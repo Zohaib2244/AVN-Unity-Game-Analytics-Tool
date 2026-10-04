@@ -1,1 +1,1 @@
-"""Self-hosted analytics backend for game events."""
+"""Self-hosted game analytics backend."""

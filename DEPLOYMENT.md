@@ -8,7 +8,7 @@ You run two services from one image, sharing one data directory:
 | Service | Port | Who may reach it |
 | --- | --- | --- |
 | **Ingest**: receives event batches from games | `8100` | The public internet, through a proxy or tunnel. Only `POST /v1/events`. |
-| **Admin**: management website, admin API, exports | `8101` | You only (localhost or an SSH forward). Never publish it. |
+| **Admin**: management website, admin API, exports | `8101` | You only (localhost, an SSH forward or a VPN). Never publish it. |
 
 ## 1. Requirements
 
@@ -38,7 +38,8 @@ Edit `.env`:
 | `AVN_UID` / `AVN_GID` | The numbers from `id -u` / `id -g`, so the containers can write `data/`. |
 | `AVN_HOST_DATA_DIR` | Where data lives. `./data` is fine; an absolute path also works if you create it first and the UID can write to it. |
 | `AVN_REQUESTS_PER_MINUTE` | Per-API-key rate limit. Default 120; raise it if many players share one key. |
-| `AVN_MIN_FREE_BYTES` | Ingestion pauses (503) below this much free disk. Default 1 GiB. |
+| `AVN_BIND_HOST` | Address the ports bind to. Default `127.0.0.1` (this machine only); use `0.0.0.0` to listen on all interfaces, for example when a proxy on another host forwards to it. |
+| `AVN_INGEST_PORT` / `AVN_ADMIN_PORT` | Host ports. Defaults 8100 and 8101. |
 | `AVN_MAX_EXPORT_BYTES` | Largest raw export. Default 256 MiB. |
 
 Keep the token out of game builds and source control, then start:
@@ -50,7 +51,7 @@ docker compose ps
 curl --fail http://127.0.0.1:8100/healthz        # {"status":"ok",...}
 ```
 
-The first build compiles a pinned SQLite (the server refuses SQLite versions with a known WAL-reset corruption bug), so it takes a few minutes. Both ports bind to `127.0.0.1` only; nothing is exposed yet.
+The first build compiles a pinned SQLite (the server refuses SQLite versions with a known WAL-reset corruption bug), so it takes a few minutes. By default both ports bind to `127.0.0.1` only (`AVN_BIND_HOST`), so nothing is exposed yet.
 
 ## 3. First use
 
@@ -85,7 +86,20 @@ Good for home servers behind NAT. You need a domain on Cloudflare and `cloudflar
 
 **Dashboard-managed tunnel:** in Cloudflare Zero Trust, *Networks, Tunnels*, add a **Public Hostname** to your tunnel: subdomain/domain such as `analytics.example.com`, type `HTTP`, URL `127.0.0.1:8100` (or the address of whatever proxy sits in front, see option B). A dashboard hostname forwards every path, so to keep other paths closed also put a proxy in front (option B), or add a Cloudflare WAF rule that blocks anything except `POST /v1/events`.
 
-**Config-file tunnel:** copy `deploy/cloudflared.example.yml`, set the tunnel ID, credentials path and hostname. It routes only `/v1/events` to port 8100 and ends with a 404 catch-all. Check it with `cloudflared tunnel ingress validate`.
+**Config-file tunnel:** a `config.yml` that routes only `/v1/events` to port 8100 and ends with a 404 catch-all:
+
+```yaml
+tunnel: YOUR_TUNNEL_ID
+credentials-file: /etc/cloudflared/YOUR_TUNNEL_ID.json
+
+ingress:
+  - hostname: analytics.example.com
+    path: ^/v1/events$
+    service: http://127.0.0.1:8100
+  - service: http_status:404
+```
+
+Check it with `cloudflared tunnel ingress validate`.
 
 If `cloudflared` runs in a container, `127.0.0.1` is the container itself; use host networking or a shared Docker network instead.
 
@@ -181,7 +195,7 @@ docker compose up -d --wait                # start
 - **Updating:** `git pull`, then `docker compose up -d --build --wait`. Keep `.env` and `data/` as they are. Do not overwrite `.env` with `.env.example` or you will lose the admin token.
 - **Boot:** services use `restart: unless-stopped`; enable the Docker service at boot (`systemctl enable docker`).
 - **Rotating the admin token:** edit `AVN_ADMIN_TOKEN` in `.env`, then `docker compose up -d --force-recreate`. Website sessions are unaffected.
-- **Disk:** check free space occasionally. Below `AVN_MIN_FREE_BYTES` the server returns 503 and clients keep their events and retry. There is no automatic retention or deletion, so plan capacity or export and archive.
+- **Disk:** check free space occasionally. There is no automatic retention or deletion, and a full disk makes the server return 503 (clients keep their events and retry), so plan capacity or export and archive.
 - **Failures are safe:** if the server is down, games queue events on the device and catch up later.
 
 ## 8. Backups and moving to another disk
@@ -226,7 +240,7 @@ To move to a new disk: stop, `rsync -a ./data/ /new/disk/avn-data/`, set `AVN_HO
 | Game gets **404/405** | Proxy only allows `POST /v1/events`; check the URL path and method. |
 | Game gets **415** | Something compresses the request body in transit; the server accepts only plain JSON. |
 | Game gets **429** | Per-key rate limit; the SDK backs off. Raise `AVN_REQUESTS_PER_MINUTE` if many players share a key. |
-| **503** responses | Disk below the free-space reserve or a database problem; check `docker compose logs` and `df -h`. |
+| **503** responses | Database or disk problem (a full disk is the usual cause); check `docker compose logs` and `df -h`. |
 | Events never show up, SDK says "offline" | Device has no connectivity, or the endpoint URL in `AvnConfig` is wrong (check `LastStatus` in the demo). |
 | `country` is always `null` | Not behind Cloudflare, or a proxy drops the `CF-IPCountry` header. |
 

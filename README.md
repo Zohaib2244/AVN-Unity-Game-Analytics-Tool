@@ -35,7 +35,7 @@ Two separate applications share the same data directory:
 | Service | Purpose | Exposure |
 | --- | --- | --- |
 | Ingest (`:8100`) | Receives event batches, validates and stores them | Public, through a proxy or tunnel |
-| Admin (`:8101`) | Management website and admin API, exports | Private (localhost or SSH forward) |
+| Admin (`:8101`) | Management website and admin API, exports | Private (localhost, SSH forward or your own proxy) |
 
 ## Quick start
 
@@ -136,7 +136,7 @@ Treat event text as untrusted data when giving exports to AI agents.
 | Body over 1 MiB or batch over 500 events | 413 / 400 | Reduce batch size |
 | Compressed request body | 415 | Send plain JSON |
 | Per-key rate limit | 429 | Honor `Retry-After`, back off with jitter |
-| Database failure or low disk | 503 | Honor `Retry-After`, keep the queue |
+| Database failure | 503 | Honor `Retry-After`, keep the queue |
 
 ## Admin API
 
@@ -187,7 +187,10 @@ Environment variables (see `.env.example`):
 | `AVN_DATA_DIR` | `./data` | Where databases are stored |
 | `AVN_REQUESTS_PER_MINUTE` | `120` | Per-key rate limit |
 | `AVN_MAX_BODY_BYTES` | `1048576` | Largest accepted request body |
-| `AVN_MIN_FREE_BYTES` | `1073741824` | Free-space reserve; ingestion pauses (503) below it |
+| `AVN_HOST_DATA_DIR` | `./data` | Host folder holding all data |
+| `AVN_UID` / `AVN_GID` | `1000` | User that owns the data folder |
+| `AVN_BIND_HOST` | `127.0.0.1` | Address the ports bind to (`0.0.0.0` = all interfaces) |
+| `AVN_INGEST_PORT` / `AVN_ADMIN_PORT` | `8100` / `8101` | Host ports |
 | `AVN_MAX_EXPORT_BYTES` | `268435456` | Largest raw export |
 
 ## Storage layout
@@ -199,11 +202,11 @@ data/
   exports/               temporary downloads
 ```
 
-Raw events are kept indefinitely; there is no retention job or deletion endpoint yet. To move or back up the data, stop both services and copy the **whole** directory (SQLite may hold committed data in `-wal` sidecar files). Keep the data on a local filesystem, not SMB or NFS. Clients simply queue events during the downtime.
+Raw events are kept indefinitely; there is no retention job or deletion endpoint yet, so watch your disk space. To move or back up the data, stop both services and copy the **whole** directory (SQLite may hold committed data in `-wal` sidecar files). Keep the data on a local filesystem, not SMB or NFS. Clients simply queue events during the downtime.
 
 ## Public exposure (Cloudflare Tunnel example)
 
-`deploy/cloudflared.example.yml` is a template that routes only `/v1/events` to the ingest port and ends in a 404 catch-all. Any reverse proxy works if it allows only `POST /v1/events`. When using Cloudflare, country detection reads the `CF-IPCountry` header, which Cloudflare adds and a reverse proxy such as Caddy forwards by default. Verify that the header reaches the ingest service in your setup. Without it, `country` is stored as `null`. See [`DEPLOYMENT.md`](DEPLOYMENT.md) for a full self-hosting guide.
+Any reverse proxy or tunnel works if it forwards only `POST /v1/events` to the ingest port and answers 404 to everything else; example configs for Cloudflare Tunnel, Caddy and nginx are in [`DEPLOYMENT.md`](DEPLOYMENT.md). When using Cloudflare, country detection reads the `CF-IPCountry` header, which Cloudflare adds and a reverse proxy such as Caddy forwards by default. Verify that the header reaches the ingest service in your setup. Without it, `country` is stored as `null`. See [`DEPLOYMENT.md`](DEPLOYMENT.md) for a full self-hosting guide.
 
 ## Development
 

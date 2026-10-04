@@ -13,7 +13,7 @@ ORIGIN = {"Origin": "http://localhost"}
 
 @pytest.fixture
 def website(tmp_path):
-    settings = Settings(data_dir=tmp_path, admin_token="a" * 48, min_free_bytes=0)
+    settings = Settings(data_dir=tmp_path, admin_token="a" * 48)
     with TestClient(create_app(settings, admin=True), base_url="http://localhost") as client:
         yield client, settings
 
@@ -67,20 +67,12 @@ def test_setup_session_and_persistence(website):
         assert client.cookies.get("avn_session") not in dump
 
 
-def test_csrf_and_hostname_protection(website):
+def test_csrf_protection(website):
     client, _ = website
     assert client.post("/auth/setup", json={"password": PASSWORD}).status_code == 403
     assert (
         client.post(
             "/auth/setup", headers={"Origin": "https://evil.example"}, json={"password": PASSWORD}
-        ).status_code
-        == 403
-    )
-    assert (
-        client.post(
-            "/auth/setup",
-            headers={"Host": "evil.example", "Origin": "http://evil.example"},
-            json={"password": PASSWORD},
         ).status_code
         == 403
     )

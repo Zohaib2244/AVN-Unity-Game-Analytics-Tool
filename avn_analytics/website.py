@@ -1,6 +1,5 @@
 import hashlib
 import secrets
-import shutil
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,8 +41,6 @@ class WebAuth:
             return connection.execute("SELECT * FROM web_credentials WHERE id=1").fetchone()
 
     def same_origin(self, request):
-        if request.url.hostname not in {"localhost", "127.0.0.1", "::1"}:
-            raise HTTPException(403, "Use the local website address")
         expected = f"{request.url.scheme}://{request.url.netloc}"
         if request.headers.get("origin") != expected:
             raise HTTPException(403, "This action must come from the website")
@@ -110,19 +107,11 @@ class WebAuth:
                 game["today"] = connection.execute(
                     "SELECT count(*) FROM events WHERE server_ts>=?", (today,)
                 ).fetchone()[0]
-        disk = shutil.disk_usage(self.storage.root)
         return {
             "games": games,
             "events": sum(game["events"] for game in games),
             "today": sum(game["today"] for game in games),
             "active_keys": active_keys,
-            "storage": {
-                "total": disk.total,
-                "free": disk.free,
-                "used": disk.used,
-                "reserve": self.storage.settings.min_free_bytes,
-            },
-            "healthy": disk.free >= self.storage.settings.min_free_bytes,
         }
 
 
