@@ -25,11 +25,6 @@ x-service: &service
 services:
   ingest:
     <<: *service
-    networks:
-      default: {}
-      caddy:
-        aliases:
-          - avn-analytics-ingest
     environment:
       AVN_DATA_DIR: /data
       AVN_REQUESTS_PER_MINUTE: ${AVN_REQUESTS_PER_MINUTE:-120}
@@ -61,8 +56,3 @@ services:
       retries: 3
     mem_limit: 512m
     cpus: 1.0
-
-networks:
-  caddy:
-    external: true
-    name: caddy_default

@@ -9,7 +9,7 @@ Copy this whole folder into your project's `Assets/` (e.g. `Assets/AVNAnalytics/
 ## Quick test
 
 1. Create an empty GameObject in a scene and add **AvnAnalyticsDemo**.
-2. Paste the game's API key (from the admin site, *API keys* page) into **Api Key**. The endpoint defaults to `https://gameanalytics.avns.site/v1/events`.
+2. Set **Endpoint** to your server's ingest URL (`https://your-domain/v1/events`) and paste the game's API key (admin site, *API keys* page) into **Api Key**.
 3. Press Play. Use the on-screen buttons; watch *Pending on disk* and *Last status*.
 4. In the admin site's health view, confirm events arrive (platform will be `editor` in the Editor).
 
@@ -21,7 +21,10 @@ Persistence test: click **Simulate OFFLINE**, log some events (pending grows), s
 using Avn.Analytics;
 
 void Awake() {
-    AvnAnalytics.Initialize(new AvnConfig { ApiKey = "YOUR_GAME_KEY" });
+    AvnAnalytics.Initialize(new AvnConfig {
+        Endpoint = "https://your-domain/v1/events",
+        ApiKey = "YOUR_GAME_KEY",
+    });
 }
 
 AvnAnalytics.LogEvent("level_complete",

@@ -203,7 +203,7 @@ Raw events are kept indefinitely; there is no retention job or deletion endpoint
 
 ## Public exposure (Cloudflare Tunnel example)
 
-`deploy/cloudflared.example.yml` is a template that routes only `/v1/events` to the ingest port and ends in a 404 catch-all. Any reverse proxy works if it allows only `POST /v1/events`. When using Cloudflare, country detection reads the `CF-IPCountry` header, which Cloudflare adds and a reverse proxy such as Caddy forwards by default. Verify that the header reaches the ingest service in your setup. Without it, `country` is stored as `null`. `DEPLOYMENT.md` documents one concrete installation.
+`deploy/cloudflared.example.yml` is a template that routes only `/v1/events` to the ingest port and ends in a 404 catch-all. Any reverse proxy works if it allows only `POST /v1/events`. When using Cloudflare, country detection reads the `CF-IPCountry` header, which Cloudflare adds and a reverse proxy such as Caddy forwards by default. Verify that the header reaches the ingest service in your setup. Without it, `country` is stored as `null`. See [`DEPLOYMENT.md`](DEPLOYMENT.md) for a full self-hosting guide.
 
 ## Development
 

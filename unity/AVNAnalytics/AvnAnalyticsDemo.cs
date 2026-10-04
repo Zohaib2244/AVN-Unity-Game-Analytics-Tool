@@ -9,7 +9,7 @@ namespace Avn.Analytics
     /// </summary>
     public sealed class AvnAnalyticsDemo : MonoBehaviour
     {
-        [SerializeField] string endpoint = "https://gameanalytics.avns.site/v1/events";
+        [SerializeField] string endpoint = "https://analytics.example.com/v1/events";
         [SerializeField] string apiKey = "";
         [SerializeField] bool debugLogging = true;
         [Tooltip("Shorter than the default so you can watch it work.")]

@@ -27,13 +27,8 @@ Website API tests additionally cover password hashing, session expiry/revocation
 session persistence across restarts, first-run setup lockout, Origin/hostname
 protection, login throttling and separation from the ingest service.
 
-See `DEPLOYMENT.md` for the installation on the AVNS server itself.
-
-After deployment, Chromium loaded the real website from `http://127.0.0.1:8101/`
-and verified the first-run setup screen. Setup was not submitted on the live
-server, so the owner can choose the password. Both deployed containers passed
-their health checks, and the existing bearer-token API checks still passed.
+See `DEPLOYMENT.md` for deploying it yourself.
 
 Not verified: Cloudflare routing/rules, Unity delivery behavior, sustained production
-load, hardware power-loss durability, or the physical replacement drive. No public
+load, hardware power-loss durability, or drive migration on real hardware. No public
 service was exposed and no actual player events were collected.

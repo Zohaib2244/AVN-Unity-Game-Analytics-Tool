@@ -3,8 +3,8 @@ namespace Avn.Analytics
     /// <summary>Settings for the AVN Analytics SDK. Create one and pass it to AvnAnalytics.Initialize.</summary>
     public sealed class AvnConfig
     {
-        /// <summary>Full ingest URL, e.g. https://gameanalytics.avns.site/v1/events</summary>
-        public string Endpoint = "https://gameanalytics.avns.site/v1/events";
+        /// <summary>Full ingest URL, e.g. https://analytics.example.com/v1/events</summary>
+        public string Endpoint = "";
 
         /// <summary>Game API key from the admin site (sent as X-API-Key). An identifier, not a secret.</summary>
         public string ApiKey = "";
