@@ -335,7 +335,7 @@ disk/storage failures, dictionary output and data-directory relocation.
 ## Remaining rollout work
 
 - Supply the public analytics hostname and tunnel configuration for game clients.
-- Build the Unity SDK's durable queue and run a pilot alongside Firebase.
+- Unity SDK is in `unity/AVNAnalytics` (see its README); run a pilot alongside Firebase.
 - Tune limits from actual device counts and batching behavior; perform load and
   power-loss testing on the target hardware. Existing tests are correctness checks.
 - Choose a retention/deletion policy and backup schedule before collecting real
