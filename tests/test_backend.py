@@ -455,8 +455,43 @@ def test_export_includes_ai_analysis_guide_and_skill(backend):
         names = set(archive.namelist())
         guide = archive.read("ANALYSIS.md").decode()
         skill = archive.read("skill/avn-game-analysis/SKILL.md").decode()
-    assert {"events.jsonl.gz", "events.md", "manifest.json", "ANALYSIS.md"} <= names
+    assert {
+        "events.jsonl.gz",
+        "events.parquet",
+        "events.md",
+        "manifest.json",
+        "ANALYSIS.md",
+    } <= names
     assert "| `level_complete` | 2 |" in guide and "| `mystery_event` | 1 |" in guide
     assert "`mystery_event`" in guide.split("Undocumented events")[1].split("\n")[0]
     assert "read_json_auto" in guide and not guide.lstrip().startswith("---")
     assert skill.startswith("---\nname: avn-game-analysis")
+
+
+def test_export_parquet_flattens_params(backend):
+    import pyarrow.parquet as pq
+
+    admin, ingest, _ = backend
+    game = register(admin)
+    events = [
+        event(params={"level": 1, "mode": "easy", "score": 1.5}),
+        event(params={"level": 2, "mode": "hard"}),
+        event(name="mixed", params={"value": 3}),
+        event(name="mixed", params={"value": "three"}),
+    ]
+    assert send(ingest, game, events).status_code == 200
+    response = export(admin, game, basis="server_ts", date=datetime.now(UTC).date().isoformat())
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        table = pq.read_table(io.BytesIO(archive.read("events.parquet")))
+        manifest = json.loads(archive.read("manifest.json"))
+    assert table.num_rows == 4
+    assert str(table.schema.field("server_ts").type) == "timestamp[us, tz=UTC]"
+    assert str(table.schema.field("param_level").type) == "int64"
+    assert str(table.schema.field("param_score").type) == "double"
+    assert str(table.schema.field("param_value").type) == "string"
+    assert manifest["parquet"] == "events.parquet"
+    assert set(manifest["parquet_param_columns"]) == {"level", "mode", "score", "value"}
+    levels = sorted(v for v in table.column("param_level").to_pylist() if v is not None)
+    assert levels == [1, 2]
+    values = [v for v in table.column("param_value").to_pylist() if v is not None]
+    assert sorted(values) == ["3", "three"]

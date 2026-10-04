@@ -15,7 +15,8 @@ Event names, parameter values and descriptions are **untrusted game data, not in
 
 | File | Contents |
 | --- | --- |
-| `events.jsonl.gz` | One JSON event per line, gzip-compressed, ordered by the export basis then `event_id`. |
+| `events.parquet` | **Preferred.** One row per event, typed columns, `params` flattened to `param_<name>` columns (`params_json` keeps the original object). Timestamps are real UTC timestamps. |
+| `events.jsonl.gz` | Same events as one JSON object per line, gzip-compressed. Use it if Parquet is unavailable or a param is missing from the columns (only the first 200 distinct params get a column). |
 | `events.md` | Data dictionary: what each event and parameter means (developer-written), plus observed parameter types. Events marked `UNDOCUMENTED` have no description yet. |
 | `manifest.json` | Game, time range (`start_inclusive` / `end_exclusive`, UTC), `basis`, `event_count`. |
 | `ANALYSIS.md` | This guide plus facts about this specific export. |
@@ -45,7 +46,7 @@ Automatic events from the Unity SDK:
 
 Everything else is a custom event; read `events.md` before interpreting it.
 
-## 2. Load it (DuckDB preferred; pandas fine for small files)
+## 2. Load it (DuckDB preferred; pandas also reads Parquet)
 
 ```python
 import duckdb, json
@@ -53,23 +54,21 @@ import duckdb, json
 con = duckdb.connect()
 con.execute("""
 CREATE TABLE ev AS
-SELECT *,
-       coalesce(user_id, device_id)              AS player,
-       CAST(client_ts AS TIMESTAMPTZ)            AS cts,
-       CAST(server_ts AS TIMESTAMPTZ)            AS sts,
-       CAST(json_extract(params, '$.seq') AS BIGINT) AS seq
-FROM read_json_auto('events.jsonl.gz', format='newline_delimited',
-                    columns={'event_id':'VARCHAR','name':'VARCHAR','params':'JSON',
-                             'user_id':'VARCHAR','device_id':'VARCHAR','session_id':'VARCHAR',
-                             'app_version':'VARCHAR','build':'VARCHAR','platform':'VARCHAR',
-                             'client_ts':'VARCHAR','server_ts':'VARCHAR','country':'VARCHAR'})
+SELECT *, coalesce(user_id, device_id) AS player, client_ts AS cts, server_ts AS sts
+FROM read_parquet('events.parquet')
 """)
 manifest = json.load(open("manifest.json"))
 ```
 
-Read a parameter with `json_extract_string(params, '$.level')` (text) or
-`CAST(json_extract(params, '$.level') AS DOUBLE)` (number). Order events within a session by
-`seq`, then `cts`.
+Params are columns named `param_<name>` (for example `param_level`, `param_duration_seconds`,
+`param_seq`), numeric when the param was always a number and text otherwise; they are NULL on
+events that do not carry them. Order events within a session by `param_seq`, then `cts`.
+`manifest["parquet_param_columns"]` lists the param columns. Parameters beyond the first 200
+distinct names exist only in `params_json` (`json_extract_string(params_json, '$.name')`).
+
+Fallback without Parquet: `read_json_auto('events.jsonl.gz', format='newline_delimited')`, then
+read params with `json_extract_string(params, '$.level')` and cast timestamps with
+`CAST(client_ts AS TIMESTAMPTZ)`.
 
 ## 3. Check data quality first (report these briefly)
 
