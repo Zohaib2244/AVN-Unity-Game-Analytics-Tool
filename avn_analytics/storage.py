@@ -1,7 +1,6 @@
 import hashlib
 import json
 import secrets
-import shutil
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -73,12 +72,7 @@ class Storage:
     def game_path(self, game_id):
         return self.root / "games" / f"{game_id}.sqlite3"
 
-    def require_space(self):
-        if shutil.disk_usage(self.root).free < self.settings.min_free_bytes:
-            raise HTTPException(503, "Storage reserve reached", headers={"Retry-After": "60"})
-
     def register_game(self, game: GameCreate):
-        self.require_space()
         game_id = str(uuid4())
         created_at = timestamp()
         with self.connect(self.root / "registry.sqlite3") as registry:
@@ -199,7 +193,6 @@ class Storage:
             return key["game_id"]
 
     def ingest(self, game_id, batch: Batch):
-        self.require_space()
         server_ts = timestamp()
         rows = []
         for event in batch.events:
@@ -255,5 +248,4 @@ class Storage:
             "game_id": game_id,
             "basis": "server_ts",
             "days": days,
-            "free_bytes": shutil.disk_usage(self.root).free,
         }

@@ -30,7 +30,6 @@ def period_bounds(period: str, selected_date: date):
 
 def build_export(storage, game_id, period, selected_date, basis):
     game = storage.get_game(game_id)
-    storage.require_space()
     start, end = period_bounds(period, selected_date)
     if basis not in ("server_ts", "client_ts"):
         raise ValueError("Invalid timestamp basis")
@@ -80,8 +79,6 @@ def build_export(storage, game_id, period, selected_date, basis):
                                         "string" if isinstance(value, str) else "number"
                                     )
                             count += 1
-                            if count % 1000 == 0:
-                                storage.require_space()
                 manifest = {
                     "schema_version": 1,
                     "game": game,

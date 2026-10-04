@@ -22,7 +22,7 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 @pytest.fixture
 def backend(tmp_path):
-    settings = Settings(data_dir=tmp_path, admin_token=TOKEN, min_free_bytes=0)
+    settings = Settings(data_dir=tmp_path, admin_token=TOKEN)
     with TestClient(create_app(settings, admin=True)) as admin:
         with TestClient(create_app(settings)) as ingest:
             yield admin, ingest, settings
@@ -230,16 +230,6 @@ def test_rate_limit_shared_across_instances_and_restart(backend, monkeypatch):
         assert response.headers["Retry-After"] == "50"
         monkeypatch.setattr("avn_analytics.storage.time.time", lambda: 1800000061)
         assert send(second, game, [event()]).status_code == 200
-
-
-def test_low_disk_space_is_retryable(backend):
-    admin, _, settings = backend
-    game = register(admin)
-    with TestClient(create_app(replace(settings, min_free_bytes=10**30))) as limited:
-        response = send(limited, game, [event()])
-        assert response.status_code == 503
-        assert response.headers["Retry-After"] == "60"
-    assert unpack(export(admin, game))[0] == []
 
 
 def test_storage_failure_never_acknowledges(backend, monkeypatch):

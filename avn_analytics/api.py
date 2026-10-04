@@ -132,7 +132,6 @@ def create_app(settings: Settings, *, admin: bool = False):
     def healthz():
         with storage.connect(storage.root / "registry.sqlite3") as connection:
             connection.execute("SELECT count(*) FROM games").fetchone()
-        storage.require_space()
         return {"status": "ok", "server_ts": timestamp()}
 
     if not admin:
