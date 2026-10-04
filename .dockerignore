@@ -1,0 +1,6 @@
+*
+!requirements.lock
+!avn_analytics/
+!avn_analytics/*.py
+!avn_analytics/static/
+!avn_analytics/static/*

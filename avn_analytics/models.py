@@ -1,0 +1,91 @@
+import math
+from datetime import UTC, datetime
+from typing import Annotated
+from uuid import UUID
+
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+
+Name = Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")]
+Context = Annotated[str, Field(min_length=1, max_length=128)]
+
+
+def timestamp(value: datetime | None = None) -> str:
+    return (value or datetime.now(UTC)).astimezone(UTC).isoformat(timespec="microseconds")
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class Event(StrictModel):
+    event_id: UUID
+    name: Name
+    params: dict[str, str | int | float] = Field(default_factory=dict, max_length=50)
+    user_id: Context | None = None
+    device_id: Context | None = None
+    session_id: Context
+    app_version: Context
+    build: Context
+    platform: Context
+    client_ts: AwareDatetime
+
+    @field_validator("params", mode="before")
+    @classmethod
+    def validate_params(cls, params):
+        if not isinstance(params, dict):
+            raise ValueError("params must be an object")
+        for key, value in params.items():
+            if not isinstance(key, str) or not 1 <= len(key) <= 80:
+                raise ValueError("param names must be 1-80 characters")
+            if type(value) not in (str, int, float):
+                raise ValueError("params support only strings and finite numbers")
+            if isinstance(value, str) and len(value) > 1024:
+                raise ValueError("param strings must be at most 1024 characters")
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError("param numbers must be finite")
+            if isinstance(value, int) and not -(2**63) <= value < 2**63:
+                raise ValueError("param integers must fit in signed 64 bits")
+        return params
+
+    @field_validator("client_ts", mode="before")
+    @classmethod
+    def require_iso_timestamp(cls, value):
+        if not isinstance(value, (str, datetime)):
+            raise ValueError("client_ts must be an ISO 8601 timestamp with timezone")
+        return value
+
+    @model_validator(mode="after")
+    def require_identity(self):
+        if not self.user_id and not self.device_id:
+            raise ValueError("user_id or device_id is required")
+        return self
+
+
+class Batch(StrictModel):
+    events: list[Event] = Field(min_length=1, max_length=500)
+
+
+class GameCreate(StrictModel):
+    name: Annotated[str, Field(min_length=1, max_length=128)]
+    bundle_id: Annotated[
+        str, Field(min_length=3, max_length=255, pattern=r"^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$")
+    ]
+    platform: Annotated[str, Field(min_length=1, max_length=32, pattern=r"^[a-z0-9_-]+$")]
+
+
+class KeyCreate(StrictModel):
+    label: Annotated[str, Field(min_length=1, max_length=128)] = "default"
+
+
+class EventDefinition(StrictModel):
+    description: Annotated[str, Field(min_length=1, max_length=4000)]
+    params: dict[str, str] = Field(default_factory=dict, max_length=50)
+
+    @field_validator("params")
+    @classmethod
+    def validate_definitions(cls, params):
+        if any(
+            not 1 <= len(key) <= 80 or not 1 <= len(value) <= 2000 for key, value in params.items()
+        ):
+            raise ValueError("Invalid parameter name or description length")
+        return params
