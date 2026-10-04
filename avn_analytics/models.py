@@ -77,6 +77,22 @@ class GameCreate(StrictModel):
         str, Field(min_length=3, max_length=255, pattern=r"^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$")
     ]
     platform: Literal["android", "ios"]
+    notes: Annotated[str, Field(max_length=2000)] = ""
+
+
+class GameUpdate(StrictModel):
+    """Platform is fixed after registration so a game's events never mix platforms."""
+
+    name: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    bundle_id: (
+        Annotated[
+            str,
+            Field(min_length=3, max_length=255, pattern=r"^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$"),
+        ]
+        | None
+    ) = None
+    notes: Annotated[str, Field(max_length=2000)] | None = None
+    archived: bool | None = None
 
 
 class KeyCreate(StrictModel):

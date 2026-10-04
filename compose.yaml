@@ -44,6 +44,7 @@ services:
       AVN_DATA_DIR: /data
       AVN_ADMIN_TOKEN: ${AVN_ADMIN_TOKEN:?Set AVN_ADMIN_TOKEN in .env}
       AVN_MAX_EXPORT_BYTES: ${AVN_MAX_EXPORT_BYTES:-268435456}
+      AVN_PUBLIC_INGEST_URL: ${AVN_PUBLIC_INGEST_URL:-}
     command: [uvicorn, "avn_analytics.api:create_admin_app", --factory, --host, "0.0.0.0", --port, "8000", --workers, "1", --limit-concurrency, "20", --no-proxy-headers]
     ports:
       - "${AVN_BIND_HOST:-127.0.0.1}:${AVN_ADMIN_PORT:-8101}:8000"

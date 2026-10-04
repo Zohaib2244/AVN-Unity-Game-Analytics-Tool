@@ -28,6 +28,8 @@ def overview(storage):
         "events": sum(game["events"] for game in games),
         "today": sum(game["today"] for game in games),
         "active_keys": active_keys,
+        "ingest_url": (storage.settings.public_ingest_url or "http://127.0.0.1:8100")
+        + "/v1/events",
     }
 
 

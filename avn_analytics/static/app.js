@@ -110,6 +110,8 @@ function mountActivity(container, game, basis = 'server_ts') {
     catch (error) { if (request === latest) result.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
   });
 }
+const platformLabel = platform => ({android:'Android', ios:'iOS'}[platform] || escapeHTML(platform));
+const fileSize = value => value >= 1073741824 ? `${(value / 1073741824).toFixed(1)} GB` : value >= 1048576 ? `${(value / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round((value || 0) / 1024))} KB`;
 const gameURL = game => `/v1/games/${encodeURIComponent(game.id)}`;
 const brand = `<a href="/" class="brand" aria-label="AVN Analytics home"><span class="brand-icon">a.</span><span><span class="brand-name">avn analytics</span><span class="brand-sub"></span></span></a>`;
 
@@ -169,17 +171,33 @@ function renderOverview() {
 }
 
 function renderGames() {
-  shell('Games', heading('Your games', 'Each game gets its own keys, events, and space to grow.', registerButton) + `<div class="toolbar"><div class="search">${icon('search',16)}<input id="game-search" type="search" aria-label="Search games" placeholder="Search your games…"></div><span class="filter-note">${overview.games.length} registered ${overview.games.length === 1 ? 'game' : 'games'}</span></div><div id="game-results"></div>`);
-  const renderCards = query => {
-    const games = overview.games.filter(game => `${game.name} ${game.bundle_id}`.toLowerCase().includes(query.toLowerCase()));
-    document.querySelector('#game-results').innerHTML = games.length ? `<div class="game-grid">${games.map(game => `<a class="game-card" href="/games/${game.id}"><div class="game-card-header"><span class="game-avatar">${escapeHTML(game.name.slice(0,2).toUpperCase())}</span><span class="pill">${escapeHTML(game.platform)}</span></div><h3>${escapeHTML(game.name)}</h3><p class="mono">${escapeHTML(game.bundle_id)}</p><div class="game-card-footer"><span>${number(game.events)} events</span><span>${game.last_event ? 'Receiving data' : 'Awaiting events'} ${icon('arrow',12)}</span></div></a>`).join('')}</div>` : `<section class="panel">${empty(query ? 'No games found' : 'Good things begin with a first game', query ? 'Try another name or bundle ID.' : 'Create a game and we’ll generate its first API key.', query ? '' : registerButton)}</section>`;
+  const all = overview.games;
+  const archivedCount = all.filter(game => game.archived_at).length;
+  shell('Games', heading('Your games', 'Each game gets its own keys, events, and space to grow.', registerButton) +
+    `<div class="toolbar games-toolbar"><div class="search">${icon('search',16)}<input id="game-search" type="search" aria-label="Search games" placeholder="Search by name, bundle ID or notes…"></div>
+    <div class="range-modes" role="group" aria-label="Show">${[['active',`Active (${all.length - archivedCount})`],['archived',`Archived (${archivedCount})`],['all',`All (${all.length})`]].map(([key,label]) => `<button type="button" data-filter="${key}">${label}</button>`).join('')}</div>
+    <div class="game-select"><label for="game-sort">Sort</label><select id="game-sort"><option value="newest">Newest first</option><option value="name">Name A–Z</option><option value="events">Most events</option><option value="recent">Latest activity</option></select></div></div><div id="game-results"></div>`);
+  const state = {query: '', filter: archivedCount && archivedCount === all.length ? 'all' : 'active', sort: 'newest'};
+  const sorters = {
+    newest: (a, b) => b.created_at.localeCompare(a.created_at),
+    name: (a, b) => a.name.localeCompare(b.name),
+    events: (a, b) => (b.events || 0) - (a.events || 0),
+    recent: (a, b) => (b.last_event || '').localeCompare(a.last_event || ''),
   };
-  renderCards('');
-  document.querySelector('#game-search').addEventListener('input', event => renderCards(event.target.value));
+  const renderCards = () => {
+    document.querySelectorAll('[data-filter]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.filter === state.filter)));
+    const query = state.query.toLowerCase();
+    const games = all.filter(game => (state.filter === 'all' || (state.filter === 'archived') === Boolean(game.archived_at)) && `${game.name} ${game.bundle_id} ${game.notes || ''}`.toLowerCase().includes(query)).sort(sorters[state.sort]);
+    document.querySelector('#game-results').innerHTML = games.length ? `<div class="game-grid">${games.map(game => `<a class="game-card ${game.archived_at ? 'archived' : ''}" href="/games/${game.id}"><div class="game-card-header"><span class="game-avatar">${escapeHTML(game.name.slice(0,2).toUpperCase())}</span><span>${game.archived_at ? '<span class="pill bad">Archived</span> ' : ''}<span class="pill">${platformLabel(game.platform)}</span></span></div><h3>${escapeHTML(game.name)}</h3><p class="mono">${escapeHTML(game.bundle_id)}</p>${game.notes ? `<p class="game-notes">${escapeHTML(game.notes)}</p>` : ''}<div class="game-card-footer"><span>${number(game.events)} events</span><span>${game.archived_at ? 'Collection paused' : game.last_event ? 'Receiving data' : 'Awaiting events'} ${icon('arrow',12)}</span></div></a>`).join('')}</div>` : `<section class="panel">${empty(all.length ? 'No games found' : 'Good things begin with a first game', all.length ? 'Try another search or filter.' : 'Create a game and we’ll generate its first API key.', all.length ? '' : registerButton)}</section>`;
+  };
+  document.querySelector('#game-search').addEventListener('input', event => { state.query = event.target.value; renderCards(); });
+  document.querySelector('#game-sort').addEventListener('change', event => { state.sort = event.target.value; renderCards(); });
+  document.querySelectorAll('[data-filter]').forEach(button => button.addEventListener('click', () => { state.filter = button.dataset.filter; renderCards(); }));
+  renderCards();
 }
 
 function renderNewGame() {
-  shell('Register game', `<a class="back-link" href="/games">← Back to games</a>` + heading('Make room for your next game.', 'A few details, and you’re ready to start collecting.') + `<div class="form-layout"><form id="register-form" class="panel form-panel"><h2>Game details</h2><p>Give your project a recognizable name.</p><div class="field"><label for="game-name">Game name</label><input id="game-name" name="name" placeholder="e.g. Tiny Adventures" required maxlength="128" autofocus></div><div class="field"><label for="bundle-id">Bundle ID</label><input id="bundle-id" name="bundle_id" placeholder="com.yourstudio.yourgame" pattern="[A-Za-z0-9_\\-]+(\\.[A-Za-z0-9_\\-]+)+" required maxlength="255"><p>The application identifier from your game’s project settings.</p></div><div class="field"><label for="platform">Platform</label><select id="platform" name="platform"><option value="android">Android</option><option value="ios">iOS</option></select><p>Register each platform separately to keep its events isolated.</p></div><div class="error" role="alert"></div><div class="form-actions"><a href="/games" class="button">Cancel</a><button class="button primary" type="submit">Register game ${icon('arrow',14)}</button></div></form><aside class="aside-card">${icon('game',25)}<h3>A space of its own</h3><p>Every game gets a separate event database and its own collection keys.</p><ul><li>Duplicates are handled automatically</li><li>Keys can be rotated at any time</li><li>Your raw data stays on your server</li></ul><p class="small">After registration, copy your new API key. It’s shown only once.</p></aside></div>`);
+  shell('Register game', `<a class="back-link" href="/games">← Back to games</a>` + heading('Make room for your next game.', 'A few details, and you’re ready to start collecting.') + `<div class="form-layout"><form id="register-form" class="panel form-panel"><h2>Game details</h2><p>Give your project a recognizable name.</p><div class="field"><label for="game-name">Game name</label><input id="game-name" name="name" placeholder="e.g. Tiny Adventures" required maxlength="128" autofocus></div><div class="field"><label for="bundle-id">Bundle ID</label><input id="bundle-id" name="bundle_id" placeholder="com.yourstudio.yourgame" pattern="[A-Za-z0-9_\\-]+(\\.[A-Za-z0-9_\\-]+)+" required maxlength="255"><p>The application identifier from your game’s project settings.</p></div><div class="field"><label for="platform">Platform</label><select id="platform" name="platform"><option value="android">Android</option><option value="ios">iOS</option></select><p>Register each platform separately to keep its events isolated. The platform can’t be changed later.</p></div><div class="field"><label for="notes">Notes (optional)</label><textarea id="notes" name="notes" maxlength="2000" placeholder="Store links, release status, anything worth remembering"></textarea></div><div class="error" role="alert"></div><div class="form-actions"><a href="/games" class="button">Cancel</a><button class="button primary" type="submit">Register game ${icon('arrow',14)}</button></div></form><aside class="aside-card">${icon('game',25)}<h3>A space of its own</h3><p>Every game gets a separate event database and its own collection keys.</p><ul><li>Duplicates are handled automatically</li><li>Keys can be rotated at any time</li><li>Your raw data stays on your server</li></ul><p class="small">After registration, copy your new API key. It’s shown only once.</p></aside></div>`);
   bindForm('#register-form', async (form, values) => {
     const game = await api('/v1/games', {method:'POST', body:JSON.stringify(values)});
     showKey(game.key.api_key, 'Your game is ready.', `/games/${game.id}`);
@@ -194,7 +212,7 @@ function selectedGame() {
 }
 
 function picker(game) {
-  return `<div class="toolbar"><div class="game-select"><label for="selected-game">Game</label><select id="selected-game">${overview.games.map(item => `<option value="${item.id}" ${item.id === game.id ? 'selected' : ''}>${escapeHTML(item.name)} · ${escapeHTML(item.platform)}</option>`).join('')}</select></div></div>`;
+  return `<div class="toolbar"><div class="game-select"><label for="selected-game">Game</label><select id="selected-game">${overview.games.map(item => `<option value="${item.id}" ${item.id === game.id ? 'selected' : ''}>${escapeHTML(item.name)} · ${platformLabel(item.platform)}${item.archived_at ? ' · archived' : ''}</option>`).join('')}</select></div></div>`;
 }
 
 function bindPicker() {
@@ -209,11 +227,76 @@ function needsGame(title, description) {
   return true;
 }
 
-function renderGame() {
-  const game = overview.games.find(item => item.id === location.pathname.split('/')[2]);
-  if (!game) { shell('Game not found', heading('Game not found', 'This game is not in your workspace.') + '<a class="button" href="/games">Back to games</a>'); return; }
-  shell(game.name, '<a class="back-link" href="/games">← Back to games</a>' + heading(game.name, `${game.bundle_id} · ${game.platform}`, `<a class="button primary" href="/exports?game=${game.id}">${icon('export',15)} Export data</a>`) + `<section class="metrics">${metric('Events collected',number(game.events),'All committed events','pulse')}${metric('Events today',number(game.today),'Received today · UTC','export')}${metric('Platform',escapeHTML(game.platform),'Registered platform','game')}${metric('Collection',game.last_event ? 'Active' : 'Ready',game.last_event ? 'Events have arrived' : 'Waiting for your first event','server')}</section><div class="section-grid"><section class="panel"><div class="panel-header"><h2>Game information</h2></div><div class="panel-body"><ul class="status-list"><li><span>Game ID</span><code>${game.id}</code></li><li><span>Registered</span><strong>${displayDate(game.created_at)}</strong></li><li><span>Latest event</span><strong>${displayDate(game.last_event)}</strong></li></ul><div class="section-spacing"><a class="button" href="/keys?game=${game.id}">${icon('key',15)} Manage keys</a> <a class="button" href="/dictionary?game=${game.id}">${icon('book',15)} Event dictionary</a></div></div></section><aside class="aside-card">${icon('pulse',25)}<h3>Connect your game</h3><p>Send batches to the collection endpoint with your game’s API key in the <code>X-API-Key</code> header.</p><div class="connection"><code>POST http://127.0.0.1:8100/v1/events</code></div><p class="small section-spacing">This address works on the server. A public address will be available after your Cloudflare Tunnel is connected.</p></aside></div><section class="panel section-spacing"><div class="panel-header"><div><h2>Event activity</h2><p>Pick any days on the calendar · received by the server · UTC</p></div></div><div class="panel-body" id="activity"></div></section>`);
+async function renderGame() {
+  const id = location.pathname.split('/')[2];
+  let game;
+  try { game = await api(`/v1/games/${encodeURIComponent(id)}`); }
+  catch { shell('Game not found', heading('Game not found', 'This game is not in your workspace.') + '<a class="button" href="/games">Back to games</a>'); return; }
+  const archived = Boolean(game.archived_at);
+  const actions = `<div class="heading-actions"><button class="button" data-game-action="edit">${icon('settings',15)} Edit</button><a class="button primary" href="/exports?game=${game.id}">${icon('export',15)} Export data</a></div>`;
+  shell(game.name, '<a class="back-link" href="/games">← Back to games</a>' + heading(game.name, `${game.bundle_id} · ${platformLabel(game.platform)}`, actions) +
+    (archived ? `<div class="archived-banner">${icon('lock',18)}<div><strong>Archived ${displayDate(game.archived_at)}.</strong> Collection is paused: the server refuses new events, and the Unity SDK keeps them queued on players’ devices until you restore the game.</div><button class="button" data-game-action="unarchive">Restore game</button></div>` : '') +
+    `<section class="metrics">${metric('Events collected',number(game.events),`${number(game.event_names)} distinct event names`,'pulse')}${metric('Events today',number(game.today),'Received today · UTC','export')}${metric('API keys',`${game.keys_active} active`,`${game.keys_total} created in total`,'key')}${metric('Storage',fileSize(game.storage_bytes),'Event database on disk','disk')}</section>
+    <div class="section-grid"><section class="panel"><div class="panel-header"><h2>Game information</h2><button class="button ghost" data-game-action="edit">Edit ${icon('arrow',12)}</button></div><div class="panel-body"><ul class="status-list">
+      <li><span>Name</span><strong>${escapeHTML(game.name)}</strong></li>
+      <li><span>Bundle ID</span><code>${escapeHTML(game.bundle_id)}</code></li>
+      <li><span>Platform</span><strong>${platformLabel(game.platform)}</strong></li>
+      <li><span>Status</span>${archived ? '<span class="pill bad">Archived · collection paused</span>' : `<span class="pill good">${game.last_event ? 'Active' : 'Ready for events'}</span>`}</li>
+      <li><span>Game ID</span><span class="copy-row"><code>${game.id}</code><button class="icon-button" data-copy="${game.id}" aria-label="Copy game ID">${icon('copy',14)}</button></span></li>
+      <li><span>Registered</span><strong>${displayDate(game.created_at)}</strong></li>
+      <li><span>First event</span><strong>${displayDate(game.first_event)}</strong></li>
+      <li><span>Latest event</span><strong>${displayDate(game.last_event)}</strong></li>
+      <li><span>Event definitions</span><strong>${number(game.definitions)}</strong></li>
+      <li class="notes-row"><span>Notes</span>${game.notes ? `<p>${escapeHTML(game.notes)}</p>` : '<span class="muted">No notes yet</span>'}</li>
+    </ul><div class="section-spacing"><a class="button" href="/keys?game=${game.id}">${icon('key',15)} Manage keys</a> <a class="button" href="/dictionary?game=${game.id}">${icon('book',15)} Event dictionary</a></div></div></section>
+    <aside class="aside-card">${icon('pulse',25)}<h3>Connect your game</h3><p>Send batches to the collection endpoint with one of this game’s API keys in the <code>X-API-Key</code> header.</p><div class="connection"><code>POST ${escapeHTML(overview.ingest_url)}</code></div><p class="small section-spacing">Set <code>AVN_PUBLIC_INGEST_URL</code> on the server to show your public collection address here.</p></aside></div>
+    <section class="panel section-spacing"><div class="panel-header"><div><h2>Event activity</h2><p>Pick any days on the calendar · received by the server · UTC</p></div></div><div class="panel-body" id="activity"></div></section>
+    <section class="panel section-spacing danger-zone"><div class="panel-header"><div><h2>Danger zone</h2><p>Changes here affect live data collection.</p></div></div><div class="panel-body">
+      <div class="danger-row"><div><strong>${archived ? 'Restore this game' : 'Archive this game'}</strong><p>${archived ? 'Start accepting events again. Queued events on devices will be delivered.' : 'Pause collection without deleting anything. You can restore it at any time.'}</p></div><button class="button" data-game-action="${archived ? 'unarchive' : 'archive'}">${archived ? 'Restore game' : 'Archive game'}</button></div>
+      <div class="danger-row"><div><strong>Delete this game</strong><p>Removes the game and all of its API keys. Its event database is moved to the server’s <code>data/deleted</code> folder, not erased.</p></div><button class="button danger" data-game-action="delete">Delete game</button></div>
+    </div></section>`);
   mountActivity(document.querySelector('#activity'), game);
+  document.querySelectorAll('[data-copy]').forEach(button => button.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(button.dataset.copy); toast('Copied.'); } catch { toast('Select the text and copy it manually.'); }
+  }));
+  const update = async (changes, message) => { await api(`/v1/games/${game.id}`, {method:'PATCH', body:JSON.stringify(changes)}); toast(message); overview = await api('/v1/overview'); await renderGame(); };
+  document.querySelectorAll('[data-game-action]').forEach(button => button.addEventListener('click', async () => {
+    const action = button.dataset.gameAction;
+    if (action === 'edit') return editGame(game, update);
+    if (action === 'archive') return confirmDialog('Archive this game?', `${game.name} will stop accepting events. Nothing is deleted, and devices keep their events queued until you restore it.`, 'Archive game', () => update({archived:true}, 'Game archived. Collection is paused.'));
+    if (action === 'unarchive') { try { await update({archived:false}, 'Game restored. Collection has resumed.'); } catch (error) { toast(error.message); } return; }
+    if (action === 'delete') return deleteGame(game);
+  }));
+}
+
+function editGame(game, update) {
+  modal.innerHTML = `<form id="edit-form"><h2 id="dialog-title">Edit game</h2><p>Changes apply immediately. Existing events and keys are kept.</p>
+    <div class="field"><label for="edit-name">Game name</label><input id="edit-name" name="name" value="${escapeHTML(game.name)}" required maxlength="128"></div>
+    <div class="field"><label for="edit-bundle">Bundle ID</label><input id="edit-bundle" name="bundle_id" value="${escapeHTML(game.bundle_id)}" pattern="[A-Za-z0-9_\\-]+(\\.[A-Za-z0-9_\\-]+)+" required maxlength="255"></div>
+    <div class="field"><label>Platform</label><input value="${platformLabel(game.platform)}" disabled><p>The platform is fixed so events never mix. Register the other platform as its own game.</p></div>
+    <div class="field"><label for="edit-notes">Notes</label><textarea id="edit-notes" name="notes" maxlength="2000" placeholder="Store links, release status, anything worth remembering">${escapeHTML(game.notes || '')}</textarea></div>
+    <div class="error" role="alert"></div><div class="modal-actions"><button type="button" class="button" data-action="close">Cancel</button><button class="button primary" type="submit">Save changes ${icon('check',14)}</button></div></form>`;
+  modal.showModal();
+  bindForm('#edit-form', async (form, values) => { await update(values, 'Game updated.'); modal.close(); });
+}
+
+function confirmDialog(title, message, label, onConfirm) {
+  modal.innerHTML = `<form id="confirm-form"><h2 id="dialog-title">${escapeHTML(title)}</h2><p>${escapeHTML(message)}</p><div class="error" role="alert"></div><div class="modal-actions"><button type="button" class="button" data-action="close">Cancel</button><button class="button primary" type="submit">${escapeHTML(label)}</button></div></form>`;
+  modal.showModal();
+  bindForm('#confirm-form', async () => { await onConfirm(); modal.close(); });
+}
+
+function deleteGame(game) {
+  modal.innerHTML = `<form id="delete-form"><h2 id="dialog-title">Delete ${escapeHTML(game.name)}?</h2><p>This removes the game and its ${number(game.keys_total)} API key${game.keys_total === 1 ? '' : 's'}. Shipped builds using them will stop sending data. ${number(game.events)} events will be moved to <code>data/deleted</code> on the server, where they can be recovered manually.</p><p>If you only want to pause collection, archive the game instead.</p>
+    <div class="field"><label for="delete-confirm">Type <code>${escapeHTML(game.bundle_id)}</code> to confirm</label><input id="delete-confirm" name="confirm" autocomplete="off" required></div>
+    <div class="error" role="alert"></div><div class="modal-actions"><button type="button" class="button" data-action="close">Cancel</button><button class="button danger" type="submit" disabled>Delete game</button></div></form>`;
+  modal.showModal();
+  const input = modal.querySelector('#delete-confirm'); const submit = modal.querySelector('[type="submit"]');
+  input.addEventListener('input', () => { submit.disabled = input.value !== game.bundle_id; });
+  bindForm('#delete-form', async (form, values) => {
+    await api(`/v1/games/${game.id}?${new URLSearchParams({confirm: values.confirm})}`, {method:'DELETE'});
+    modal.close(); location.assign('/games');
+  });
 }
 
 async function renderKeys() {
@@ -273,7 +356,7 @@ async function renderDictionary() {
   if (needsGame('Event dictionary', 'Give your events context, so the numbers mean something.')) return;
   const game = selectedGame();
   const definitions = await api(`${gameURL(game)}/dictionary`);
-  shell('Event dictionary', heading('Give every event meaning.', 'A shared reference for you and the tools analyzing your data.') + picker(game) + `<div class="form-layout"><section class="panel"><div class="panel-header"><h2>Defined events <span class="count">${Object.keys(definitions).length}</span></h2>${icon('book',17)}</div>${Object.keys(definitions).length ? Object.entries(definitions).map(([name, definition]) => `<article class="dictionary-entry"><h3><code>${escapeHTML(name)}</code></h3><p>${escapeHTML(definition.description)}</p><dl>${Object.entries(definition.params).map(([parameter, meaning]) => `<dt>${escapeHTML(parameter)}</dt><dd>${escapeHTML(meaning)}</dd>`).join('')}</dl><button class="button ghost" data-edit="${escapeHTML(name)}">Edit definition ${icon('arrow',12)}</button></article>`).join('') : empty('Make your events understandable', 'Describe what each event means in your game. Definitions travel with every export.', '', 'book')}</section><form id="dictionary-form" class="panel form-panel"><h2>Add an event definition</h2><p>Use the exact name sent by your game.</p><div class="field"><label for="event-name">Event name</label><input id="event-name" name="name" placeholder="level_complete" pattern="[A-Za-z][A-Za-z0-9_]*" maxlength="80" required></div><div class="field"><label for="description">What does it mean?</label><textarea id="description" name="description" placeholder="The player finished a level successfully." maxlength="4000" required></textarea></div><div class="field"><label for="parameters">Parameters (optional)</label><textarea id="parameters" name="params" placeholder="level: One-based level number&#10;duration: Time spent, in seconds"></textarea><p>One parameter per line: name: description. Saving an existing event replaces its definition.</p></div><div class="error" role="alert"></div><button class="button primary" type="submit">Save definition ${icon('check',14)}</button></form></div>`);
+  shell('Event dictionary', heading('Give every event meaning.', 'A shared reference for you and the tools analyzing your data.') + picker(game) + `<div class="form-layout"><section class="panel"><div class="panel-header"><h2>Defined events <span class="count">${Object.keys(definitions).length}</span></h2>${icon('book',17)}</div>${Object.keys(definitions).length ? Object.entries(definitions).map(([name, definition]) => `<article class="dictionary-entry"><h3><code>${escapeHTML(name)}</code></h3><p>${escapeHTML(definition.description)}</p><dl>${Object.entries(definition.params).map(([parameter, meaning]) => `<dt>${escapeHTML(parameter)}</dt><dd>${escapeHTML(meaning)}</dd>`).join('')}</dl><button class="button ghost" data-edit="${escapeHTML(name)}">Edit definition ${icon('arrow',12)}</button> <button class="button ghost danger-text" data-delete-definition="${escapeHTML(name)}">Delete</button></article>`).join('') : empty('Make your events understandable', 'Describe what each event means in your game. Definitions travel with every export.', '', 'book')}</section><form id="dictionary-form" class="panel form-panel"><h2>Add an event definition</h2><p>Use the exact name sent by your game.</p><div class="field"><label for="event-name">Event name</label><input id="event-name" name="name" placeholder="level_complete" pattern="[A-Za-z][A-Za-z0-9_]*" maxlength="80" required></div><div class="field"><label for="description">What does it mean?</label><textarea id="description" name="description" placeholder="The player finished a level successfully." maxlength="4000" required></textarea></div><div class="field"><label for="parameters">Parameters (optional)</label><textarea id="parameters" name="params" placeholder="level: One-based level number&#10;duration: Time spent, in seconds"></textarea><p>One parameter per line: name: description. Saving an existing event replaces its definition.</p></div><div class="error" role="alert"></div><button class="button primary" type="submit">Save definition ${icon('check',14)}</button></form></div>`);
   bindPicker();
   document.querySelectorAll('[data-edit]').forEach(button => button.addEventListener('click', () => {
     const definition = definitions[button.dataset.edit];
@@ -281,6 +364,13 @@ async function renderDictionary() {
     document.querySelector('#description').value = definition.description;
     document.querySelector('#parameters').value = Object.entries(definition.params).map(([name, meaning]) => `${name}: ${meaning}`).join('\n');
     document.querySelector('#event-name').focus();
+  }));
+  document.querySelectorAll('[data-delete-definition]').forEach(button => button.addEventListener('click', () => {
+    const name = button.dataset.deleteDefinition;
+    confirmDialog(`Delete the definition of ${name}?`, 'Only the description is removed. Collected events are not affected.', 'Delete definition', async () => {
+      await api(`${gameURL(game)}/dictionary/${encodeURIComponent(name)}`, {method:'DELETE'});
+      await renderDictionary(); toast('Definition deleted.');
+    });
   }));
   bindForm('#dictionary-form', async (form, values) => {
     const params = Object.create(null);

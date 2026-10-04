@@ -17,6 +17,7 @@ from .models import (
     Batch,
     EventDefinition,
     GameCreate,
+    GameUpdate,
     KeyCreate,
     Name,
     normalize_country,
@@ -169,6 +170,18 @@ def create_app(settings: Settings, *, admin: bool = False):
         response.headers["Cache-Control"] = "no-store"
         return storage.register_game(game)
 
+    @admin_api.get("/v1/games/{game_id}")
+    def game_details(game_id: UUID):
+        return storage.game_details(str(game_id))
+
+    @admin_api.patch("/v1/games/{game_id}")
+    def update_game(game_id: UUID, update: GameUpdate):
+        return storage.update_game(str(game_id), update)
+
+    @admin_api.delete("/v1/games/{game_id}")
+    def delete_game(game_id: UUID, confirm: Annotated[str, Query(max_length=255)] = ""):
+        return storage.delete_game(str(game_id), confirm)
+
     @admin_api.get("/v1/games/{game_id}/keys")
     def list_keys(game_id: UUID):
         return storage.list_keys(str(game_id))
@@ -186,6 +199,10 @@ def create_app(settings: Settings, *, admin: bool = False):
     def set_definition(game_id: UUID, name: Name, definition: EventDefinition):
         storage.set_definition(str(game_id), name, definition)
         return {"status": "saved"}
+
+    @admin_api.delete("/v1/games/{game_id}/dictionary/{name}", status_code=204)
+    def delete_definition(game_id: UUID, name: Name):
+        storage.delete_definition(str(game_id), name)
 
     @admin_api.get("/v1/games/{game_id}/dictionary")
     def get_dictionary(game_id: UUID):

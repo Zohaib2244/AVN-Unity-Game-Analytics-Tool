@@ -495,3 +495,69 @@ def test_export_parquet_flattens_params(backend):
     assert levels == [1, 2]
     values = [v for v in table.column("param_value").to_pylist() if v is not None]
     assert sorted(values) == ["3", "three"]
+
+
+def test_game_crud_archive_and_delete(backend):
+    admin, ingest, settings = backend
+    game = register(admin)
+    other = register(admin, bundle="com.avn.other")
+    assert send(ingest, game, [event()]).status_code == 200
+
+    details = admin.get(f"/v1/games/{game['id']}").json()
+    assert details["events"] == 1 and details["keys_active"] == 1 and details["storage_bytes"] > 0
+    assert details["archived_at"] is None and details["notes"] == ""
+
+    updated = admin.patch(
+        f"/v1/games/{game['id']}",
+        json={"name": "Renamed", "bundle_id": "com.avn.renamed", "notes": "Beta build"},
+    ).json()
+    assert (updated["name"], updated["bundle_id"], updated["notes"]) == (
+        "Renamed",
+        "com.avn.renamed",
+        "Beta build",
+    )
+    clash = admin.patch(f"/v1/games/{game['id']}", json={"bundle_id": "com.avn.other"})
+    assert clash.status_code == 409
+    assert admin.patch(f"/v1/games/{game['id']}", json={"platform": "ios"}).status_code == 400
+
+    assert admin.patch(f"/v1/games/{game['id']}", json={"archived": True}).json()["archived_at"]
+    assert send(ingest, game, [event()]).status_code == 403
+    assert (
+        admin.patch(f"/v1/games/{game['id']}", json={"archived": False}).json()["archived_at"]
+        is None
+    )
+    assert send(ingest, game, [event()]).status_code == 200
+
+    path = f"/v1/games/{game['id']}"
+    assert admin.delete(path, params={"confirm": "wrong"}).status_code == 400
+    assert admin.delete(path, params={"confirm": "com.avn.renamed"}).status_code == 200
+    assert admin.get(path).status_code == 404
+    assert send(ingest, game, [event()]).status_code == 401
+    assert [g["id"] for g in admin.get("/v1/games").json()] == [other["id"]]
+    trashed = list((settings.data_dir / "deleted").iterdir())
+    assert len(trashed) == 1 and trashed[0].name.endswith(f"{game['id']}.sqlite3")
+    assert not list((settings.data_dir / "games").glob(f"{game['id']}*"))
+
+
+def test_delete_dictionary_definition(backend):
+    admin, _, _ = backend
+    game = register(admin)
+    url = f"/v1/games/{game['id']}/dictionary/level_complete"
+    assert admin.put(url, json={"description": "Done", "params": {}}).status_code == 200
+    assert admin.delete(url).status_code == 204
+    assert admin.delete(url).status_code == 404
+    assert admin.get(f"/v1/games/{game['id']}/dictionary").json() == {}
+
+
+def test_schema_migrates_v1_registry(tmp_path):
+    import sqlite3
+
+    settings = Settings(data_dir=tmp_path, admin_token=TOKEN)
+    with TestClient(create_app(settings, admin=True)):
+        pass
+    with sqlite3.connect(tmp_path / "registry.sqlite3") as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(games)")}
+    assert {"notes", "archived_at"} <= columns
+    with TestClient(create_app(settings, admin=True)):  # second start must not re-migrate
+        pass
