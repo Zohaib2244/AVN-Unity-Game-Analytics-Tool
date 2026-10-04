@@ -14,7 +14,15 @@ from starlette.background import BackgroundTask
 
 from .config import Settings
 from .exports import build_export, period_bounds
-from .models import Batch, EventDefinition, GameCreate, KeyCreate, Name, timestamp
+from .models import (
+    Batch,
+    EventDefinition,
+    GameCreate,
+    KeyCreate,
+    Name,
+    normalize_country,
+    timestamp,
+)
 from .storage import Storage
 from .website import WebAuth, add_website
 
@@ -141,8 +149,12 @@ def create_app(settings: Settings, *, admin: bool = False):
             return storage.authorize_ingest(x_api_key)
 
         @app.post("/v1/events")
-        def ingest(batch: Batch, game_id: Annotated[str, Depends(authorize)]):
-            return storage.ingest(game_id, batch)
+        def ingest(
+            batch: Batch,
+            game_id: Annotated[str, Depends(authorize)],
+            cf_ipcountry: Annotated[str | None, Header()] = None,
+        ):
+            return storage.ingest(game_id, batch, country=normalize_country(cf_ipcountry))
 
         return app
 

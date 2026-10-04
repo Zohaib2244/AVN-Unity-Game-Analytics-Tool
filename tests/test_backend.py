@@ -246,7 +246,7 @@ def test_storage_failure_never_acknowledges(backend, monkeypatch):
     admin, ingest, _ = backend
     game = register(admin)
 
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(ingest.app.state.storage, "ingest", fail)
@@ -389,3 +389,22 @@ def test_storage_can_be_moved(backend, tmp_path):
         with TestClient(create_app(moved)) as moved_ingest:
             assert send(moved_ingest, game, [original]).json()["duplicates"] == 1
             assert unpack(export(moved_admin, game))[1]["event_count"] == 1
+
+
+def test_country_comes_from_cloudflare_header_only(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    key = {"X-API-Key": game["key"]["api_key"]}
+    spoof = event(country="ZZ")
+    assert ingest.post("/v1/events", headers=key, json={"events": [spoof]}).status_code == 400
+    ok = event()
+    headers = {**key, "CF-IPCountry": "pk"}
+    assert ingest.post("/v1/events", headers=headers, json={"events": [ok]}).status_code == 200
+    bad = event()
+    headers = {**key, "CF-IPCountry": "<script>"}
+    assert ingest.post("/v1/events", headers=headers, json={"events": [bad]}).status_code == 200
+    rows, _, dictionary = unpack(export(admin, game))
+    by_id = {row["event_id"]: row for row in rows}
+    assert by_id[ok["event_id"]]["country"] == "PK"
+    assert by_id[bad["event_id"]]["country"] is None
+    assert "country" in dictionary

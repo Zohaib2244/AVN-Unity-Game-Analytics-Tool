@@ -32,7 +32,21 @@ AvnAnalytics.LogEvent("level_complete",
 
 Migrating from Firebase is a find-and-replace: `FirebaseAnalytics.LogEvent` → `AvnAnalytics.LogEvent`, `new Parameter(` → `new AvnParameter(`. Run both in parallel while you compare counts. `LogEvent(name, Dictionary<string, object>)` also works. Optional: `AvnAnalytics.SetUserId(id)`.
 
-Automatic events (turn off with `AutoSessionEvents = false`): `first_open` (once per install) and `session_start` (launch, and after the app was backgrounded > 30 min).
+### Automatic events
+
+Turn off with `AutoSessionEvents = false`.
+
+| Event | When | Params |
+| --- | --- | --- |
+| `first_open` | Once per install | |
+| `session_start` | Launch, or returning after the app was in the background more than 30 min | `session_number` (1 = first ever), `language`, `timezone_offset_minutes`, `device_model`, `os_version`, `device_type`, `screen_width`, `screen_height` |
+| `session_end` | Logged when the **next** session starts | `duration_seconds` (foreground time), `session_number` |
+
+Every event also gets a `seq` param, a counter that goes up within a session, for exact ordering (`seq` is reserved; a param with that name is ignored).
+
+**Sessions and coming back.** Backgrounding the app does not end the session. If the player returns within 30 minutes (`SessionTimeoutSeconds`) it is the same `session_id`. `session_end` is written only when a new session begins, with the old `session_id` and a `client_ts` of the last time the app was known to be alive, so the time spent in the background is not counted. The SDK keeps the session clock in `state.json` (saved on pause, quit and every 30 s while playing), so a session left open by a killed or crashed app still gets its `session_end` on the next launch. `duration_seconds` is accurate to about 30 s in that case.
+
+**Location.** The SDK sends no location data and needs no location permission. The server adds a `country` from the request IP (Cloudflare `CF-IPCountry`).
 
 ## How reliability works
 

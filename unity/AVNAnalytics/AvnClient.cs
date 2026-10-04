@@ -16,6 +16,13 @@ namespace Avn.Analytics
         public string userId;
         public double skewSeconds;
         public bool firstOpenLogged;
+        public int sessionNumber;
+        // The session that has started but whose session_end has not been logged yet.
+        public bool hasOpenSession;
+        public string openSessionId;
+        public int openSeq;
+        public double openForegroundSeconds;
+        public long openLastActiveTicks; // UTC ticks of the last time we knew the app was alive
     }
 
     [Serializable]
@@ -40,6 +47,13 @@ namespace Avn.Analytics
         readonly string appVersion, build, platform;
         string sessionId;
         DateTime? pausedAtUtc;
+
+        // session clock (foreground time only)
+        int seq;
+        double fgAccum;
+        long segStart; // Stopwatch timestamp when the app last came to the foreground; 0 = in background
+        float nextHeartbeatAt;
+        const float HeartbeatSeconds = 30f;
 
         // sending state (main thread only)
         bool inFlight;
@@ -76,6 +90,7 @@ namespace Avn.Analytics
         internal void Start(MonoBehaviour runner)
         {
             host = runner;
+            EndSessionFromState(); // a session left open by a previous run (killed, crashed or quit)
             NewSession();
             if (Config.AutoSessionEvents)
             {
@@ -85,7 +100,7 @@ namespace Avn.Analytics
                     SaveState();
                     Log("first_open", null);
                 }
-                Log("session_start", null);
+                LogSessionStart();
             }
             Flush(); // launch: send anything left over from earlier runs
         }
@@ -94,21 +109,36 @@ namespace Avn.Analytics
 
         internal void Log(string name, IDictionary<string, object> parameters)
         {
-            string line = BuildEvent(name, parameters);
+            Enqueue(name, BuildEvent(name, parameters, null, null, -1));
+        }
+
+        void Enqueue(string name, string line)
+        {
             if (queue.Append(line)) Debug("queued " + name + " (" + queue.Count + " pending)");
         }
 
-        string BuildEvent(string name, IDictionary<string, object> parameters)
+        DateTime NowCorrected()
+        {
+            double skew;
+            lock (stateGate) skew = state.skewSeconds;
+            DateTime ts = DateTime.UtcNow;
+            return Config.CorrectClockSkew && Math.Abs(skew) > 10 ? ts.AddSeconds(skew) : ts;
+        }
+
+        string BuildEvent(string name, IDictionary<string, object> parameters, string sessionOverride, DateTime? tsOverride, int seqOverride)
         {
             var sb = new StringBuilder(256);
             sb.Append("{\"event_id\":\"").Append(Guid.NewGuid().ToString()).Append("\",\"name\":");
             AvnJson.WriteString(sb, SanitizeName(name));
             sb.Append(",\"params\":{");
+            int seqValue = seqOverride >= 0 ? seqOverride : System.Threading.Interlocked.Increment(ref seq);
+            sb.Append("\"seq\":").Append(seqValue.ToString(CultureInfo.InvariantCulture));
             if (parameters != null)
             {
-                int written = 0;
+                int written = 1; // seq
                 foreach (var kv in parameters)
                 {
+                    if (kv.Key == "seq") continue; // reserved
                     if (written >= 50) { Debug("more than 50 params on " + name + "; extras dropped"); break; }
                     if (string.IsNullOrEmpty(kv.Key)) continue;
                     int mark = sb.Length;
@@ -121,16 +151,14 @@ namespace Avn.Analytics
             }
             sb.Append("}");
             string userId, deviceId = state.deviceId;
-            double skew;
-            lock (stateGate) { userId = state.userId; skew = state.skewSeconds; }
+            lock (stateGate) userId = state.userId;
             if (!string.IsNullOrEmpty(userId)) { sb.Append(",\"user_id\":"); AvnJson.WriteString(sb, AvnJson.Truncate(userId, 128)); }
             sb.Append(",\"device_id\":"); AvnJson.WriteString(sb, deviceId);
-            sb.Append(",\"session_id\":"); AvnJson.WriteString(sb, sessionId ?? "none");
+            sb.Append(",\"session_id\":"); AvnJson.WriteString(sb, sessionOverride ?? sessionId ?? "none");
             sb.Append(",\"app_version\":"); AvnJson.WriteString(sb, appVersion);
             sb.Append(",\"build\":"); AvnJson.WriteString(sb, build);
             sb.Append(",\"platform\":"); AvnJson.WriteString(sb, platform);
-            DateTime ts = DateTime.UtcNow;
-            if (Config.CorrectClockSkew && Math.Abs(skew) > 10) ts = ts.AddSeconds(skew);
+            DateTime ts = tsOverride ?? NowCorrected();
             sb.Append(",\"client_ts\":\"").Append(ts.ToString("yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'", CultureInfo.InvariantCulture)).Append("\"}");
             return sb.ToString();
         }
@@ -155,6 +183,87 @@ namespace Avn.Analytics
         void NewSession()
         {
             sessionId = Guid.NewGuid().ToString("N");
+            seq = 0;
+            fgAccum = 0;
+            segStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            lock (stateGate)
+            {
+                state.sessionNumber++;
+                state.hasOpenSession = true;
+                state.openSessionId = sessionId;
+            }
+            PersistSession();
+        }
+
+        double ForegroundSeconds()
+        {
+            double running = segStart != 0
+                ? (System.Diagnostics.Stopwatch.GetTimestamp() - segStart) / (double)System.Diagnostics.Stopwatch.Frequency
+                : 0;
+            return fgAccum + running;
+        }
+
+        /// <summary>Move the foreground clock into the accumulator (app going to background / quitting).</summary>
+        void StopForegroundClock()
+        {
+            fgAccum = ForegroundSeconds();
+            segStart = 0;
+        }
+
+        /// <summary>Record enough on disk to write session_end later, even if the app is killed.</summary>
+        void PersistSession()
+        {
+            lock (stateGate)
+            {
+                state.openForegroundSeconds = ForegroundSeconds();
+                state.openLastActiveTicks = NowCorrected().Ticks;
+                state.openSeq = seq;
+            }
+            SaveState();
+        }
+
+        /// <summary>
+        /// Log session_end for the session recorded in state.json, stamped with the last time the app
+        /// was known to be alive. Called when the NEXT session starts, so the user coming back
+        /// within the timeout never ends a session.
+        /// </summary>
+        void EndSessionFromState()
+        {
+            string id; int number, endSeq; double duration; long lastTicks;
+            lock (stateGate)
+            {
+                if (!state.hasOpenSession || string.IsNullOrEmpty(state.openSessionId)) return;
+                id = state.openSessionId; number = state.sessionNumber; endSeq = state.openSeq + 1;
+                duration = state.openForegroundSeconds; lastTicks = state.openLastActiveTicks;
+                state.hasOpenSession = false;
+            }
+            SaveState();
+            if (!Config.AutoSessionEvents) return;
+            DateTime lastActive = lastTicks > 0 ? new DateTime(lastTicks, DateTimeKind.Utc) : NowCorrected();
+            var p = new Dictionary<string, object>
+            {
+                { "duration_seconds", Math.Round(duration, 1) },
+                { "session_number", (long)number },
+            };
+            Enqueue("session_end", BuildEvent("session_end", p, id, lastActive, endSeq));
+        }
+
+        void LogSessionStart()
+        {
+            int number;
+            lock (stateGate) number = state.sessionNumber;
+            var p = new Dictionary<string, object>
+            {
+                { "session_number", (long)number },
+                { "language", Application.systemLanguage.ToString() },
+                { "timezone_offset_minutes", (long)TimeZoneInfo.Local.GetUtcOffset(DateTime.Now).TotalMinutes },
+                { "device_model", SystemInfo.deviceModel },
+                { "os_version", SystemInfo.operatingSystem },
+                { "device_type", SystemInfo.deviceType.ToString() },
+                { "screen_width", (long)Screen.width },
+                { "screen_height", (long)Screen.height },
+            };
+            Log("session_start", p);
         }
 
         // ------------------------------------------------------------ lifecycle
@@ -164,14 +273,21 @@ namespace Avn.Analytics
             if (paused)
             {
                 pausedAtUtc = DateTime.UtcNow;
+                StopForegroundClock();
+                PersistSession();
                 queue.SyncToDisk();
                 Flush();
                 return;
             }
             if (pausedAtUtc.HasValue && (DateTime.UtcNow - pausedAtUtc.Value).TotalSeconds > Config.SessionTimeoutSeconds)
             {
+                EndSessionFromState(); // the session that ended when the app was backgrounded
                 NewSession();
-                if (Config.AutoSessionEvents) Log("session_start", null);
+                if (Config.AutoSessionEvents) LogSessionStart();
+            }
+            else if (segStart == 0)
+            {
+                segStart = System.Diagnostics.Stopwatch.GetTimestamp(); // same session continues
             }
             pausedAtUtc = null;
             Flush();
@@ -179,8 +295,9 @@ namespace Avn.Analytics
 
         internal void OnQuit()
         {
+            StopForegroundClock();
+            PersistSession();
             queue.Close();
-            SaveState();
         }
 
         /// <summary>Send everything pending, ignoring the timer and any client-side backoff.</summary>
@@ -197,6 +314,11 @@ namespace Avn.Analytics
         /// <summary>Called every frame by the runner.</summary>
         internal void Tick(float now)
         {
+            if (host != null && segStart != 0 && now >= nextHeartbeatAt)
+            {
+                nextHeartbeatAt = now + HeartbeatSeconds;
+                PersistSession(); // keeps session_end accurate if the app is killed while playing
+            }
             if (inFlight || host == null) return;
             if (queue.Count == 0) { draining = false; forceFlush = false; return; }
             if (now < holdUntil || now < nextSendAt) return;
