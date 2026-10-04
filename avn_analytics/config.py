@@ -9,16 +9,10 @@ class Settings:
     admin_token: str = ""
     max_body_bytes: int = 1_048_576
     requests_per_minute: int = 120
-    min_free_bytes: int = 1_073_741_824
     max_export_bytes: int = 268_435_456
 
     def __post_init__(self):
-        if (
-            self.max_body_bytes < 1
-            or self.requests_per_minute < 1
-            or self.min_free_bytes < 0
-            or self.max_export_bytes < 1
-        ):
+        if self.max_body_bytes < 1 or self.requests_per_minute < 1 or self.max_export_bytes < 1:
             raise ValueError("Invalid storage or request limits")
 
     @classmethod
@@ -28,6 +22,5 @@ class Settings:
             admin_token=os.environ.get("AVN_ADMIN_TOKEN", ""),
             max_body_bytes=int(os.environ.get("AVN_MAX_BODY_BYTES", "1048576")),
             requests_per_minute=int(os.environ.get("AVN_REQUESTS_PER_MINUTE", "120")),
-            min_free_bytes=int(os.environ.get("AVN_MIN_FREE_BYTES", "1073741824")),
             max_export_bytes=int(os.environ.get("AVN_MAX_EXPORT_BYTES", "268435456")),
         )

@@ -1,1 +1,1 @@
-"""Standalone analytics backend for the AVNS server."""
+"""Self-hosted game analytics backend."""
