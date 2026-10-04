@@ -5,12 +5,128 @@ import zipfile
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 from fastapi import HTTPException
 
 from .models import timestamp
 
+SKILL = Path(__file__).parent / "skill" / "SKILL.md"
+# Sent automatically by the Unity SDK and documented in the skill itself.
+SDK_EVENTS = {"first_open", "session_start", "session_end"}
 
-def period_bounds(period: str, selected_date: date):
+
+def skill_body():
+    text = SKILL.read_text(encoding="utf-8")
+    if text.startswith("---"):
+        text = text.split("---", 2)[2]
+    return text.strip()
+
+
+def analysis_guide(manifest, name_counts, undocumented):
+    game = manifest["game"]
+    lines = [
+        f"# AI analysis guide: {game['name']} ({game['platform']})",
+        "",
+        "Give this ZIP to an AI assistant (Claude, Codex...) and ask your question, for example:",
+        '"Analyze this game export: build the install -> tutorial -> level 5 funnel, D1/D7',
+        'retention, and recommend changes." The assistant should follow the guide below.',
+        "",
+        "## This export",
+        "",
+        f"- Game: {game['name']} · bundle `{game['bundle_id']}` · platform {game['platform']}",
+        f"- Range (UTC): {manifest['start_inclusive']} to {manifest['end_exclusive']} (exclusive)",
+        f"- Window chosen by: `{manifest['basis']}`",
+        f"- Events: {manifest['event_count']}",
+        "",
+        "| Event | Count |",
+        "| --- | --- |",
+    ]
+    for name, count in sorted(name_counts.items(), key=lambda item: (-item[1], item[0])):
+        lines.append(f"| `{name}` | {count} |")
+    if not name_counts:
+        lines.append("| (no events in this range) | 0 |")
+    if undocumented:
+        lines += [
+            "",
+            "Undocumented events (no description in the event dictionary yet): "
+            + ", ".join(f"`{name}`" for name in sorted(undocumented)),
+        ]
+    lines += ["", "---", "", skill_body(), ""]
+    return "\n".join(lines)
+
+
+MAX_PARAM_COLUMNS = 200
+PARQUET_BATCH = 20_000
+FIXED_COLUMNS = [
+    ("event_id", pa.string()),
+    ("name", pa.string()),
+    ("user_id", pa.string()),
+    ("device_id", pa.string()),
+    ("session_id", pa.string()),
+    ("app_version", pa.string()),
+    ("build", pa.string()),
+    ("platform", pa.string()),
+    ("country", pa.string()),
+    ("client_ts", pa.timestamp("us", tz="UTC")),
+    ("server_ts", pa.timestamp("us", tz="UTC")),
+]
+
+
+def param_columns(connection, query, args):
+    """Typed columns for event params, in first-seen order (string > float > int)."""
+    kinds = {}
+    for row in connection.execute(query, args):
+        for key, value in json.loads(row["payload"])["params"].items():
+            kind = "s" if isinstance(value, str) else "f" if isinstance(value, float) else "i"
+            seen = kinds.get(key)
+            if seen is None and len(kinds) >= MAX_PARAM_COLUMNS:
+                continue
+            kinds[key] = kind if seen in (None, kind) else "s" if "s" in (seen, kind) else "f"
+    types = {"s": pa.string(), "f": pa.float64(), "i": pa.int64()}
+    return {key: types[kind] for key, kind in kinds.items()}
+
+
+def write_parquet(connection, query, args, path):
+    """events.parquet: one row per event, params flattened to param_<name> columns."""
+    columns = param_columns(connection, query, args)
+    schema = pa.schema(
+        [*FIXED_COLUMNS]
+        + [(f"param_{key}", kind) for key, kind in columns.items()]
+        + [("params_json", pa.string())]
+    )
+
+    def flush(writer, batch):
+        arrays = [pa.array(batch[field.name], type=field.type) for field in schema]
+        writer.write_table(pa.Table.from_arrays(arrays, schema=schema))
+
+    def empty():
+        return {field.name: [] for field in schema}
+
+    with pq.ParquetWriter(path, schema, compression="zstd") as writer:
+        batch = empty()
+        for row in connection.execute(query, args):
+            event = json.loads(row["payload"])
+            for name, _ in FIXED_COLUMNS:
+                value = event.get(name)
+                batch[name].append(
+                    datetime.fromisoformat(value) if name.endswith("_ts") and value else value
+                )
+            for key in columns:
+                value = event["params"].get(key)
+                batch[f"param_{key}"].append(
+                    None if value is None else str(value) if columns[key] == pa.string() else value
+                )
+            batch["params_json"].append(json.dumps(event["params"], ensure_ascii=True))
+            if len(batch["event_id"]) >= PARQUET_BATCH:
+                flush(writer, batch)
+                batch = empty()
+        if batch["event_id"]:
+            flush(writer, batch)
+    return list(columns)
+
+
+def period_bounds(period: str, selected_date: date, end_date: date | None = None):
     start = selected_date
     if period == "week":
         start -= timedelta(days=start.weekday())
@@ -20,6 +136,10 @@ def period_bounds(period: str, selected_date: date):
         end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
     elif period == "day":
         end = start + timedelta(days=1)
+    elif period == "custom":
+        if end_date is None or end_date < start:
+            raise ValueError("Custom period needs an end date on or after the start date")
+        end = end_date + timedelta(days=1)
     else:
         raise ValueError("Unknown export period")
     return (
@@ -28,9 +148,9 @@ def period_bounds(period: str, selected_date: date):
     )
 
 
-def build_export(storage, game_id, period, selected_date, basis):
+def build_export(storage, game_id, period, selected_date, basis, end_date=None):
     game = storage.get_game(game_id)
-    start, end = period_bounds(period, selected_date)
+    start, end = period_bounds(period, selected_date, end_date)
     if basis not in ("server_ts", "client_ts"):
         raise ValueError("Invalid timestamp basis")
     with tempfile.NamedTemporaryFile(
@@ -40,6 +160,7 @@ def build_export(storage, game_id, period, selected_date, basis):
     count = 0
     raw_bytes = 0
     observed = {}
+    name_counts = {}
     dictionary_truncated = False
     try:
         with storage.connect(storage.game_path(game_id)) as connection:
@@ -67,6 +188,7 @@ def build_export(storage, game_id, period, selected_date, basis):
                                 )
                             compressed.write(encoded)
                             event = json.loads(row["payload"])
+                            name_counts[event["name"]] = name_counts.get(event["name"], 0) + 1
                             if event["name"] not in observed and len(observed) >= 1000:
                                 dictionary_truncated = True
                             else:
@@ -79,6 +201,18 @@ def build_export(storage, game_id, period, selected_date, basis):
                                         "string" if isinstance(value, str) else "number"
                                     )
                             count += 1
+                parquet_path = output.with_suffix(".parquet")
+                try:
+                    parquet_columns = write_parquet(
+                        connection,
+                        f"""SELECT payload FROM events WHERE {basis}>=? AND {basis}<?
+                            ORDER BY {basis}, event_id""",
+                        (start, end),
+                        parquet_path,
+                    )
+                    archive.write(parquet_path, "events.parquet")
+                finally:
+                    parquet_path.unlink(missing_ok=True)
                 manifest = {
                     "schema_version": 1,
                     "game": game,
@@ -92,6 +226,8 @@ def build_export(storage, game_id, period, selected_date, basis):
                     "uncompressed_bytes": raw_bytes,
                     "dictionary_truncated": dictionary_truncated,
                     "format": "events.jsonl.gz",
+                    "parquet": "events.parquet",
+                    "parquet_param_columns": parquet_columns,
                     "ordering": [basis, "event_id"],
                 }
                 archive.writestr("manifest.json", json.dumps(manifest, indent=2))
@@ -147,6 +283,13 @@ def build_export(storage, game_id, period, selected_date, basis):
                 if dictionary_truncated:
                     lines.append("Observed schema was truncated; raw event rows are complete.")
                 archive.writestr("events.md", "\n".join(lines))
+                undocumented = {
+                    name
+                    for name in name_counts
+                    if name not in definitions and name not in SDK_EVENTS
+                }
+                archive.writestr("ANALYSIS.md", analysis_guide(manifest, name_counts, undocumented))
+                archive.write(SKILL, "skill/avn-game-analysis/SKILL.md")
         return output
     except BaseException:
         output.unlink(missing_ok=True)

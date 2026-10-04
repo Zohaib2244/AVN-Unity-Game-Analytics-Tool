@@ -1,5 +1,4 @@
 import logging
-import secrets
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import date
@@ -7,7 +6,7 @@ from threading import BoundedSemaphore
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
@@ -18,13 +17,15 @@ from .models import (
     Batch,
     EventDefinition,
     GameCreate,
+    GameUpdate,
     KeyCreate,
     Name,
     normalize_country,
     timestamp,
 )
 from .storage import Storage
-from .website import WebAuth, add_website
+from .website import add_website
+from .website import overview as website_overview
 
 logger = logging.getLogger(__name__)
 
@@ -71,33 +72,25 @@ def create_app(settings: Settings, *, admin: bool = False):
     if admin and len(settings.admin_token) < 32:
         raise ValueError("Set AVN_ADMIN_TOKEN to a random token of at least 32 characters")
     storage = Storage(settings)
-    web_auth = WebAuth(storage)
     export_slot = BoundedSemaphore(1)
 
     @asynccontextmanager
     async def lifespan(app):
         storage.initialize()
-        if admin:
-            web_auth.initialize()
         yield
 
-    def require_admin(request: Request, authorization: Annotated[str | None, Header()] = None):
-        supplied = (authorization or "").encode()
-        expected = f"Bearer {settings.admin_token}".encode()
-        if secrets.compare_digest(supplied, expected):
-            return
-        if web_auth.session_valid(request):
-            if request.method not in {"GET", "HEAD", "OPTIONS"}:
-                web_auth.same_origin(request)
-            return
-        else:
-            raise HTTPException(
-                401,
-                "Admin authentication required",
-                headers={
-                    "WWW-Authenticate": "Bearer",
-                },
-            )
+    def require_admin():
+        # No application-level login: access control is handled by Cloudflare Access
+        # (and the LAN) in front of the admin service.
+        return
+
+    def bounds(period, selected_date, end_date):
+        if period == "custom":
+            if end_date is None or end_date < selected_date:
+                raise HTTPException(400, "Choose an end date on or after the start date")
+            if (end_date - selected_date).days > 365:
+                raise HTTPException(400, "Choose a range of 366 days or fewer")
+        return period_bounds(period, selected_date, end_date)
 
     app = FastAPI(
         title="AVN Analytics Admin" if admin else "AVN Analytics Ingest",
@@ -158,11 +151,11 @@ def create_app(settings: Settings, *, admin: bool = False):
         return app
 
     admin_api = APIRouter(dependencies=[Depends(require_admin)])
-    add_website(app, web_auth)
+    add_website(app)
 
     @admin_api.get("/v1/overview")
     def overview():
-        return web_auth.overview()
+        return website_overview(storage)
 
     @admin_api.get("/openapi.json")
     def schema():
@@ -176,6 +169,18 @@ def create_app(settings: Settings, *, admin: bool = False):
     def register_game(game: GameCreate, response: Response):
         response.headers["Cache-Control"] = "no-store"
         return storage.register_game(game)
+
+    @admin_api.get("/v1/games/{game_id}")
+    def game_details(game_id: UUID):
+        return storage.game_details(str(game_id))
+
+    @admin_api.patch("/v1/games/{game_id}")
+    def update_game(game_id: UUID, update: GameUpdate):
+        return storage.update_game(str(game_id), update)
+
+    @admin_api.delete("/v1/games/{game_id}")
+    def delete_game(game_id: UUID, confirm: Annotated[str, Query(max_length=255)] = ""):
+        return storage.delete_game(str(game_id), confirm)
 
     @admin_api.get("/v1/games/{game_id}/keys")
     def list_keys(game_id: UUID):
@@ -195,6 +200,10 @@ def create_app(settings: Settings, *, admin: bool = False):
         storage.set_definition(str(game_id), name, definition)
         return {"status": "saved"}
 
+    @admin_api.delete("/v1/games/{game_id}/dictionary/{name}", status_code=204)
+    def delete_definition(game_id: UUID, name: Name):
+        storage.delete_definition(str(game_id), name)
+
     @admin_api.get("/v1/games/{game_id}/dictionary")
     def get_dictionary(game_id: UUID):
         return storage.get_dictionary(str(game_id))
@@ -205,10 +214,12 @@ def create_app(settings: Settings, *, admin: bool = False):
         selected_date: Annotated[
             date, Query(alias="date", ge=date(1970, 1, 1), le=date(9998, 12, 31))
         ],
-        period: Literal["day", "week", "month"] = "week",
+        period: Literal["day", "week", "month", "custom"] = "week",
+        end_date: Annotated[date | None, Query(ge=date(1970, 1, 1), le=date(9998, 12, 31))] = None,
+        basis: Literal["server_ts", "client_ts"] = "server_ts",
     ):
-        start, end = period_bounds(period, selected_date)
-        return storage.health(str(game_id), start, end)
+        start, end = bounds(period, selected_date, end_date)
+        return storage.health(str(game_id), start, end, basis)
 
     @admin_api.get("/v1/games/{game_id}/export")
     def export(
@@ -216,19 +227,23 @@ def create_app(settings: Settings, *, admin: bool = False):
         selected_date: Annotated[
             date, Query(alias="date", ge=date(1970, 1, 1), le=date(9998, 12, 31))
         ],
-        period: Literal["day", "week", "month"] = "day",
+        period: Literal["day", "week", "month", "custom"] = "day",
         basis: Literal["server_ts", "client_ts"] = "server_ts",
+        end_date: Annotated[date | None, Query(ge=date(1970, 1, 1), le=date(9998, 12, 31))] = None,
     ):
+        bounds(period, selected_date, end_date)
         if not export_slot.acquire(blocking=False):
             raise HTTPException(429, "An export is already running", headers={"Retry-After": "10"})
         try:
-            output = build_export(storage, str(game_id), period, selected_date, basis)
+            output = build_export(storage, str(game_id), period, selected_date, basis, end_date)
         finally:
             export_slot.release()
         return FileResponse(
             output,
             media_type="application/zip",
-            filename=f"{game_id}-{period}-{selected_date}-{basis}.zip",
+            filename=f"{game_id}-{period}-{selected_date}"
+            + (f"_to_{end_date}" if period == "custom" else "")
+            + f"-{basis}.zip",
             headers={"Cache-Control": "no-store"},
             background=BackgroundTask(output.unlink, missing_ok=True),
         )

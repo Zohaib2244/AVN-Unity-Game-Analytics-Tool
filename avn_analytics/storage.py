@@ -9,7 +9,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from .config import Settings
-from .models import Batch, EventDefinition, GameCreate, timestamp
+from .models import Batch, EventDefinition, GameCreate, GameUpdate, timestamp
 
 
 class Storage:
@@ -43,7 +43,8 @@ class Storage:
         (self.root / "games").mkdir(exist_ok=True, mode=0o700)
         (self.root / "exports").mkdir(exist_ok=True, mode=0o700)
         with self.connect(self.root / "registry.sqlite3") as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] > 1:
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version > 2:
                 raise RuntimeError("Database schema is newer than this application")
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript("""
@@ -66,8 +67,17 @@ class Storage:
                     window INTEGER NOT NULL DEFAULT 0,
                     requests INTEGER NOT NULL DEFAULT 0
                 );
-                PRAGMA user_version=1;
             """)
+            if version < 2:
+                # v2: game notes and archiving (archived games stop accepting events).
+                columns = {row["name"] for row in connection.execute("PRAGMA table_info(games)")}
+                if "notes" not in columns:
+                    connection.execute(
+                        "ALTER TABLE games ADD COLUMN notes TEXT NOT NULL DEFAULT ''"
+                    )
+                if "archived_at" not in columns:
+                    connection.execute("ALTER TABLE games ADD COLUMN archived_at TEXT")
+                connection.execute("PRAGMA user_version=2")
 
     def game_path(self, game_id):
         return self.root / "games" / f"{game_id}.sqlite3"
@@ -101,11 +111,18 @@ class Storage:
                     PRAGMA user_version=1;
                 """)
             registry.execute(
-                "INSERT INTO games VALUES (?, ?, ?, ?, ?)",
-                (game_id, game.name, game.bundle_id, game.platform, created_at),
+                "INSERT INTO games (id, name, bundle_id, platform, notes, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (game_id, game.name, game.bundle_id, game.platform, game.notes, created_at),
             )
             key = self._new_key(registry, game_id, "initial")
-        return {"id": game_id, **game.model_dump(), "created_at": created_at, "key": key}
+        return {
+            "id": game_id,
+            **game.model_dump(),
+            "created_at": created_at,
+            "archived_at": None,
+            "key": key,
+        }
 
     def list_games(self):
         with self.connect(self.root / "registry.sqlite3") as connection:
@@ -119,6 +136,83 @@ class Storage:
         if row is None:
             raise HTTPException(404, "Game not found")
         return dict(row)
+
+    def game_files(self, game_id):
+        path = self.game_path(game_id)
+        return [path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")]
+
+    def game_details(self, game_id):
+        game = self.get_game(game_id)
+        today = timestamp()[:10] + "T00:00:00.000000+00:00"
+        with self.connect(self.game_path(game_id)) as connection:
+            stats = connection.execute(
+                """SELECT count(*) AS events, min(server_ts) AS first_event,
+                          max(server_ts) AS last_event,
+                          count(*) FILTER (WHERE server_ts>=?) AS today,
+                          count(DISTINCT name) AS event_names
+                   FROM events""",
+                (today,),
+            ).fetchone()
+            definitions = connection.execute("SELECT count(*) FROM dictionary").fetchone()[0]
+        with self.connect(self.root / "registry.sqlite3") as connection:
+            keys = connection.execute(
+                "SELECT count(*) AS total, count(*) FILTER (WHERE revoked_at IS NULL) AS active "
+                "FROM api_keys WHERE game_id=?",
+                (game_id,),
+            ).fetchone()
+        size = sum(path.stat().st_size for path in self.game_files(game_id) if path.exists())
+        return {
+            **game,
+            **dict(stats),
+            "definitions": definitions,
+            "keys_total": keys["total"],
+            "keys_active": keys["active"],
+            "storage_bytes": size,
+        }
+
+    def update_game(self, game_id, update: GameUpdate):
+        changes = update.model_dump(exclude_none=True)
+        with self.connect(self.root / "registry.sqlite3") as registry:
+            registry.execute("BEGIN IMMEDIATE")
+            game = registry.execute("SELECT * FROM games WHERE id=?", (game_id,)).fetchone()
+            if game is None:
+                raise HTTPException(404, "Game not found")
+            if (
+                "bundle_id" in changes
+                and registry.execute(
+                    "SELECT 1 FROM games WHERE bundle_id=? AND platform=? AND id<>?",
+                    (changes["bundle_id"], game["platform"], game_id),
+                ).fetchone()
+            ):
+                raise HTTPException(409, "Bundle ID and platform already registered")
+            if "archived" in changes:
+                archived = changes.pop("archived")
+                if archived and game["archived_at"] is None:
+                    changes["archived_at"] = timestamp()
+                elif not archived:
+                    changes["archived_at"] = None
+            for column, value in changes.items():
+                registry.execute(f"UPDATE games SET {column}=? WHERE id=?", (value, game_id))
+        return self.game_details(game_id)
+
+    def delete_game(self, game_id, confirm):
+        """Removes the game and its keys; its database is moved to data/deleted/, not erased."""
+        game = self.get_game(game_id)
+        if confirm != game["bundle_id"]:
+            raise HTTPException(400, "Type the game's bundle ID to confirm deletion")
+        with self.connect(self.game_path(game_id)) as database:
+            database.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        trash = self.root / "deleted"
+        trash.mkdir(exist_ok=True, mode=0o700)
+        stamp = timestamp().replace(":", "").replace("+", "_")
+        with self.connect(self.root / "registry.sqlite3") as registry:
+            registry.execute("BEGIN IMMEDIATE")
+            registry.execute("DELETE FROM api_keys WHERE game_id=?", (game_id,))
+            registry.execute("DELETE FROM games WHERE id=?", (game_id,))
+            for path in self.game_files(game_id):
+                if path.exists():
+                    path.rename(trash / f"{stamp}-{game['bundle_id']}-{path.name}")
+        return {"status": "deleted", "moved_to": str(trash.relative_to(self.root))}
 
     def _new_key(self, connection, game_id, label):
         raw_key = "avn_" + secrets.token_urlsafe(32)
@@ -173,10 +267,15 @@ class Storage:
         with self.connect(self.root / "registry.sqlite3") as connection:
             connection.execute("BEGIN IMMEDIATE")
             key = connection.execute(
-                "SELECT * FROM api_keys WHERE key_hash=?", (digest,)
+                "SELECT api_keys.*, games.archived_at FROM api_keys "
+                "JOIN games ON games.id=api_keys.game_id WHERE key_hash=?",
+                (digest,),
             ).fetchone()
             if key is None or key["revoked_at"] is not None:
                 raise HTTPException(401, "Invalid API key")
+            if key["archived_at"] is not None:
+                # The Unity SDK keeps events queued on 403 and retries later, so nothing is lost.
+                raise HTTPException(403, "Game is archived; collection is paused")
             count = key["requests"] if key["window"] == window else 0
             if count >= self.settings.requests_per_minute:
                 raise HTTPException(
@@ -226,6 +325,12 @@ class Storage:
                 (name, definition.model_dump_json()),
             )
 
+    def delete_definition(self, game_id, name):
+        self.get_game(game_id)
+        with self.connect(self.game_path(game_id)) as connection:
+            if connection.execute("DELETE FROM dictionary WHERE name=?", (name,)).rowcount == 0:
+                raise HTTPException(404, "Definition not found")
+
     def get_dictionary(self, game_id):
         self.get_game(game_id)
         with self.connect(self.game_path(game_id)) as connection:
@@ -234,19 +339,22 @@ class Storage:
                 for row in connection.execute("SELECT * FROM dictionary ORDER BY name")
             }
 
-    def health(self, game_id, start, end):
+    def health(self, game_id, start, end, basis="server_ts"):
+        if basis not in ("server_ts", "client_ts"):
+            raise ValueError("Invalid timestamp basis")
         self.get_game(game_id)
         with self.connect(self.game_path(game_id)) as connection:
             days = [
                 dict(row)
                 for row in connection.execute(
-                    """SELECT substr(server_ts, 1, 10) AS day, count(*) AS events
-                   FROM events WHERE server_ts>=? AND server_ts<? GROUP BY day ORDER BY day""",
+                    f"""SELECT substr({basis}, 1, 10) AS day, count(*) AS events
+                   FROM events WHERE {basis}>=? AND {basis}<? GROUP BY day ORDER BY day""",
                     (start, end),
                 )
             ]
         return {
             "game_id": game_id,
-            "basis": "server_ts",
+            "basis": basis,
+            "total": sum(day["events"] for day in days),
             "days": days,
         }

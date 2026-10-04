@@ -16,7 +16,7 @@ dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.11,<1"]
 include = ["avn_analytics*"]
 
 [tool.setuptools.package-data]
-avn_analytics = ["static/*"]
+avn_analytics = ["static/*", "skill/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

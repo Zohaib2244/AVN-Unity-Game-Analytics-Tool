@@ -85,12 +85,11 @@ def unpack(response):
         return rows, json.loads(archive.read("manifest.json")), archive.read("events.md").decode()
 
 
-def test_admin_separation_and_authentication(backend):
+def test_admin_separation_and_no_login(backend):
     admin, ingest, _ = backend
-    assert admin.get("/v1/games").status_code == 401
-    assert admin.get("/healthz").status_code == 401
-    assert admin.get("/openapi.json").status_code == 401
-    assert admin.get("/openapi.json", headers=AUTH).status_code == 200
+    assert admin.get("/v1/games").status_code == 200
+    assert admin.get("/healthz").status_code == 200
+    assert admin.get("/v1/games", headers=AUTH).status_code == 200
     assert ingest.get("/v1/games", headers=AUTH).status_code == 404
     assert ingest.get("/openapi.json").status_code == 404
     assert ingest.get("/healthz").status_code == 200
@@ -398,3 +397,167 @@ def test_country_comes_from_cloudflare_header_only(backend):
     assert by_id[ok["event_id"]]["country"] == "PK"
     assert by_id[bad["event_id"]]["country"] is None
     assert "country" in dictionary
+
+
+@pytest.mark.parametrize("platform", ["windows", "macos", "linux", "web", "Android", ""])
+def test_only_android_and_ios_games(backend, platform):
+    admin, _, _ = backend
+    response = admin.post(
+        "/v1/games", json={"name": "G", "bundle_id": "com.avn.g", "platform": platform}
+    )
+    assert response.status_code == 400
+    ios = admin.post("/v1/games", json={"name": "G", "bundle_id": "com.avn.g", "platform": "ios"})
+    assert ios.status_code == 201
+
+
+def test_custom_date_range_health_and_export(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    stamps = [
+        "2026-10-01T10:00:00Z",
+        "2026-10-03T10:00:00Z",
+        "2026-10-03T11:00:00Z",
+        "2026-10-09T10:00:00Z",
+    ]
+    assert send(ingest, game, [event(client_ts=value) for value in stamps]).status_code == 200
+    base = {"period": "custom", "basis": "client_ts"}
+    health = admin.get(
+        f"/v1/games/{game['id']}/health",
+        params={**base, "date": "2026-10-02", "end_date": "2026-10-03"},
+    ).json()
+    assert health["total"] == 2 and health["days"] == [{"day": "2026-10-03", "events": 2}]
+    rows, manifest, _ = unpack(
+        export(admin, game, period="custom", date="2026-10-01", end_date="2026-10-03")
+    )
+    assert len(rows) == 3 and manifest["end_exclusive"].startswith("2026-10-04")
+    bad = admin.get(
+        f"/v1/games/{game['id']}/health",
+        params={**base, "date": "2026-10-05", "end_date": "2026-10-01"},
+    )
+    assert bad.status_code == 400
+    missing = admin.get(f"/v1/games/{game['id']}/health", params={**base, "date": "2026-10-05"})
+    assert missing.status_code == 400
+    too_long = admin.get(
+        f"/v1/games/{game['id']}/health",
+        params={**base, "date": "2025-01-01", "end_date": "2026-10-01"},
+    )
+    assert too_long.status_code == 400
+
+
+def test_export_includes_ai_analysis_guide_and_skill(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    events = [event(), event(), event(name="mystery_event")]
+    assert send(ingest, game, events).status_code == 200
+    response = export(admin, game)
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = set(archive.namelist())
+        guide = archive.read("ANALYSIS.md").decode()
+        skill = archive.read("skill/avn-game-analysis/SKILL.md").decode()
+    assert {
+        "events.jsonl.gz",
+        "events.parquet",
+        "events.md",
+        "manifest.json",
+        "ANALYSIS.md",
+    } <= names
+    assert "| `level_complete` | 2 |" in guide and "| `mystery_event` | 1 |" in guide
+    assert "`mystery_event`" in guide.split("Undocumented events")[1].split("\n")[0]
+    assert "read_json_auto" in guide and not guide.lstrip().startswith("---")
+    assert skill.startswith("---\nname: avn-game-analysis")
+
+
+def test_export_parquet_flattens_params(backend):
+    import pyarrow.parquet as pq
+
+    admin, ingest, _ = backend
+    game = register(admin)
+    events = [
+        event(params={"level": 1, "mode": "easy", "score": 1.5}),
+        event(params={"level": 2, "mode": "hard"}),
+        event(name="mixed", params={"value": 3}),
+        event(name="mixed", params={"value": "three"}),
+    ]
+    assert send(ingest, game, events).status_code == 200
+    response = export(admin, game, basis="server_ts", date=datetime.now(UTC).date().isoformat())
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        table = pq.read_table(io.BytesIO(archive.read("events.parquet")))
+        manifest = json.loads(archive.read("manifest.json"))
+    assert table.num_rows == 4
+    assert str(table.schema.field("server_ts").type) == "timestamp[us, tz=UTC]"
+    assert str(table.schema.field("param_level").type) == "int64"
+    assert str(table.schema.field("param_score").type) == "double"
+    assert str(table.schema.field("param_value").type) == "string"
+    assert manifest["parquet"] == "events.parquet"
+    assert set(manifest["parquet_param_columns"]) == {"level", "mode", "score", "value"}
+    levels = sorted(v for v in table.column("param_level").to_pylist() if v is not None)
+    assert levels == [1, 2]
+    values = [v for v in table.column("param_value").to_pylist() if v is not None]
+    assert sorted(values) == ["3", "three"]
+
+
+def test_game_crud_archive_and_delete(backend):
+    admin, ingest, settings = backend
+    game = register(admin)
+    other = register(admin, bundle="com.avn.other")
+    assert send(ingest, game, [event()]).status_code == 200
+
+    details = admin.get(f"/v1/games/{game['id']}").json()
+    assert details["events"] == 1 and details["keys_active"] == 1 and details["storage_bytes"] > 0
+    assert details["archived_at"] is None and details["notes"] == ""
+
+    updated = admin.patch(
+        f"/v1/games/{game['id']}",
+        json={"name": "Renamed", "bundle_id": "com.avn.renamed", "notes": "Beta build"},
+    ).json()
+    assert (updated["name"], updated["bundle_id"], updated["notes"]) == (
+        "Renamed",
+        "com.avn.renamed",
+        "Beta build",
+    )
+    clash = admin.patch(f"/v1/games/{game['id']}", json={"bundle_id": "com.avn.other"})
+    assert clash.status_code == 409
+    assert admin.patch(f"/v1/games/{game['id']}", json={"platform": "ios"}).status_code == 400
+
+    assert admin.patch(f"/v1/games/{game['id']}", json={"archived": True}).json()["archived_at"]
+    assert send(ingest, game, [event()]).status_code == 403
+    assert (
+        admin.patch(f"/v1/games/{game['id']}", json={"archived": False}).json()["archived_at"]
+        is None
+    )
+    assert send(ingest, game, [event()]).status_code == 200
+
+    path = f"/v1/games/{game['id']}"
+    assert admin.delete(path, params={"confirm": "wrong"}).status_code == 400
+    assert admin.delete(path, params={"confirm": "com.avn.renamed"}).status_code == 200
+    assert admin.get(path).status_code == 404
+    assert send(ingest, game, [event()]).status_code == 401
+    assert [g["id"] for g in admin.get("/v1/games").json()] == [other["id"]]
+    trashed = list((settings.data_dir / "deleted").iterdir())
+    assert len(trashed) == 1 and trashed[0].name.endswith(f"{game['id']}.sqlite3")
+    assert not list((settings.data_dir / "games").glob(f"{game['id']}*"))
+
+
+def test_delete_dictionary_definition(backend):
+    admin, _, _ = backend
+    game = register(admin)
+    url = f"/v1/games/{game['id']}/dictionary/level_complete"
+    assert admin.put(url, json={"description": "Done", "params": {}}).status_code == 200
+    assert admin.delete(url).status_code == 204
+    assert admin.delete(url).status_code == 404
+    assert admin.get(f"/v1/games/{game['id']}/dictionary").json() == {}
+
+
+def test_schema_migrates_v1_registry(tmp_path):
+    import sqlite3
+
+    settings = Settings(data_dir=tmp_path, admin_token=TOKEN)
+    with TestClient(create_app(settings, admin=True)):
+        pass
+    with sqlite3.connect(tmp_path / "registry.sqlite3") as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(games)")}
+    assert {"notes", "archived_at"} <= columns
+    with TestClient(create_app(settings, admin=True)):  # second start must not re-migrate
+        pass

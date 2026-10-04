@@ -10,6 +10,7 @@ class Settings:
     max_body_bytes: int = 1_048_576
     requests_per_minute: int = 120
     max_export_bytes: int = 268_435_456
+    public_ingest_url: str = ""
 
     def __post_init__(self):
         if self.max_body_bytes < 1 or self.requests_per_minute < 1 or self.max_export_bytes < 1:
@@ -23,4 +24,5 @@ class Settings:
             max_body_bytes=int(os.environ.get("AVN_MAX_BODY_BYTES", "1048576")),
             requests_per_minute=int(os.environ.get("AVN_REQUESTS_PER_MINUTE", "120")),
             max_export_bytes=int(os.environ.get("AVN_MAX_EXPORT_BYTES", "268435456")),
+            public_ingest_url=os.environ.get("AVN_PUBLIC_INGEST_URL", "").rstrip("/"),
         )
