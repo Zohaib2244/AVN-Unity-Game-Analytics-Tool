@@ -442,3 +442,21 @@ def test_custom_date_range_health_and_export(backend):
         params={**base, "date": "2025-01-01", "end_date": "2026-10-01"},
     )
     assert too_long.status_code == 400
+
+
+def test_export_includes_ai_analysis_guide_and_skill(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    events = [event(), event(), event(name="mystery_event")]
+    assert send(ingest, game, events).status_code == 200
+    response = export(admin, game)
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = set(archive.namelist())
+        guide = archive.read("ANALYSIS.md").decode()
+        skill = archive.read("skill/avn-game-analysis/SKILL.md").decode()
+    assert {"events.jsonl.gz", "events.md", "manifest.json", "ANALYSIS.md"} <= names
+    assert "| `level_complete` | 2 |" in guide and "| `mystery_event` | 1 |" in guide
+    assert "`mystery_event`" in guide.split("Undocumented events")[1].split("\n")[0]
+    assert "read_json_auto" in guide and not guide.lstrip().startswith("---")
+    assert skill.startswith("---\nname: avn-game-analysis")

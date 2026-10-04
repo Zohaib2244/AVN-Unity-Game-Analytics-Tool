@@ -4,3 +4,5 @@
 !avn_analytics/*.py
 !avn_analytics/static/
 !avn_analytics/static/*
+!avn_analytics/skill/
+!avn_analytics/skill/*

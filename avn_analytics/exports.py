@@ -9,6 +9,50 @@ from fastapi import HTTPException
 
 from .models import timestamp
 
+SKILL = Path(__file__).parent / "skill" / "SKILL.md"
+# Sent automatically by the Unity SDK and documented in the skill itself.
+SDK_EVENTS = {"first_open", "session_start", "session_end"}
+
+
+def skill_body():
+    text = SKILL.read_text(encoding="utf-8")
+    if text.startswith("---"):
+        text = text.split("---", 2)[2]
+    return text.strip()
+
+
+def analysis_guide(manifest, name_counts, undocumented):
+    game = manifest["game"]
+    lines = [
+        f"# AI analysis guide: {game['name']} ({game['platform']})",
+        "",
+        "Give this ZIP to an AI assistant (Claude, Codex...) and ask your question, for example:",
+        '"Analyze this game export: build the install -> tutorial -> level 5 funnel, D1/D7',
+        'retention, and recommend changes." The assistant should follow the guide below.',
+        "",
+        "## This export",
+        "",
+        f"- Game: {game['name']} · bundle `{game['bundle_id']}` · platform {game['platform']}",
+        f"- Range (UTC): {manifest['start_inclusive']} to {manifest['end_exclusive']} (exclusive)",
+        f"- Window chosen by: `{manifest['basis']}`",
+        f"- Events: {manifest['event_count']}",
+        "",
+        "| Event | Count |",
+        "| --- | --- |",
+    ]
+    for name, count in sorted(name_counts.items(), key=lambda item: (-item[1], item[0])):
+        lines.append(f"| `{name}` | {count} |")
+    if not name_counts:
+        lines.append("| (no events in this range) | 0 |")
+    if undocumented:
+        lines += [
+            "",
+            "Undocumented events (no description in the event dictionary yet): "
+            + ", ".join(f"`{name}`" for name in sorted(undocumented)),
+        ]
+    lines += ["", "---", "", skill_body(), ""]
+    return "\n".join(lines)
+
 
 def period_bounds(period: str, selected_date: date, end_date: date | None = None):
     start = selected_date
@@ -44,6 +88,7 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None):
     count = 0
     raw_bytes = 0
     observed = {}
+    name_counts = {}
     dictionary_truncated = False
     try:
         with storage.connect(storage.game_path(game_id)) as connection:
@@ -71,6 +116,7 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None):
                                 )
                             compressed.write(encoded)
                             event = json.loads(row["payload"])
+                            name_counts[event["name"]] = name_counts.get(event["name"], 0) + 1
                             if event["name"] not in observed and len(observed) >= 1000:
                                 dictionary_truncated = True
                             else:
@@ -151,6 +197,13 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None):
                 if dictionary_truncated:
                     lines.append("Observed schema was truncated; raw event rows are complete.")
                 archive.writestr("events.md", "\n".join(lines))
+                undocumented = {
+                    name
+                    for name in name_counts
+                    if name not in definitions and name not in SDK_EVENTS
+                }
+                archive.writestr("ANALYSIS.md", analysis_guide(manifest, name_counts, undocumented))
+                archive.write(SKILL, "skill/avn-game-analysis/SKILL.md")
         return output
     except BaseException:
         output.unlink(missing_ok=True)
