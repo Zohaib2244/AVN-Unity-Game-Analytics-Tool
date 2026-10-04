@@ -58,7 +58,7 @@ function bindRange(container, onChange, initialPreset = '7') {
   const input = container.querySelector('[data-range-picker]');
   const hidden = {from: container.querySelector('[data-range="from"]'), to: container.querySelector('[data-range="to"]')};
   const picker = flatpickr(input, {
-    mode: 'range', showMonths: window.innerWidth > 700 ? 2 : 1, dateFormat: 'Y-m-d', altInput: true, altFormat: 'M j, Y',
+    mode: 'range', showMonths: 1, dateFormat: 'Y-m-d', altInput: true, altFormat: 'M j, Y',
     altInputClass: 'range-input', minDate: '1970-01-01', maxDate: '9998-12-31', locale: {firstDayOfWeek: 1}, allowInput: false,
     onClose: dates => {
       if (dates.length === 0) return;
