@@ -13,6 +13,12 @@ def timestamp(value: datetime | None = None) -> str:
     return (value or datetime.now(UTC)).astimezone(UTC).isoformat(timespec="microseconds")
 
 
+def normalize_country(value: str | None) -> str | None:
+    """ISO 3166-1 alpha-2 from Cloudflare's CF-IPCountry (XX = unknown, T1 = Tor)."""
+    value = (value or "").strip().upper()
+    return value if len(value) == 2 and value.isascii() and value.isalnum() else None
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

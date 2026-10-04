@@ -192,13 +192,14 @@ class Storage:
             )
             return key["game_id"]
 
-    def ingest(self, game_id, batch: Batch):
+    def ingest(self, game_id, batch: Batch, country: str | None = None):
         server_ts = timestamp()
         rows = []
         for event in batch.events:
             payload = event.model_dump(mode="json")
             payload["client_ts"] = timestamp(event.client_ts)
             payload["server_ts"] = server_ts
+            payload["country"] = country  # set from the request IP by the server, never by clients
             rows.append(
                 (
                     str(event.event_id),

@@ -1,0 +1,19 @@
+# Optional override for putting the ingest service behind a reverse proxy that runs in Docker
+# (Caddy, nginx, Traefik...). The proxy then reaches it at http://avn-analytics-ingest:8000
+# over a shared Docker network, and you can stop publishing the host port if you like.
+#
+#   docker compose -f compose.yaml -f compose.proxy.example.yaml up -d --build
+#
+# Change `name` to the network your proxy is attached to (`docker network ls`).
+services:
+  ingest:
+    networks:
+      default: {}
+      proxy:
+        aliases:
+          - avn-analytics-ingest
+
+networks:
+  proxy:
+    external: true
+    name: caddy_default
