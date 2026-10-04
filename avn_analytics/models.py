@@ -1,6 +1,6 @@
 import math
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -76,7 +76,7 @@ class GameCreate(StrictModel):
     bundle_id: Annotated[
         str, Field(min_length=3, max_length=255, pattern=r"^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$")
     ]
-    platform: Annotated[str, Field(min_length=1, max_length=32, pattern=r"^[a-z0-9_-]+$")]
+    platform: Literal["android", "ios"]
 
 
 class KeyCreate(StrictModel):

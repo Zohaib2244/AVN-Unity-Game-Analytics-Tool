@@ -234,19 +234,22 @@ class Storage:
                 for row in connection.execute("SELECT * FROM dictionary ORDER BY name")
             }
 
-    def health(self, game_id, start, end):
+    def health(self, game_id, start, end, basis="server_ts"):
+        if basis not in ("server_ts", "client_ts"):
+            raise ValueError("Invalid timestamp basis")
         self.get_game(game_id)
         with self.connect(self.game_path(game_id)) as connection:
             days = [
                 dict(row)
                 for row in connection.execute(
-                    """SELECT substr(server_ts, 1, 10) AS day, count(*) AS events
-                   FROM events WHERE server_ts>=? AND server_ts<? GROUP BY day ORDER BY day""",
+                    f"""SELECT substr({basis}, 1, 10) AS day, count(*) AS events
+                   FROM events WHERE {basis}>=? AND {basis}<? GROUP BY day ORDER BY day""",
                     (start, end),
                 )
             ]
         return {
             "game_id": game_id,
-            "basis": "server_ts",
+            "basis": basis,
+            "total": sum(day["events"] for day in days),
             "days": days,
         }

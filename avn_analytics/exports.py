@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from .models import timestamp
 
 
-def period_bounds(period: str, selected_date: date):
+def period_bounds(period: str, selected_date: date, end_date: date | None = None):
     start = selected_date
     if period == "week":
         start -= timedelta(days=start.weekday())
@@ -20,6 +20,10 @@ def period_bounds(period: str, selected_date: date):
         end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
     elif period == "day":
         end = start + timedelta(days=1)
+    elif period == "custom":
+        if end_date is None or end_date < start:
+            raise ValueError("Custom period needs an end date on or after the start date")
+        end = end_date + timedelta(days=1)
     else:
         raise ValueError("Unknown export period")
     return (
@@ -28,9 +32,9 @@ def period_bounds(period: str, selected_date: date):
     )
 
 
-def build_export(storage, game_id, period, selected_date, basis):
+def build_export(storage, game_id, period, selected_date, basis, end_date=None):
     game = storage.get_game(game_id)
-    start, end = period_bounds(period, selected_date)
+    start, end = period_bounds(period, selected_date, end_date)
     if basis not in ("server_ts", "client_ts"):
         raise ValueError("Invalid timestamp basis")
     with tempfile.NamedTemporaryFile(

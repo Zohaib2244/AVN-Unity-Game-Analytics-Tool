@@ -85,12 +85,11 @@ def unpack(response):
         return rows, json.loads(archive.read("manifest.json")), archive.read("events.md").decode()
 
 
-def test_admin_separation_and_authentication(backend):
+def test_admin_separation_and_no_login(backend):
     admin, ingest, _ = backend
-    assert admin.get("/v1/games").status_code == 401
-    assert admin.get("/healthz").status_code == 401
-    assert admin.get("/openapi.json").status_code == 401
-    assert admin.get("/openapi.json", headers=AUTH).status_code == 200
+    assert admin.get("/v1/games").status_code == 200
+    assert admin.get("/healthz").status_code == 200
+    assert admin.get("/v1/games", headers=AUTH).status_code == 200
     assert ingest.get("/v1/games", headers=AUTH).status_code == 404
     assert ingest.get("/openapi.json").status_code == 404
     assert ingest.get("/healthz").status_code == 200
@@ -398,3 +397,48 @@ def test_country_comes_from_cloudflare_header_only(backend):
     assert by_id[ok["event_id"]]["country"] == "PK"
     assert by_id[bad["event_id"]]["country"] is None
     assert "country" in dictionary
+
+
+@pytest.mark.parametrize("platform", ["windows", "macos", "linux", "web", "Android", ""])
+def test_only_android_and_ios_games(backend, platform):
+    admin, _, _ = backend
+    response = admin.post(
+        "/v1/games", json={"name": "G", "bundle_id": "com.avn.g", "platform": platform}
+    )
+    assert response.status_code == 400
+    ios = admin.post("/v1/games", json={"name": "G", "bundle_id": "com.avn.g", "platform": "ios"})
+    assert ios.status_code == 201
+
+
+def test_custom_date_range_health_and_export(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    stamps = [
+        "2026-10-01T10:00:00Z",
+        "2026-10-03T10:00:00Z",
+        "2026-10-03T11:00:00Z",
+        "2026-10-09T10:00:00Z",
+    ]
+    assert send(ingest, game, [event(client_ts=value) for value in stamps]).status_code == 200
+    base = {"period": "custom", "basis": "client_ts"}
+    health = admin.get(
+        f"/v1/games/{game['id']}/health",
+        params={**base, "date": "2026-10-02", "end_date": "2026-10-03"},
+    ).json()
+    assert health["total"] == 2 and health["days"] == [{"day": "2026-10-03", "events": 2}]
+    rows, manifest, _ = unpack(
+        export(admin, game, period="custom", date="2026-10-01", end_date="2026-10-03")
+    )
+    assert len(rows) == 3 and manifest["end_exclusive"].startswith("2026-10-04")
+    bad = admin.get(
+        f"/v1/games/{game['id']}/health",
+        params={**base, "date": "2026-10-05", "end_date": "2026-10-01"},
+    )
+    assert bad.status_code == 400
+    missing = admin.get(f"/v1/games/{game['id']}/health", params={**base, "date": "2026-10-05"})
+    assert missing.status_code == 400
+    too_long = admin.get(
+        f"/v1/games/{game['id']}/health",
+        params={**base, "date": "2025-01-01", "end_date": "2026-10-01"},
+    )
+    assert too_long.status_code == 400

@@ -27,6 +27,89 @@ const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, character =>
 const number = value => new Intl.NumberFormat().format(value || 0);
 const today = () => new Date().toISOString().slice(0, 10);
 const displayDate = value => value ? new Date(value).toLocaleString(undefined, {dateStyle:'medium', timeStyle:'short'}) : 'No events yet';
+const addDays = (value, days) => { const date = new Date(`${value}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); };
+const daysBetween = (from, to) => Math.round((Date.parse(to) - Date.parse(from)) / 86400000);
+const monthStart = value => `${value.slice(0, 8)}01`;
+const monthEnd = value => { const date = new Date(`${value}T00:00:00Z`); return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).toISOString().slice(0, 10); };
+const shiftMonth = (value, months) => { const date = new Date(`${value}T00:00:00Z`); return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1)).toISOString().slice(0, 10); };
+const prettyDay = value => new Date(`${value}T00:00:00Z`).toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short', year:'numeric', timeZone:'UTC'});
+
+// Date range control: quick presets (Last 7/30/90 days…) plus a flatpickr calendar for any custom From–To days.
+const presets = [
+  ['today', 'Today', () => [today(), today()]],
+  ['yesterday', 'Yesterday', () => [addDays(today(), -1), addDays(today(), -1)]],
+  ['7', 'Last 7 days', () => [addDays(today(), -6), today()]],
+  ['30', 'Last 30 days', () => [addDays(today(), -29), today()]],
+  ['90', 'Last 90 days', () => [addDays(today(), -89), today()]],
+  ['month', 'This month', () => [monthStart(today()), today()]],
+  ['lastmonth', 'Last month', () => { const first = shiftMonth(today(), -1); return [first, monthEnd(first)]; }],
+];
+
+function rangeMarkup() {
+  return `<div class="range"><div class="range-modes" role="group" aria-label="Quick ranges">${presets.map(([key, label]) => `<button type="button" data-preset="${key}">${label}</button>`).join('')}<button type="button" data-preset="custom">Custom</button></div>
+  <div class="range-body"><button type="button" class="range-nav" data-range-step="-1" aria-label="Previous range">‹</button>
+  <label>Date range<input type="text" class="range-input" data-range-picker readonly placeholder="Select from and to days"></label>
+  <button type="button" class="range-nav" data-range-step="1" aria-label="Next range">›</button>
+  <input type="hidden" data-range="from" name="date"><input type="hidden" data-range="to" name="end_date"></div></div>`;
+}
+
+function bindRange(container, onChange, initialPreset = '7') {
+  const state = {preset: initialPreset, from: today(), to: today()};
+  const input = container.querySelector('[data-range-picker]');
+  const hidden = {from: container.querySelector('[data-range="from"]'), to: container.querySelector('[data-range="to"]')};
+  const picker = flatpickr(input, {
+    mode: 'range', showMonths: window.innerWidth > 700 ? 2 : 1, dateFormat: 'Y-m-d', altInput: true, altFormat: 'M j, Y',
+    altInputClass: 'range-input', minDate: '1970-01-01', maxDate: '9998-12-31', locale: {firstDayOfWeek: 1}, allowInput: false,
+    onClose: dates => {
+      if (dates.length === 0) return;
+      const from = picker.formatDate(dates[0], 'Y-m-d'); const to = picker.formatDate(dates[dates.length - 1], 'Y-m-d');
+      if (from === state.from && to === state.to) return;
+      state.preset = 'custom'; state.from = from; state.to = to; apply(false);
+    },
+  });
+  function apply(updatePicker = true) {
+    if (updatePicker) picker.setDate([state.from, state.to], false);
+    hidden.from.value = state.from; hidden.to.value = state.to;
+    container.querySelectorAll('[data-preset]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.preset === state.preset)));
+    onChange({...state});
+  }
+  container.querySelectorAll('[data-preset]').forEach(button => button.addEventListener('click', () => {
+    if (button.dataset.preset === 'custom') { state.preset = 'custom'; apply(false); picker.open(); return; }
+    [state.from, state.to] = presets.find(([key]) => key === button.dataset.preset)[2](); state.preset = button.dataset.preset; apply();
+  }));
+  container.querySelectorAll('[data-range-step]').forEach(button => button.addEventListener('click', () => {
+    const direction = Number(button.dataset.rangeStep);
+    const span = daysBetween(state.from, state.to) + 1;
+    state.from = addDays(state.from, direction * span); state.to = addDays(state.to, direction * span); state.preset = 'custom'; apply();
+  }));
+  [state.from, state.to] = presets.find(([key]) => key === initialPreset)[2]();
+  apply();
+  return state;
+}
+
+async function fetchRange(game, {from, to}, basis = 'server_ts') {
+  return api(`${gameURL(game)}/health?${new URLSearchParams({period:'custom', date:from, end_date:to, basis})}`);
+}
+
+function rangeResult(health, {from, to}) {
+  const counts = new Map(health.days.map(day => [day.day, day.events]));
+  const days = []; for (let day = from; day <= to; day = addDays(day, 1)) days.push({day, events: counts.get(day) || 0});
+  const peak = Math.max(1, ...days.map(day => day.events));
+  const span = days.length;
+  return `<div class="range-total"><strong>${number(health.total)}</strong><span>events · ${prettyDay(from)}${span > 1 ? ` → ${prettyDay(to)}` : ''} · ${span} day${span === 1 ? '' : 's'}</span></div>` +
+    (health.total ? `<div class="table-wrap"><table><thead><tr><th>DAY</th><th>EVENTS</th><th></th></tr></thead><tbody>${days.map(day => `<tr><td>${day.day}</td><td>${number(day.events)}</td><td class="range-bar"><progress class="progress mini" max="${peak}" value="${day.events}" aria-label="${day.events} events on ${day.day}"></progress></td></tr>`).join('')}</tbody></table></div>` : `<p class="help">No events in this range.</p>`);
+}
+
+function mountActivity(container, game, basis = 'server_ts') {
+  container.innerHTML = rangeMarkup() + '<div class="range-result" aria-live="polite"></div>';
+  const result = container.querySelector('.range-result');
+  let latest = 0;
+  bindRange(container, async range => {
+    const request = ++latest; result.innerHTML = '<p class="help">Counting…</p>';
+    try { const health = await fetchRange(game, range, basis); if (request === latest) result.innerHTML = rangeResult(health, range); }
+    catch (error) { if (request === latest) result.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
+  });
+}
 const gameURL = game => `/v1/games/${encodeURIComponent(game.id)}`;
 const brand = `<a href="/" class="brand" aria-label="AVN Analytics home"><span class="brand-icon">a.</span><span><span class="brand-name">avn analytics</span><span class="brand-sub"></span></span></a>`;
 
@@ -45,9 +128,6 @@ async function api(path, options = {}) {
     headers: {...(options.body ? {'Content-Type':'application/json'} : {}), ...options.headers}});
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    if (response.status === 401 && !path.startsWith('/auth/')) {
-      location.assign('/login');
-    }
     throw new Error(typeof error.detail === 'string' ? error.detail : 'Please check your details and try again.');
   }
   return response.status === 204 ? null : response.json();
@@ -71,7 +151,7 @@ function shell(title, content) {
   const primary = [['/','grid','Overview'],['/games','game','Games'],['/keys','key','API keys'],['/exports','export','Exports'],['/dictionary','book','Event dictionary']];
   const secondary = [['/status','pulse','Status'],['/settings','settings','Settings']];
   const nav = links => links.map(([url, symbol, label]) => `<a href="${url}" aria-label="${label}" class="${location.pathname === url || (url === '/games' && location.pathname.startsWith('/games/')) ? 'active' : ''}" ${location.pathname === url ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span></a>`).join('');
-  root.innerHTML = `<aside class="sidebar">${brand}<p class="nav-label eyebrow">Workspace</p><nav class="nav" aria-label="Workspace">${nav(primary)}</nav><nav class="nav nav-secondary" aria-label="Secondary">${nav(secondary)}</nav><div class="sidebar-bottom"><div class="account"><span class="avatar">AV</span><div><strong>Administrator</strong><p>Workspace</p></div><button class="icon-button" data-action="logout" title="Sign out" aria-label="Sign out">${icon('logout',16)}</button></div></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong>${escapeHTML(title)}</strong></div><div class="topbar-right"><button class="icon-button" data-action="refresh" title="Refresh page" aria-label="Refresh page">${icon('refresh',15)}</button><button class="icon-button" data-action="logout" title="Sign out" aria-label="Sign out">${icon('logout',16)}</button></div></header><main id="main">${content}<footer class="footnote"><span>${icon('shield',13)} Your data stays on your server.</span><span>AVN Analytics</span></footer></main></div>`;
+  root.innerHTML = `<aside class="sidebar">${brand}<p class="nav-label eyebrow">Workspace</p><nav class="nav" aria-label="Workspace">${nav(primary)}</nav><nav class="nav nav-secondary" aria-label="Secondary">${nav(secondary)}</nav><div class="sidebar-bottom"><div class="account"><span class="avatar">AV</span><div><strong>Administrator</strong><p>Workspace</p></div></div></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong>${escapeHTML(title)}</strong></div><div class="topbar-right"><button class="icon-button" data-action="refresh" title="Refresh page" aria-label="Refresh page">${icon('refresh',15)}</button></div></header><main id="main">${content}<footer class="footnote"><span>${icon('shield',13)} Your data stays on your server.</span><span>AVN Analytics</span></footer></main></div>`;
   document.title = `${title} · AVN Analytics`;
 }
 
@@ -99,7 +179,7 @@ function renderGames() {
 }
 
 function renderNewGame() {
-  shell('Register game', `<a class="back-link" href="/games">← Back to games</a>` + heading('Make room for your next game.', 'A few details, and you’re ready to start collecting.') + `<div class="form-layout"><form id="register-form" class="panel form-panel"><h2>Game details</h2><p>Give your project a recognizable name.</p><div class="field"><label for="game-name">Game name</label><input id="game-name" name="name" placeholder="e.g. Tiny Adventures" required maxlength="128" autofocus></div><div class="field"><label for="bundle-id">Bundle ID</label><input id="bundle-id" name="bundle_id" placeholder="com.yourstudio.yourgame" pattern="[A-Za-z0-9_\\-]+(\\.[A-Za-z0-9_\\-]+)+" required maxlength="255"><p>The application identifier from your game’s project settings.</p></div><div class="field"><label for="platform">Platform</label><select id="platform" name="platform"><option value="android">Android</option><option value="ios">iOS</option><option value="windows">Windows</option><option value="macos">macOS</option><option value="linux">Linux</option><option value="web">Web</option></select><p>Register each platform separately to keep its events isolated.</p></div><div class="error" role="alert"></div><div class="form-actions"><a href="/games" class="button">Cancel</a><button class="button primary" type="submit">Register game ${icon('arrow',14)}</button></div></form><aside class="aside-card">${icon('game',25)}<h3>A space of its own</h3><p>Every game gets a separate event database and its own collection keys.</p><ul><li>Duplicates are handled automatically</li><li>Keys can be rotated at any time</li><li>Your raw data stays on your server</li></ul><p class="small">After registration, copy your new API key. It’s shown only once.</p></aside></div>`);
+  shell('Register game', `<a class="back-link" href="/games">← Back to games</a>` + heading('Make room for your next game.', 'A few details, and you’re ready to start collecting.') + `<div class="form-layout"><form id="register-form" class="panel form-panel"><h2>Game details</h2><p>Give your project a recognizable name.</p><div class="field"><label for="game-name">Game name</label><input id="game-name" name="name" placeholder="e.g. Tiny Adventures" required maxlength="128" autofocus></div><div class="field"><label for="bundle-id">Bundle ID</label><input id="bundle-id" name="bundle_id" placeholder="com.yourstudio.yourgame" pattern="[A-Za-z0-9_\\-]+(\\.[A-Za-z0-9_\\-]+)+" required maxlength="255"><p>The application identifier from your game’s project settings.</p></div><div class="field"><label for="platform">Platform</label><select id="platform" name="platform"><option value="android">Android</option><option value="ios">iOS</option></select><p>Register each platform separately to keep its events isolated.</p></div><div class="error" role="alert"></div><div class="form-actions"><a href="/games" class="button">Cancel</a><button class="button primary" type="submit">Register game ${icon('arrow',14)}</button></div></form><aside class="aside-card">${icon('game',25)}<h3>A space of its own</h3><p>Every game gets a separate event database and its own collection keys.</p><ul><li>Duplicates are handled automatically</li><li>Keys can be rotated at any time</li><li>Your raw data stays on your server</li></ul><p class="small">After registration, copy your new API key. It’s shown only once.</p></aside></div>`);
   bindForm('#register-form', async (form, values) => {
     const game = await api('/v1/games', {method:'POST', body:JSON.stringify(values)});
     showKey(game.key.api_key, 'Your game is ready.', `/games/${game.id}`);
@@ -132,7 +212,8 @@ function needsGame(title, description) {
 function renderGame() {
   const game = overview.games.find(item => item.id === location.pathname.split('/')[2]);
   if (!game) { shell('Game not found', heading('Game not found', 'This game is not in your workspace.') + '<a class="button" href="/games">Back to games</a>'); return; }
-  shell(game.name, '<a class="back-link" href="/games">← Back to games</a>' + heading(game.name, `${game.bundle_id} · ${game.platform}`, `<a class="button primary" href="/exports?game=${game.id}">${icon('export',15)} Export data</a>`) + `<section class="metrics">${metric('Events collected',number(game.events),'All committed events','pulse')}${metric('Events today',number(game.today),'Received today · UTC','export')}${metric('Platform',escapeHTML(game.platform),'Registered platform','game')}${metric('Collection',game.last_event ? 'Active' : 'Ready',game.last_event ? 'Events have arrived' : 'Waiting for your first event','server')}</section><div class="section-grid"><section class="panel"><div class="panel-header"><h2>Game information</h2></div><div class="panel-body"><ul class="status-list"><li><span>Game ID</span><code>${game.id}</code></li><li><span>Registered</span><strong>${displayDate(game.created_at)}</strong></li><li><span>Latest event</span><strong>${displayDate(game.last_event)}</strong></li></ul><div class="section-spacing"><a class="button" href="/keys?game=${game.id}">${icon('key',15)} Manage keys</a> <a class="button" href="/dictionary?game=${game.id}">${icon('book',15)} Event dictionary</a></div></div></section><aside class="aside-card">${icon('pulse',25)}<h3>Connect your game</h3><p>Send batches to the collection endpoint with your game’s API key in the <code>X-API-Key</code> header.</p><div class="connection"><code>POST http://127.0.0.1:8100/v1/events</code></div><p class="small section-spacing">This address works on the server. A public address will be available after your Cloudflare Tunnel is connected.</p></aside></div>`);
+  shell(game.name, '<a class="back-link" href="/games">← Back to games</a>' + heading(game.name, `${game.bundle_id} · ${game.platform}`, `<a class="button primary" href="/exports?game=${game.id}">${icon('export',15)} Export data</a>`) + `<section class="metrics">${metric('Events collected',number(game.events),'All committed events','pulse')}${metric('Events today',number(game.today),'Received today · UTC','export')}${metric('Platform',escapeHTML(game.platform),'Registered platform','game')}${metric('Collection',game.last_event ? 'Active' : 'Ready',game.last_event ? 'Events have arrived' : 'Waiting for your first event','server')}</section><div class="section-grid"><section class="panel"><div class="panel-header"><h2>Game information</h2></div><div class="panel-body"><ul class="status-list"><li><span>Game ID</span><code>${game.id}</code></li><li><span>Registered</span><strong>${displayDate(game.created_at)}</strong></li><li><span>Latest event</span><strong>${displayDate(game.last_event)}</strong></li></ul><div class="section-spacing"><a class="button" href="/keys?game=${game.id}">${icon('key',15)} Manage keys</a> <a class="button" href="/dictionary?game=${game.id}">${icon('book',15)} Event dictionary</a></div></div></section><aside class="aside-card">${icon('pulse',25)}<h3>Connect your game</h3><p>Send batches to the collection endpoint with your game’s API key in the <code>X-API-Key</code> header.</p><div class="connection"><code>POST http://127.0.0.1:8100/v1/events</code></div><p class="small section-spacing">This address works on the server. A public address will be available after your Cloudflare Tunnel is connected.</p></aside></div><section class="panel section-spacing"><div class="panel-header"><div><h2>Event activity</h2><p>Pick any days on the calendar · received by the server · UTC</p></div></div><div class="panel-body" id="activity"></div></section>`);
+  mountActivity(document.querySelector('#activity'), game);
 }
 
 async function renderKeys() {
@@ -163,14 +244,25 @@ async function renderKeys() {
 function renderExports() {
   if (needsGame('Exports', 'Your raw data, ready for a closer look.')) return;
   const game = selectedGame();
-  shell('Exports', heading('Take your data further.', 'Create a portable snapshot for your next analysis.') + picker(game) + `<div class="form-layout"><form id="export-form" class="panel form-panel"><h2>Create an export</h2><p>Choose a time period. We’ll package your events and their definitions.</p><div class="field-row"><div class="field"><label for="period">Period</label><select id="period" name="period"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></div><div class="field"><label for="export-date">Date in period</label><input id="export-date" name="date" type="date" value="${today()}" min="1970-01-01" max="9998-12-31" required></div></div><div class="field"><label for="basis">Select events by</label><select id="basis" name="basis"><option value="server_ts">Arrival time — when the server received them</option><option value="client_ts">Game time — when the client says they happened</option></select><p>All periods use UTC. Weeks begin Monday; months follow the calendar. Game time can be affected by device clock settings.</p></div><div class="error" role="alert"></div><div class="form-actions"><button class="button primary" type="submit">${icon('export',15)} Download export</button></div></form><aside class="aside-card">${icon('file',25)}<h3>A small package. The whole story.</h3><p>Your ZIP contains everything an analysis tool needs to get started.</p><div class="file-preview"><div>${icon('file',17)}<span>events.jsonl.gz<small>Your raw, compressed events</small></span></div><div>${icon('book',17)}<span>events.md<small>Event names and what they mean</small></span></div><div>${icon('settings',17)}<span>manifest.json<small>Time range and export details</small></span></div></div><p class="small">Large exports are capped at 256 MiB before compression. Try a shorter period if you hit the limit.</p></aside></div>`);
+  shell('Exports', heading('Take your data further.', 'Create a portable snapshot for your next analysis.') + picker(game) + `<div class="form-layout"><form id="export-form" class="panel form-panel"><h2>Create an export</h2><p>Choose a time period. We’ll package your events and their definitions.</p><input type="hidden" name="period" value="custom"><div class="field"><label>Date range</label>${rangeMarkup()}<p id="export-count" class="small muted" aria-live="polite"></p></div><div class="field"><label for="basis">Select events by</label><select id="basis" name="basis"><option value="server_ts">Arrival time — when the server received them</option><option value="client_ts">Game time — when the client says they happened</option></select><p>All periods use UTC. Weeks begin Monday; months follow the calendar. Game time can be affected by device clock settings.</p></div><div class="error" role="alert"></div><div class="form-actions"><button class="button primary" type="submit">${icon('export',15)} Download export</button></div></form><aside class="aside-card">${icon('file',25)}<h3>A small package. The whole story.</h3><p>Your ZIP contains everything an analysis tool needs to get started.</p><div class="file-preview"><div>${icon('file',17)}<span>events.jsonl.gz<small>Your raw, compressed events</small></span></div><div>${icon('book',17)}<span>events.md<small>Event names and what they mean</small></span></div><div>${icon('settings',17)}<span>manifest.json<small>Time range and export details</small></span></div></div><p class="small">Large exports are capped at 256 MiB before compression. Try a shorter period if you hit the limit.</p></aside></div>`);
   bindPicker();
+  const exportForm = document.querySelector('#export-form');
+  const exportCount = document.querySelector('#export-count');
+  let exportRange; let exportRequest = 0;
+  const refreshCount = async () => {
+    if (!exportRange) return;
+    const request = ++exportRequest; exportCount.textContent = 'Counting events…';
+    try { const health = await fetchRange(game, exportRange, exportForm.elements.basis.value); if (request === exportRequest) exportCount.textContent = `${number(health.total)} events in this range`; }
+    catch (error) { if (request === exportRequest) exportCount.textContent = error.message; }
+  };
+  exportRange = bindRange(exportForm, range => { exportRange = range; refreshCount(); });
+  exportForm.elements.basis.addEventListener('change', refreshCount);
   bindForm('#export-form', async (form, values) => {
     const response = await fetch(`${gameURL(game)}/export?${new URLSearchParams(values)}`, {credentials:'same-origin'});
     if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Export failed. Please try again.'); }
     const download = URL.createObjectURL(await response.blob());
     const anchor = document.createElement('a');
-    anchor.href = download; anchor.download = `${game.bundle_id}-${values.period}-${values.date}.zip`;
+    anchor.href = download; anchor.download = `${game.bundle_id}-${values.date}_to_${values.end_date}.zip`;
     document.body.append(anchor); anchor.click(); anchor.remove();
     setTimeout(() => URL.revokeObjectURL(download), 60000);
     toast('Your export is ready. Download started.');
@@ -204,13 +296,13 @@ async function renderDictionary() {
 
 async function renderStatus() {
   const game = selectedGame();
-  const health = game ? await api(`${gameURL(game)}/health?period=week&date=${today()}`) : null;
-  shell('Status', heading('Status', 'Recent event arrivals.', '<button class="button" data-action="refresh">'+icon('refresh',14)+' Refresh</button>') + `<div class="section-grid"><section class="panel"><div class="panel-header"><h2>At a glance</h2>${icon('server',17)}</div><div class="panel-body"><ul class="status-list"><li><span>Active game keys</span><strong>${overview.active_keys}</strong></li><li><span>Registered games</span><strong>${overview.games.length}</strong></li><li><span>Events collected</span><strong>${number(overview.events)}</strong></li></ul></div></section></div><section class="panel section-spacing"><div class="panel-header"><div><h2>Event arrivals this week</h2><p>Received by the server · Monday to Sunday · UTC</p></div></div><div class="panel-body">${game ? picker(game) : ''}${health?.days.length ? `<div class="table-wrap"><table><thead><tr><th>DAY</th><th>EVENTS RECEIVED</th></tr></thead><tbody>${health.days.map(day => `<tr><td>${day.day}</td><td>${number(day.events)}</td></tr>`).join('')}</tbody></table></div>` : empty('No arrivals yet', 'When your game starts sending events, daily counts will appear here.', '', 'pulse')}</div></section>`);
+  shell('Status', heading('Status', 'Recent event arrivals.', '<button class="button" data-action="refresh">'+icon('refresh',14)+' Refresh</button>') + `<div class="section-grid"><section class="panel"><div class="panel-header"><h2>At a glance</h2>${icon('server',17)}</div><div class="panel-body"><ul class="status-list"><li><span>Active game keys</span><strong>${overview.active_keys}</strong></li><li><span>Registered games</span><strong>${overview.games.length}</strong></li><li><span>Events collected</span><strong>${number(overview.events)}</strong></li></ul></div></section></div><section class="panel section-spacing"><div class="panel-header"><div><h2>Event arrivals</h2><p>Received by the server · choose any days · UTC</p></div></div><div class="panel-body">${game ? picker(game) : ''}${game ? '<div id="arrivals"></div>' : empty('No arrivals yet', 'Register a game and daily counts will appear here.', '', 'pulse')}</div></section>`);
   bindPicker();
+  if (game) mountActivity(document.querySelector('#arrivals'), game);
 }
 
 function renderSettings() {
-  shell('Settings', heading('Settings', 'Account and export details.') + `<div class="section-grid"><section class="panel"><div class="panel-header"><h2>Workspace</h2>${icon('settings',17)}</div><div class="panel-body"><ul class="status-list"><li><span>Application</span><strong>AVN Analytics</strong></li><li><span>Export format</span><strong>JSONL.gz + dictionary</strong></li><li><span>Session duration</span><strong>8 hours</strong></li></ul><p class="help section-spacing">Storage location and limits are set in the server's .env file.</p></div></section><aside class="aside-card">${icon('shield',25)}<h3>Keep your password safe</h3><p>Your admin password and game keys have separate jobs. Keep the admin password to yourself.</p><button class="button" data-action="logout">${icon('logout',14)} Sign out</button></aside></div>`);
+  shell('Settings', heading('Settings', 'Account and export details.') + `<div class="section-grid"><section class="panel"><div class="panel-header"><h2>Workspace</h2>${icon('settings',17)}</div><div class="panel-body"><ul class="status-list"><li><span>Application</span><strong>AVN Analytics</strong></li><li><span>Export format</span><strong>JSONL.gz + dictionary</strong></li><li><span>Session duration</span><strong>8 hours</strong></li></ul><p class="help section-spacing">Storage location and limits are set in the server's .env file.</p></div></section><aside class="aside-card">${icon('shield',25)}<h3>Protect this workspace</h3><p>This dashboard has no sign-in of its own. Put it behind your own access control, such as Cloudflare Access, a VPN or a private network, and never expose it directly.</p></aside></div>`);
 }
 
 function bindForm(selector, submit) {
@@ -236,33 +328,17 @@ function showKey(key, title, next) {
   });
 }
 
-function renderAuth(configured) {
-  document.title = configured ? 'Sign in · AVN Analytics' : 'Welcome · AVN Analytics';
-  root.innerHTML = `<main id="main" class="auth-page"><section class="auth-story"><div>${brand}</div><div><p class="eyebrow">A home for your game data</p><h1>Your game data.<br>Your server.</h1><p>Keep the moments that matter, understand your players, and build something better.</p>${diagram()}</div><p class="auth-footer">Self-hosted game analytics.</p></section><section class="auth-form-side"><div class="auth-form-wrap"><span class="auth-emblem">${icon(configured ? 'lock' : 'shield',24)}</span><h2>${configured ? 'Welcome back.' : 'Make yourself at home.'}</h2><p>${configured ? 'Sign in to your private analytics workspace.' : 'Create an admin password to open your workspace. This is a one-time setup on your server.'}</p><form id="auth-form"><div class="field"><label for="password">${configured ? 'Admin password' : 'Choose an admin password'}</label><input id="password" name="password" type="password" minlength="12" maxlength="128" autocomplete="${configured ? 'current-password' : 'new-password'}" placeholder="${configured ? 'Enter your password' : 'At least 12 characters'}" required autofocus></div>${configured ? '' : '<div class="field"><label for="confirm">Confirm password</label><input id="confirm" name="confirm" type="password" minlength="12" maxlength="128" autocomplete="new-password" placeholder="One more time" required></div>'}<div class="error" role="alert"></div><button class="button primary" type="submit">${configured ? 'Sign in' : 'Create your workspace'} ${icon('arrow',15)}</button></form><p class="help">${icon('lock',11)} Your data stays on this server.<br>No external account. No subscriptions.</p></div></section></main>`;
-  bindForm('#auth-form', async (form, values) => {
-    if (!configured && values.password !== values.confirm) throw new Error('The passwords don’t match. Please try again.');
-    await api(configured ? '/auth/login' : '/auth/setup', {method:'POST', body:JSON.stringify({password:values.password})});
-    location.assign('/');
-  });
-}
-
 document.addEventListener('click', async event => {
   const action = event.target.closest('[data-action]')?.dataset.action;
   if (action === 'close') { modal.close(); modal.innerHTML = ''; }
   if (action === 'refresh') location.reload();
-  if (action === 'logout') {
-    try { await api('/auth/logout', {method:'POST'}); location.assign('/login'); }
-    catch (error) { toast(error.message); }
-  }
 });
 modal.addEventListener('close', () => { modal.innerHTML = ''; });
 
 async function boot() {
   try {
-    const status = await api('/auth/status');
-    if (!status.authenticated) { renderAuth(status.configured); return; }
     overview = await api('/v1/overview');
-    const pages = {'/':renderOverview, '/login':renderOverview, '/games':renderGames, '/games/new':renderNewGame, '/keys':renderKeys, '/exports':renderExports, '/dictionary':renderDictionary, '/status':renderStatus, '/settings':renderSettings};
+    const pages = {'/':renderOverview, '/games':renderGames, '/games/new':renderNewGame, '/keys':renderKeys, '/exports':renderExports, '/dictionary':renderDictionary, '/status':renderStatus, '/settings':renderSettings};
     await (pages[location.pathname] || renderGame)();
   } catch (error) {
     root.innerHTML = `<main id="main"><div class="boot"><span class="brand-mark">avn.</span><h1>Couldn’t open your workspace.</h1><p class="muted">${escapeHTML(error.message)}</p><button class="button" data-action="refresh">Try again</button></div></main>`;
