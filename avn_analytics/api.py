@@ -27,6 +27,8 @@ from .models import (
     GameUpdate,
     KeyCreate,
     Name,
+    RoutePlayersQuery,
+    RoutesQuery,
     SavedFunnel,
     TeamAdd,
     TeamUpdate,
@@ -336,6 +338,10 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     def get_dictionary(game_id: UUID):
         return storage.get_dictionary(str(game_id))
 
+    @admin_api.get("/v1/games/{game_id}/dictionary/discovery")
+    def dictionary_discovery(game_id: UUID):
+        return insights.discovery(storage, str(game_id))
+
     DateParam = Annotated[date, Query(ge=date(1970, 1, 1), le=date(9998, 12, 31))]
     Values = Annotated[list[Annotated[str, Field(max_length=128)]], Query(max_length=100)]
 
@@ -424,6 +430,18 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     @admin_api.post("/v1/games/{game_id}/insights/funnel")
     def insights_funnel(game_id: UUID, query: FunnelQuery):
         return insights.funnel(
+            storage, str(game_id), *day_range(query.start, query.end), query.model_dump()
+        )
+
+    @admin_api.post("/v1/games/{game_id}/insights/routes")
+    def insights_routes(game_id: UUID, query: RoutesQuery):
+        return insights.routes(
+            storage, str(game_id), *day_range(query.start, query.end), query.model_dump()
+        )
+
+    @admin_api.post("/v1/games/{game_id}/insights/routes/players")
+    def insights_route_players(game_id: UUID, query: RoutePlayersQuery):
+        return insights.route_players(
             storage, str(game_id), *day_range(query.start, query.end), query.model_dump()
         )
 

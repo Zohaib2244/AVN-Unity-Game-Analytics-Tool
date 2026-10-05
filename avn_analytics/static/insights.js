@@ -202,6 +202,7 @@ async function renderFunnels() {
         <div class="funnel-actions"><div class="quiet-actions"><button class="button small-button" type="button" id="add-step">${icon('plus',14)} Add step</button><button class="button small-button" type="button" id="quick-levels">${icon('plus',14)} Level steps…</button><button class="button ghost small-button" type="button" id="clear-steps">Clear</button></div><button class="button primary" type="button" id="run-funnel">Run funnel</button></div>
         <details class="funnel-more"><summary>Options <span id="options-summary" class="muted"></span></summary><div class="funnel-options"><label class="inline-field">Count<select id="funnel-scope"><option value="player">Per player, across sessions</option><option value="session">Within one session</option></select></label><label class="inline-field">Finish within<select id="funnel-window"><option value="">Any time</option><option value="0.25">15 minutes</option><option value="1">1 hour</option><option value="24">1 day</option><option value="168">7 days</option><option value="720">30 days</option></select></label><label class="inline-field">Break down by<select id="funnel-breakdown"><option value="">Nothing</option>${Object.entries(DIMENSION_LABELS).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select></label></div></details></div></section>
     <section class="panel section-spacing"><div class="panel-header"><div><h2>Result</h2><p id="funnel-note">Add at least two steps.</p></div><button class="button small-button" type="button" id="funnel-csv" hidden>${icon('export',14)} CSV</button></div><div id="funnel-summary"></div><div class="panel-body" id="funnel-result"><p class="help">No result yet.</p></div></section>
+    <section class="panel section-spacing" id="routes-panel"></section>
     <section class="panel section-spacing" id="breakdown-panel" hidden><div class="panel-header"><div><h2 id="breakdown-title">Breakdown</h2><p>Players reaching each step, per segment · a player’s segment comes from their step 1 event</p></div></div><div id="breakdown-result"></div></section>`);
   const draftKey = `avn-funnel-draft-${game.id}`;
   let saved = [];
@@ -343,7 +344,7 @@ async function renderFunnels() {
     const breakdown = document.querySelector('#funnel-breakdown').value;
     try {
       const data = await api(`${gameURL(game)}/insights/funnel`, {method:'POST', body: JSON.stringify({...filterBody(filters.state), steps: body.steps, scope: body.scope, ...(body.window_hours ? {window_hours: body.window_hours} : {}), ...(breakdown ? {breakdown} : {})})});
-      if (ticket === latest) { lastResult = data; drawResult(data); }
+      if (ticket === latest) { lastResult = data; drawResult(data); routes.refresh(); }
     } catch (error) { if (ticket === latest) result.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
   }
   const timing = times => times ? `<span title="${number(times.count)} players · average ${duration(times.average)} · fastest ${duration(times.min)} · slowest ${duration(times.max)}">median ${duration(times.median)} · 90% within ${duration(times.p90)}</span>` : '';
@@ -375,6 +376,11 @@ async function renderFunnels() {
     downloadCSV(`${game.name}-${platformLabel(game.platform)}-funnel-${filters.state.range.from}_${filters.state.range.to}.csv`, rows);
   });
 
+  const routes = mountRoutes(document.querySelector('#routes-panel'), game, {
+    steps: () => current.steps.filter(step => step.event),
+    catalog: () => catalog,
+    query: () => ({...filterBody(filters.state), ...(({steps, scope, window_hours}) => ({steps, scope, ...(window_hours ? {window_hours} : {})}))(definition())}),
+  });
   drawOptions(); drawSaved(); drawSteps();
   loadSaved().catch(() => {});
   const filters = mountFilters(document.querySelector('#filters'), game, async state => {
@@ -382,8 +388,202 @@ async function renderFunnels() {
     catch (error) { toast(error.message); catalog = {events: []}; }
     if (!current.steps.length && catalog.events.length) current.steps = [blankStep(catalog.events[0].name), blankStep(catalog.events[0].name)];
     drawSteps();
+    routes.redraw();
     run();
   });
+}
+
+/* ─── Routes: the paths players took between two funnel steps, as a Sankey flow (d3-sankey, vendored) ─── */
+
+const ROUTE_OUTCOMES = {reached: ['Reached the end', 'good'], stopped: ['Stopped', 'bad'], continued: ['Kept going', '']};
+
+function drawSankey(box, data, onPick) {
+  const layers = Math.max(...data.nodes.map(node => node.layer)) + 1;
+  const perLayer = {}; data.nodes.forEach(node => { perLayer[node.layer] = (perLayer[node.layer] || 0) + 1; });
+  const width = Math.max(box.clientWidth || 720, layers * 190);
+  const height = Math.min(980, Math.max(340, Math.max(...Object.values(perLayer)) * 54));
+  const nodes = data.nodes.map(node => ({...node}));
+  const index = new Map(nodes.map((node, position) => [node.id, position]));
+  const links = data.links.map(link => ({source: index.get(link.source), target: index.get(link.target), value: link.players, id: [link.source, link.target]}));
+  const graph = d3.sankey().nodeAlign(node => node.layer).nodeWidth(14).nodePadding(16).extent([[6, 10], [width - 190, height - 10]])({nodes, links});
+  const total = data.started || 1;
+  const share = value => percent(100 * value / total);
+  box.innerHTML = `<div class="sankey-scroll"><svg class="sankey" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Routes players took">
+    <g class="sk-links">${graph.links.map((link, position) => `<path class="sk-link to-${link.target.kind}" d="${d3.sankeyLinkHorizontal()(link)}" stroke-width="${Math.max(1, link.width)}" data-link="${position}"><title>${escapeHTML(link.source.label)} → ${escapeHTML(link.target.label)}\n${number(link.value)} players · ${share(link.value)}</title></path>`).join('')}</g>
+    <g class="sk-nodes">${graph.nodes.map((node, position) => {
+      const left = false; // labels always sit to the right; the chart keeps 190px free for them
+      return `<g class="sk-node kind-${node.kind}" data-node="${position}"><rect x="${node.x0}" y="${node.y0}" width="${node.x1 - node.x0}" height="${Math.max(2, node.y1 - node.y0)}" rx="3"><title>${escapeHTML(node.label)}\n${number(node.players)} players · ${share(node.players)}${node.values?.length ? `\n${node.values.map(value => `${value.text} ×${number(value.players)}`).join(' · ')}` : ''}</title></rect>
+        <text class="sk-label" x="${left ? node.x0 - 7 : node.x1 + 7}" y="${(node.y0 + node.y1) / 2}" dy="-0.15em" text-anchor="${left ? 'end' : 'start'}">${escapeHTML(node.label.length > 26 ? `${node.label.slice(0, 25)}…` : node.label)}</text>
+        <text class="sk-count" x="${left ? node.x0 - 7 : node.x1 + 7}" y="${(node.y0 + node.y1) / 2}" dy="1.05em" text-anchor="${left ? 'end' : 'start'}">${number(node.players)} · ${share(node.players)}</text></g>`;
+    }).join('')}</g></svg></div>`;
+  // Mouse wheel over the chart scrolls it sideways (until its edge, then the page scrolls again).
+  const scroller = box.querySelector('.sankey-scroll');
+  scroller.addEventListener('wheel', event => {
+    if (scroller.scrollWidth <= scroller.clientWidth || event.ctrlKey || Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+    const before = scroller.scrollLeft;
+    scroller.scrollLeft += event.deltaY * (event.deltaMode === 1 ? 32 : 1);
+    if (scroller.scrollLeft !== before) event.preventDefault();
+  }, {passive: false});
+  box.insertAdjacentHTML('afterbegin', '<p class="sankey-hint small muted" hidden>Scroll with your mouse wheel over the chart to move sideways.</p>');
+  box.querySelector('.sankey-hint').hidden = scroller.scrollWidth <= scroller.clientWidth;
+  box.querySelectorAll('[data-node]').forEach(element => element.addEventListener('click', () => { const node = graph.nodes[Number(element.dataset.node)]; onPick({node: node.id}, `Players through “${node.label}” (step ${node.layer})`); }));
+  box.querySelectorAll('[data-link]').forEach(element => element.addEventListener('click', () => { const link = graph.links[Number(element.dataset.link)]; onPick({link: link.id}, `Players who went “${link.source.label}” → “${link.target.label}”`); }));
+}
+
+function mountRoutes(container, game, hooks) {
+  const key = `avn-routes-${game.id}`;
+  const saved = storeGet(key) || {};
+  const state = {from: 1, to: null, ignore: [], split: [], include: [], exclude: [], depth: 6, perLayer: 7, collapse: true, view: 'paths', ...saved};
+  const pairs = list => (Array.isArray(list) ? list : []).filter(item => item && typeof item.event === 'string' && /^[A-Za-z][A-Za-z0-9_]*$/.test(item.event) && typeof item.param === 'string' && item.param);
+  state.split = pairs(state.split); state.include = pairs(state.include); state.exclude = pairs(state.exclude);
+  const hasPair = (list, event, param) => list.some(item => item.event === event && item.param === param);
+  const withoutPair = (list, event, param) => list.filter(item => !(item.event === event && item.param === param));
+  let outcomeFilter = 'all'; let shown = 15; let lastData = null;
+  let active = false; let latest = 0; let lastBody = null;
+  container.innerHTML = `<div class="panel-header"><div><h2>Routes</h2><p>What players did between two steps, branch by branch · click any block or flow to see those players</p></div><button class="button primary" type="button" id="routes-run">${icon('funnel',14)} Show routes</button></div>
+    <div class="panel-body"><div class="routes-controls">
+      <label class="inline-field">From<select id="routes-from"></select></label>
+      <label class="inline-field">To<select id="routes-to"></select></label>
+      <label class="inline-field">Steps shown<select id="routes-depth">${[3, 4, 5, 6, 8, 10].map(value => `<option value="${value}">${value}</option>`).join('')}</select></label>
+      <label class="inline-field">Branches per step<select id="routes-branches">${[4, 5, 7, 10, 15].map(value => `<option value="${value}">${value}</option>`).join('')}</select></label>
+      <label class="check-row"><input type="checkbox" id="routes-collapse"> Merge repeats</label>
+    </div>
+    <div class="routes-controls"><label class="inline-field">Ignore<select id="routes-ignore-add"></select></label><span id="routes-ignore" class="chip-row"></span></div>
+    <details class="routes-values" id="routes-values" hidden><summary>Values shown on each step <span class="muted" id="routes-values-note"></span></summary><div id="routes-values-body"></div></details>
+    <div id="routes-summary"></div>
+    <p class="help" id="routes-intro">Pick the start and end step, then “Show routes”. It’s built from the steps in your funnel above.</p>
+    <div id="routes-views" hidden>
+      <div class="range-modes route-tabs" role="tablist" aria-label="How to view routes"><button type="button" role="tab" data-view="paths">Paths</button><button type="button" role="tab" data-view="exits">Where players stop</button><button type="button" role="tab" data-view="flow">Flow chart</button></div>
+      <div id="routes-view-paths"></div><div id="routes-view-exits" hidden></div><div id="routes-view-flow" hidden><div id="routes-chart"></div></div>
+    </div></div>
+    <div id="routes-players-wrap" hidden><div class="panel-header"><div><h2 id="routes-players-title">Players</h2><p id="routes-players-note"></p></div><button class="button small-button" type="button" id="routes-players-csv">${icon('export',14)} CSV</button></div><div id="routes-players" class="panel-body"></div></div>`;
+  const $ = selector => container.querySelector(selector);
+  const persist = () => storeSet(key, {from: state.from, to: state.to, ignore: state.ignore, split: state.split, include: state.include, exclude: state.exclude, depth: state.depth, perLayer: state.perLayer, collapse: state.collapse, view: state.view});
+  const stepName = (step, index) => `${index + 1}. ${step.label || step.event}${step.param ? ` · ${step.param}${step.value ? `=${step.value}` : ''}` : ''}`;
+
+  const drawControls = () => {
+    const steps = hooks.steps();
+    state.from = Math.min(Math.max(1, state.from), Math.max(1, steps.length - 1));
+    state.to = Math.min(Math.max(state.to || steps.length, state.from + 1), Math.max(steps.length, 2));
+    $('#routes-from').innerHTML = steps.map((step, index) => `<option value="${index + 1}" ${index + 1 === state.from ? 'selected' : ''}>${escapeHTML(stepName(step, index))}</option>`).join('');
+    $('#routes-to').innerHTML = steps.map((step, index) => `<option value="${index + 1}" ${index + 1 === state.to ? 'selected' : ''} ${index + 1 <= state.from ? 'disabled' : ''}>${escapeHTML(stepName(step, index))}</option>`).join('');
+    $('#routes-depth').value = String(state.depth); $('#routes-branches').value = String(state.perLayer); $('#routes-collapse').checked = state.collapse;
+    const events = hooks.catalog().events;
+    $('#routes-ignore-add').innerHTML = `<option value="">Hide an event…</option>${events.filter(event => !state.ignore.includes(event.name)).map(event => `<option>${escapeHTML(event.name)}</option>`).join('')}`;
+    $('#routes-ignore').innerHTML = state.ignore.map(name => `<span class="chip">${escapeHTML(name)} <button type="button" class="chip-x" data-unignore="${escapeHTML(name)}" aria-label="Stop ignoring ${escapeHTML(name)}">×</button></span>`).join('');
+
+
+
+  };
+  const changed = () => { persist(); drawControls(); if (active) run(); };
+  $('#routes-from').addEventListener('change', event => { state.from = Number(event.target.value); changed(); });
+  $('#routes-to').addEventListener('change', event => { state.to = Number(event.target.value); changed(); });
+  $('#routes-depth').addEventListener('change', event => { state.depth = Number(event.target.value); changed(); });
+  $('#routes-branches').addEventListener('change', event => { state.perLayer = Number(event.target.value); changed(); });
+  $('#routes-collapse').addEventListener('change', event => { state.collapse = event.target.checked; changed(); });
+  $('#routes-ignore-add').addEventListener('change', event => { if (event.target.value) { state.ignore.push(event.target.value); changed(); } });
+
+  container.addEventListener('click', event => {
+    const unignore = event.target.closest('[data-unignore]'); if (unignore) { state.ignore = state.ignore.filter(name => name !== unignore.dataset.unignore); changed(); }
+  });
+
+  const body = () => ({...hooks.query(), route_from: state.from, route_to: state.to, ignore: state.ignore, split: state.split, detail_include: state.include, detail_exclude: state.exclude, max_depth: state.depth, per_layer: state.perLayer, collapse: state.collapse});
+  const outcome = status => { const [label, tone] = ROUTE_OUTCOMES[status]; return `<span class="pill ${tone}">${label}</span>`; };
+  const route = item => item.path.length ? item.path.map((name, index) => `<span class="route-step">${escapeHTML(name)}${item.details?.[index] ? ` <span class="route-detail">${escapeHTML(item.details[index])}</span>` : ''}</span>`).join('<span class="route-arrow">→</span>') : '<span class="muted">went straight to the end or stopped</span>';
+
+  const startName = () => stepName(hooks.steps()[state.from - 1], state.from - 1).replace(/^\d+\.\s*/, '');
+  const endName = () => stepName(hooks.steps()[(state.to || hooks.steps().length) - 1], (state.to || hooks.steps().length) - 1).replace(/^\d+\.\s*/, '');
+  const valueChips = (values, players) => {
+    if (!values?.length) return '';
+    const several = values.length > 1;
+    return `<span class="route-values">${values.map(value => `<span class="route-detail" title="${number(value.players)} of ${number(players)} players on this path">${escapeHTML(value.text)}${several ? ` <b>×${number(value.players)}</b>` : ''}</span>`).join('')}</span>`;
+  };
+  const chain = item => `<span class="route-step start" title="Start step">${escapeHTML(startName())}</span>${item.path.map((name, index) => `<span class="route-arrow">→</span><span class="route-step" title="Step ${index + 1} after the start"><i>${index + 1}</i>${escapeHTML(name)}${valueChips(item.values?.[index], item.players)}</span>`).join('')}<span class="route-arrow">→</span>${{reached: `<span class="route-step end good">Reached: ${escapeHTML(endName())}</span>`, stopped: '<span class="route-step end bad">Stopped here</span>', continued: `<span class="route-step end">… still playing after ${state.depth} steps</span>`}[item.status]}`;
+  const drawPaths = () => {
+    const data = lastData; const counts = {all: data.top_routes.length};
+    data.top_routes.forEach(item => { counts[item.status] = (counts[item.status] || 0) + 1; });
+    const items = data.top_routes.filter(item => outcomeFilter === 'all' || item.status === outcomeFilter);
+    const peak = Math.max(1, ...data.top_routes.map(item => item.percent));
+    $('#routes-view-paths').innerHTML = `<div class="route-filters" role="group" aria-label="Filter paths by outcome">${[['all', 'All paths'], ['reached', 'Reached the end'], ['stopped', 'Stopped'], ['continued', 'Kept going']].map(([key, label]) => `<button type="button" data-outcome="${key}" aria-pressed="${outcomeFilter === key}" ${counts[key] ? '' : 'disabled'}>${label} <span class="count">${counts[key] || 0}</span></button>`).join('')}</div>
+      <ol class="route-cards">${items.slice(0, shown).map((item, index) => `<li class="route-card tone-${item.status}"><div class="route-card-head"><span class="route-rank">#${index + 1}</span>${outcome(item.status)}<span class="route-count"><strong>${number(item.players)}</strong> player${item.players === 1 ? '' : 's'} · ${percent(item.percent)}</span><progress class="progress mini route-share" max="${peak}" value="${item.percent}" aria-label="${percent(item.percent)} of players"></progress><button type="button" class="button small-button" data-path="${data.top_routes.indexOf(item)}">See players</button></div><div class="route-chain">${chain(item)}</div></li>`).join('') || '<li class="help">No paths with this outcome.</li>'}</ol>
+      ${items.length > shown ? `<div class="route-more"><button type="button" class="button" data-more>Show ${Math.min(15, items.length - shown)} more of ${number(items.length - shown)} remaining</button></div>` : ''}
+      ${data.distinct_routes > data.top_routes.length ? `<p class="help">Showing the ${data.top_routes.length} most common of ${number(data.distinct_routes)} different paths. Hide noisy events above to merge similar ones.</p>` : ''}`;
+  };
+  const drawExits = () => {
+    const data = lastData;
+    $('#routes-view-exits').innerHTML = data.stopped ? `<p class="help">The last thing ${number(data.stopped)} player${data.stopped === 1 ? '' : 's'} did before they stopped, between “${escapeHTML(startName())}” and “${escapeHTML(endName())}”. Click one to see who they were.</p>
+      <ol class="exit-list">${data.exits.map((item, index) => `<li class="exit-row"><span class="route-rank">#${index + 1}</span><span class="exit-label">${item.label === '__start__' ? `<span class="route-step start">${escapeHTML(startName())}</span> <span class="muted">then nothing else</span>` : `<span class="route-step">${escapeHTML(item.label)}</span>`}</span><progress class="progress mini exit-bar" max="100" value="${item.percent_of_stopped}" aria-label="${percent(item.percent_of_stopped)} of those who stopped"></progress><span class="exit-numbers"><strong>${number(item.players)}</strong> player${item.players === 1 ? '' : 's'}<br><span class="small muted">${percent(item.percent)} of all · ${percent(item.percent_of_stopped)} of stoppers</span></span><button type="button" class="button small-button" data-exit="${index}">See players</button></li>`).join('')}</ol>${data.stopped > data.exits.reduce((sum, item) => sum + item.players, 0) ? '<p class="help">Less common exits are not shown.</p>' : ''}` : '<p class="help">Nobody stopped between these steps: everyone either reached the end or was still playing.</p>';
+  };
+  const drawValues = () => {
+    const data = lastData; const panel = $('#routes-values');
+    const events = (data?.detail_params || []).filter(event => event.params.length);
+    panel.hidden = !events.length;
+    if (!events.length) return;
+    $('#routes-values-note').textContent = `· ${events.reduce((sum, event) => sum + event.params.filter(param => param.on).length, 0)} shown`;
+    $('#routes-values-body').innerHTML = `<p class="help">Each step lists the values of these parameters, so “LEVEL_ANALYSIS” becomes “Started=5”. Parameters with many different values (times, scores, IDs) are left off. Switch any on or off. <b>Split</b> goes further and makes a separate path per value.</p>
+      ${events.map(event => `<div class="values-row"><span class="route-step">${escapeHTML(event.event)}</span><span class="chip-row">${event.params.map(param => `<span class="value-chip ${param.on ? 'on' : ''}"><button type="button" class="value-toggle" data-value-event="${escapeHTML(event.event)}" data-value-param="${escapeHTML(param.key)}" data-value-on="${param.on}" aria-pressed="${param.on}" title="${number(param.distinct)} different value${param.distinct === 1 ? '' : 's'}">${escapeHTML(param.key)}</button><button type="button" class="value-split ${hasPair(state.split, event.event, param.key) ? 'active' : ''}" data-split-event="${escapeHTML(event.event)}" data-split-param="${escapeHTML(param.key)}" aria-pressed="${hasPair(state.split, event.event, param.key)}" title="Separate path for each value of ${escapeHTML(param.key)}">Split</button></span>`).join('')}</span></div>`).join('')}`;
+  };
+  const drawViews = () => {
+    drawValues();
+    $('#routes-views').querySelectorAll('[data-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.view === state.view)));
+    ['paths', 'exits', 'flow'].forEach(name => { $(`#routes-view-${name}`).hidden = name !== state.view; });
+    if (state.view === 'paths') drawPaths();
+    if (state.view === 'exits') drawExits();
+    if (state.view === 'flow') drawSankey($('#routes-chart'), lastData, showPlayers);
+  };
+  container.addEventListener('click', event => {
+    const toggle = event.target.closest('[data-value-event]');
+    if (toggle) {
+      const [name, param, on] = [toggle.dataset.valueEvent, toggle.dataset.valueParam, toggle.dataset.valueOn === 'true'];
+      state.include = withoutPair(state.include, name, param); state.exclude = withoutPair(state.exclude, name, param);
+      (on ? state.exclude : state.include).push({event: name, param}); persist(); run(); return;
+    }
+    const splitter = event.target.closest('[data-split-event]');
+    if (splitter) {
+      const [name, param] = [splitter.dataset.splitEvent, splitter.dataset.splitParam];
+      state.split = hasPair(state.split, name, param) ? withoutPair(state.split, name, param) : [...withoutPair(state.split, name, param).filter(item => item.event !== name), {event: name, param}]; persist(); run(); return;
+    }
+    const tab = event.target.closest('[data-view]'); if (tab && lastData) { state.view = tab.dataset.view; persist(); drawViews(); return; }
+    const filter = event.target.closest('[data-outcome]'); if (filter && lastData) { outcomeFilter = filter.dataset.outcome; shown = 15; drawPaths(); return; }
+    if (event.target.closest('[data-more]') && lastData) { shown += 15; drawPaths(); return; }
+    const path = event.target.closest('[data-path]');
+    if (path && lastData) { const item = lastData.top_routes[Number(path.dataset.path)]; showPlayers({route: item.path, status: item.status}, `Players on this path: ${item.path.join(' → ') || 'straight to the end'}`); return; }
+    const exit = event.target.closest('[data-exit]');
+    if (exit && lastData) { const item = lastData.exits[Number(exit.dataset.exit)]; showPlayers({exit: item.label}, item.label === '__start__' ? `Players who stopped right after “${startName()}”` : `Players who stopped after “${item.label}”`); }
+  });
+
+  async function showPlayers(target, title) {
+    const wrap = $('#routes-players-wrap'); wrap.hidden = false;
+    $('#routes-players-title').textContent = title; $('#routes-players-note').textContent = ''; $('#routes-players').innerHTML = '<p class="help">Loading players…</p>';
+    wrap.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    try {
+      const data = await api(`${gameURL(game)}/insights/routes/players`, {method: 'POST', body: JSON.stringify({...lastBody, target})});
+      $('#routes-players-note').textContent = `${number(data.total)} player${data.total === 1 ? '' : 's'}${data.total > data.players.length ? ` · showing the latest ${number(data.players.length)}` : ''} · open one to see everything they did`;
+      $('#routes-players').innerHTML = data.players.length ? `<div class="table-wrap"><table><thead><tr><th>Player</th><th>Outcome</th><th>Route</th><th>Last event</th></tr></thead><tbody>${data.players.map(item => `<tr><td><a class="mono" href="${gamePath(game, 'players')}?${new URLSearchParams({player: item.player})}">${escapeHTML(shortId(item.player))}</a></td><td>${outcome(item.status)}</td><td class="route-cell">${route({path: item.route, details: item.details})}</td><td class="small muted">${displayDate(item.last_seen)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="help">Nobody.</p>';
+      $('#routes-players-csv').onclick = () => downloadCSV(`${game.name}-route-players.csv`, [['player', 'outcome', 'route', 'last_event'], ...data.players.map(item => [item.player, item.status, item.route.join(' > '), item.last_seen])]);
+    } catch (error) { $('#routes-players').innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
+  }
+
+  async function run() {
+    active = true;
+    const ticket = ++latest;
+    const steps = hooks.steps();
+    if (steps.length < 2) { $('#routes-views').hidden = true; $('#routes-intro').hidden = false; $('#routes-intro').textContent = 'Add at least two steps to your funnel first.'; return; }
+    $('#routes-intro').hidden = false; $('#routes-intro').textContent = 'Following players…'; $('#routes-players-wrap').hidden = true;
+    try {
+      lastBody = body();
+      const data = await api(`${gameURL(game)}/insights/routes`, {method: 'POST', body: JSON.stringify(lastBody)});
+      if (ticket !== latest) return;
+      $('#routes-summary').innerHTML = data.started ? stats([['Started', number(data.started), `did “${escapeHTML(stepName(steps[state.from - 1], state.from - 1))}”`], ['Reached the end', number(data.reached), percent(100 * data.reached / data.started)], ['Stopped', number(data.stopped), percent(100 * data.stopped / data.started)], ['Kept going', number(data.continued), `beyond ${state.depth} steps`], ['Different routes', number(data.distinct_routes), '']]) : '';
+      if (!data.started) { $('#routes-views').hidden = true; $('#routes-intro').hidden = false; $('#routes-intro').textContent = 'Nobody did the start step with these days and filters.'; return; }
+      lastData = data; outcomeFilter = 'all'; shown = 15;
+      $('#routes-intro').hidden = true; $('#routes-views').hidden = false;
+      drawViews();
+    } catch (error) { if (ticket === latest) { $('#routes-views').hidden = true; $('#routes-intro').hidden = false; $('#routes-intro').innerHTML = `<span class="error">${escapeHTML(error.message)}</span>`; } }
+  }
+  $('#routes-run').addEventListener('click', run);
+  drawControls();
+  return {run, redraw: drawControls, refresh() { drawControls(); if (active) run(); }};
 }
 
 /* ─── Players and journeys ─── */

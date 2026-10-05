@@ -561,6 +561,57 @@ def test_delete_dictionary_definition(backend):
     assert admin.get(f"/v1/games/{game['id']}/dictionary").json() == {}
 
 
+def test_dictionary_discovery(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    url = f"/v1/games/{game['id']}/dictionary"
+    empty = admin.get(f"{url}/discovery").json()
+    assert empty["missing"] == [] and empty["events_seen"] == 0
+    send(
+        ingest,
+        game,
+        [
+            event(params={"level": 3, "mode": "easy", "won": 1, "seq": 1}),
+            event(params={"level": 12, "mode": "hard", "won": "yes"}),
+            event(name="shop_open", params={}),
+            event(name="session_start", params={"environment": "production"}),
+        ],
+    )
+    found = admin.get(f"{url}/discovery").json()
+    assert found["events_seen"] == 3
+    # SDK events are never reported; the busiest undocumented event comes first
+    assert [item["name"] for item in found["missing"]] == ["level_complete", "shop_open"]
+    level = found["missing"][0]
+    assert level["count"] == 2 and not level["defined"] and level["description"] == ""
+    params = {param["key"]: param for param in level["params"]}
+    assert set(params) == {"level", "mode", "won"}  # seq is SDK bookkeeping
+    assert params["level"]["types"] == ["number"] and params["level"]["examples"] == ["3", "12"]
+    assert sorted(params["won"]["types"]) == ["number", "string"]  # a param that changed type
+    assert sorted(params["won"]["examples"]) == ["1", "yes"]
+    assert found["activity"] == {} and found["stale"] == []
+
+    # Describing the event and some parameters leaves only the rest
+    admin.put(
+        f"{url}/level_complete",
+        json={"description": "Done", "params": {"level": "One-based level number"}},
+    )
+    admin.put(f"{url}/shop_open", json={"description": "Opened the shop"})
+    found = admin.get(f"{url}/discovery").json()
+    assert [item["name"] for item in found["missing"]] == ["level_complete"]
+    assert found["missing"][0]["defined"] and found["missing"][0]["description"] == "Done"
+    assert {param["key"] for param in found["missing"][0]["params"]} == {"mode", "won"}
+    assert found["activity"]["level_complete"]["count"] == 2
+
+    # Once everything is described, only a defined event the game never sends is reported
+    admin.put(
+        f"{url}/level_complete",
+        json={"description": "Done", "params": {"level": "l", "mode": "m", "won": "w"}},
+    )
+    admin.put(f"{url}/removed_event", json={"description": "Gone"})
+    found = admin.get(f"{url}/discovery").json()
+    assert found["missing"] == [] and found["stale"] == ["removed_event"]
+
+
 def test_schema_migrates_v1_registry(tmp_path):
     import sqlite3
 
@@ -1173,3 +1224,198 @@ def test_lan_and_token_access(tmp_path):
     )
     with TestClient(create_app(off, admin=True, access_keys={}), client=("192.168.1.50", 1)) as lan:
         assert lan.get("/v1/me").status_code == 401
+
+
+def _route_game(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    flows = {
+        "p1": ["first_open", "tutorial_start", "tutorial_complete", "level_start"],
+        "p2": ["first_open", "settings_open", "ad_view", "ad_view", "session_end"],
+        "p3": ["first_open", "tutorial_start", "tutorial_start", "level_start"],
+        "p4": ["first_open"],
+    }
+    events = []
+    for device, names in flows.items():
+        for index, name in enumerate(names):
+            events.append(
+                event(
+                    name=name,
+                    device_id=device,
+                    session_id=f"s-{device}",
+                    client_ts=f"2026-10-04T10:{index:02d}:00Z",
+                    params={"level": 1} if name == "level_start" else {},
+                )
+            )
+    assert send(ingest, game, events).status_code == 200
+    return admin, game
+
+
+def _routes_query(**extra):
+    return {
+        "steps": [{"event": "first_open"}, {"event": "level_start"}],
+        "start": "2026-10-04",
+        "end": "2026-10-04",
+        **extra,
+    }
+
+
+def test_routes_graph_and_top_routes(backend):
+    admin, game = _route_game(backend)
+    data = admin.post(f"/v1/games/{game['id']}/insights/routes", json=_routes_query()).json()
+    assert (data["started"], data["reached"], data["stopped"]) == (4, 2, 2)
+    by_id = {node["id"]: node for node in data["nodes"]}
+    assert by_id["start:0:"]["players"] == 4
+    assert by_id["event:1:tutorial_start"]["players"] == 2
+    assert by_id["event:1:settings_open"]["players"] == 1
+    # repeated events collapse: p3's two tutorial_starts count once
+    assert by_id["event:2:tutorial_complete"]["players"] == 1
+    assert by_id["reached:2:"]["players"] == 1 and by_id["reached:3:"]["players"] == 1
+    links = {(link["source"], link["target"]): link["players"] for link in data["links"]}
+    assert links[("start:0:", "event:1:tutorial_start")] == 2
+    assert links[("start:0:", "stopped:1:")] == 1  # p4 stopped right after first_open
+    top = {
+        tuple(route["path"]) + (route["status"],): route["players"] for route in data["top_routes"]
+    }
+    assert top[("tutorial_start", "reached")] == 1
+    assert top[("settings_open", "ad_view", "session_end", "stopped")] == 1
+
+    no_collapse = admin.post(
+        f"/v1/games/{game['id']}/insights/routes", json=_routes_query(collapse=False)
+    ).json()
+    assert any(r["path"] == ["tutorial_start", "tutorial_start"] for r in no_collapse["top_routes"])
+
+    ignored = admin.post(
+        f"/v1/games/{game['id']}/insights/routes", json=_routes_query(ignore=["ad_view"])
+    ).json()
+    assert any(r["path"] == ["settings_open", "session_end"] for r in ignored["top_routes"])
+
+
+def test_routes_players_drilldown_split_and_validation(backend):
+    admin, game = _route_game(backend)
+    url = f"/v1/games/{game['id']}/insights/routes/players"
+    node = admin.post(url, json={**_routes_query(), "target": {"node": "event:1:tutorial_start"}})
+    assert sorted(p["player"] for p in node.json()["players"]) == ["p1", "p3"]
+    link = admin.post(
+        url,
+        json={
+            **_routes_query(),
+            "target": {"link": ["event:1:settings_open", "event:2:ad_view"]},
+        },
+    ).json()
+    assert [p["player"] for p in link["players"]] == ["p2"]
+    route = admin.post(
+        url,
+        json={**_routes_query(), "target": {"route": ["tutorial_start"], "status": "reached"}},
+    ).json()
+    assert [p["player"] for p in route["players"]] == ["p3"]
+
+    split = admin.post(
+        f"/v1/games/{game['id']}/insights/routes",
+        json=_routes_query(
+            steps=[{"event": "first_open"}, {"event": "session_end"}],
+            split=[{"event": "tutorial_start", "param": "level"}],
+        ),
+    ).json()
+    assert split["started"] == 4 and split["reached"] == 1
+
+    bad = admin.post(
+        f"/v1/games/{game['id']}/insights/routes", json=_routes_query(route_from=2, route_to=2)
+    )
+    assert bad.status_code == 422 or bad.status_code == 400
+    depth = admin.post(
+        f"/v1/games/{game['id']}/insights/routes",
+        json=_routes_query(max_depth=1, steps=[{"event": "first_open"}, {"event": "level_start"}]),
+    ).json()
+    assert depth["continued"] >= 1
+
+
+def test_routes_exits_where_players_stop(backend):
+    admin, game = _route_game(backend)
+    data = admin.post(f"/v1/games/{game['id']}/insights/routes", json=_routes_query()).json()
+    exits = {item["label"]: item for item in data["exits"]}
+    assert exits["__start__"]["players"] == 1  # p4 never did anything after first_open
+    assert exits["session_end"]["players"] == 1  # p2 ended on session_end
+    assert (
+        exits["session_end"]["percent"] == 25.0
+        and exits["session_end"]["percent_of_stopped"] == 50.0
+    )
+    url = f"/v1/games/{game['id']}/insights/routes/players"
+    who = admin.post(url, json={**_routes_query(), "target": {"exit": "session_end"}}).json()
+    assert [p["player"] for p in who["players"]] == ["p2"]
+    direct = admin.post(url, json={**_routes_query(), "target": {"exit": "__start__"}}).json()
+    assert [p["player"] for p in direct["players"]] == ["p4"]
+
+
+def test_routes_show_parameter_values_per_step(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    events = []
+    for device, level in (("a", 3), ("b", 3), ("c", 5)):
+        for index, (name, params) in enumerate(
+            [
+                ("first_open", {}),
+                ("LEVEL_ANALYSIS", {"Started": level, "TIME": 100 + ord(device) + level * 7}),
+                ("done", {}),
+            ]
+        ):
+            events.append(
+                event(
+                    name=name,
+                    device_id=device,
+                    session_id=f"s-{device}",
+                    client_ts=f"2026-10-04T10:{index:02d}:00Z",
+                    params=params,
+                )
+            )
+    assert send(ingest, game, events).status_code == 200
+    base = {
+        "steps": [{"event": "first_open"}, {"event": "done"}],
+        "start": "2026-10-04",
+        "end": "2026-10-04",
+    }
+    url = f"/v1/games/{game['id']}/insights/routes"
+    data = admin.post(url, json=base).json()
+    (route_,) = data["top_routes"]
+    assert route_["path"] == ["LEVEL_ANALYSIS"]  # grouped by event, not by level
+    assert route_["values"] == [
+        [{"text": "Started=3", "players": 2}, {"text": "Started=5", "players": 1}]
+    ]
+    node = next(n for n in data["nodes"] if n["label"] == "LEVEL_ANALYSIS")
+    assert node["values"][0] == {"text": "Started=3", "players": 2}
+    # TIME is skipped automatically; Started is on
+    listed = {
+        p["key"]: p["on"]
+        for e in data["detail_params"]
+        if e["event"] == "LEVEL_ANALYSIS"
+        for p in e["params"]
+    }
+    assert listed == {"Started": True, "TIME": False}
+
+    included = admin.post(
+        url, json={**base, "detail_include": [{"event": "LEVEL_ANALYSIS", "param": "TIME"}]}
+    ).json()
+    assert "TIME=" in included["top_routes"][0]["values"][0][0]["text"]
+    excluded = admin.post(
+        url, json={**base, "detail_exclude": [{"event": "LEVEL_ANALYSIS", "param": "Started"}]}
+    ).json()
+    assert excluded["top_routes"][0]["values"] == [[]]
+    off = admin.post(url, json={**base, "details": "off"}).json()
+    assert off["top_routes"][0]["values"] == [[]]
+
+    split = admin.post(
+        url, json={**base, "split": [{"event": "LEVEL_ANALYSIS", "param": "Started"}]}
+    ).json()
+    assert {tuple(r["path"]): r["players"] for r in split["top_routes"]} == {
+        ("LEVEL_ANALYSIS · Started=3",): 2,
+        ("LEVEL_ANALYSIS · Started=5",): 1,
+    }
+    who = admin.post(
+        f"{url}/players",
+        json={**base, "target": {"route": ["LEVEL_ANALYSIS"], "status": "reached"}},
+    ).json()
+    assert sorted(p["details"][0] for p in who["players"]) == [
+        "Started=3",
+        "Started=3",
+        "Started=5",
+    ]

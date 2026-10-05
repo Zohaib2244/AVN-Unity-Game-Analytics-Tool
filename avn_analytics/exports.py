@@ -14,7 +14,7 @@ from .models import timestamp
 
 SKILL = Path(__file__).parent / "skill" / "SKILL.md"
 # Sent automatically by the Unity SDK and documented in the skill itself.
-SDK_EVENTS = {"first_open", "session_start", "session_end"}
+SDK_EVENTS = insights.SDK_EVENTS
 
 
 def skill_body():

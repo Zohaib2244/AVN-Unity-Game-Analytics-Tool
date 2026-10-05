@@ -206,6 +206,50 @@ class FunnelQuery(FunnelDefinition):
     filters: Filters = Filters()
 
 
+class RouteSplit(StrictModel):
+    """Show an event as 'event · param=value' in routes, e.g. level_start split by level."""
+
+    event: Name
+    param: Annotated[str, Field(min_length=1, max_length=80)]
+
+
+class RouteTarget(StrictModel):
+    """What to list players for: everyone through a node, across a link, or on one whole route."""
+
+    node: Annotated[str, Field(max_length=300)] | None = None
+    link: (
+        Annotated[list[Annotated[str, Field(max_length=300)]], Field(min_length=2, max_length=2)]
+        | None
+    ) = None
+    route: Annotated[list[Annotated[str, Field(max_length=200)]], Field(max_length=20)] | None = (
+        None
+    )
+    status: Literal["reached", "stopped", "continued"] | None = None
+    exit: Annotated[str, Field(max_length=200)] | None = None  # last event before stopping
+
+
+class RoutesQuery(FunnelDefinition):
+    """Routes players took between two steps of a funnel (default: first to last)."""
+
+    start: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    end: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    filters: Filters = Filters()
+    route_from: Annotated[int, Field(ge=1, le=20)] = 1
+    route_to: Annotated[int, Field(ge=2, le=20)] | None = None
+    ignore: list[Name] = Field(default_factory=list, max_length=50)
+    split: list[RouteSplit] = Field(default_factory=list, max_length=10)
+    max_depth: Annotated[int, Field(ge=1, le=10)] = 6
+    per_layer: Annotated[int, Field(ge=3, le=15)] = 7
+    collapse: bool = True
+    details: Literal["auto", "off"] = "auto"
+    detail_include: list[RouteSplit] = Field(default_factory=list, max_length=60)
+    detail_exclude: list[RouteSplit] = Field(default_factory=list, max_length=60)
+
+
+class RoutePlayersQuery(RoutesQuery):
+    target: RouteTarget
+
+
 class SavedFunnel(FunnelDefinition):
     name: Annotated[str, Field(min_length=1, max_length=80)]
 
