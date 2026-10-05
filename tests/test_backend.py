@@ -108,7 +108,7 @@ def test_rejects_unpatched_sqlite(tmp_path, monkeypatch):
             pass
 
 
-def test_registration_uniqueness_and_hashed_keys(backend):
+def test_registration_uniqueness_and_key_storage(backend):
     admin, _, settings = backend
     game = register(admin)
     response = admin.post(
@@ -124,8 +124,10 @@ def test_registration_uniqueness_and_hashed_keys(backend):
     assert len(list((settings.data_dir / "games").glob("*.sqlite3"))) == 1
     connection = sqlite3.connect(settings.data_dir / "registry.sqlite3")
     try:
-        dump = "\n".join(connection.iterdump())
-        assert game["key"]["api_key"] not in dump
+        # Full keys are kept so the dashboard can copy them; auth still uses the hash.
+        stored = connection.execute("SELECT key_hash, api_key FROM api_keys").fetchone()
+        assert stored[0] != stored[1]
+        assert stored[1] == game["key"]["api_key"]
     finally:
         connection.close()
     assert game["key"]["api_key"] not in admin.get("/v1/games", headers=AUTH).text
@@ -151,7 +153,7 @@ def test_deduplication_isolation_and_export(backend):
     assert "level" in dictionary
 
 
-def test_key_rotation_and_revocation(backend):
+def test_key_rotation_and_deletion(backend):
     admin, ingest, _ = backend
     game = register(admin)
     response = admin.post(f"/v1/games/{game['id']}/keys", headers=AUTH, json={"label": "v2"})
@@ -161,10 +163,17 @@ def test_key_rotation_and_revocation(backend):
         admin.delete(f"/v1/games/{game['id']}/keys/{game['key']['id']}", headers=AUTH).status_code
         == 204
     )
+    assert (
+        admin.delete(f"/v1/games/{game['id']}/keys/{game['key']['id']}", headers=AUTH).status_code
+        == 404
+    )
+    remaining = admin.get(f"/v1/games/{game['id']}/keys", headers=AUTH).json()
+    assert [key["id"] for key in remaining] == [new_key["id"]]
     assert send(ingest, game, [event()]).status_code == 401
     assert send(ingest, {**game, "key": new_key}, [event()]).status_code == 200
     listing = admin.get(f"/v1/games/{game['id']}/keys", headers=AUTH)
-    assert "key_hash" not in listing.text and "api_key" not in listing.text
+    assert "key_hash" not in listing.text
+    assert listing.json()[0]["api_key"] == new_key["api_key"]
 
 
 @pytest.mark.parametrize(
@@ -612,3 +621,166 @@ def test_context_cannot_fill_gaps_it_does_not_cover(backend):
     assert ingest.post("/v1/events", headers=key, json=ok).status_code == 200
     unknown = {"context": {"device_id": "d", "country": "ZZ"}, "events": [bare]}
     assert ingest.post("/v1/events", headers=key, json=unknown).status_code == 400
+
+
+def test_insights_funnel_players_and_journey(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+
+    def level(device, status, number, minute, session="session-1", **extra):
+        return event(
+            name="LEVEL_ANALYSIS",
+            device_id=device,
+            session_id=session,
+            params={status: number, **extra},
+            client_ts=f"2026-10-04T09:{minute:02d}:00Z",
+        )
+
+    events = [
+        level("a", "Started", 1, 0),
+        level("a", "Completed", 1, 2, TIME=110),
+        level("a", "Started", 2, 3),
+        level("b", "Started", 1, 10, session="b-1"),
+        level("b", "Completed", 1, 14, session="b-2"),  # completed in a later session
+        level("c", "Completed", 1, 20),  # completed without a start: not in the funnel
+        level("d", "Started", 2, 30),  # out of order: never started level 1
+    ]
+    assert send(ingest, game, events).status_code == 200
+    base = f"/v1/games/{game['id']}/insights"
+    days = {"start": "2026-10-04", "end": "2026-10-04"}
+
+    catalog = admin.get(f"{base}/catalog", headers=AUTH, params=days).json()
+    [level_event] = catalog["events"]
+    assert level_event["name"] == "LEVEL_ANALYSIS" and level_event["count"] == 7
+    keys = {param["key"]: param for param in level_event["params"]}
+    assert set(keys) == {"Started", "Completed", "TIME"}
+    assert set(keys["Started"]["values"]) == {"1", "2"}
+
+    steps = [
+        {"event": "LEVEL_ANALYSIS", "param": "Started", "value": "1"},
+        {"event": "LEVEL_ANALYSIS", "param": "Completed", "value": "1"},
+        {"event": "LEVEL_ANALYSIS", "param": "Started", "value": "2"},
+    ]
+
+    def run(**options):
+        response = admin.post(
+            f"{base}/funnel", headers=AUTH, json={**days, "steps": steps, **options}
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    result = run()
+    assert [step["players"] for step in result["steps"]] == [2, 2, 1]
+    timing = result["steps"][1]["time_from_previous"]
+    assert timing["median"] == 180.0 and timing["average"] == 180.0 and timing["count"] == 2
+    assert result["steps"][2]["of_first"] == 50.0 and result["steps"][2]["of_previous"] == 50.0
+    assert result["steps"][1]["dropped"] == 1
+    assert result["steps"][1]["dropped_sample"][0]["player"] == "b"
+    assert result["time_to_complete"]["median"] == 180.0
+
+    assert [step["players"] for step in run(window_hours=0.04)["steps"]] == [2, 1, 0]
+    assert [step["players"] for step in run(scope="session")["steps"]] == [2, 1, 1]
+    numeric = [
+        {"event": "LEVEL_ANALYSIS", "param": "Started", "op": "gte", "value": "1"},
+        {"event": "LEVEL_ANALYSIS", "param": "TIME", "op": "lt", "value": "200"},
+    ]
+    response = admin.post(f"{base}/funnel", headers=AUTH, json={**days, "steps": numeric})
+    assert [step["players"] for step in response.json()["steps"]] == [3, 1]
+    broken = run(breakdown="environment")
+    assert broken["segments"] == [{"value": "unknown", "players": [2, 2, 1]}]
+
+    listing = admin.get(f"{base}/players", headers=AUTH, params=days).json()
+    assert listing["total"] == 4 and listing["players"][0]["player"] == "d"
+    assert (
+        admin.get(f"{base}/players", headers=AUTH, params={**days, "search": "b"}).json()["total"]
+        == 1
+    )
+
+    journey = admin.get(f"{base}/journey", headers=AUTH, params={**days, "player": "a"}).json()
+    assert [item["params"] for item in journey["events"]] == [
+        {"Started": 1},
+        {"Completed": 1, "TIME": 110},
+        {"Started": 2},
+    ]
+    other_day = {"start": "2026-10-05", "end": "2026-10-05", "player": "a"}
+    assert admin.get(f"{base}/journey", headers=AUTH, params=other_day).json()["events"] == []
+
+    saved = admin.post(f"{base}/funnels", headers=AUTH, json={"name": "Levels", "steps": steps})
+    assert saved.status_code == 201, saved.text
+    funnel_id = saved.json()["id"]
+    renamed = {"name": "Level 1-2", "steps": steps, "scope": "session"}
+    assert admin.put(f"{base}/funnels/{funnel_id}", headers=AUTH, json=renamed).status_code == 200
+    [stored] = admin.get(f"{base}/funnels", headers=AUTH).json()
+    assert (
+        stored["name"] == "Level 1-2" and stored["scope"] == "session" and len(stored["steps"]) == 3
+    )
+    assert admin.delete(f"{base}/funnels/{funnel_id}", headers=AUTH).status_code == 204
+    assert admin.get(f"{base}/funnels", headers=AUTH).json() == []
+
+
+def test_environment_filters(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    start = event(
+        name="session_start",
+        device_id="tester",
+        session_id="editor-session",
+        params={"environment": "Editor"},
+    )
+    later = event(name="level_complete", device_id="tester", session_id="editor-session")
+    assert send(ingest, game, [start]).status_code == 200
+    assert send(ingest, game, [later]).status_code == 200  # matched to its session later
+    batch = {
+        "context": {"environment": "production", "session_id": "real", "device_id": "player"},
+        "events": [
+            {key: value for key, value in event().items() if key not in ("session_id", "device_id")}
+        ],
+    }
+    response = ingest.post("/v1/events", headers={"X-API-Key": game["key"]["api_key"]}, json=batch)
+    assert response.status_code == 200, response.text
+
+    base = f"/v1/games/{game['id']}/insights"
+    days = {"start": "2026-10-04", "end": "2026-10-04"}
+    facets = admin.get(f"{base}/facets", headers=AUTH, params=days).json()
+    assert {item["value"]: item["events"] for item in facets["environment"]} == {
+        "editor": 2,
+        "production": 1,
+    }
+    real = admin.get(f"{base}/summary", headers=AUTH, params={**days, "not_env": "editor"}).json()
+    assert real["events"] == 1 and real["players"] == 1
+    everything = admin.get(f"{base}/summary", headers=AUTH, params=days).json()
+    assert everything["events"] == 3 and everything["players"] == 2 and everything["sessions"] == 2
+    assert {row["value"] for row in everything["breakdowns"]["environment"]} == {
+        "editor",
+        "production",
+    }
+    only_editor = admin.get(f"{base}/players", headers=AUTH, params={**days, "env": "editor"})
+    assert [row["player"] for row in only_editor.json()["players"]] == ["tester"]
+
+
+def test_export_and_health_filters(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    start = event(
+        name="session_start", device_id="tester", session_id="e1", params={"environment": "editor"}
+    )
+    real = [event(), event(name="level_start", device_id="tester", session_id="e1")]
+    assert send(ingest, game, [start, *real]).status_code == 200
+    params = {"date": "2026-10-04", "period": "day", "basis": "client_ts"}
+    everything = admin.get(f"/v1/games/{game['id']}/health", headers=AUTH, params=params)
+    assert everything.json()["total"] == 3
+    real_only = admin.get(
+        f"/v1/games/{game['id']}/health", headers=AUTH, params={**params, "not_env": "editor"}
+    )
+    assert real_only.json()["total"] == 1
+    full = export(admin, game)
+    filtered = admin.get(
+        f"/v1/games/{game['id']}/export", headers=AUTH, params={**params, "not_env": "editor"}
+    )
+    assert filtered.status_code == 200, filtered.text
+    with zipfile.ZipFile(io.BytesIO(filtered.content)) as archive:
+        lines = gzip.decompress(archive.read("events.jsonl.gz")).decode().splitlines()
+        manifest = json.loads(archive.read("manifest.json"))
+    assert len(lines) == 1 and manifest["event_count"] == 1
+    assert manifest["filters"] == {"exclude_environments": ["editor"]}
+    assert full.status_code == 200

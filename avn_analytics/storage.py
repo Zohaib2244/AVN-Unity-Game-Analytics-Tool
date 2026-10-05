@@ -8,8 +8,12 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from . import insights
 from .config import Settings
 from .models import Batch, EventDefinition, GameCreate, GameUpdate, timestamp
+
+# Normalizes a stored environment string (production, Editor, DEVELOPMENT...) to lower case.
+ENVIRONMENT_VALUE = "lower(substr(trim({column}), 1, 64))"
 
 
 class Storage:
@@ -78,6 +82,49 @@ class Storage:
                 if "archived_at" not in columns:
                     connection.execute("ALTER TABLE games ADD COLUMN archived_at TEXT")
                 connection.execute("PRAGMA user_version=2")
+            # Keys created from here on keep their full value so the dashboard can copy them again.
+            # Older keys only have a hash and stay uncopyable. Added without bumping user_version.
+            key_columns = {row["name"] for row in connection.execute("PRAGMA table_info(api_keys)")}
+            if "api_key" not in key_columns:
+                connection.execute("ALTER TABLE api_keys ADD COLUMN api_key TEXT")
+            game_ids = [row["id"] for row in connection.execute("SELECT id FROM games")]
+        for game_id in game_ids:
+            if self.game_path(game_id).exists():
+                with self.connect(self.game_path(game_id)) as database:
+                    self.upgrade_game_database(database)
+
+    def upgrade_game_database(self, connection):
+        """Tables added after v1, created on demand so existing game databases keep working.
+
+        sessions: the environment (production, editor, development...) of each session, taken
+        from the batch's `environment` or from session_start's `environment` param, so every event
+        of a session can be filtered without the SDK repeating it. funnels: saved funnel steps.
+        """
+        connection.executescript("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                environment TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS funnels (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                definition TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+        """)
+        if connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0:
+            declared = ENVIRONMENT_VALUE.format(
+                column="json_extract(payload, '$.params.environment')"
+            )
+            connection.execute(f"""
+                INSERT OR IGNORE INTO sessions
+                SELECT json_extract(payload, '$.session_id'),
+                       {declared}
+                FROM events
+                WHERE name='session_start' AND json_extract(payload, '$.session_id') IS NOT NULL
+                  AND json_type(payload, '$.params.environment')='text'
+                ORDER BY client_ts
+            """)
 
     def game_path(self, game_id):
         return self.root / "games" / f"{game_id}.sqlite3"
@@ -110,6 +157,7 @@ class Storage:
                     );
                     PRAGMA user_version=1;
                 """)
+                self.upgrade_game_database(database)
             registry.execute(
                 "INSERT INTO games (id, name, bundle_id, platform, notes, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
@@ -219,8 +267,8 @@ class Storage:
         key_id = str(uuid4())
         created_at = timestamp()
         connection.execute(
-            """INSERT INTO api_keys (id, game_id, key_hash, prefix, label, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO api_keys (id, game_id, key_hash, prefix, label, created_at, api_key)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 key_id,
                 game_id,
@@ -228,6 +276,7 @@ class Storage:
                 raw_key[:12],
                 label,
                 created_at,
+                raw_key,
             ),
         )
         return {"id": key_id, "api_key": raw_key, "label": label, "created_at": created_at}
@@ -243,17 +292,17 @@ class Storage:
             return [
                 dict(row)
                 for row in connection.execute(
-                    "SELECT id, prefix, label, created_at, revoked_at "
+                    "SELECT id, prefix, label, created_at, revoked_at, api_key "
                     "FROM api_keys WHERE game_id=?",
                     (game_id,),
                 )
             ]
 
-    def revoke_key(self, game_id, key_id):
+    def delete_key(self, game_id, key_id):
+        # Events are stored per game, not per key, so deleting a key never touches collected data.
         with self.connect(self.root / "registry.sqlite3") as connection:
             result = connection.execute(
-                "UPDATE api_keys SET revoked_at=COALESCE(revoked_at, ?) WHERE id=? AND game_id=?",
-                (timestamp(), key_id, game_id),
+                "DELETE FROM api_keys WHERE id=? AND game_id=?", (key_id, game_id)
             )
             if result.rowcount == 0:
                 raise HTTPException(404, "Key not found")
@@ -308,12 +357,24 @@ class Storage:
                     json.dumps(payload, ensure_ascii=True, allow_nan=False),
                 )
             )
+        environments = {}
+        for event in batch.resolved:
+            declared = event.environment
+            if event.name == "session_start" and isinstance(event.params.get("environment"), str):
+                declared = declared or event.params["environment"]
+            if declared and event.session_id:
+                environments[event.session_id] = declared.strip().lower()[:64]
         with self.connect(self.game_path(game_id)) as connection:
             connection.executemany(
                 "INSERT INTO events VALUES (?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING",
                 rows,
             )
             accepted = connection.total_changes
+            connection.executemany(
+                "INSERT INTO sessions VALUES (?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET environment=excluded.environment",
+                environments.items(),
+            )
         return {"accepted": accepted, "duplicates": len(rows) - accepted, "server_ts": server_ts}
 
     def set_definition(self, game_id, name, definition: EventDefinition):
@@ -339,17 +400,18 @@ class Storage:
                 for row in connection.execute("SELECT * FROM dictionary ORDER BY name")
             }
 
-    def health(self, game_id, start, end, basis="server_ts"):
+    def health(self, game_id, start, end, basis="server_ts", filters=None):
         if basis not in ("server_ts", "client_ts"):
             raise ValueError("Invalid timestamp basis")
         self.get_game(game_id)
+        condition, args = insights.where(start, end, filters, column=basis)
         with self.connect(self.game_path(game_id)) as connection:
             days = [
                 dict(row)
                 for row in connection.execute(
                     f"""SELECT substr({basis}, 1, 10) AS day, count(*) AS events
-                   FROM events WHERE {basis}>=? AND {basis}<? GROUP BY day ORDER BY day""",
-                    (start, end),
+                   FROM events WHERE {condition} GROUP BY day ORDER BY day""",
+                    args,
                 )
             ]
         return {

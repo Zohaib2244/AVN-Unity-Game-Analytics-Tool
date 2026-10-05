@@ -1,5 +1,6 @@
 import math
 from datetime import UTC, datetime
+from datetime import date as datetime_date
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -73,6 +74,9 @@ class EventContext(StrictModel):
     app_version: Context | None = None
     build: Context | None = None
     platform: Context | None = None
+    environment: Context | None = (
+        None  # production, development, editor...: lets dashboards hide test data
+    )
 
 
 class EventIn(EventBase, EventContext):
@@ -88,6 +92,7 @@ class Event(EventBase):
     app_version: Context
     build: Context
     platform: Context
+    environment: Context | None = None
 
     @model_validator(mode="after")
     def require_identity(self):
@@ -163,3 +168,42 @@ class EventDefinition(StrictModel):
         ):
             raise ValueError("Invalid parameter name or description length")
         return params
+
+
+FilterValues = Annotated[list[Annotated[str, Field(max_length=128)]], Field(max_length=100)]
+
+
+class Filters(StrictModel):
+    """Narrows dashboard queries; an empty list means no restriction."""
+
+    environments: FilterValues = []
+    exclude_environments: FilterValues = []
+    app_versions: FilterValues = []
+    builds: FilterValues = []
+    countries: FilterValues = []
+    platforms: FilterValues = []
+
+
+class FunnelStep(StrictModel):
+    event: Name
+    param: Annotated[str, Field(max_length=80)] = ""
+    op: Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"] = "eq"
+    value: Annotated[str, Field(max_length=200)] = ""
+    label: Annotated[str, Field(max_length=80)] = ""
+
+
+class FunnelDefinition(StrictModel):
+    steps: list[FunnelStep] = Field(min_length=2, max_length=20)
+    window_hours: Annotated[float, Field(gt=0, le=24 * 366)] | None = None
+    scope: Literal["player", "session"] = "player"
+
+
+class FunnelQuery(FunnelDefinition):
+    start: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    end: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    breakdown: Literal["environment", "app_version", "build", "country", "platform"] | None = None
+    filters: Filters = Filters()
+
+
+class SavedFunnel(FunnelDefinition):
+    name: Annotated[str, Field(min_length=1, max_length=80)]

@@ -10,17 +10,22 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import Field
 from starlette.background import BackgroundTask
 
+from . import insights
 from .config import Settings
 from .exports import build_export, period_bounds
 from .models import (
     Batch,
     EventDefinition,
+    Filters,
+    FunnelQuery,
     GameCreate,
     GameUpdate,
     KeyCreate,
     Name,
+    SavedFunnel,
     normalize_country,
     timestamp,
 )
@@ -209,7 +214,8 @@ def create_app(settings: Settings, *, admin: bool = False):
         return storage.delete_game(str(game_id), confirm)
 
     @admin_api.get("/v1/games/{game_id}/keys")
-    def list_keys(game_id: UUID):
+    def list_keys(game_id: UUID, response: Response):
+        response.headers["Cache-Control"] = "no-store"
         return storage.list_keys(str(game_id))
 
     @admin_api.post("/v1/games/{game_id}/keys", status_code=201)
@@ -218,8 +224,8 @@ def create_app(settings: Settings, *, admin: bool = False):
         return storage.create_key(str(game_id), key.label)
 
     @admin_api.delete("/v1/games/{game_id}/keys/{key_id}", status_code=204)
-    def revoke_key(game_id: UUID, key_id: UUID):
-        storage.revoke_key(str(game_id), str(key_id))
+    def delete_key(game_id: UUID, key_id: UUID):
+        storage.delete_key(str(game_id), str(key_id))
 
     @admin_api.put("/v1/games/{game_id}/dictionary/{name}")
     def set_definition(game_id: UUID, name: Name, definition: EventDefinition):
@@ -234,9 +240,35 @@ def create_app(settings: Settings, *, admin: bool = False):
     def get_dictionary(game_id: UUID):
         return storage.get_dictionary(str(game_id))
 
+    DateParam = Annotated[date, Query(ge=date(1970, 1, 1), le=date(9998, 12, 31))]
+    Values = Annotated[list[Annotated[str, Field(max_length=128)]], Query(max_length=100)]
+
+    def day_range(start, end):
+        return bounds("custom", start, end)
+
+    def filters(
+        env: Values = None,
+        not_env: Values = None,
+        version: Values = None,
+        build: Values = None,
+        country: Values = None,
+        platform: Values = None,
+    ):
+        return Filters(
+            environments=env or [],
+            exclude_environments=not_env or [],
+            app_versions=version or [],
+            builds=build or [],
+            countries=country or [],
+            platforms=platform or [],
+        ).model_dump()
+
+    Filtered = Annotated[dict, Depends(filters)]
+
     @admin_api.get("/v1/games/{game_id}/health")
     def game_health(
         game_id: UUID,
+        chosen: Filtered,
         selected_date: Annotated[
             date, Query(alias="date", ge=date(1970, 1, 1), le=date(9998, 12, 31))
         ],
@@ -245,11 +277,12 @@ def create_app(settings: Settings, *, admin: bool = False):
         basis: Literal["server_ts", "client_ts"] = "server_ts",
     ):
         start, end = bounds(period, selected_date, end_date)
-        return storage.health(str(game_id), start, end, basis)
+        return storage.health(str(game_id), start, end, basis, chosen)
 
     @admin_api.get("/v1/games/{game_id}/export")
     def export(
         game_id: UUID,
+        chosen: Filtered,
         selected_date: Annotated[
             date, Query(alias="date", ge=date(1970, 1, 1), le=date(9998, 12, 31))
         ],
@@ -261,7 +294,9 @@ def create_app(settings: Settings, *, admin: bool = False):
         if not export_slot.acquire(blocking=False):
             raise HTTPException(429, "An export is already running", headers={"Retry-After": "10"})
         try:
-            output = build_export(storage, str(game_id), period, selected_date, basis, end_date)
+            output = build_export(
+                storage, str(game_id), period, selected_date, basis, end_date, chosen
+            )
         finally:
             export_slot.release()
         return FileResponse(
@@ -273,6 +308,62 @@ def create_app(settings: Settings, *, admin: bool = False):
             headers={"Cache-Control": "no-store"},
             background=BackgroundTask(output.unlink, missing_ok=True),
         )
+
+    @admin_api.get("/v1/games/{game_id}/insights/facets")
+    def insights_facets(game_id: UUID, start: DateParam, end: DateParam):
+        return insights.facets(storage, str(game_id), *day_range(start, end))
+
+    @admin_api.get("/v1/games/{game_id}/insights/summary")
+    def insights_summary(game_id: UUID, start: DateParam, end: DateParam, chosen: Filtered):
+        return insights.summary(storage, str(game_id), *day_range(start, end), chosen)
+
+    @admin_api.get("/v1/games/{game_id}/insights/catalog")
+    def insights_catalog(game_id: UUID, start: DateParam, end: DateParam, chosen: Filtered):
+        return insights.catalog(storage, str(game_id), *day_range(start, end), chosen)
+
+    @admin_api.post("/v1/games/{game_id}/insights/funnel")
+    def insights_funnel(game_id: UUID, query: FunnelQuery):
+        return insights.funnel(
+            storage, str(game_id), *day_range(query.start, query.end), query.model_dump()
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/players")
+    def insights_players(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        search: Annotated[str, Query(max_length=128)] = "",
+        offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+    ):
+        return insights.players(
+            storage, str(game_id), *day_range(start, end), chosen, search=search, offset=offset
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/journey")
+    def insights_journey(
+        game_id: UUID,
+        player: Annotated[str, Query(min_length=1, max_length=128)],
+        start: DateParam,
+        end: DateParam,
+    ):
+        return insights.journey(storage, str(game_id), player, *day_range(start, end))
+
+    @admin_api.get("/v1/games/{game_id}/insights/funnels")
+    def list_funnels(game_id: UUID):
+        return insights.saved_funnels(storage, str(game_id))
+
+    @admin_api.post("/v1/games/{game_id}/insights/funnels", status_code=201)
+    def create_funnel(game_id: UUID, saved: SavedFunnel):
+        return insights.save_funnel(storage, str(game_id), None, saved.model_dump())
+
+    @admin_api.put("/v1/games/{game_id}/insights/funnels/{funnel_id}")
+    def update_funnel(game_id: UUID, funnel_id: UUID, saved: SavedFunnel):
+        return insights.save_funnel(storage, str(game_id), str(funnel_id), saved.model_dump())
+
+    @admin_api.delete("/v1/games/{game_id}/insights/funnels/{funnel_id}", status_code=204)
+    def delete_funnel(game_id: UUID, funnel_id: UUID):
+        insights.delete_funnel(storage, str(game_id), str(funnel_id))
 
     app.include_router(admin_api)
     return app

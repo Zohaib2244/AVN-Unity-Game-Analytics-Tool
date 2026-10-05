@@ -57,9 +57,12 @@ def add_website(app):
         "/games",
         "/games/new",
         "/games/{game_id}",
+        "/games/{game_id}/{section}",
         "/keys",
         "/exports",
         "/dictionary",
+        "/funnels",
+        "/players",
         "/status",
         "/settings",
     ):
