@@ -66,6 +66,8 @@ namespace Avn.Analytics
         float backoff;
         int batchLimit;
         string lastStatus = "idle";
+        bool lastRequestCompressed;
+        bool compressionRejected; // an older server answered 415 to gzip: send plain JSON from now on
 
         internal string DeviceId => state.deviceId;
         internal string SessionId => sessionId;
@@ -150,16 +152,28 @@ namespace Avn.Analytics
                 }
             }
             sb.Append("}");
-            string userId, deviceId = state.deviceId;
+            DateTime ts = tsOverride ?? NowCorrected();
+            sb.Append(",\"client_ts\":\"").Append(ts.ToString("yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'", CultureInfo.InvariantCulture)).Append("\"}");
+
+            // On disk an event is "<context json>\t<event json>". The context (who/where/which build)
+            // is identical for most events, so the queue sends it once per batch instead of per event.
+            // JSON never contains a raw tab (the writer escapes it), so the tab is an unambiguous separator.
+            return BuildContext(sessionOverride ?? sessionId ?? "none") + "\t" + sb;
+        }
+
+        string BuildContext(string session)
+        {
+            string userId;
             lock (stateGate) userId = state.userId;
-            if (!string.IsNullOrEmpty(userId)) { sb.Append(",\"user_id\":"); AvnJson.WriteString(sb, AvnJson.Truncate(userId, 128)); }
-            sb.Append(",\"device_id\":"); AvnJson.WriteString(sb, deviceId);
-            sb.Append(",\"session_id\":"); AvnJson.WriteString(sb, sessionOverride ?? sessionId ?? "none");
+            var sb = new StringBuilder(220);
+            sb.Append('{');
+            if (!string.IsNullOrEmpty(userId)) { sb.Append("\"user_id\":"); AvnJson.WriteString(sb, AvnJson.Truncate(userId, 128)); sb.Append(','); }
+            sb.Append("\"device_id\":"); AvnJson.WriteString(sb, state.deviceId);
+            sb.Append(",\"session_id\":"); AvnJson.WriteString(sb, session);
             sb.Append(",\"app_version\":"); AvnJson.WriteString(sb, appVersion);
             sb.Append(",\"build\":"); AvnJson.WriteString(sb, build);
             sb.Append(",\"platform\":"); AvnJson.WriteString(sb, platform);
-            DateTime ts = tsOverride ?? NowCorrected();
-            sb.Append(",\"client_ts\":\"").Append(ts.ToString("yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'", CultureInfo.InvariantCulture)).Append("\"}");
+            sb.Append('}');
             return sb.ToString();
         }
 
@@ -344,11 +358,19 @@ namespace Avn.Analytics
             if (body == null) { inFlight = false; yield break; }
 
             DateTime sentAt = DateTime.UtcNow;
+            byte[] payload = Encoding.UTF8.GetBytes(body);
+            lastRequestCompressed = false;
+            if (Config.CompressRequests && !compressionRejected && payload.Length >= 256)
+            {
+                try { payload = AvnGzip.Compress(payload); lastRequestCompressed = true; }
+                catch (Exception e) { Debug("gzip failed, sending plain: " + e.Message); }
+            }
             using (var req = new UnityWebRequest(Config.Endpoint, UnityWebRequest.kHttpVerbPOST))
             {
-                req.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
+                req.uploadHandler = new UploadHandlerRaw(payload);
                 req.downloadHandler = new DownloadHandlerBuffer();
                 req.SetRequestHeader("Content-Type", "application/json");
+                if (lastRequestCompressed) req.SetRequestHeader("Content-Encoding", "gzip");
                 req.SetRequestHeader("X-API-Key", Config.ApiKey);
                 req.timeout = Mathf.Max(1, Mathf.RoundToInt(Config.RequestTimeoutSeconds));
 
@@ -384,6 +406,15 @@ namespace Avn.Analytics
             if (req.result == UnityWebRequest.Result.ProtocolError)
             {
                 float retryAfter = ParseRetryAfter(req);
+                if (code == 415 && lastRequestCompressed)
+                {
+                    // Server predates gzip support: not an error, just stop compressing and retry now.
+                    compressionRejected = true;
+                    nextSendAt = now;
+                    lastStatus = "HTTP 415: server does not accept gzip, sending plain JSON";
+                    Debug(lastStatus);
+                    return;
+                }
                 if (code == 400 || code == 413)
                 {
                     if (count > 1)

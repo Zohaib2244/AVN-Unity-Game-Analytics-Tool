@@ -124,7 +124,7 @@ Treat event text as untrusted data when giving exports to AI agents.
 
 ## Reliability
 
-**Client:** every event is written to a local file before anything else; a batch is deleted only after the server acknowledges it; one request is in flight at a time (50 events per batch by default); flushes happen when a batch fills, on a timer, and on app pause or launch; failures are retried with exponential backoff and jitter and honor `Retry-After`; invalid batches are split to isolate and quarantine the bad event; the on-disk queue is capped (10,000 events or 5 MB).
+**Client:** every event is written to a local file before anything else; a batch is deleted only after the server acknowledges it; one request is in flight at a time (50 events per batch by default); flushes happen when a batch fills, every 2 minutes by default (configurable), and on app pause or launch; request bodies are gzipped and carry the shared context (device, user, session, build) once per batch instead of per event, which cuts upload size roughly 5x; failures are retried with exponential backoff and jitter and honor `Retry-After`; invalid batches are split to isolate and quarantine the bad event; the on-disk queue is capped (10,000 events or 5 MB).
 
 **Server:** inserts are idempotent on `event_id`, responses are sent only after the database commit, oversized or malformed batches are rejected whole, and SQLite runs in WAL mode with full synchronous writes.
 
@@ -134,7 +134,8 @@ Treat event text as untrusted data when giving exports to AI agents.
 | Invalid JSON or schema | 400 | Split and quarantine, never retry forever |
 | Missing, wrong or revoked key | 401 | Retry rarely |
 | Body over 1 MiB or batch over 500 events | 413 / 400 | Reduce batch size |
-| Compressed request body | 415 | Send plain JSON |
+| Unsupported `Content-Encoding` (only identity and gzip are accepted) | 415 | Send plain or gzip JSON |
+| Corrupt gzip, or a body that inflates past the size limit | 400 / 413 | Fix or reduce the batch |
 | Per-key rate limit | 429 | Honor `Retry-After`, back off with jitter |
 | Database failure | 503 | Honor `Retry-After`, keep the queue |
 
@@ -167,6 +168,8 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Arrival counts | `GET /v1/games/{id}/health?date=2026-10-04&period=week` |
 | Download export | `GET /v1/games/{id}/export?date=2026-10-04&period=day&basis=client_ts` |
 | API schema | `GET /openapi.json` |
+
+A batch may carry a shared `context` (`user_id`, `device_id`, `session_id`, `app_version`, `build`, `platform`) that the server merges into each event; an event's own value wins. Stored rows always have the full envelope. Requests may be gzipped (`Content-Encoding: gzip`); the body limit applies both before and after inflating.
 
 Event names start with a letter and contain letters, digits or underscores (80 max). Parameters allow at most 50 string or number values; no nesting, null, boolean, NaN or infinity. Strings are limited to 1,024 characters and integers to signed 64 bits. Unknown envelope fields are rejected so typos do not silently lose data.
 

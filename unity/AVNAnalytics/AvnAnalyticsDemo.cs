@@ -12,8 +12,9 @@ namespace Avn.Analytics
         [SerializeField] string endpoint = "https://analytics.example.com/v1/events";
         [SerializeField] string apiKey = "";
         [SerializeField] bool debugLogging = true;
-        [Tooltip("Shorter than the default so you can watch it work.")]
-        [SerializeField] float flushIntervalSeconds = 10f;
+        [Tooltip("How often pending events are sent, in minutes. Use the Flush button to send immediately.")]
+        [Min(0.05f)]
+        [SerializeField] float flushIntervalMinutes = 2f;
 
         string goodEndpoint;
         bool offline;
@@ -27,7 +28,7 @@ namespace Avn.Analytics
                 Endpoint = endpoint,
                 ApiKey = apiKey,
                 DebugLogging = debugLogging,
-                FlushIntervalSeconds = flushIntervalSeconds,
+                FlushIntervalMinutes = flushIntervalMinutes,
             });
         }
 
