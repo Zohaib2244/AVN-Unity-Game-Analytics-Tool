@@ -194,7 +194,7 @@ When you upgrade from a version without dashboards, nothing needs migrating by h
 Skip this if you are the only user. To let a team in, with roles and per-game access (see the [README](README.md#team-access)):
 
 1. **Cloudflare Access:** in Zero Trust → Access → Applications, edit the application that protects the admin hostname. In its Allow policy, include *Emails ending in* your company domain (for example `@example.com`) and your own email. Leave the separate Bypass application for `POST /v1/events` as it is, so games can still send events.
-2. **Find two values:** the team domain (Zero Trust → Settings → Custom pages, shown as `<team>.cloudflareaccess.com`) and the application's **Application Audience (AUD) Tag** (Access → Applications → your app → Overview).
+2. **Find two values:** the team domain (Zero Trust → Settings → Custom pages, shown as `<team>.cloudflareaccess.com`) and the application's **Application Audience (AUD) Tag** (on the application's page under Access controls → Applications; the tab it lives on varies between dashboard versions, so look for the label).
 3. **Set them in `.env`:**
 
    ```bash
