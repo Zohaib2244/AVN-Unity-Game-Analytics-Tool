@@ -33,7 +33,7 @@ async function renderTeam() {
 
   document.querySelector('#add-person').addEventListener('click', () => {
     modal.innerHTML = `<form id="person-form"><h2 id="dialog-title">Add a person</h2><p>They sign in through Cloudflare with their work email; this list decides what they can do.</p>
-      <div class="field"><label for="person-email">Work email</label><input id="person-email" name="email" type="email" required placeholder="name@finz.io" autocomplete="off"></div>
+      <div class="field"><label for="person-email">Work email</label><input id="person-email" name="email" type="email" required placeholder="name@yourcompany.com" autocomplete="off"></div>
       <div class="field"><label for="person-name">Name (optional)</label><input id="person-name" name="name" maxlength="80"></div>
       <div class="field"><label for="person-role">Role</label><select id="person-role" name="role"><option value="member">Member: works with the games they’re given</option><option value="lead">Team lead: manages games and who sees them</option><option value="admin">Admin: everything, including this page</option></select></div>
       <div class="field" id="person-games"><label>Games they can see</label>${gameBoxes([])}</div>

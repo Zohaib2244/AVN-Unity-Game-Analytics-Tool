@@ -834,9 +834,9 @@ def test_game_icons(backend):
 
 # ---- team access: Cloudflare Access sign-in, roles, per-game access, LAN rule
 
-TEAM_DOMAIN = "finz.cloudflareaccess.com"
+TEAM_DOMAIN = "example.cloudflareaccess.com"
 AUDIENCE = "test-audience-tag"
-ADMIN_EMAIL = "boss@finz.io"
+ADMIN_EMAIL = "boss@example.com"
 
 
 @pytest.fixture
@@ -850,7 +850,7 @@ def team(tmp_path):
         access_team_domain=TEAM_DOMAIN,
         access_audience=AUDIENCE,
         admin_email=ADMIN_EMAIL,
-        allowed_email_domain="finz.io",
+        allowed_email_domain="example.com",
     )
     app = create_app(settings, admin=True, access_keys={"k1": private.public_key()})
 
@@ -882,7 +882,7 @@ def test_team_sign_in_and_roles(team):
     assert client.get("/v1/me", headers=boss).json()["role"] == "admin"
     # not signed in, and signed in but not invited
     assert client.get("/v1/me").status_code == 401
-    assert client.get("/v1/me", headers=as_user("stranger@finz.io")).status_code == 403
+    assert client.get("/v1/me", headers=as_user("stranger@example.com")).status_code == 403
     # token problems: wrong audience, expired, wrong signing key, no Cloudflare marker needed
     assert client.get("/v1/me", headers=as_user(ADMIN_EMAIL, audience="other")).status_code == 401
     assert client.get("/v1/me", headers=as_user(ADMIN_EMAIL, expires=-60)).status_code == 401
@@ -906,12 +906,12 @@ def test_team_sign_in_and_roles(team):
         json={"name": "Other", "bundle_id": "com.avn.other", "platform": "android"},
     ).json()
     add = lambda **body: client.post("/v1/team", headers=boss, json=body)  # noqa: E731
-    assert add(email="lead@finz.io", role="lead").status_code == 201
-    assert add(email="dev@finz.io", role="member", game_ids=[game["id"]]).status_code == 201
-    assert add(email="dev@finz.io", role="member").status_code == 409
+    assert add(email="lead@example.com", role="lead").status_code == 201
+    assert add(email="dev@example.com", role="member", game_ids=[game["id"]]).status_code == 201
+    assert add(email="dev@example.com", role="member").status_code == 409
     assert add(email="someone@gmail.com", role="member").status_code == 400  # wrong domain
 
-    lead, member = as_user("lead@finz.io"), as_user("dev@finz.io")
+    lead, member = as_user("lead@example.com"), as_user("dev@example.com")
     # everyone can see keys, edit dictionary and funnels, and export their games
     assert client.get(f"/v1/games/{game['id']}/keys", headers=member).status_code == 200
     definition = {"description": "d", "params": {}}
@@ -953,7 +953,7 @@ def test_team_sign_in_and_roles(team):
     # leads can manage games and give members access, but can't manage the team
     assert client.post("/v1/games", headers=lead, json=new_game).status_code == 201
     granted = client.put(
-        f"/v1/games/{other['id']}/access", headers=lead, json={"emails": ["dev@finz.io"]}
+        f"/v1/games/{other['id']}/access", headers=lead, json={"emails": ["dev@example.com"]}
     )
     assert granted.status_code == 200
     assert {g["id"] for g in client.get("/v1/games", headers=member).json()} == {
@@ -961,7 +961,7 @@ def test_team_sign_in_and_roles(team):
         other["id"],
     }
     assert client.get("/v1/team", headers=lead).status_code == 403
-    assert client.post("/v1/team", headers=lead, json={"email": "z@finz.io"}).status_code == 403
+    assert client.post("/v1/team", headers=lead, json={"email": "z@example.com"}).status_code == 403
     assert client.get("/v1/audit", headers=member).status_code == 403
     # only the admin manages the team; the primary admin is protected; removal blocks at once
     assert (
@@ -970,10 +970,11 @@ def test_team_sign_in_and_roles(team):
     )
     assert client.delete(f"/v1/team/{ADMIN_EMAIL}", headers=boss).status_code == 400
     assert (
-        client.patch("/v1/team/dev@finz.io", headers=boss, json={"role": "lead"}).status_code == 200
+        client.patch("/v1/team/dev@example.com", headers=boss, json={"role": "lead"}).status_code
+        == 200
     )
     assert len(client.get("/v1/games", headers=member).json()) == 3
-    assert client.delete("/v1/team/dev@finz.io", headers=boss).status_code == 204
+    assert client.delete("/v1/team/dev@example.com", headers=boss).status_code == 204
     assert client.get("/v1/me", headers=member).status_code == 403
     actions = [row["action"] for row in client.get("/v1/audit", headers=boss).json()]
     assert {"game.register", "user.add", "access.game", "user.remove", "export.download"} <= set(

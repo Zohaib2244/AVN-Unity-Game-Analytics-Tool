@@ -13,10 +13,12 @@ class Settings:
     public_ingest_url: str = ""
     # Team access. Enabled when both the Cloudflare Access team domain and the application's
     # audience tag are set; otherwise every request is an admin (the original single-user mode).
-    access_team_domain: str = ""  # e.g. finz.cloudflareaccess.com
+    access_team_domain: str = ""  # e.g. example.cloudflareaccess.com
     access_audience: str = ""  # the Access application's "Application Audience (AUD) Tag"
     admin_email: str = ""  # always an admin; can't be removed or demoted from the website
-    allowed_email_domain: str = ""  # e.g. finz.io: only these addresses can be added to the team
+    allowed_email_domain: str = (
+        ""  # e.g. example.com: only these addresses can be added to the team
+    )
     lan_admin: bool = True  # requests from the private network (no Cloudflare) count as admin
 
     def __post_init__(self):
