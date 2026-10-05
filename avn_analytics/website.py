@@ -7,8 +7,9 @@ from fastapi.staticfiles import StaticFiles
 ASSETS = Path(__file__).parent / "static"
 
 
-def overview(storage):
-    games = storage.list_games()
+def overview(storage, allowed=None):
+    """Workspace totals; `allowed` limits them to the games a team member can see."""
+    games = [game for game in storage.list_games() if allowed is None or game["id"] in allowed]
     today = datetime.now(UTC).strftime("%Y-%m-%dT00:00:00.000000+00:00")
     with storage.connect(storage.root / "registry.sqlite3") as registry:
         active_keys = registry.execute(
@@ -65,5 +66,6 @@ def add_website(app):
         "/players",
         "/status",
         "/settings",
+        "/team",
     ):
         app.add_api_route(route, page, methods=["GET"], include_in_schema=False)

@@ -101,6 +101,26 @@ Every stored event has the same envelope, which makes funnels, retention, sessio
 
 The SDK needs no location permission on Android or iOS. Because country is derived from the IP address, check your store privacy disclosures.
 
+## Team access
+
+For a team, put the admin site behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) and set the `AVN_ACCESS_*` variables (see [`DEPLOYMENT.md`](DEPLOYMENT.md#team-access)). Cloudflare handles sign-in with work emails; the app keeps its own **invite-only team list** and applies a role:
+
+| | Admin | Team lead | Member |
+| --- | --- | --- | --- |
+| View dashboards, funnels, players, exports | ✓ | ✓ | ✓ (assigned games only) |
+| Edit funnels and the event dictionary | ✓ | ✓ | ✓ |
+| See and copy API keys | ✓ | ✓ | ✓ |
+| Register, edit, archive, delete games; icons; create and delete keys | ✓ | ✓ | ✗ |
+| Choose which members see a game | ✓ | ✓ | ✗ |
+| Manage people and roles, read the activity log | ✓ | ✗ | ✗ |
+
+- Admins and leads see every game; a member sees only the games they were given, and other games look like they don't exist.
+- The admin adds people on the **Team** page (email, role, games). Anyone signed in through Cloudflare but not on the list is refused, and removing someone blocks them immediately. `AVN_ALLOWED_EMAIL_DOMAIN` limits who can be added to one domain, and `AVN_ADMIN_EMAIL` is always an admin.
+- Requests from your own network (no Cloudflare in between) count as the admin, because there is no sign-in on the LAN; turn that off with `AVN_LAN_ADMIN=false`. A request that did come through Cloudflare never gets this pass: it must carry a valid Access token, which the server verifies against Cloudflare's published keys (signature, expiry, audience and issuer).
+- The admin token still works for scripts (`Authorization: Bearer …`) and counts as an admin.
+- Leads manage who sees a game under **Game settings → Who can see this game**. The **Recent activity** log on the Team page records who changed games, keys, access, the dictionary and exports.
+- With the `AVN_ACCESS_*` variables empty, everything behaves as before: every request is an admin.
+
 ## Dashboards
 
 The website is organized around games. The home page lists your games; Android and iOS versions that share a **name** appear as one game with a platform switch. Open a game to get its own menu:
@@ -225,6 +245,9 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Run a funnel | `POST /v1/games/{id}/insights/funnel` (steps, `scope`, `window_hours`, `breakdown`, `filters`) |
 | Players / one player's events | `GET /v1/games/{id}/insights/players?start=…&end=…`, `GET /v1/games/{id}/insights/journey?player=…&start=…&end=…` |
 | Saved funnels | `GET` / `POST /v1/games/{id}/insights/funnels`, `PUT` / `DELETE /v1/games/{id}/insights/funnels/{funnel_id}` |
+| Who am I, with my permissions | `GET /v1/me` |
+| Team (admin) | `GET` / `POST /v1/team`, `PATCH` / `DELETE /v1/team/{email}`, `GET /v1/audit` |
+| Who can see a game (admin, lead) | `GET` / `PUT /v1/games/{id}/access` |
 | API schema | `GET /openapi.json` |
 
 The filter parameters are `env`, `not_env`, `version`, `build`, `country` and `platform`; each may be repeated.
@@ -235,6 +258,7 @@ Event names start with a letter and contain letters, digits or underscores (80 m
 
 ## Security notes
 
+- With team access on, every admin endpoint checks the caller's role and game access on the server; hiding buttons in the website is only a convenience.
 - The API key ships inside the game build, so treat it as an **identifier, not a secret**. Protect the endpoint with rate limits (120 requests per key per minute by default) and body limits, and add edge rate limiting.
 - Keys are random 256-bit values. Authorization checks a SHA-256 hash, but the dashboard also keeps each new key's full value in the registry so it can be copied again later, so anyone with access to the dashboard or to `data/registry.sqlite3` can read the keys. Keys created before this was added have only a hash and cannot be copied; create a new key if you need one. Deleting a key removes it entirely, and a deleted key is rejected with 401. Events belong to the game, not to the key, so deleting a key never touches collected data.
 - Only `POST /v1/events` should be reachable publicly. The management website and admin API stay on a private port, protected by an admin token or by whatever sits in front of it (a VPN, SSH forwarding, or an access gateway such as Cloudflare Access).
@@ -260,7 +284,7 @@ Environment variables (see `.env.example`):
 
 ```text
 data/
-  registry.sqlite3       games, API keys, rate-limit counters
+  registry.sqlite3       games, API keys, rate-limit counters, team, game access, activity log
   games/<uuid>.sqlite3   raw events, dictionary, session environments and saved funnels for one game
   icons/<uuid>.png       game icons
   exports/               temporary downloads

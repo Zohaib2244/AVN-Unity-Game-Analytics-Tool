@@ -830,3 +830,189 @@ def test_game_icons(backend):
     )
     assert deleted.status_code == 200
     assert not (settings.data_dir / "icons" / f"{game['id']}.png").exists()
+
+
+# ---- team access: Cloudflare Access sign-in, roles, per-game access, LAN rule
+
+TEAM_DOMAIN = "finz.cloudflareaccess.com"
+AUDIENCE = "test-audience-tag"
+ADMIN_EMAIL = "boss@finz.io"
+
+
+@pytest.fixture
+def team(tmp_path):
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    settings = Settings(
+        data_dir=tmp_path,
+        admin_token=TOKEN,
+        access_team_domain=TEAM_DOMAIN,
+        access_audience=AUDIENCE,
+        admin_email=ADMIN_EMAIL,
+        allowed_email_domain="finz.io",
+    )
+    app = create_app(settings, admin=True, access_keys={"k1": private.public_key()})
+
+    def token(email, audience=AUDIENCE, key=private, expires=3600, issuer=None):
+        import time
+
+        import jwt
+
+        now = int(time.time())
+        claims = {
+            "email": email,
+            "aud": [audience],
+            "iss": issuer or f"https://{TEAM_DOMAIN}",
+            "iat": now,
+            "exp": now + expires,
+        }
+        return jwt.encode(claims, key, algorithm="RS256", headers={"kid": "k1"})
+
+    def as_user(email, **options):
+        return {"Cf-Access-Jwt-Assertion": token(email, **options), "Cf-Ray": "abc-LHR"}
+
+    with TestClient(app, client=("203.0.113.9", 5000)) as client:
+        yield client, as_user, private, token
+
+
+def test_team_sign_in_and_roles(team):
+    client, as_user, private, token = team
+    boss = as_user(ADMIN_EMAIL)
+    assert client.get("/v1/me", headers=boss).json()["role"] == "admin"
+    # not signed in, and signed in but not invited
+    assert client.get("/v1/me").status_code == 401
+    assert client.get("/v1/me", headers=as_user("stranger@finz.io")).status_code == 403
+    # token problems: wrong audience, expired, wrong signing key, no Cloudflare marker needed
+    assert client.get("/v1/me", headers=as_user(ADMIN_EMAIL, audience="other")).status_code == 401
+    assert client.get("/v1/me", headers=as_user(ADMIN_EMAIL, expires=-60)).status_code == 401
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    forged = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    assert client.get("/v1/me", headers=as_user(ADMIN_EMAIL, key=forged)).status_code == 401
+    # a header claiming to be someone isn't enough
+    spoof = {"Cf-Access-Authenticated-User-Email": ADMIN_EMAIL, "Cf-Ray": "x"}
+    assert client.get("/v1/me", headers=spoof).status_code == 401
+
+    # the admin builds the team
+    game = client.post(
+        "/v1/games",
+        headers=boss,
+        json={"name": "Test Game", "bundle_id": "com.avn.test", "platform": "android"},
+    ).json()
+    other = client.post(
+        "/v1/games",
+        headers=boss,
+        json={"name": "Other", "bundle_id": "com.avn.other", "platform": "android"},
+    ).json()
+    add = lambda **body: client.post("/v1/team", headers=boss, json=body)  # noqa: E731
+    assert add(email="lead@finz.io", role="lead").status_code == 201
+    assert add(email="dev@finz.io", role="member", game_ids=[game["id"]]).status_code == 201
+    assert add(email="dev@finz.io", role="member").status_code == 409
+    assert add(email="someone@gmail.com", role="member").status_code == 400  # wrong domain
+
+    lead, member = as_user("lead@finz.io"), as_user("dev@finz.io")
+    # everyone can see keys, edit dictionary and funnels, and export their games
+    assert client.get(f"/v1/games/{game['id']}/keys", headers=member).status_code == 200
+    definition = {"description": "d", "params": {}}
+    put = client.put(f"/v1/games/{game['id']}/dictionary/level", headers=member, json=definition)
+    assert put.status_code == 200
+    saved = client.post(
+        f"/v1/games/{game['id']}/insights/funnels",
+        headers=member,
+        json={"name": "F", "steps": [{"event": "a"}, {"event": "b"}]},
+    )
+    assert saved.status_code == 201
+    export = client.get(
+        f"/v1/games/{game['id']}/export",
+        headers=member,
+        params={"date": "2026-10-04", "period": "day"},
+    )
+    assert export.status_code == 200
+    # members see only their games, and other games look like they don't exist
+    assert [g["id"] for g in client.get("/v1/games", headers=member).json()] == [game["id"]]
+    assert client.get(f"/v1/games/{other['id']}", headers=member).status_code == 404
+    assert client.get(f"/v1/games/{other['id']}/keys", headers=member).status_code == 404
+    assert client.get("/v1/overview", headers=member).json()["games"][0]["id"] == game["id"]
+    assert len(client.get("/v1/games", headers=lead).json()) == 2  # leads see everything
+    # members can't manage games or keys
+    new_game = {"name": "X", "bundle_id": "com.avn.x", "platform": "ios"}
+    assert client.post("/v1/games", headers=member, json=new_game).status_code == 403
+    assert (
+        client.patch(f"/v1/games/{game['id']}", headers=member, json={"notes": "n"}).status_code
+        == 403
+    )
+    assert (
+        client.post(f"/v1/games/{game['id']}/keys", headers=member, json={"label": "k"}).status_code
+        == 403
+    )
+    assert (
+        client.put(f"/v1/games/{game['id']}/icon", headers=member, content=b"x").status_code == 403
+    )
+    assert client.get(f"/v1/games/{game['id']}/access", headers=member).status_code == 403
+    # leads can manage games and give members access, but can't manage the team
+    assert client.post("/v1/games", headers=lead, json=new_game).status_code == 201
+    granted = client.put(
+        f"/v1/games/{other['id']}/access", headers=lead, json={"emails": ["dev@finz.io"]}
+    )
+    assert granted.status_code == 200
+    assert {g["id"] for g in client.get("/v1/games", headers=member).json()} == {
+        game["id"],
+        other["id"],
+    }
+    assert client.get("/v1/team", headers=lead).status_code == 403
+    assert client.post("/v1/team", headers=lead, json={"email": "z@finz.io"}).status_code == 403
+    assert client.get("/v1/audit", headers=member).status_code == 403
+    # only the admin manages the team; the primary admin is protected; removal blocks at once
+    assert (
+        client.patch(f"/v1/team/{ADMIN_EMAIL}", headers=boss, json={"role": "member"}).status_code
+        == 400
+    )
+    assert client.delete(f"/v1/team/{ADMIN_EMAIL}", headers=boss).status_code == 400
+    assert (
+        client.patch("/v1/team/dev@finz.io", headers=boss, json={"role": "lead"}).status_code == 200
+    )
+    assert len(client.get("/v1/games", headers=member).json()) == 3
+    assert client.delete("/v1/team/dev@finz.io", headers=boss).status_code == 204
+    assert client.get("/v1/me", headers=member).status_code == 403
+    actions = [row["action"] for row in client.get("/v1/audit", headers=boss).json()]
+    assert {"game.register", "user.add", "access.game", "user.remove", "export.download"} <= set(
+        actions
+    )
+
+
+def test_lan_and_token_access(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path,
+        admin_token=TOKEN,
+        access_team_domain=TEAM_DOMAIN,
+        access_audience=AUDIENCE,
+        admin_email=ADMIN_EMAIL,
+    )
+    app = create_app(settings, admin=True, access_keys={})
+    with TestClient(app, client=("192.168.1.50", 5000)) as lan:
+        assert lan.get("/v1/me").json()["role"] == "admin"  # home network = the admin
+        assert lan.get("/v1/me").json()["source"] == "lan"
+        # a request that came through Cloudflare never gets the LAN pass, even from a private proxy
+        assert lan.get("/v1/me", headers={"Cf-Connecting-Ip": "198.51.100.7"}).status_code == 401
+        assert (
+            lan.get("/v1/me", headers={"Authorization": f"Bearer {TOKEN}"}).json()["source"]
+            == "token"
+        )
+        assert lan.get("/v1/me", headers={"Authorization": "Bearer wrong"}).status_code == 401
+        # X-Forwarded-For from our own proxy tells us the real caller
+        public = {"X-Forwarded-For": "203.0.113.9"}
+        assert lan.get("/v1/me", headers=public).status_code == 401
+        assert lan.get("/v1/me", headers={"X-Forwarded-For": "192.168.1.7"}).status_code == 200
+    with TestClient(app, client=("203.0.113.9", 5000)) as outside:
+        assert outside.get("/v1/me").status_code == 401  # the public internet gets nothing
+        assert outside.get("/v1/me", headers={"X-Forwarded-For": "192.168.1.7"}).status_code == 401
+    off = Settings(
+        data_dir=tmp_path,
+        admin_token=TOKEN,
+        access_team_domain=TEAM_DOMAIN,
+        access_audience=AUDIENCE,
+        lan_admin=False,
+    )
+    with TestClient(create_app(off, admin=True, access_keys={}), client=("192.168.1.50", 1)) as lan:
+        assert lan.get("/v1/me").status_code == 401

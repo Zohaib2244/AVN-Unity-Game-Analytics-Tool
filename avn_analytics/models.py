@@ -207,3 +207,24 @@ class FunnelQuery(FunnelDefinition):
 
 class SavedFunnel(FunnelDefinition):
     name: Annotated[str, Field(min_length=1, max_length=80)]
+
+
+Role = Literal["admin", "lead", "member"]
+Email = Annotated[str, Field(min_length=3, max_length=254)]
+
+
+class TeamAdd(StrictModel):
+    email: Email
+    name: Annotated[str, Field(max_length=80)] = ""
+    role: Role = "member"
+    game_ids: list[UUID] = Field(default_factory=list, max_length=500)
+
+
+class TeamUpdate(StrictModel):
+    role: Role | None = None
+    name: Annotated[str, Field(max_length=80)] | None = None
+    game_ids: list[UUID] | None = Field(default=None, max_length=500)
+
+
+class AccessUpdate(StrictModel):
+    emails: list[Email] = Field(max_length=500)

@@ -1,6 +1,7 @@
 const root = document.querySelector('#app');
 const modal = document.querySelector('#dialog');
 let overview;
+let me = {role: 'admin', can_manage_games: true, can_manage_team: false, email: '', name: '', source: 'local'};
 let noticeTimer;
 const icons = {
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
@@ -162,7 +163,7 @@ async function request(path, options = {}) {
     headers: {...(options.body ? {'Content-Type':'application/json'} : {}), ...options.headers}});
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(typeof error.detail === 'string' ? error.detail : 'Please check your details and try again.');
+    throw Object.assign(new Error(typeof error.detail === 'string' ? error.detail : 'Please check your details and try again.'), {status: response.status});
   }
   return response.status === 204 ? null : response.json();
 }
@@ -190,7 +191,8 @@ function heading(title, subtitle, action = '') {
   return `<div class="page-heading"><div><h1>${escapeHTML(title)}</h1><p>${escapeHTML(subtitle)}</p></div>${action}</div>`;
 }
 
-const registerButton = `<a class="button primary" href="/games/new">${icon('plus', 15)} Register game</a>`;
+const registerButton = () => me.can_manage_games ? `<a class="button primary" href="/games/new">${icon('plus', 15)} Register game</a>` : '';
+const ROLE_LABELS = {admin: 'Admin', lead: 'Team lead', member: 'Member'};
 
 function metric(title, value, footer, symbol) {
   return `<article class="metric"><div class="metric-top"><span>${title}</span>${icon(symbol,17)}</div><div class="metric-value">${value}</div><p class="metric-foot">${footer}</p></article>`;
@@ -253,31 +255,31 @@ function gameGroups(games) {
 function variantSwitch(game, section) {
   const variants = variantsOf(game);
   const missing = PLATFORM_ORDER.filter(platform => !variants.some(item => item.platform === platform));
-  return `<div class="variant-switch" role="group" aria-label="Platform">${variants.map(item => `<a href="${gamePath(item, section)}" aria-pressed="${item.id === game.id}" title="${escapeHTML(item.bundle_id)}">${platformLabel(item.platform)}${item.archived_at ? ' ·  paused' : ''}</a>`).join('')}${missing.map(platform => `<a class="variant-add" href="/games/new?${new URLSearchParams({name: game.name, bundle_id: game.bundle_id, platform})}" title="Register the ${platformLabel(platform)} version">+ ${platformLabel(platform)}</a>`).join('')}</div>`;
+  return `<div class="variant-switch" role="group" aria-label="Platform">${variants.map(item => `<a href="${gamePath(item, section)}" aria-pressed="${item.id === game.id}" title="${escapeHTML(item.bundle_id)}">${platformLabel(item.platform)}${item.archived_at ? ' ·  paused' : ''}</a>`).join('')}${(me.can_manage_games ? missing : []).map(platform => `<a class="variant-add" href="/games/new?${new URLSearchParams({name: game.name, bundle_id: game.bundle_id, platform})}" title="Register the ${platformLabel(platform)} version">+ ${platformLabel(platform)}</a>`).join('')}</div>`;
 }
 
 function shell(title, content) {
-  const secondary = [['/status','pulse','Status'],['/settings','settings','Settings']];
+  const secondary = [...(me.can_manage_team ? [['/team','users','Team']] : []), ['/status','pulse','Status'],['/settings','settings','Settings']];
   const link = ([url, symbol, label], active) => `<a href="${url}" aria-label="${label}" class="${active ? 'active' : ''}" ${active ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span></a>`;
   const game = currentGame;
   const main = game
     ? `<a class="back-to-games" href="/">← All games</a><div class="sidebar-game">${avatar(game.name, variantsOf(game))}<div><strong>${escapeHTML(game.name)}</strong><span>${escapeHTML(game.bundle_id)}</span></div></div>${variantSwitch(game, currentSection)}<p class="nav-label eyebrow">Game</p><nav class="nav" aria-label="Game">${GAME_SECTIONS.map(([section, symbol, label]) => link([gamePath(game, section), symbol, label], section === currentSection)).join('')}</nav>`
     : `<p class="nav-label eyebrow">Workspace</p><nav class="nav" aria-label="Workspace">${link(['/', 'grid', 'Games'], ['/', '/games', '/games/new'].includes(location.pathname))}</nav>`;
   const crumbs = game ? `<a href="/">Games</a> <span>/</span> <a href="${gamePath(game)}">${escapeHTML(game.name)} · ${platformLabel(game.platform)}</a> <span>/</span> <strong>${escapeHTML(title)}</strong>` : `Workspace <span>/</span> <strong>${escapeHTML(title)}</strong>`;
-  root.innerHTML = `<aside class="sidebar">${brand}${main}<nav class="nav nav-secondary" aria-label="Secondary">${secondary.map(item => link(item, location.pathname === item[0])).join('')}</nav><div class="sidebar-bottom"><div class="account"><span class="avatar">AV</span><div><strong>Administrator</strong><p>Workspace</p></div></div></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">${crumbs}</div><div class="topbar-right"><button class="icon-button" data-action="theme" title="Switch light/dark theme" aria-label="Switch light/dark theme">${icon(window.avnTheme?.theme() === 'light' ? 'moon' : 'sun',15)}</button><button class="icon-button" data-action="refresh" title="Refresh data" aria-label="Refresh data">${icon('refresh',15)}</button></div></header><main id="main">${content}<footer class="footnote"><span>${icon('shield',13)} Your data stays on your server.</span><span>AVN Analytics</span></footer></main></div>`;
+  root.innerHTML = `<aside class="sidebar">${brand}${main}<nav class="nav nav-secondary" aria-label="Secondary">${secondary.map(item => link(item, location.pathname === item[0])).join('')}</nav><div class="sidebar-bottom"><div class="account"><span class="avatar">${escapeHTML((me.name || me.email || 'A').slice(0,2).toUpperCase())}</span><div><strong>${escapeHTML(me.name || (me.email || '').split('@')[0] || 'Administrator')}</strong><p>${ROLE_LABELS[me.role] || me.role}${me.source === 'lan' ? ' · local network' : ''}</p></div></div></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">${crumbs}</div><div class="topbar-right"><button class="icon-button" data-action="theme" title="Switch light/dark theme" aria-label="Switch light/dark theme">${icon(window.avnTheme?.theme() === 'light' ? 'moon' : 'sun',15)}</button><button class="icon-button" data-action="refresh" title="Refresh data" aria-label="Refresh data">${icon('refresh',15)}</button></div></header><main id="main">${content}<footer class="footnote"><span>${icon('shield',13)} Your data stays on your server.</span><span>AVN Analytics</span></footer></main></div>`;
   document.title = `${game ? `${title} · ${game.name}` : title} · AVN Analytics`;
 }
 
 function renderHome() {
   const all = gameGroups(overview.games);
   const archivedCount = all.filter(group => group.archived).length;
-  shell('Games', heading('Your games', 'Pick a game to see its players, funnels, exports and settings.', registerButton) +
+  shell('Games', heading('Your games', 'Pick a game to see its players, funnels, exports and settings.', registerButton()) +
     `<section class="metrics" aria-label="Workspace totals">${metric('Games', number(all.length), `${number(overview.games.length)} platform variant${overview.games.length === 1 ? '' : 's'}`, 'game')}${metric('Events collected', number(overview.events), 'Safely stored, never double-counted', 'pulse')}${metric('Events today', number(overview.today), 'Received today · UTC', 'export')}</section>
     ${all.length ? `<div class="toolbar games-toolbar"><div class="search">${icon('search',16)}<input id="game-search" type="search" aria-label="Search games" placeholder="Search by name, bundle ID or notes…"></div>
     <div class="range-modes" role="group" aria-label="Show">${[['active',`Active (${all.length - archivedCount})`],['archived',`Archived (${archivedCount})`],['all',`All (${all.length})`]].map(([key,label]) => `<button type="button" data-filter="${key}">${label}</button>`).join('')}</div>
     <div class="game-select"><label for="game-sort">Sort</label><select id="game-sort"><option value="recent">Latest activity</option><option value="name">Name A–Z</option><option value="events">Most events</option><option value="newest">Newest first</option></select></div></div>` : ''}<div id="game-results"></div>
     ${overview.events ? '' : `<section class="panel section-spacing"><div class="panel-header"><div><h2>A simple start</h2><p>From your first event to your next idea.</p></div>${icon('pulse',17)}</div><ol class="steps"><li><span class="step-number ${all.length ? 'done' : ''}">${all.length ? icon('check',12) : '01'}</span><div><strong>Register your game</strong><p>A name, a platform, and a place for your events. Add the other platform later.</p></div></li><li><span class="step-number">02</span><div><strong>Send your first event</strong><p>Use your game’s API key to start collecting.</p></div></li><li><span class="step-number">03</span><div><strong>Turn data into direction</strong><p>Open the game for funnels and player journeys, or export the raw events.</p></div></li></ol></section>`}`);
-  if (!all.length) { document.querySelector('#game-results').innerHTML = `<section class="panel">${empty('Good things begin with a first game', 'Create a game and we’ll generate its first API key.', registerButton)}</section>`; return; }
+  if (!all.length) { document.querySelector('#game-results').innerHTML = `<section class="panel">${me.can_manage_games ? empty('Good things begin with a first game', 'Create a game and we’ll generate its first API key.', registerButton()) : empty('No games yet', 'You haven’t been given access to any games. Ask your team lead or the admin.')}</section>`; return; }
   const state = {query: '', filter: archivedCount === all.length ? 'all' : 'active', sort: 'recent'};
   const sorters = {
     newest: (a, b) => b.created_at.localeCompare(a.created_at),
@@ -289,7 +291,7 @@ function renderHome() {
     document.querySelectorAll('[data-filter]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.filter === state.filter)));
     const query = state.query.toLowerCase();
     const groups = all.filter(group => (state.filter === 'all' || (state.filter === 'archived') === group.archived) && `${group.name} ${group.variants.map(item => item.bundle_id).join(' ')} ${group.notes}`.toLowerCase().includes(query)).sort(sorters[state.sort]);
-    document.querySelector('#game-results').innerHTML = groups.length ? `<div class="game-grid">${groups.map(group => `<article class="game-card ${group.archived ? 'archived' : ''}"><div class="game-card-header">${avatar(group.name, group.variants)}<span>${group.archived ? '<span class="pill bad">Archived</span>' : ''}</span></div><h3><a class="card-link" href="${gamePath(group.primary)}">${escapeHTML(group.name)}</a></h3><p class="mono">${escapeHTML([...new Set(group.variants.map(item => item.bundle_id))].join(' · '))}</p>${group.notes ? `<p class="game-notes">${escapeHTML(group.notes)}</p>` : ''}<div class="card-variants">${group.variants.map(item => `<a class="pill ${item.archived_at ? 'bad' : ''}" href="${gamePath(item)}" title="Open the ${platformLabel(item.platform)} version">${platformLabel(item.platform)} · ${number(item.events)}</a>`).join('')}${PLATFORM_ORDER.filter(platform => !group.variants.some(item => item.platform === platform)).map(platform => `<a class="pill variant-add" href="/games/new?${new URLSearchParams({name: group.name, bundle_id: group.primary.bundle_id, platform})}">+ ${platformLabel(platform)}</a>`).join('')}</div><div class="game-card-footer"><span>${number(group.events)} events</span><span>${group.archived ? 'Collection paused' : group.last_event ? `Last event ${displayDate(group.last_event)}` : 'Awaiting events'} ${icon('arrow',12)}</span></div></article>`).join('')}</div>` : `<section class="panel">${empty('No games found', 'Try another search or filter.')}</section>`;
+    document.querySelector('#game-results').innerHTML = groups.length ? `<div class="game-grid">${groups.map(group => `<article class="game-card ${group.archived ? 'archived' : ''}"><div class="game-card-header">${avatar(group.name, group.variants)}<span>${group.archived ? '<span class="pill bad">Archived</span>' : ''}</span></div><h3><a class="card-link" href="${gamePath(group.primary)}">${escapeHTML(group.name)}</a></h3><p class="mono">${escapeHTML([...new Set(group.variants.map(item => item.bundle_id))].join(' · '))}</p>${group.notes ? `<p class="game-notes">${escapeHTML(group.notes)}</p>` : ''}<div class="card-variants">${group.variants.map(item => `<a class="pill ${item.archived_at ? 'bad' : ''}" href="${gamePath(item)}" title="Open the ${platformLabel(item.platform)} version">${platformLabel(item.platform)} · ${number(item.events)}</a>`).join('')}${(me.can_manage_games ? PLATFORM_ORDER.filter(platform => !group.variants.some(item => item.platform === platform)) : []).map(platform => `<a class="pill variant-add" href="/games/new?${new URLSearchParams({name: group.name, bundle_id: group.primary.bundle_id, platform})}">+ ${platformLabel(platform)}</a>`).join('')}</div><div class="game-card-footer"><span>${number(group.events)} events</span><span>${group.archived ? 'Collection paused' : group.last_event ? `Last event ${displayDate(group.last_event)}` : 'Awaiting events'} ${icon('arrow',12)}</span></div></article>`).join('')}</div>` : `<section class="panel">${empty('No games found', 'Try another search or filter.')}</section>`;
   };
   document.querySelector('#game-search').addEventListener('input', event => { state.query = event.target.value; draw(); });
   document.querySelector('#game-sort').addEventListener('change', event => { state.sort = event.target.value; draw(); });
@@ -338,7 +340,7 @@ function bindPicker() {
 
 function needsGame(title, description) {
   if (overview.games.length) return false;
-  shell(title, heading(title, description) + `<section class="panel">${empty('First, give your events a home', 'Register a game to use this part of your workspace.', registerButton)}</section>`);
+  shell(title, heading(title, description) + `<section class="panel">${empty('First, give your events a home', 'Register a game to use this part of your workspace.', registerButton())}</section>`);
   return true;
 }
 
@@ -348,12 +350,14 @@ async function renderGameSettings() {
   try { game = await api(`/v1/games/${encodeURIComponent(id)}`); }
   catch { shell('Game not found', heading('Game not found', 'This game is not in your workspace.') + '<a class="button" href="/">Back to games</a>'); return; }
   const archived = Boolean(game.archived_at);
-  const actions = `<div class="heading-actions"><button class="button" data-game-action="edit">${icon('settings',15)} Edit</button><a class="button primary" href="${gamePath(game, 'exports')}">${icon('export',15)} Export data</a></div>`;
+  const manage = me.can_manage_games;
+  const actions = `<div class="heading-actions">${manage ? `<button class="button" data-game-action="edit">${icon('settings',15)} Edit</button>` : ''}<a class="button primary" href="${gamePath(game, 'exports')}">${icon('export',15)} Export data</a></div>`;
   shell('Game settings', heading('Game settings', `${game.bundle_id} · ${platformLabel(game.platform)}`, actions) +
-    (archived ? `<div class="archived-banner">${icon('lock',18)}<div><strong>Archived ${displayDate(game.archived_at)}.</strong> Collection is paused: the server refuses new events, and the Unity SDK keeps them queued on players’ devices until you restore the game.</div><button class="button" data-game-action="unarchive">Restore game</button></div>` : '') +
+    (archived ? `<div class="archived-banner">${icon('lock',18)}<div><strong>Archived ${displayDate(game.archived_at)}.</strong> Collection is paused: the server refuses new events, and the Unity SDK keeps them queued on players’ devices until you restore the game.</div>${manage ? '<button class="button" data-game-action="unarchive">Restore game</button>' : ''}</div>` : '') +
     `<section class="metrics">${metric('Events collected',number(game.events),`${number(game.event_names)} distinct event names`,'pulse')}${metric('Events today',number(game.today),'Received today · UTC','export')}${metric('API keys',`${game.keys_active} active`,`${game.keys_total} created in total`,'key')}${metric('Storage',fileSize(game.storage_bytes),'Event database on disk','disk')}</section>
-    <section class="panel section-spacing"><div class="panel-header"><div><h2>Game icon</h2><p>Shown next to the game in the sidebar and on the games page${variantsOf(game).length > 1 ? ' · applies to both platforms' : ''}</p></div></div><div class="panel-body icon-settings">${avatar(game.name, variantsOf(game)).replace('game-avatar', 'game-avatar icon-large')}<div class="icon-actions"><label class="button" for="icon-file">${icon('export',14)} ${game.icon_updated_at ? 'Change icon' : 'Upload icon'}</label><input id="icon-file" type="file" accept="image/*" hidden>${variantsOf(game).some(item => item.icon_updated_at) ? '<button type="button" class="button danger-text" id="icon-remove">Remove</button>' : ''}<p class="small muted">Any image works; it is cropped to a square.</p></div></div></section>
-    <div class="section-grid section-spacing"><section class="panel"><div class="panel-header"><h2>Game information</h2><button class="button ghost" data-game-action="edit">Edit ${icon('arrow',12)}</button></div><div class="panel-body"><ul class="status-list">
+    ${manage ? `<section class="panel section-spacing"><div class="panel-header"><div><h2>Game icon</h2><p>Shown next to the game in the sidebar and on the games page${variantsOf(game).length > 1 ? ' · applies to both platforms' : ''}</p></div></div><div class="panel-body icon-settings">${avatar(game.name, variantsOf(game)).replace('game-avatar', 'game-avatar icon-large')}<div class="icon-actions"><label class="button" for="icon-file">${icon('export',14)} ${game.icon_updated_at ? 'Change icon' : 'Upload icon'}</label><input id="icon-file" type="file" accept="image/*" hidden>${variantsOf(game).some(item => item.icon_updated_at) ? '<button type="button" class="button danger-text" id="icon-remove">Remove</button>' : ''}<p class="small muted">Any image works; it is cropped to a square.</p></div></div></section>` : ''}
+    ${manage ? '<section class="panel section-spacing" id="access-panel"><div class="panel-header"><div><h2>Who can see this game</h2><p>Admins and team leads always see every game. Choose which members can open this one.</p></div></div><div class="panel-body" id="access-list"><p class="help">Loading…</p></div></section>' : ''}
+    <div class="section-grid section-spacing"><section class="panel"><div class="panel-header"><h2>Game information</h2>${manage ? `<button class="button ghost" data-game-action="edit">Edit ${icon('arrow',12)}</button>` : ''}</div><div class="panel-body"><ul class="status-list">
       <li><span>Name</span><strong>${escapeHTML(game.name)}</strong></li>
       <li><span>Bundle ID</span><code>${escapeHTML(game.bundle_id)}</code></li>
       <li><span>Platform</span><strong>${platformLabel(game.platform)}</strong></li>
@@ -367,11 +371,12 @@ async function renderGameSettings() {
     </ul><div class="section-spacing"><a class="button" href="${gamePath(game, 'keys')}">${icon('key',15)} Manage keys</a> <a class="button" href="${gamePath(game, 'dictionary')}">${icon('book',15)} Event dictionary</a></div></div></section>
     <aside class="aside-card">${icon('pulse',25)}<h3>Connect your game</h3><p>Send batches to the collection endpoint with one of this game’s API keys in the <code>X-API-Key</code> header.</p><div class="connection"><code>POST ${escapeHTML(overview.ingest_url)}</code></div><p class="small section-spacing">Set <code>AVN_PUBLIC_INGEST_URL</code> on the server to show your public collection address here.</p></aside></div>
     <section class="panel section-spacing"><div class="panel-header"><div><h2>Event activity</h2><p>Pick any days on the calendar · received by the server · UTC</p></div></div><div class="panel-body" id="activity"></div></section>
-    <section class="panel section-spacing danger-zone"><div class="panel-header"><div><h2>Danger zone</h2><p>Changes here affect live data collection.</p></div></div><div class="panel-body">
+    ${manage ? `<section class="panel section-spacing danger-zone"><div class="panel-header"><div><h2>Danger zone</h2><p>Changes here affect live data collection.</p></div></div><div class="panel-body">
       <div class="danger-row"><div><strong>${archived ? 'Restore this game' : 'Archive this game'}</strong><p>${archived ? 'Start accepting events again. Queued events on devices will be delivered.' : 'Pause collection without deleting anything. You can restore it at any time.'}</p></div><button class="button" data-game-action="${archived ? 'unarchive' : 'archive'}">${archived ? 'Restore game' : 'Archive game'}</button></div>
       <div class="danger-row"><div><strong>Delete this game</strong><p>Removes the game and all of its API keys. Its event database is moved to the server’s <code>data/deleted</code> folder, not erased.</p></div><button class="button danger" data-game-action="delete">Delete game</button></div>
-    </div></section>`);
+    </div></section>` : ''}`);
   mountActivity(document.querySelector('#activity'), game);
+  if (manage) loadGameAccess(game);
   const refreshAfterIcon = async message => {
     overview = await api('/v1/overview'); overviewStale = false;
     currentGame = overview.games.find(item => item.id === game.id) || currentGame;
@@ -431,9 +436,9 @@ async function renderKeys() {
   if (needsGame('API keys', 'Control how your games connect.')) return;
   const game = selectedGame();
   const keys = await api(`${gameURL(game)}/keys`);
-  shell('API keys', heading('API keys', 'A connection for every release. Rotate keys when you need to.', '<button class="button primary" data-action="new-key">'+icon('plus',15)+' Create key</button>') + picker(game) + `<section class="panel"><div class="panel-header"><h2>Collection keys <span class="count">${keys.length}</span></h2><span class="small muted">Copy a key any time. Keys made before this update can’t be copied</span></div><div class="table-wrap"><table><thead><tr><th>Label</th><th>Key prefix</th><th>Created</th><th>Status</th><th></th></tr></thead><tbody>${keys.map(key => `<tr><td>${escapeHTML(key.label)}</td><td><code>${escapeHTML(key.prefix)}…</code> ${key.api_key ? `<button type="button" class="icon-button copy-prefix" data-action="copy-key" data-key="${escapeHTML(key.api_key)}" aria-label="Copy full key" title="Copy full key">${icon('copy',14)}</button>` : `<button type="button" class="icon-button copy-prefix" disabled aria-label="Full key unavailable" title="Created before full keys were kept — create a new key to copy it">${icon('copy',14)}</button>`}</td><td class="small muted">${displayDate(key.created_at)}</td><td><span class="pill ${key.revoked_at ? '' : 'good'}">${key.revoked_at ? 'Revoked' : 'Active'}</span></td><td><button class="button danger table-action" data-action="delete-key" data-id="${key.id}">Delete</button></td></tr>`).join('')}</tbody></table></div></section><p class="help section-spacing">These keys identify your game builds. Never use your admin credentials in a game client.</p>`);
+  shell('API keys', heading('API keys', 'A connection for every release. Everyone on the team can copy them; admins and leads manage them.', me.can_manage_games ? '<button class="button primary" data-action="new-key">'+icon('plus',15)+' Create key</button>' : '') + picker(game) + `<section class="panel"><div class="panel-header"><h2>Collection keys <span class="count">${keys.length}</span></h2><span class="small muted">Copy a key any time. Keys made before this update can’t be copied</span></div><div class="table-wrap"><table><thead><tr><th>Label</th><th>Key prefix</th><th>Created</th><th>Status</th><th></th></tr></thead><tbody>${keys.map(key => `<tr><td>${escapeHTML(key.label)}</td><td><code>${escapeHTML(key.prefix)}…</code> ${key.api_key ? `<button type="button" class="icon-button copy-prefix" data-action="copy-key" data-key="${escapeHTML(key.api_key)}" aria-label="Copy full key" title="Copy full key">${icon('copy',14)}</button>` : `<button type="button" class="icon-button copy-prefix" disabled aria-label="Full key unavailable" title="Created before full keys were kept — create a new key to copy it">${icon('copy',14)}</button>`}</td><td class="small muted">${displayDate(key.created_at)}</td><td><span class="pill ${key.revoked_at ? '' : 'good'}">${key.revoked_at ? 'Revoked' : 'Active'}</span></td><td>${me.can_manage_games ? `<button class="button danger table-action" data-action="delete-key" data-id="${key.id}">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table></div></section><p class="help section-spacing">These keys identify your game builds. Never use your admin credentials in a game client.</p>`);
   bindPicker();
-  document.querySelector('[data-action="new-key"]').addEventListener('click', () => {
+  document.querySelector('[data-action="new-key"]')?.addEventListener('click', () => {
     modal.innerHTML = `<h2 id="dialog-title">Create a collection key</h2><p>Give it a label so you can recognize the release or environment.</p><form id="key-form"><label for="key-label">Key label</label><input id="key-label" name="label" placeholder="e.g. Android production" required maxlength="128"><div class="error" role="alert"></div><div class="modal-actions"><button type="button" class="button" data-action="close">Cancel</button><button type="submit" class="button primary">Create key</button></div></form>`;
     modal.showModal();
     bindForm('#key-form', async (form, values) => {
@@ -574,7 +579,7 @@ document.addEventListener('click', async event => {
 });
 modal.addEventListener('close', () => { modal.innerHTML = ''; });
 
-const routes = {'/':renderHome, '/games':renderHome, '/games/new':renderNewGame, '/status':renderStatus, '/settings':renderSettings};
+const routes = {'/':renderHome, '/games':renderHome, '/games/new':renderNewGame, '/team':renderTeam, '/status':renderStatus, '/settings':renderSettings};
 const sections = {overview:renderGameOverview, funnels:renderFunnels, players:renderPlayers, exports:renderExports, dictionary:renderDictionary, keys:renderKeys, settings:renderGameSettings};
 const LEGACY = ['/keys', '/exports', '/dictionary', '/funnels', '/players']; // old ?game= pages
 const gameRoute = pathname => pathname.match(/^\/games\/([^/]+)(?:\/([a-z]+))?\/?$/);
@@ -603,6 +608,7 @@ function prefetch(url) {
 
 async function renderRoute() {
   try {
+    if (!me.loaded) { me = {...await request('/v1/me'), loaded: true}; }
     await loadOverview();
     currentGame = null; currentSection = 'overview';
     let {pathname} = location;
@@ -620,7 +626,8 @@ async function renderRoute() {
     if (!currentGame || !sections[currentSection]) { currentGame = null; return renderNotFound(); }
     await sections[currentSection]();
   } catch (error) {
-    root.innerHTML = `<main id="main"><div class="boot"><span class="brand-mark">avn.</span><h1>Couldn’t open your workspace.</h1><p class="muted">${escapeHTML(error.message)}</p><button class="button" data-action="refresh">Try again</button></div></main>`;
+    const denied = error.status === 401 || error.status === 403;
+    root.innerHTML = `<main id="main"><div class="boot"><span class="brand-mark">avn.</span><h1>${denied ? 'You don’t have access yet.' : 'Couldn’t open your workspace.'}</h1><p class="muted">${escapeHTML(error.message)}</p><button class="button" data-action="refresh">Try again</button></div></main>`;
   }
   window.scrollTo(0, 0);
 }

@@ -14,9 +14,11 @@ from pydantic import Field
 from starlette.background import BackgroundTask
 
 from . import insights
+from .auth import AccessVerifier, Accounts, Principal
 from .config import Settings
 from .exports import build_export, period_bounds
 from .models import (
+    AccessUpdate,
     Batch,
     EventDefinition,
     Filters,
@@ -26,6 +28,8 @@ from .models import (
     KeyCreate,
     Name,
     SavedFunnel,
+    TeamAdd,
+    TeamUpdate,
     normalize_country,
     timestamp,
 )
@@ -99,21 +103,47 @@ class BodyLimit:
         await self.app(scope, replay, send)
 
 
-def create_app(settings: Settings, *, admin: bool = False):
+def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     if admin and len(settings.admin_token) < 32:
         raise ValueError("Set AVN_ADMIN_TOKEN to a random token of at least 32 characters")
     storage = Storage(settings)
+    verifier = (
+        AccessVerifier(settings.access_team_domain, settings.access_audience, access_keys)
+        if settings.access_enabled
+        else None
+    )
+    accounts = Accounts(storage, settings, verifier)
     export_slot = BoundedSemaphore(1)
 
     @asynccontextmanager
     async def lifespan(app):
         storage.initialize()
+        accounts.initialize()
         yield
 
-    def require_admin():
-        # No application-level login: access control is handled by Cloudflare Access
-        # (and the LAN) in front of the admin service.
-        return
+    def current(request: Request) -> Principal:
+        """Who is calling; for game routes, also whether they may see that game."""
+        principal = accounts.authenticate(request)
+        request.state.principal = principal
+        game_id = request.path_params.get("game_id")
+        if game_id and not accounts.can_see_game(principal, str(game_id)):
+            raise HTTPException(404, "Game not found")  # same answer as for a game that isn't there
+        return principal
+
+    Current = Annotated[Principal, Depends(current)]
+
+    def manager(principal: Current) -> Principal:
+        if not principal.manages_games:
+            raise HTTPException(403, "Only admins and team leads can do this")
+        return principal
+
+    def team_admin(principal: Current) -> Principal:
+        if not principal.manages_team:
+            raise HTTPException(403, "Only the admin can do this")
+        return principal
+
+    Manager = Annotated[Principal, Depends(manager)]
+    TeamAdmin = Annotated[Principal, Depends(team_admin)]
 
     def bounds(period, selected_date, end_date):
         if period == "custom":
@@ -160,7 +190,7 @@ def create_app(settings: Settings, *, admin: bool = False):
             headers={"Retry-After": "60"},
         )
 
-    @app.get("/healthz", dependencies=[Depends(require_admin)] if admin else [])
+    @app.get("/healthz", dependencies=[Depends(current)] if admin else [])
     def healthz():
         with storage.connect(storage.root / "registry.sqlite3") as connection:
             connection.execute("SELECT count(*) FROM games").fetchone()
@@ -181,45 +211,72 @@ def create_app(settings: Settings, *, admin: bool = False):
 
         return app
 
-    admin_api = APIRouter(dependencies=[Depends(require_admin)])
+    admin_api = APIRouter(dependencies=[Depends(current)])
     add_website(app)
 
+    @admin_api.get("/v1/me")
+    def me(principal: Current):
+        return principal.describe()
+
     @admin_api.get("/v1/overview")
-    def overview():
-        return website_overview(storage)
+    def overview(principal: Current):
+        if principal.sees_all_games:
+            return website_overview(storage)
+        allowed = accounts.game_ids_for(principal, [g["id"] for g in storage.list_games()])
+        return website_overview(storage, allowed)
 
     @admin_api.get("/openapi.json")
     def schema():
         return app.openapi()
 
     @admin_api.get("/v1/games")
-    def list_games():
-        return storage.list_games()
+    def list_games(principal: Current):
+        games = storage.list_games()
+        if principal.sees_all_games:
+            return games
+        allowed = accounts.game_ids_for(principal, [game["id"] for game in games])
+        return [game for game in games if game["id"] in allowed]
 
     @admin_api.post("/v1/games", status_code=201)
-    def register_game(game: GameCreate, response: Response):
+    def register_game(game: GameCreate, response: Response, principal: Manager):
         response.headers["Cache-Control"] = "no-store"
-        return storage.register_game(game)
+        registered = storage.register_game(game)
+        accounts.audit(
+            principal, "game.register", registered["id"], f"{game.name} ({game.platform})"
+        )
+        return registered
 
     @admin_api.get("/v1/games/{game_id}")
     def game_details(game_id: UUID):
         return storage.game_details(str(game_id))
 
     @admin_api.patch("/v1/games/{game_id}")
-    def update_game(game_id: UUID, update: GameUpdate):
-        return storage.update_game(str(game_id), update)
+    def update_game(game_id: UUID, update: GameUpdate, principal: Manager):
+        changes = ", ".join(sorted(update.model_dump(exclude_none=True)))
+        result = storage.update_game(str(game_id), update)
+        accounts.audit(principal, "game.update", str(game_id), changes)
+        return result
 
     @admin_api.delete("/v1/games/{game_id}")
-    def delete_game(game_id: UUID, confirm: Annotated[str, Query(max_length=255)] = ""):
-        return storage.delete_game(str(game_id), confirm)
+    def delete_game(
+        game_id: UUID, principal: Manager, confirm: Annotated[str, Query(max_length=255)] = ""
+    ):
+        name = storage.get_game(str(game_id))["name"]
+        result = storage.delete_game(str(game_id), confirm)
+        accounts.forget_game(str(game_id))
+        accounts.audit(principal, "game.delete", str(game_id), name)
+        return result
 
     @admin_api.put("/v1/games/{game_id}/icon")
-    async def set_icon(game_id: UUID, request: Request):
-        return storage.set_icon(str(game_id), await request.body())
+    async def set_icon(game_id: UUID, request: Request, principal: Manager):
+        result = storage.set_icon(str(game_id), await request.body())
+        accounts.audit(principal, "icon.set", str(game_id))
+        return result
 
     @admin_api.delete("/v1/games/{game_id}/icon", status_code=204)
-    def clear_icon(game_id: UUID):
+    def clear_icon(game_id: UUID, principal: Manager):
         storage.clear_icon(str(game_id))
+        accounts.audit(principal, "icon.clear", str(game_id))
 
     @admin_api.get("/v1/games/{game_id}/icon")
     def get_icon(game_id: UUID):
@@ -238,22 +295,27 @@ def create_app(settings: Settings, *, admin: bool = False):
         return storage.list_keys(str(game_id))
 
     @admin_api.post("/v1/games/{game_id}/keys", status_code=201)
-    def create_key(game_id: UUID, key: KeyCreate, response: Response):
+    def create_key(game_id: UUID, key: KeyCreate, response: Response, principal: Manager):
         response.headers["Cache-Control"] = "no-store"
-        return storage.create_key(str(game_id), key.label)
+        created = storage.create_key(str(game_id), key.label)
+        accounts.audit(principal, "key.create", str(game_id), key.label)
+        return created
 
     @admin_api.delete("/v1/games/{game_id}/keys/{key_id}", status_code=204)
-    def delete_key(game_id: UUID, key_id: UUID):
+    def delete_key(game_id: UUID, key_id: UUID, principal: Manager):
         storage.delete_key(str(game_id), str(key_id))
+        accounts.audit(principal, "key.delete", str(game_id), str(key_id))
 
     @admin_api.put("/v1/games/{game_id}/dictionary/{name}")
-    def set_definition(game_id: UUID, name: Name, definition: EventDefinition):
+    def set_definition(game_id: UUID, name: Name, definition: EventDefinition, principal: Current):
         storage.set_definition(str(game_id), name, definition)
+        accounts.audit(principal, "dictionary.set", str(game_id), name)
         return {"status": "saved"}
 
     @admin_api.delete("/v1/games/{game_id}/dictionary/{name}", status_code=204)
-    def delete_definition(game_id: UUID, name: Name):
+    def delete_definition(game_id: UUID, name: Name, principal: Current):
         storage.delete_definition(str(game_id), name)
+        accounts.audit(principal, "dictionary.delete", str(game_id), name)
 
     @admin_api.get("/v1/games/{game_id}/dictionary")
     def get_dictionary(game_id: UUID):
@@ -301,6 +363,7 @@ def create_app(settings: Settings, *, admin: bool = False):
     @admin_api.get("/v1/games/{game_id}/export")
     def export(
         game_id: UUID,
+        principal: Current,
         chosen: Filtered,
         selected_date: Annotated[
             date, Query(alias="date", ge=date(1970, 1, 1), le=date(9998, 12, 31))
@@ -318,6 +381,9 @@ def create_app(settings: Settings, *, admin: bool = False):
             )
         finally:
             export_slot.release()
+        accounts.audit(
+            principal, "export.download", str(game_id), f"{period} {selected_date} {end_date or ''}"
+        )
         return FileResponse(
             output,
             media_type="application/zip",
@@ -383,6 +449,41 @@ def create_app(settings: Settings, *, admin: bool = False):
     @admin_api.delete("/v1/games/{game_id}/insights/funnels/{funnel_id}", status_code=204)
     def delete_funnel(game_id: UUID, funnel_id: UUID):
         insights.delete_funnel(storage, str(game_id), str(funnel_id))
+
+    @admin_api.get("/v1/games/{game_id}/access")
+    def game_access(game_id: UUID, principal: Manager):
+        return accounts.game_members(str(game_id))
+
+    @admin_api.put("/v1/games/{game_id}/access")
+    def set_game_access(game_id: UUID, update: AccessUpdate, principal: Manager):
+        accounts.set_game_members(principal, str(game_id), update.emails)
+        return accounts.game_members(str(game_id))
+
+    @admin_api.get("/v1/team")
+    def list_team(principal: TeamAdmin):
+        return accounts.list_users()
+
+    @admin_api.post("/v1/team", status_code=201)
+    def add_team_member(person: TeamAdd, principal: TeamAdmin):
+        email = accounts.add_user(
+            principal, person.email, person.name, person.role, [str(g) for g in person.game_ids]
+        )
+        return {"email": email}
+
+    @admin_api.patch("/v1/team/{email}")
+    def update_team_member(email: str, update: TeamUpdate, principal: TeamAdmin):
+        accounts.update_user(principal, email, update.role, update.name)
+        if update.game_ids is not None:
+            accounts.set_games(principal, email, [str(g) for g in update.game_ids])
+        return {"status": "saved"}
+
+    @admin_api.delete("/v1/team/{email}", status_code=204)
+    def remove_team_member(email: str, principal: TeamAdmin):
+        accounts.remove_user(principal, email)
+
+    @admin_api.get("/v1/audit")
+    def audit_log(principal: TeamAdmin):
+        return accounts.audit_log()
 
     app.include_router(admin_api)
     return app

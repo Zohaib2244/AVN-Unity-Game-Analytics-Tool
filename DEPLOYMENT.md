@@ -189,6 +189,26 @@ You don't need an export to look at your data: each game has an **Overview**, **
 
 When you upgrade from a version without dashboards, nothing needs migrating by hand: on first start the server adds the new per-game tables (session environments and saved funnels) and fills the environments from existing `session_start` events. Back up `data/` first, as always.
 
+## Team access
+
+Skip this if you are the only user. To let a team in, with roles and per-game access (see the [README](README.md#team-access)):
+
+1. **Cloudflare Access:** in Zero Trust → Access → Applications, edit the application that protects the admin hostname. In its Allow policy, include *Emails ending in* your company domain (for example `@finz.io`) and your own email. Leave the separate Bypass application for `POST /v1/events` as it is, so games can still send events.
+2. **Find two values:** the team domain (Zero Trust → Settings → Custom pages, shown as `<team>.cloudflareaccess.com`) and the application's **Application Audience (AUD) Tag** (Access → Applications → your app → Overview).
+3. **Set them in `.env`:**
+
+   ```bash
+   AVN_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com
+   AVN_ACCESS_AUDIENCE=<the AUD tag>
+   AVN_ADMIN_EMAIL=you@yourcompany.com     # the email you sign in with; always an admin
+   AVN_ALLOWED_EMAIL_DOMAIN=yourcompany.com
+   AVN_LAN_ADMIN=true
+   ```
+
+4. **Restart the admin service:** `docker compose up -d admin`. Open the site through Cloudflare, sign in, then add people on the **Team** page.
+
+If something is misconfigured and you can't sign in remotely, you are not locked out: open the site from your own network (it counts as the admin), or call the API with the admin token. Remove the `AVN_ACCESS_*` values to return to single-user mode. Your reverse proxy must forward the `Cf-Access-Jwt-Assertion` header (Caddy and nginx do by default) and should set `X-Forwarded-For` (Caddy does), because the server uses it to tell a request from your home network from one that came through Cloudflare.
+
 ## 7. Operating it
 
 ```bash
