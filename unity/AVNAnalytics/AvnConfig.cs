@@ -1,47 +1,67 @@
+using System;
+using UnityEngine;
+
 namespace Avn.Analytics
 {
-    /// <summary>Settings for the AVN Analytics SDK. Create one and pass it to AvnAnalytics.Initialize.</summary>
+    /// <summary>
+    /// Settings for the AVN Analytics SDK. Edit it in the Inspector on an AvnAnalyticsInitializer,
+    /// or create one in code and pass it to AvnAnalytics.Initialize.
+    /// </summary>
+    [Serializable]
     public sealed class AvnConfig
     {
-        /// <summary>Full ingest URL, e.g. https://analytics.example.com/v1/events</summary>
+        [Header("Server")]
+        [Tooltip("Full ingest URL, e.g. https://analytics.example.com/v1/events")]
         public string Endpoint = "";
 
-        /// <summary>Game API key from the admin site (sent as X-API-Key). An identifier, not a secret.</summary>
+        [Tooltip("Game API key from the admin site (sent as X-API-Key). An identifier, not a secret.")]
         public string ApiKey = "";
 
-        /// <summary>Optional overrides. Null/empty = detect automatically.</summary>
+        [Header("Build info (leave empty to detect automatically)")]
         public string AppVersion;
         public string Build;
         public string Platform;
 
-        // ---- batching ----
-        /// <summary>Send as soon as this many events are pending (server max is 500).</summary>
+        [Header("Batching")]
+        [Tooltip("Send as soon as this many events are pending (server max is 500).")]
+        [Min(1)]
         public int BatchSize = 50;
-        /// <summary>Send pending events at least this often.</summary>
-        public float FlushIntervalSeconds = 30f;
-        /// <summary>Hard cap on one request body. Server limit is 1 MiB.</summary>
+
+        [Tooltip("Send pending events at least this often, in minutes. Events are also sent when a batch fills up and when the app is paused or launched.")]
+        [Min(0.05f)]
+        public float FlushIntervalMinutes = 2f;
+
+        [Tooltip("Hard cap on one request body in bytes. Server limit is 1 MiB.")]
         public int MaxBatchBytes = 700 * 1024;
-        /// <summary>Gap between batches while draining a backlog.</summary>
+
+        [Tooltip("Gap between batches while draining a backlog, in seconds.")]
         public float PaceGapSeconds = 1f;
+
         public float RequestTimeoutSeconds = 20f;
 
-        // ---- retry ----
+        [Header("Retry")]
         public float MinBackoffSeconds = 5f;
         public float MaxBackoffSeconds = 300f;
-        /// <summary>How long to wait after 401/403/404/415 (bad key, disabled key, misconfiguration).</summary>
+
+        [Tooltip("How long to wait after 401/403/404/415 (bad key, disabled key, misconfiguration), in seconds.")]
         public float AuthRetrySeconds = 1800f;
 
-        // ---- disk queue ----
+        [Header("Disk queue")]
         public int MaxQueuedEvents = 10000;
         public long MaxQueueBytes = 5L * 1024 * 1024;
 
-        // ---- behaviour ----
-        /// <summary>Start a new session after the app was in the background this long.</summary>
+        [Header("Behaviour")]
+        [Tooltip("Start a new session after the app was in the background this long, in seconds.")]
         public float SessionTimeoutSeconds = 1800f;
-        /// <summary>Log first_open (once per install) and session_start automatically.</summary>
+
+        [Tooltip("Log first_open (once per install), session_start and session_end automatically.")]
         public bool AutoSessionEvents = true;
-        /// <summary>Shift client_ts by the device clock error measured from server responses.</summary>
+
+        [Tooltip("Shift client_ts by the device clock error measured from server responses.")]
         public bool CorrectClockSkew = true;
+
         public bool DebugLogging = false;
+
+        internal float FlushIntervalSeconds => Mathf.Max(3f, FlushIntervalMinutes * 60f);
     }
 }

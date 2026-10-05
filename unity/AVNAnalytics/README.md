@@ -17,6 +17,10 @@ Persistence test: click **Simulate OFFLINE**, log some events (pending grows), s
 
 ## Use in a game
 
+**From the Inspector:** add **AVN Analytics Initializer** (*Add Component, AVN Analytics*) to a GameObject in your first scene and fill in Endpoint, Api Key and any other settings (for example **Flush Interval Minutes**, default 2). It initializes before your other scripts' `Awake`.
+
+**From code:**
+
 ```csharp
 using Avn.Analytics;
 
@@ -55,7 +59,7 @@ Every event also gets a `seq` param, a counter that goes up within a session, fo
 
 - **Disk first.** Every event is appended to `persistentDataPath/avn_analytics/queue.jsonl` before anything else. A crash or kill loses nothing already logged (the OS-level flush happens per event; an fsync happens on pause/quit — only a power cut in between could lose the last few events).
 - **Delete after ack.** A batch is removed only after the server returns 2xx. If the app dies mid-send, it is sent again on next launch; the server dedups on `event_id`. The ack is recorded in a small cursor file, and the queue file is compacted only occasionally.
-- **One request at a time**, batches of 50 events (or ≤700 KB), flushed when full, every 30 s, on app pause, and on launch. Backlogs drain with a 1 s gap between batches.
+- **One request at a time**, batches of 50 events (or ≤700 KB), flushed when full, every 2 minutes (`FlushIntervalMinutes`), on app pause, and on launch. Backlogs drain with a 1 s gap between batches.
 - **Failures:** network error / 5xx → exponential backoff 5 s → 5 min with jitter; `Retry-After` honored (429/503). 400/413 → the batch is halved until the bad event is isolated, then moved to `quarantine.jsonl`. 401/403/404/415 → retry every 30 min, events are kept.
 - **Cap:** 10,000 events / 5 MB; oldest dropped first.
 - **Clock skew:** the server's `server_ts` is used to measure device clock error (saved on device); later events have `client_ts` corrected if the clock is off by more than 10 s. Events logged before the first successful sync are not corrected. Disable with `CorrectClockSkew = false`.
@@ -70,7 +74,8 @@ Threading: `LogEvent` is safe from any thread; `Initialize` must be called on th
 | File | Purpose |
 | --- | --- |
 | `AvnAnalytics.cs` | Public static API |
-| `AvnConfig.cs` | Settings |
+| `AvnConfig.cs` | Settings (editable in the Inspector) |
+| `AvnAnalyticsInitializer.cs` | Component that initializes the SDK from Inspector settings |
 | `AvnParameter.cs` | Firebase-style parameter |
 | `AvnClient.cs` | Event building, batching, retry/backoff, clock skew |
 | `AvnEventQueue.cs` | Durable on-disk queue |
