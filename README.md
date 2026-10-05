@@ -101,24 +101,31 @@ Every stored event has the same envelope, which makes funnels, retention, sessio
 
 The SDK needs no location permission on Android or iOS. Because country is derived from the IP address, check your store privacy disclosures.
 
-## Team access
+## Team access and workspaces
 
-For a team, put the admin site behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) and set the `AVN_ACCESS_*` variables (see [`DEPLOYMENT.md`](DEPLOYMENT.md#team-access)). Cloudflare handles sign-in with work emails; the app keeps its own **invite-only team list** and applies a role:
+For a team, put the admin site behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) and set the `AVN_ACCESS_*` variables (see [`DEPLOYMENT.md`](DEPLOYMENT.md#team-access)). Two lists work together, and both must include a person:
 
-| | Admin | Team lead | Member |
+1. **Cloudflare** decides who can reach the site at all (add their email to the Access policy).
+2. **The Team page** decides what they can do. Anyone who signs in through Cloudflare but isn't listed (or has no workspace) sees a "no access" page that names the admin to contact.
+
+**Workspaces** keep sets of games and people apart, for example work and personal projects. Every game belongs to exactly one workspace, and roles belong to a workspace, so one person can be a lead in one and a member in another. There is always at least one workspace; the first start creates "Default" and puts every existing game and person in it (rename it on the Workspaces page).
+
+| | Admin (every workspace) | Team lead (their workspace) | Member (their workspace) |
 | --- | --- | --- | --- |
 | View dashboards, funnels, players, exports | ✓ | ✓ | ✓ (assigned games only) |
 | Edit funnels and the event dictionary | ✓ | ✓ | ✓ |
 | See and copy API keys | ✓ | ✓ | ✓ |
 | Register, edit, archive, delete games; icons; create and delete keys | ✓ | ✓ | ✗ |
 | Choose which members see a game | ✓ | ✓ | ✗ |
-| Manage people and roles, read the activity log | ✓ | ✗ | ✗ |
+| Create, rename, delete workspaces; move games between them | ✓ | ✗ | ✗ |
+| Add people, set roles, read the activity log | ✓ | ✗ | ✗ |
 
-- Admins and leads see every game; a member sees only the games they were given, and other games look like they don't exist.
-- The admin adds people on the **Team** page (email, role, games). Anyone signed in through Cloudflare but not on the list is refused, and removing someone blocks them immediately. `AVN_ALLOWED_EMAIL_DOMAIN` limits who can be added to one domain, and `AVN_ADMIN_EMAIL` is always an admin.
-- Requests from your own network (no Cloudflare in between) count as the admin, because there is no sign-in on the LAN; turn that off with `AVN_LAN_ADMIN=false`. A request that did come through Cloudflare never gets this pass: it must carry a valid Access token, which the server verifies against Cloudflare's published keys (signature, expiry, audience and issuer).
-- The admin token still works for scripts (`Authorization: Bearer …`) and counts as an admin.
-- Leads manage who sees a game under **Game settings → Who can see this game**. The **Recent activity** log on the Team page records who changed games, keys, access, the dictionary and exports.
+- A workspace is invisible to people who aren't in it: its games, keys and data behave as if they didn't exist, even by direct link. Admins see everything and switch workspace from the sidebar.
+- **Moving a game** (Game settings, admin only) moves its other platform version too, with its events, keys, funnels and dictionary. Collection keeps working because keys don't change. Members' per-game access is cleared, and a move is refused if the destination already has a game with the same name and platform.
+- **Deleting a workspace** (admin only, type its name to confirm) either moves all its games to another workspace or deletes them (their files go to `data/deleted`, not erased). The last workspace can't be deleted.
+- Removing someone from a workspace keeps their other workspaces; removing them from the team blocks them at once.
+- `AVN_ADMIN_EMAIL` is always an admin and can't be removed. Requests from your own network (no Cloudflare) count as an admin; turn that off with `AVN_LAN_ADMIN=false`. A request that came through Cloudflare never gets that pass: it must carry a valid Access token, which the server verifies against Cloudflare's published keys (signature, expiry, audience and issuer). The admin token still works for scripts.
+- The activity log records changes to games, keys, workspaces, people, access, the dictionary and exports.
 - With the `AVN_ACCESS_*` variables empty, everything behaves as before: every request is an admin.
 
 ## Dashboards
@@ -232,7 +239,7 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 
 | Operation | Endpoint |
 | --- | --- |
-| List / register games | `GET` / `POST /v1/games` |
+| List / register games | `GET` / `POST /v1/games` (`?workspace=<id>`, `workspace_id` in the body) |
 | List / issue keys | `GET` / `POST /v1/games/{id}/keys` |
 | Delete key | `DELETE /v1/games/{id}/keys/{key_id}` |
 | Set / read / remove game icon | `PUT` (raw PNG body, 16–1024 px, up to 512 KB) / `GET` / `DELETE /v1/games/{id}/icon` |
@@ -245,8 +252,10 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Run a funnel | `POST /v1/games/{id}/insights/funnel` (steps, `scope`, `window_hours`, `breakdown`, `filters`) |
 | Players / one player's events | `GET /v1/games/{id}/insights/players?start=…&end=…`, `GET /v1/games/{id}/insights/journey?player=…&start=…&end=…` |
 | Saved funnels | `GET` / `POST /v1/games/{id}/insights/funnels`, `PUT` / `DELETE /v1/games/{id}/insights/funnels/{funnel_id}` |
-| Who am I, with my permissions | `GET /v1/me` |
-| Team (admin) | `GET` / `POST /v1/team`, `PATCH` / `DELETE /v1/team/{email}`, `GET /v1/audit` |
+| Who am I, my workspaces and roles | `GET /v1/me` |
+| Workspaces (admin) | `GET` / `POST /v1/workspaces`, `PATCH /v1/workspaces/{id}`, `DELETE /v1/workspaces/{id}?confirm=<name>&move_to=<id>` (or `&delete_games=true`) |
+| Move a game (admin) | `POST /v1/games/{id}/move` with `{"workspace_id": …}` |
+| People (admin) | `GET` / `POST /v1/team`, `PATCH /v1/team/{email}`, `DELETE /v1/team/{email}?workspace_id=…`, `GET /v1/audit` |
 | Who can see a game (admin, lead) | `GET` / `PUT /v1/games/{id}/access` |
 | API schema | `GET /openapi.json` |
 

@@ -16,9 +16,6 @@ class Settings:
     access_team_domain: str = ""  # e.g. example.cloudflareaccess.com
     access_audience: str = ""  # the Access application's "Application Audience (AUD) Tag"
     admin_email: str = ""  # always an admin; can't be removed or demoted from the website
-    allowed_email_domain: str = (
-        ""  # e.g. example.com: only these addresses can be added to the team
-    )
     lan_admin: bool = True  # requests from the private network (no Cloudflare) count as admin
 
     def __post_init__(self):
@@ -44,10 +41,6 @@ class Settings:
             .rstrip("/"),
             access_audience=os.environ.get("AVN_ACCESS_AUDIENCE", "").strip(),
             admin_email=os.environ.get("AVN_ADMIN_EMAIL", "").strip().lower(),
-            allowed_email_domain=os.environ.get("AVN_ALLOWED_EMAIL_DOMAIN", "")
-            .strip()
-            .lower()
-            .lstrip("@"),
             lan_admin=os.environ.get("AVN_LAN_ADMIN", "true").strip().lower()
             not in ("0", "false", "no", "off"),
         )

@@ -734,3 +734,10 @@ table.breakdown td,table.breakdown th,.compact-table td,.compact-table th{paddin
 .check-list .check-row{margin:0;padding:6px 4px;border-radius:6px}
 .check-list .check-row:hover{background:var(--bg-nested)}
 select[data-role]{width:auto;min-width:130px;padding:6px 30px 6px 10px}
+
+/* workspaces */
+.ws-switch{padding:0 10px;margin:-6px 0 16px;display:grid;gap:4px}
+.ws-switch label{font-size:.72rem;color:var(--text-muted-dim)}
+.ws-switch select{padding:7px 30px 7px 10px;font-size:.88rem}
+.row-actions{text-align:right;white-space:nowrap}
+#ws-delete select{margin:6px 0 10px}

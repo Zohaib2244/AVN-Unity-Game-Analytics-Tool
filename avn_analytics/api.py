@@ -30,6 +30,8 @@ from .models import (
     SavedFunnel,
     TeamAdd,
     TeamUpdate,
+    WorkspaceCreate,
+    WorkspaceMove,
     normalize_country,
     timestamp,
 )
@@ -132,8 +134,11 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
 
     Current = Annotated[Principal, Depends(current)]
 
-    def manager(principal: Current) -> Principal:
-        if not principal.manages_games:
+    def manager(request: Request, principal: Current) -> Principal:
+        """Admins, or the lead of the workspace the game in the URL belongs to."""
+        game_id = request.path_params.get("game_id")
+        workspace_id = accounts.workspace_of_game(str(game_id)) if game_id else None
+        if not workspace_id or not principal.manages_games_in(workspace_id):
             raise HTTPException(403, "Only admins and team leads can do this")
         return principal
 
@@ -216,31 +221,41 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
 
     @admin_api.get("/v1/me")
     def me(principal: Current):
-        return principal.describe()
+        return {
+            "email": principal.email,
+            "name": principal.name,
+            "is_admin": principal.is_admin,
+            "source": principal.source,
+            "can_manage_team": principal.manages_team,
+            "workspaces": accounts.workspaces_for(principal),
+        }
 
     @admin_api.get("/v1/overview")
-    def overview(principal: Current):
-        if principal.sees_all_games:
-            return website_overview(storage)
-        allowed = accounts.game_ids_for(principal, [g["id"] for g in storage.list_games()])
-        return website_overview(storage, allowed)
+    def overview(principal: Current, workspace: UUID | None = None):
+        workspace_id = accounts.pick_workspace(principal, str(workspace) if workspace else None)
+        visible = {game["id"] for game in accounts.games_in(principal, workspace_id)}
+        result = website_overview(storage, visible)
+        result["workspace"] = workspace_id
+        return result
 
     @admin_api.get("/openapi.json")
     def schema():
         return app.openapi()
 
     @admin_api.get("/v1/games")
-    def list_games(principal: Current):
-        games = storage.list_games()
-        if principal.sees_all_games:
-            return games
-        allowed = accounts.game_ids_for(principal, [game["id"] for game in games])
-        return [game for game in games if game["id"] in allowed]
+    def list_games(principal: Current, workspace: UUID | None = None):
+        workspace_id = accounts.pick_workspace(principal, str(workspace) if workspace else None)
+        return accounts.games_in(principal, workspace_id)
 
     @admin_api.post("/v1/games", status_code=201)
-    def register_game(game: GameCreate, response: Response, principal: Manager):
+    def register_game(game: GameCreate, response: Response, principal: Current):
         response.headers["Cache-Control"] = "no-store"
-        registered = storage.register_game(game)
+        workspace_id = accounts.pick_workspace(
+            principal, str(game.workspace_id) if game.workspace_id else None
+        )
+        if not principal.manages_games_in(workspace_id):
+            raise HTTPException(403, "Only admins and team leads can do this")
+        registered = storage.register_game(game, workspace_id)
         accounts.audit(
             principal, "game.register", registered["id"], f"{game.name} ({game.platform})"
         )
@@ -459,27 +474,67 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         accounts.set_game_members(principal, str(game_id), update.emails)
         return accounts.game_members(str(game_id))
 
+    @admin_api.get("/v1/workspaces")
+    def list_workspaces(principal: Current):
+        return accounts.workspaces_for(principal, counts=principal.is_admin)
+
+    @admin_api.post("/v1/workspaces", status_code=201)
+    def create_workspace(body: WorkspaceCreate, principal: TeamAdmin):
+        return accounts.create_workspace(principal, body.name)
+
+    @admin_api.patch("/v1/workspaces/{workspace_id}")
+    def rename_workspace(workspace_id: UUID, body: WorkspaceCreate, principal: TeamAdmin):
+        accounts.rename_workspace(principal, str(workspace_id), body.name)
+        return {"status": "saved"}
+
+    @admin_api.delete("/v1/workspaces/{workspace_id}")
+    def delete_workspace(
+        workspace_id: UUID,
+        principal: TeamAdmin,
+        confirm: Annotated[str, Query(max_length=255)] = "",
+        move_to: UUID | None = None,
+        delete_games: bool = False,
+    ):
+        return accounts.delete_workspace(
+            principal, str(workspace_id), confirm, str(move_to) if move_to else None, delete_games
+        )
+
+    @admin_api.post("/v1/games/{game_id}/move")
+    def move_game(game_id: UUID, body: WorkspaceMove, principal: TeamAdmin):
+        return accounts.move_game(principal, str(game_id), str(body.workspace_id))
+
     @admin_api.get("/v1/team")
     def list_team(principal: TeamAdmin):
-        return accounts.list_users()
+        return accounts.list_people()
 
     @admin_api.post("/v1/team", status_code=201)
     def add_team_member(person: TeamAdd, principal: TeamAdmin):
-        email = accounts.add_user(
-            principal, person.email, person.name, person.role, [str(g) for g in person.game_ids]
+        email = accounts.add_person(
+            principal,
+            person.email,
+            person.name,
+            person.role,
+            str(person.workspace_id) if person.workspace_id else None,
+            [str(g) for g in person.game_ids],
         )
         return {"email": email}
 
     @admin_api.patch("/v1/team/{email}")
     def update_team_member(email: str, update: TeamUpdate, principal: TeamAdmin):
-        accounts.update_user(principal, email, update.role, update.name)
-        if update.game_ids is not None:
-            accounts.set_games(principal, email, [str(g) for g in update.game_ids])
+        accounts.update_person(
+            principal,
+            email,
+            update.name,
+            update.admin,
+            str(update.workspace_id) if update.workspace_id else None,
+            update.role,
+            [str(g) for g in update.game_ids] if update.game_ids is not None else None,
+        )
         return {"status": "saved"}
 
     @admin_api.delete("/v1/team/{email}", status_code=204)
-    def remove_team_member(email: str, principal: TeamAdmin):
-        accounts.remove_user(principal, email)
+    def remove_team_member(email: str, principal: TeamAdmin, workspace_id: UUID | None = None):
+        accounts.remove_person(principal, email, str(workspace_id) if workspace_id else None)
 
     @admin_api.get("/v1/audit")
     def audit_log(principal: TeamAdmin):

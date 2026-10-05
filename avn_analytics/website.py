@@ -67,5 +67,6 @@ def add_website(app):
         "/status",
         "/settings",
         "/team",
+        "/workspaces",
     ):
         app.add_api_route(route, page, methods=["GET"], include_in_schema=False)

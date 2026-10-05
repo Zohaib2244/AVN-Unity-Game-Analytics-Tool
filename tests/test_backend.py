@@ -832,11 +832,12 @@ def test_game_icons(backend):
     assert not (settings.data_dir / "icons" / f"{game['id']}.png").exists()
 
 
-# ---- team access: Cloudflare Access sign-in, roles, per-game access, LAN rule
+# ---- team access: Cloudflare Access sign-in, workspaces, roles, per-game access, LAN rule
 
 TEAM_DOMAIN = "example.cloudflareaccess.com"
 AUDIENCE = "test-audience-tag"
 ADMIN_EMAIL = "boss@example.com"
+GAME = {"name": "Test Game", "bundle_id": "com.avn.test", "platform": "android"}
 
 
 @pytest.fixture
@@ -850,11 +851,10 @@ def team(tmp_path):
         access_team_domain=TEAM_DOMAIN,
         access_audience=AUDIENCE,
         admin_email=ADMIN_EMAIL,
-        allowed_email_domain="example.com",
     )
     app = create_app(settings, admin=True, access_keys={"k1": private.public_key()})
 
-    def token(email, audience=AUDIENCE, key=private, expires=3600, issuer=None):
+    def token(email, audience=AUDIENCE, key=private, expires=3600):
         import time
 
         import jwt
@@ -863,7 +863,7 @@ def team(tmp_path):
         claims = {
             "email": email,
             "aud": [audience],
-            "iss": issuer or f"https://{TEAM_DOMAIN}",
+            "iss": f"https://{TEAM_DOMAIN}",
             "iat": now,
             "exp": now + expires,
         }
@@ -873,113 +873,272 @@ def team(tmp_path):
         return {"Cf-Access-Jwt-Assertion": token(email, **options), "Cf-Ray": "abc-LHR"}
 
     with TestClient(app, client=("203.0.113.9", 5000)) as client:
-        yield client, as_user, private, token
+        yield client, as_user, private
 
 
-def test_team_sign_in_and_roles(team):
-    client, as_user, private, token = team
+def test_sign_in_rules(team):
+    client, as_user, _ = team
     boss = as_user(ADMIN_EMAIL)
-    assert client.get("/v1/me", headers=boss).json()["role"] == "admin"
-    # not signed in, and signed in but not invited
+    me = client.get("/v1/me", headers=boss).json()
+    assert me["is_admin"] and [w["name"] for w in me["workspaces"]] == ["Default"]
     assert client.get("/v1/me").status_code == 401
-    assert client.get("/v1/me", headers=as_user("stranger@example.com")).status_code == 403
-    # token problems: wrong audience, expired, wrong signing key, no Cloudflare marker needed
+    stranger = client.get("/v1/me", headers=as_user("stranger@example.com"))
+    assert stranger.status_code == 403
+    assert ADMIN_EMAIL in stranger.json()["detail"]  # tells them whom to contact
     assert client.get("/v1/me", headers=as_user(ADMIN_EMAIL, audience="other")).status_code == 401
     assert client.get("/v1/me", headers=as_user(ADMIN_EMAIL, expires=-60)).status_code == 401
     from cryptography.hazmat.primitives.asymmetric import rsa
 
     forged = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     assert client.get("/v1/me", headers=as_user(ADMIN_EMAIL, key=forged)).status_code == 401
-    # a header claiming to be someone isn't enough
     spoof = {"Cf-Access-Authenticated-User-Email": ADMIN_EMAIL, "Cf-Ray": "x"}
     assert client.get("/v1/me", headers=spoof).status_code == 401
-
-    # the admin builds the team
-    game = client.post(
-        "/v1/games",
-        headers=boss,
-        json={"name": "Test Game", "bundle_id": "com.avn.test", "platform": "android"},
-    ).json()
-    other = client.post(
-        "/v1/games",
-        headers=boss,
-        json={"name": "Other", "bundle_id": "com.avn.other", "platform": "android"},
-    ).json()
-    add = lambda **body: client.post("/v1/team", headers=boss, json=body)  # noqa: E731
-    assert add(email="lead@example.com", role="lead").status_code == 201
-    assert add(email="dev@example.com", role="member", game_ids=[game["id"]]).status_code == 201
-    assert add(email="dev@example.com", role="member").status_code == 409
-    assert add(email="someone@gmail.com", role="member").status_code == 400  # wrong domain
-
-    lead, member = as_user("lead@example.com"), as_user("dev@example.com")
-    # everyone can see keys, edit dictionary and funnels, and export their games
-    assert client.get(f"/v1/games/{game['id']}/keys", headers=member).status_code == 200
-    definition = {"description": "d", "params": {}}
-    put = client.put(f"/v1/games/{game['id']}/dictionary/level", headers=member, json=definition)
-    assert put.status_code == 200
-    saved = client.post(
-        f"/v1/games/{game['id']}/insights/funnels",
-        headers=member,
-        json={"name": "F", "steps": [{"event": "a"}, {"event": "b"}]},
-    )
-    assert saved.status_code == 201
-    export = client.get(
-        f"/v1/games/{game['id']}/export",
-        headers=member,
-        params={"date": "2026-10-04", "period": "day"},
-    )
-    assert export.status_code == 200
-    # members see only their games, and other games look like they don't exist
-    assert [g["id"] for g in client.get("/v1/games", headers=member).json()] == [game["id"]]
-    assert client.get(f"/v1/games/{other['id']}", headers=member).status_code == 404
-    assert client.get(f"/v1/games/{other['id']}/keys", headers=member).status_code == 404
-    assert client.get("/v1/overview", headers=member).json()["games"][0]["id"] == game["id"]
-    assert len(client.get("/v1/games", headers=lead).json()) == 2  # leads see everything
-    # members can't manage games or keys
-    new_game = {"name": "X", "bundle_id": "com.avn.x", "platform": "ios"}
-    assert client.post("/v1/games", headers=member, json=new_game).status_code == 403
+    # listed by the admin but in no workspace: still no access
+    person = {"email": "idle@example.com", "role": "admin"}
+    assert client.post("/v1/team", headers=boss, json=person).status_code == 201
     assert (
-        client.patch(f"/v1/games/{game['id']}", headers=member, json={"notes": "n"}).status_code
-        == 403
-    )
-    assert (
-        client.post(f"/v1/games/{game['id']}/keys", headers=member, json={"label": "k"}).status_code
-        == 403
-    )
-    assert (
-        client.put(f"/v1/games/{game['id']}/icon", headers=member, content=b"x").status_code == 403
-    )
-    assert client.get(f"/v1/games/{game['id']}/access", headers=member).status_code == 403
-    # leads can manage games and give members access, but can't manage the team
-    assert client.post("/v1/games", headers=lead, json=new_game).status_code == 201
-    granted = client.put(
-        f"/v1/games/{other['id']}/access", headers=lead, json={"emails": ["dev@example.com"]}
-    )
-    assert granted.status_code == 200
-    assert {g["id"] for g in client.get("/v1/games", headers=member).json()} == {
-        game["id"],
-        other["id"],
-    }
-    assert client.get("/v1/team", headers=lead).status_code == 403
-    assert client.post("/v1/team", headers=lead, json={"email": "z@example.com"}).status_code == 403
-    assert client.get("/v1/audit", headers=member).status_code == 403
-    # only the admin manages the team; the primary admin is protected; removal blocks at once
-    assert (
-        client.patch(f"/v1/team/{ADMIN_EMAIL}", headers=boss, json={"role": "member"}).status_code
-        == 400
-    )
-    assert client.delete(f"/v1/team/{ADMIN_EMAIL}", headers=boss).status_code == 400
-    assert (
-        client.patch("/v1/team/dev@example.com", headers=boss, json={"role": "lead"}).status_code
+        client.patch("/v1/team/idle@example.com", headers=boss, json={"admin": False}).status_code
         == 200
     )
-    assert len(client.get("/v1/games", headers=member).json()) == 3
-    assert client.delete("/v1/team/dev@example.com", headers=boss).status_code == 204
-    assert client.get("/v1/me", headers=member).status_code == 403
-    actions = [row["action"] for row in client.get("/v1/audit", headers=boss).json()]
-    assert {"game.register", "user.add", "access.game", "user.remove", "export.download"} <= set(
-        actions
+    assert client.get("/v1/me", headers=as_user("idle@example.com")).status_code == 403
+
+
+def test_workspaces_and_roles(team):
+    client, as_user, _ = team
+    boss = as_user(ADMIN_EMAIL)
+    work = client.get("/v1/workspaces", headers=boss).json()[0]
+    home = client.post("/v1/workspaces", headers=boss, json={"name": "Home"}).json()
+    assert client.post("/v1/workspaces", headers=boss, json={"name": "home"}).status_code == 409
+
+    def register(workspace, **game):
+        body = {**GAME, **game, "workspace_id": workspace["id"]}
+        response = client.post("/v1/games", headers=boss, json=body)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    work_game = register(work)
+    home_game = register(home, name="Pets", bundle_id="com.avn.pets")
+    add = lambda **body: client.post("/v1/team", headers=boss, json=body)  # noqa: E731
+    assert add(email="lead@example.com", role="lead", workspace_id=work["id"]).status_code == 201
+    assert (
+        add(
+            email="dev@example.com",
+            role="member",
+            workspace_id=work["id"],
+            game_ids=[work_game["id"]],
+        ).status_code
+        == 201
     )
+    assert add(email="dev@example.com", role="member", workspace_id=work["id"]).status_code == 409
+    # the same person can also be in the other workspace with another role
+    assert add(email="dev@example.com", role="lead", workspace_id=home["id"]).status_code == 201
+    assert add(email="friend@gmail.com", role="member", workspace_id=home["id"]).status_code == 201
+
+    lead, dev, friend = (as_user(f"{n}@example.com") for n in ("lead", "dev", "friend"))
+    friend = as_user("friend@gmail.com")
+
+    def games(headers, workspace):
+        response = client.get("/v1/games", headers=headers, params={"workspace": workspace["id"]})
+        return response
+
+    # workspaces are invisible to people who aren't in them
+    assert [w["name"] for w in client.get("/v1/me", headers=lead).json()["workspaces"]] == [
+        "Default"
+    ]
+    assert games(lead, home).status_code == 404
+    assert client.get(f"/v1/games/{home_game['id']}", headers=lead).status_code == 404
+    assert client.get(f"/v1/games/{home_game['id']}/keys", headers=lead).status_code == 404
+    assert [g["id"] for g in games(lead, work).json()] == [work_game["id"]]
+    assert client.get("/v1/workspaces", headers=lead).json()[0]["role"] == "lead"
+    # dev: a member at work, a lead at home
+    assert client.get(f"/v1/games/{work_game['id']}/keys", headers=dev).status_code == 200
+    assert (
+        client.post(
+            f"/v1/games/{work_game['id']}/keys", headers=dev, json={"label": "k"}
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            f"/v1/games/{home_game['id']}/keys", headers=dev, json={"label": "k"}
+        ).status_code
+        == 201
+    )
+    # a member sees only granted games; a lead only manages their own workspace
+    assert friend and games(friend, home).json() == []
+    assert client.get(f"/v1/games/{home_game['id']}", headers=friend).status_code == 404
+    other = {**GAME, "name": "Other", "bundle_id": "com.avn.other", "workspace_id": work["id"]}
+    assert client.post("/v1/games", headers=lead, json=other).status_code == 201
+    assert (
+        client.post(
+            "/v1/games",
+            headers=lead,
+            json={**other, "bundle_id": "com.avn.o2", "workspace_id": home["id"]},
+        ).status_code
+        == 404
+    )
+    assert client.post(
+        "/v1/games", headers=dev, json={**other, "bundle_id": "com.avn.o3"}
+    ).status_code in (403, 404)
+    granted = client.put(
+        f"/v1/games/{home_game['id']}/access", headers=dev, json={"emails": ["friend@gmail.com"]}
+    )
+    assert granted.status_code == 200
+    assert [g["id"] for g in games(friend, home).json()] == [home_game["id"]]
+    # only the admin manages workspaces, people and moves
+    for call in (
+        client.post("/v1/workspaces", headers=lead, json={"name": "X"}),
+        client.get("/v1/team", headers=lead),
+        client.post(
+            f"/v1/games/{work_game['id']}/move", headers=lead, json={"workspace_id": home["id"]}
+        ),
+        client.delete(f"/v1/workspaces/{home['id']}", headers=lead),
+    ):
+        assert call.status_code == 403
+    # removing someone from a workspace keeps their other workspace
+    assert (
+        client.delete(
+            f"/v1/team/dev@example.com?workspace_id={home['id']}", headers=boss
+        ).status_code
+        == 204
+    )
+    assert [w["name"] for w in client.get("/v1/me", headers=dev).json()["workspaces"]] == [
+        "Default"
+    ]
+    assert client.delete("/v1/team/dev@example.com", headers=boss).status_code == 204
+    assert client.get("/v1/me", headers=dev).status_code == 403
+    assert client.delete(f"/v1/team/{ADMIN_EMAIL}", headers=boss).status_code == 400
+    actions = {row["action"] for row in client.get("/v1/audit", headers=boss).json()}
+    assert {
+        "workspace.create",
+        "game.register",
+        "user.add",
+        "access.game",
+        "user.remove",
+    } <= actions
+
+
+def test_move_and_delete_workspaces(team, tmp_path):
+    client, as_user, _ = team
+    boss = as_user(ADMIN_EMAIL)
+    first = client.get("/v1/workspaces", headers=boss).json()[0]
+    second = client.post("/v1/workspaces", headers=boss, json={"name": "Home"}).json()
+
+    def register(workspace, platform="android", **game):
+        body = {**GAME, "platform": platform, "workspace_id": workspace["id"], **game}
+        return client.post("/v1/games", headers=boss, json=body).json()
+
+    android = register(first, bundle_id="com.avn.a")
+    ios = register(first, platform="ios", bundle_id="com.avn.i")
+    other = register(first, name="Solo", bundle_id="com.avn.solo")
+    client.post(
+        "/v1/team",
+        headers=boss,
+        json={
+            "email": "m@example.com",
+            "role": "member",
+            "workspace_id": first["id"],
+            "game_ids": [android["id"]],
+        },
+    )
+    member = as_user("m@example.com")
+    assert [g["id"] for g in client.get("/v1/games", headers=member).json()] == [android["id"]]
+
+    # moving takes both platform versions along, and clears member grants
+    moved = client.post(
+        f"/v1/games/{android['id']}/move", headers=boss, json={"workspace_id": second["id"]}
+    )
+    assert moved.status_code == 200 and set(moved.json()["moved"]) == {android["id"], ios["id"]}
+    assert moved.json()["grants_cleared"] == 1
+    listing = client.get("/v1/games", headers=boss, params={"workspace": second["id"]}).json()
+    assert {g["id"] for g in listing} == {android["id"], ios["id"]}
+    assert (
+        client.get("/v1/games", headers=boss, params={"workspace": first["id"]}).json()[0]["id"]
+        == other["id"]
+    )
+    assert client.get(f"/v1/games/{android['id']}", headers=member).status_code == 404
+    assert (
+        client.post(
+            f"/v1/games/{android['id']}/move", headers=boss, json={"workspace_id": second["id"]}
+        ).status_code
+        == 400
+    )
+    # a game with the same name and platform in the destination blocks the move
+    clash = register(first, bundle_id="com.avn.clash")
+    blocked = client.post(
+        f"/v1/games/{clash['id']}/move", headers=boss, json={"workspace_id": second["id"]}
+    )
+    assert blocked.status_code == 409 and "Rename" in blocked.json()["detail"]
+
+    # deleting a workspace needs the name, and a decision about its games
+    url = f"/v1/workspaces/{second['id']}"
+    assert client.delete(url, headers=boss, params={"confirm": "wrong"}).status_code == 400
+    assert client.delete(url, headers=boss, params={"confirm": "Home"}).status_code == 409
+    assert (
+        client.delete(
+            url, headers=boss, params={"confirm": "Home", "move_to": second["id"]}
+        ).status_code
+        == 400
+    )
+    clash_blocked = client.delete(
+        url, headers=boss, params={"confirm": "Home", "move_to": first["id"]}
+    )
+    assert clash_blocked.status_code == 409  # the "clash" game already holds that name and platform
+    client.delete(f"/v1/games/{clash['id']}", headers=boss, params={"confirm": "com.avn.clash"})
+    done = client.delete(url, headers=boss, params={"confirm": "Home", "move_to": first["id"]})
+    assert done.status_code == 200 and done.json()["games"] == 2
+    ids = {
+        g["id"]
+        for g in client.get("/v1/games", headers=boss, params={"workspace": first["id"]}).json()
+    }
+    assert {android["id"], ios["id"], other["id"]} <= ids
+    # the last workspace can't go
+    last = client.delete(
+        f"/v1/workspaces/{first['id']}",
+        headers=boss,
+        params={"confirm": first["name"], "delete_games": "true"},
+    )
+    assert last.status_code == 400 and "at least one" in last.json()["detail"]
+    # deleting with "delete the games" moves their files to data/deleted
+    third = client.post("/v1/workspaces", headers=boss, json={"name": "Scratch"}).json()
+    doomed = register(third, bundle_id="com.avn.doomed", name="Doomed")
+    gone = client.delete(
+        f"/v1/workspaces/{third['id']}",
+        headers=boss,
+        params={"confirm": "Scratch", "delete_games": "true"},
+    )
+    assert gone.status_code == 200
+    assert client.get(f"/v1/games/{doomed['id']}", headers=boss).status_code == 404
+    assert list((tmp_path / "deleted").glob("*com.avn.doomed*"))
+    renamed = client.patch(f"/v1/workspaces/{first['id']}", headers=boss, json={"name": "Work"})
+    assert renamed.status_code == 200
+    assert client.get("/v1/workspaces", headers=boss).json()[0]["name"] == "Work"
+
+
+def test_existing_data_moves_into_default_workspace(tmp_path):
+    import sqlite3
+
+    settings = Settings(data_dir=tmp_path, admin_token=TOKEN)
+    with TestClient(create_app(settings, admin=True)) as admin:
+        game = register(admin)
+    registry = sqlite3.connect(tmp_path / "registry.sqlite3")
+    registry.executescript(
+        """
+        UPDATE games SET workspace_id=NULL;
+        DELETE FROM workspace_members; DELETE FROM workspaces;
+        INSERT INTO team_users VALUES ('old-lead@example.com','','lead','x','2026-01-01',NULL);
+        INSERT INTO team_users VALUES ('old-dev@example.com','','member','x','2026-01-01',NULL);
+        """
+    )
+    registry.commit()
+    registry.close()
+    with TestClient(create_app(settings, admin=True)) as admin:
+        workspaces = admin.get("/v1/workspaces", headers=AUTH).json()
+        assert [w["name"] for w in workspaces] == ["Default"] and workspaces[0]["games"] == 1
+        people = {p["email"]: p for p in admin.get("/v1/team", headers=AUTH).json()}
+        assert people["old-lead@example.com"]["memberships"] == {workspaces[0]["id"]: "lead"}
+        assert people["old-dev@example.com"]["memberships"] == {workspaces[0]["id"]: "member"}
+        assert admin.get(f"/v1/games/{game['id']}", headers=AUTH).status_code == 200
 
 
 def test_lan_and_token_access(tmp_path):
@@ -992,21 +1151,18 @@ def test_lan_and_token_access(tmp_path):
     )
     app = create_app(settings, admin=True, access_keys={})
     with TestClient(app, client=("192.168.1.50", 5000)) as lan:
-        assert lan.get("/v1/me").json()["role"] == "admin"  # home network = the admin
+        assert lan.get("/v1/me").json()["is_admin"]  # home network = the admin
         assert lan.get("/v1/me").json()["source"] == "lan"
-        # a request that came through Cloudflare never gets the LAN pass, even from a private proxy
-        assert lan.get("/v1/me", headers={"Cf-Connecting-Ip": "198.51.100.7"}).status_code == 401
-        assert (
-            lan.get("/v1/me", headers={"Authorization": f"Bearer {TOKEN}"}).json()["source"]
-            == "token"
-        )
+        cloudflare = {"Cf-Connecting-Ip": "198.51.100.7"}
+        assert lan.get("/v1/me", headers=cloudflare).status_code == 401
+        bearer = {"Authorization": f"Bearer {TOKEN}"}
+        assert lan.get("/v1/me", headers=bearer).json()["source"] == "token"
         assert lan.get("/v1/me", headers={"Authorization": "Bearer wrong"}).status_code == 401
-        # X-Forwarded-For from our own proxy tells us the real caller
         public = {"X-Forwarded-For": "203.0.113.9"}
         assert lan.get("/v1/me", headers=public).status_code == 401
         assert lan.get("/v1/me", headers={"X-Forwarded-For": "192.168.1.7"}).status_code == 200
     with TestClient(app, client=("203.0.113.9", 5000)) as outside:
-        assert outside.get("/v1/me").status_code == 401  # the public internet gets nothing
+        assert outside.get("/v1/me").status_code == 401
         assert outside.get("/v1/me", headers={"X-Forwarded-For": "192.168.1.7"}).status_code == 401
     off = Settings(
         data_dir=tmp_path,

@@ -48,7 +48,6 @@ services:
       AVN_ACCESS_TEAM_DOMAIN: ${AVN_ACCESS_TEAM_DOMAIN:-}
       AVN_ACCESS_AUDIENCE: ${AVN_ACCESS_AUDIENCE:-}
       AVN_ADMIN_EMAIL: ${AVN_ADMIN_EMAIL:-}
-      AVN_ALLOWED_EMAIL_DOMAIN: ${AVN_ALLOWED_EMAIL_DOMAIN:-}
       AVN_LAN_ADMIN: ${AVN_LAN_ADMIN:-true}
     command: [uvicorn, "avn_analytics.api:create_admin_app", --factory, --host, "0.0.0.0", --port, "8000", --workers, "1", --limit-concurrency, "20", --no-proxy-headers]
     ports:

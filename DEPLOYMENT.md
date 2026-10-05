@@ -191,9 +191,9 @@ When you upgrade from a version without dashboards, nothing needs migrating by h
 
 ## Team access
 
-Skip this if you are the only user. To let a team in, with roles and per-game access (see the [README](README.md#team-access)):
+Skip this if you are the only user. To let a team in, with workspaces and roles (see the [README](README.md#team-access-and-workspaces)):
 
-1. **Cloudflare Access:** in Zero Trust → Access → Applications, edit the application that protects the admin hostname. In its Allow policy, include *Emails ending in* your company domain (for example `@example.com`) and your own email. Leave the separate Bypass application for `POST /v1/events` as it is, so games can still send events.
+1. **Cloudflare Access:** in Zero Trust → Access → Applications, edit the application that protects the admin hostname and add an Allow policy for the people who should reach the site (their emails, or *Emails ending in* a company domain). Leave the separate Bypass application for `POST /v1/events` as it is, so games can still send events. Cloudflare only decides who reaches the site; the app's Team page decides what they can do.
 2. **Find two values:** the team domain (Zero Trust → Settings → Custom pages, shown as `<team>.cloudflareaccess.com`) and the application's **Application Audience (AUD) Tag** (on the application's page under Access controls → Applications; the tab it lives on varies between dashboard versions, so look for the label).
 3. **Set them in `.env`:**
 
@@ -201,13 +201,14 @@ Skip this if you are the only user. To let a team in, with roles and per-game ac
    AVN_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com
    AVN_ACCESS_AUDIENCE=<the AUD tag>
    AVN_ADMIN_EMAIL=you@yourcompany.com     # the email you sign in with; always an admin
-   AVN_ALLOWED_EMAIL_DOMAIN=yourcompany.com
    AVN_LAN_ADMIN=true
    ```
 
-4. **Restart the admin service:** `docker compose up -d admin`. Open the site through Cloudflare, sign in, then add people on the **Team** page.
+4. **Restart the admin service:** `docker compose up -d admin`. Open the site through Cloudflare, sign in, then use **Workspaces** and **Team** to set up who can do what. Anyone who passes Cloudflare without being listed sees a page telling them to contact `AVN_ADMIN_EMAIL`.
 
-If something is misconfigured and you can't sign in remotely, you are not locked out: open the site from your own network (it counts as the admin), or call the API with the admin token. Remove the `AVN_ACCESS_*` values to return to single-user mode. Your reverse proxy must forward the `Cf-Access-Jwt-Assertion` header (Caddy and nginx do by default) and should set `X-Forwarded-For` (Caddy does), because the server uses it to tell a request from your home network from one that came through Cloudflare.
+The team domain and audience tag let the server verify Cloudflare's signed sign-in token, so nobody can pretend to be someone else. If something is misconfigured and you can't sign in remotely, you are not locked out: open the site from your own network (it counts as the admin), or call the API with the admin token. Remove the `AVN_ACCESS_*` values to return to single-user mode. Your reverse proxy must forward the `Cf-Access-Jwt-Assertion` header (Caddy and nginx do by default) and should set `X-Forwarded-For` (Caddy does), because the server uses it to tell a request from your home network from one that came through Cloudflare.
+
+**Upgrading from a version without workspaces:** nothing to do by hand. On first start the server creates a "Default" workspace, puts every game and person in it, and keeps their roles. Back up `data/` first, as always.
 
 ## 7. Operating it
 

@@ -135,6 +135,7 @@ class GameCreate(StrictModel):
     ]
     platform: Literal["android", "ios"]
     notes: Annotated[str, Field(max_length=2000)] = ""
+    workspace_id: UUID | None = None  # defaults to the caller's only (or first) workspace
 
 
 class GameUpdate(StrictModel):
@@ -210,21 +211,34 @@ class SavedFunnel(FunnelDefinition):
 
 
 Role = Literal["admin", "lead", "member"]
+MemberRole = Literal["lead", "member"]
 Email = Annotated[str, Field(min_length=3, max_length=254)]
+WorkspaceName = Annotated[str, Field(min_length=1, max_length=60)]
 
 
 class TeamAdd(StrictModel):
     email: Email
     name: Annotated[str, Field(max_length=80)] = ""
-    role: Role = "member"
+    role: Role = "member"  # "admin" is global; lead and member apply to workspace_id
+    workspace_id: UUID | None = None
     game_ids: list[UUID] = Field(default_factory=list, max_length=500)
 
 
 class TeamUpdate(StrictModel):
-    role: Role | None = None
     name: Annotated[str, Field(max_length=80)] | None = None
+    admin: bool | None = None
+    workspace_id: UUID | None = None
+    role: MemberRole | None = None
     game_ids: list[UUID] | None = Field(default=None, max_length=500)
 
 
 class AccessUpdate(StrictModel):
     emails: list[Email] = Field(max_length=500)
+
+
+class WorkspaceCreate(StrictModel):
+    name: WorkspaceName
+
+
+class WorkspaceMove(StrictModel):
+    workspace_id: UUID

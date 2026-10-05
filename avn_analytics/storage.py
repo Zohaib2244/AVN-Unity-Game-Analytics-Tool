@@ -94,6 +94,8 @@ class Storage:
             if "api_key" not in key_columns:
                 connection.execute("ALTER TABLE api_keys ADD COLUMN api_key TEXT")
             game_columns = {row["name"] for row in connection.execute("PRAGMA table_info(games)")}
+            if "workspace_id" not in game_columns:  # filled in by the first start with workspaces
+                connection.execute("ALTER TABLE games ADD COLUMN workspace_id TEXT")
             if "icon_updated_at" not in game_columns:  # set when the game has an uploaded icon
                 connection.execute("ALTER TABLE games ADD COLUMN icon_updated_at TEXT")
             game_ids = [row["id"] for row in connection.execute("SELECT id FROM games")]
@@ -138,7 +140,7 @@ class Storage:
     def game_path(self, game_id):
         return self.root / "games" / f"{game_id}.sqlite3"
 
-    def register_game(self, game: GameCreate):
+    def register_game(self, game: GameCreate, workspace_id=None):
         game_id = str(uuid4())
         created_at = timestamp()
         with self.connect(self.root / "registry.sqlite3") as registry:
@@ -168,24 +170,38 @@ class Storage:
                 """)
                 self.upgrade_game_database(database)
             registry.execute(
-                "INSERT INTO games (id, name, bundle_id, platform, notes, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (game_id, game.name, game.bundle_id, game.platform, game.notes, created_at),
+                "INSERT INTO games "
+                "(id, name, bundle_id, platform, notes, created_at, workspace_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    game_id,
+                    game.name,
+                    game.bundle_id,
+                    game.platform,
+                    game.notes,
+                    created_at,
+                    workspace_id,
+                ),
             )
             key = self._new_key(registry, game_id, "initial")
         return {
             "id": game_id,
-            **game.model_dump(),
+            **game.model_dump(mode="json", exclude={"workspace_id"}),
+            "workspace_id": workspace_id,
             "created_at": created_at,
             "archived_at": None,
             "key": key,
         }
 
-    def list_games(self):
+    def list_games(self, workspace_id=None):
         with self.connect(self.root / "registry.sqlite3") as connection:
-            return [
-                dict(row) for row in connection.execute("SELECT * FROM games ORDER BY created_at")
-            ]
+            if workspace_id:
+                rows = connection.execute(
+                    "SELECT * FROM games WHERE workspace_id=? ORDER BY created_at", (workspace_id,)
+                )
+            else:
+                rows = connection.execute("SELECT * FROM games ORDER BY created_at")
+            return [dict(row) for row in rows]
 
     def get_game(self, game_id):
         with self.connect(self.root / "registry.sqlite3") as connection:
@@ -285,19 +301,34 @@ class Storage:
         game = self.get_game(game_id)
         if confirm != game["bundle_id"]:
             raise HTTPException(400, "Type the game's bundle ID to confirm deletion")
-        with self.connect(self.game_path(game_id)) as database:
-            database.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.delete_games([game])
+        return {"status": "deleted", "moved_to": "deleted"}
+
+    def delete_games(self, games):
+        """Removes games and their keys together; files go to data/deleted/. All or nothing."""
+        for game in games:
+            with self.connect(self.game_path(game["id"])) as database:
+                database.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         trash = self.root / "deleted"
         trash.mkdir(exist_ok=True, mode=0o700)
         stamp = timestamp().replace(":", "").replace("+", "_")
-        with self.connect(self.root / "registry.sqlite3") as registry:
-            registry.execute("BEGIN IMMEDIATE")
-            registry.execute("DELETE FROM api_keys WHERE game_id=?", (game_id,))
-            registry.execute("DELETE FROM games WHERE id=?", (game_id,))
-            for path in [*self.game_files(game_id), self.icon_path(game_id)]:
-                if path.exists():
-                    path.rename(trash / f"{stamp}-{game['bundle_id']}-{path.name}")
-        return {"status": "deleted", "moved_to": str(trash.relative_to(self.root))}
+        moved = []
+        try:
+            with self.connect(self.root / "registry.sqlite3") as registry:
+                registry.execute("BEGIN IMMEDIATE")
+                for game in games:
+                    game_id = game["id"]
+                    registry.execute("DELETE FROM api_keys WHERE game_id=?", (game_id,))
+                    registry.execute("DELETE FROM games WHERE id=?", (game_id,))
+                    for path in [*self.game_files(game_id), self.icon_path(game_id)]:
+                        if path.exists():
+                            target = trash / f"{stamp}-{game['bundle_id']}-{path.name}"
+                            path.rename(target)
+                            moved.append((target, path))
+        except Exception:
+            for target, original in reversed(moved):  # put the files back; the rows roll back
+                target.rename(original)
+            raise
 
     def _new_key(self, connection, game_id, label):
         raw_key = "avn_" + secrets.token_urlsafe(32)
