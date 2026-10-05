@@ -173,15 +173,21 @@ Use the demo component in the SDK folder to test. Confirm arrival on the website
 
 ## 6. Exports
 
-On the **Exports** page choose a game, a day, week or month, and a time basis (`server_ts` = arrival, `client_ts` = when it happened). You get a ZIP with `events.jsonl.gz`, `events.md` (the data dictionary) and `manifest.json`. Scripted version:
+Open a game, then its **Exports** page. Choose the days (up to 366), optional filters (environment, app version, build, country, platform; editor and development data is hidden by default) and a time basis (`server_ts` = arrival, `client_ts` = when it happened). You get a ZIP with `events.parquet`, `events.jsonl.gz`, `events.md` (the data dictionary), `ANALYSIS.md` (a guide for AI assistants) and `manifest.json`. Scripted version:
 
 ```bash
 set -a; . ./.env; set +a
 curl -H "Authorization: Bearer $AVN_ADMIN_TOKEN" -o export.zip \
-  "http://127.0.0.1:8101/v1/games/$GAME_ID/export?date=2026-10-04&period=week&basis=client_ts"
+  "http://127.0.0.1:8101/v1/games/$GAME_ID/export?date=2026-10-04&period=week&basis=client_ts&not_env=editor"
 ```
 
 Hand the ZIP to an AI agent or load it into DuckDB, pandas or a dashboard tool.
+
+### Dashboards
+
+You don't need an export to look at your data: each game has an **Overview**, **Funnels** and **Players** page on the website, computed live from the event database. See the [README](README.md#dashboards) for what each shows, how environments are decided, and the limits (very large ranges and millions of events can take a few seconds).
+
+When you upgrade from a version without dashboards, nothing needs migrating by hand: on first start the server adds the new per-game tables (session environments and saved funnels) and fills the environments from existing `session_start` events. Back up `data/` first, as always.
 
 ## 7. Operating it
 
@@ -192,7 +198,7 @@ docker compose stop                        # stop (data is untouched)
 docker compose up -d --wait                # start
 ```
 
-- **Updating:** `git pull`, then `docker compose up -d --build --wait`. Keep `.env` and `data/` as they are. Do not overwrite `.env` with `.env.example` or you will lose the admin token.
+- **Updating:** `git pull`, then `docker compose up -d --build --wait`. The ingest and admin services both use the image, so rebuild both: a brief restart of ingest is safe (games queue events and retry). Keep `.env` and `data/` as they are. Do not overwrite `.env` with `.env.example` or you will lose the admin token.
 - **Boot:** services use `restart: unless-stopped`; enable the Docker service at boot (`systemctl enable docker`).
 - **Rotating the admin token:** edit `AVN_ADMIN_TOKEN` in `.env`, then `docker compose up -d --force-recreate`. Website sessions are unaffected.
 - **Disk:** check free space occasionally. There is no automatic retention or deletion, and a full disk makes the server return 503 (clients keep their events and retry), so plan capacity or export and archive.
@@ -224,6 +230,7 @@ To move to a new disk: stop, `rsync -a ./data/ /new/disk/avn-data/`, set `AVN_HO
 - [ ] Only `POST /v1/events` is reachable from the internet; port 8101 is not routed anywhere public.
 - [ ] HTTPS is enforced at your proxy or tunnel.
 - [ ] `.env` is `chmod 600`, and the admin token is not in any game build or repository.
+- [ ] Remember the dashboard stores each new API key's full value (so it can be copied again): keep port 8101 and `data/` private, and back them up as sensitive.
 - [ ] You chose a strong admin password; remote admin access goes through SSH forwarding or a VPN.
 - [ ] Edge rate limiting is on for the ingest hostname.
 - [ ] Backups run and have been restored at least once.
@@ -236,7 +243,7 @@ To move to a new disk: stop, `rsync -a ./data/ /new/disk/avn-data/`, set `AVN_HO
 | `docker compose up` complains about `AVN_ADMIN_TOKEN` | It is empty in `.env`. |
 | Ingest or admin container restarts, log says "Use SQLite 3.51.3+" | You are running outside the Docker image on an older system SQLite. Use the image. |
 | Permission errors writing `data/` | `AVN_UID`/`AVN_GID` don't match the owner of the data directory. |
-| Game gets **401** | Wrong, revoked or missing API key, or the proxy strips the `X-API-Key` header. |
+| Game gets **401** | Wrong, deleted or missing API key, or the proxy strips the `X-API-Key` header. |
 | Game gets **404/405** | Proxy only allows `POST /v1/events`; check the URL path and method. |
 | Game gets **415** | A `Content-Encoding` other than gzip (for example a proxy re-encoding the body). An SDK talking to a server that predates gzip support falls back to plain JSON by itself. |
 | Game gets **429** | Per-key rate limit; the SDK backs off. Raise `AVN_REQUESTS_PER_MINUTE` if many players share a key. |

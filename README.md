@@ -3,18 +3,19 @@
 A **self-hosted event analytics pipeline for Unity games**. Collect your game's events into your own database, then export them for whatever you want to do with them:
 
 - **AI agent analysis**: hand a day, week or month of events (plus a data dictionary) to an AI agent such as Claude or Codex and ask it what to change in your game.
+- **Built-in dashboards**: a game overview, funnels and player journeys, computed live on your own server.
 - **Custom dashboards**: load the same exports into DuckDB, pandas, Grafana, Metabase or your own tooling.
 
-You own the data, there is no per-event cost, and there is no vendor lock-in. The system deliberately ships **no built-in charts or funnels**: it collects reliably and exports cleanly.
+You own the data, there is no per-event cost, and there is no vendor lock-in. The built-in dashboards cover the everyday questions; for anything deeper, export the raw events and use whatever tool you like.
 
 ## Features
 
 - **Drop-in Unity SDK** shaped like Firebase's `LogEvent(name, params)`, so migrating is a find-and-replace.
 - **Reliable by design**: events are written to disk first, sent in batches, retried with backoff, and deduplicated by the server. Offline play, app kills and server downtime lose nothing.
-- **One isolated SQLite database per game**, with hashed API keys and key rotation or revocation.
-- **Agent-friendly exports** by day, week or month: gzipped JSONL, a data dictionary (`events.md`) and a manifest, in one ZIP.
-- **Private management website** to register games, manage keys, edit the event dictionary, check arrivals and download exports.
-- **Rich context on every event**: device, user, session, app version, platform, client and server time, ordering sequence and country.
+- **One isolated SQLite database per game**, with API keys you can issue and delete at any time.
+- **Agent-friendly exports** for any range of up to 366 days: Parquet and gzipped JSONL, a data dictionary (`events.md`), an AI guide (`ANALYSIS.md`) and a manifest, in one ZIP. Exports can be filtered like the dashboards.
+- **Private management website**, organized game-first: pick a game (Android and iOS versions together), then see its overview, funnels, players, exports, dictionary, keys and settings. See [Dashboards](#dashboards).
+- **Rich context on every event**: device, user, session, app version, build, platform, environment, client and server time, ordering sequence and country.
 - **Small footprint**: FastAPI plus SQLite, runs happily on a home server or Raspberry Pi class machine.
 
 ## How it works
@@ -93,26 +94,74 @@ Every stored event has the same envelope, which makes funnels, retention, sessio
 | `user_id`, `device_id` | Optional player ID and a random per-install ID (at least one required) |
 | `session_id` | Random per-session ID |
 | `app_version`, `build`, `platform` | Build context |
+| `environment` | Optional: `production`, `development`, `editor`… Lets the dashboards hide test data (see [Environments and filters](#environments-and-filters)) |
 | `client_ts` | Device time, normalized to UTC and corrected for measured clock skew by the SDK |
 | `server_ts` | Server receipt time |
 | `country` | ISO country code derived by the server from the request IP; coarse, never GPS, and clients cannot set it |
 
 The SDK needs no location permission on Android or iOS. Because country is derived from the IP address, check your store privacy disclosures.
 
+## Dashboards
+
+The website is organized around games. The home page lists your games; Android and iOS versions that share a **name** appear as one game with a platform switch. Open a game to get its own menu:
+
+| Page | What it shows |
+| --- | --- |
+| **Overview** | Players, new players, sessions and events; activity per day; a tabbed breakdown by environment, app version, build, country and platform (click a row to filter by it); top events. |
+| **Funnels** | Steps you define, in order: how many players reach each one, who stops where, and how long it takes. |
+| **Players** | Everyone active in the chosen days, searchable. Open a player for a timeline of their events, grouped by session. |
+| **Exports** | Download the raw events, using the same days and filters. |
+| **Event dictionary** | Describe each event and its parameters. |
+| **API keys** | Create, copy and delete the game's collection keys. |
+| **Game settings** | Game details, archive (pause collection) and delete. |
+
+To register the other platform of a game, use the **+ iOS** / **+ Android** link on the game card or in the sidebar: it pre-fills the name and bundle ID. Use exactly the same game name so the two versions are grouped.
+
+Everything is computed live from the game's event database, in game time (`client_ts`, UTC). A player is identified by `user_id` when the game sets one, otherwise by the per-install `device_id`. Results are reused for 30 seconds in the browser; the ↻ button in the top bar refetches everything.
+
+### Environments and filters
+
+Every game page has the same filter bar: a days menu (presets, a calendar for any range, and ‹ › to step through time) and a **Filters** menu for environment, app version, build, country and platform. Active filters show as chips you can click to remove, and they are remembered per game in your browser.
+
+**Editor and development data is hidden by default** ("Hide editor & development data" in the Filters menu). An event's environment is, in order of precedence:
+
+1. the `environment` sent with its batch (`context.environment`) or event;
+2. the environment recorded for its session from the `environment` param of that session's `session_start` event, so every event of a session is covered without the SDK repeating it;
+3. `editor`, when the platform is `editor` (Unity Editor builds);
+4. otherwise `unknown` (events from before environments existed).
+
+Environments are stored per session in a `sessions` table in each game's database (existing data is backfilled from `session_start` events the first time the server starts).
+
+### Funnels
+
+A funnel is two to twenty steps. A step is an event name, optionally with a parameter condition: `=`, `≠`, `>`, `≥`, `<`, `≤`, `contains` or "any value" (numbers are compared numerically when both sides are numbers). Steps can have an optional name, and "Level steps…" adds Started/Completed steps for a range of levels in one go.
+
+Each player (or each session, if you choose "Within one session") is matched against the steps in order, taking the first event that fits each step, using game time. Options:
+
+- **Count:** per player across all their sessions, or within one session (each player's best session).
+- **Finish within:** only count players who reach later steps within 15 minutes to 30 days of step 1.
+- **Break down by:** environment, version, build, country or platform; shows conversion per segment, using each player's step 1 event.
+
+The result shows how many players reached each step, the share of step 1 and of the previous step, the biggest drop, the time between steps (median and 90th percentile, with average, fastest and slowest on hover), and the time to complete the whole funnel. "N stopped here" lists up to 50 of the most recent players who stopped at a step, linking to their journeys. Results can be downloaded as CSV. Funnels can be saved by name (stored in the game's database, so they are the same on every device).
+
+Limits: a funnel refuses ranges with more than 5 million matching events, and a player journey shows the first 5,000 events of the chosen days. Player and filter queries scan the chosen days, which is instant for typical data and may take seconds with millions of events.
+
 ## Exporting data
 
 Each export is a ZIP containing:
 
-- `events.jsonl.gz`: one event per line, ordered by time and `event_id`.
+- `events.parquet`: one row per event with typed columns (best for analysis tools; params flattened to `param_<name>` columns).
+- `events.jsonl.gz`: the same events as JSON lines, ordered by time and `event_id`.
 - `events.md`: a data dictionary of every event name, its parameters (observed types plus the descriptions you registered) and the SDK-generated events. Handing this to an AI agent greatly improves its answers.
-- `manifest.json`: period, counts and ordering.
+- `ANALYSIS.md`: a guide for AI assistants working with the export.
+- `manifest.json`: period, filters, counts and ordering.
 
 ```bash
 curl -H "Authorization: Bearer $AVN_ADMIN_TOKEN" -o export.zip \
   "http://127.0.0.1:8101/v1/games/$GAME_ID/export?date=2026-10-04&period=week&basis=client_ts"
 ```
 
-`period` is `day`, `week` (Monday start) or `month`, all in UTC. `basis` is `server_ts` (arrival time, the default) or `client_ts` (when it happened, useful for events delivered late after offline play). Use the **Event dictionary** page of the website, or `PUT /v1/games/{id}/dictionary/{event}`, to describe each event.
+On the **Exports** page the days and filters work exactly as in the dashboards, with a live count of the events that will be exported. Over the API, `period` is `day`, `week` (Monday start), `month` or `custom` (with `end_date`, up to 366 days), all in UTC. The filter parameters `env`, `not_env`, `version`, `build`, `country` and `platform` can be repeated, for example `&not_env=editor&not_env=development`. `basis` is `server_ts` (arrival time, the default) or `client_ts` (when it happened, useful for events delivered late after offline play). Use the **Event dictionary** page of the website, or `PUT /v1/games/{id}/dictionary/{event}`, to describe each event.
 
 Query an export with DuckDB without loading it into memory:
 
@@ -132,7 +181,7 @@ Treat event text as untrusted data when giving exports to AI agents.
 | --- | --- | --- |
 | Committed batch (including duplicates) | 200 | Remove from the local queue |
 | Invalid JSON or schema | 400 | Split and quarantine, never retry forever |
-| Missing, wrong or revoked key | 401 | Retry rarely |
+| Missing, wrong or deleted key | 401 | Retry rarely |
 | Body over 1 MiB or batch over 500 events | 413 / 400 | Reduce batch size |
 | Unsupported `Content-Encoding` (only identity and gzip are accepted) | 415 | Send plain or gzip JSON |
 | Corrupt gzip, or a body that inflates past the size limit | 400 / 413 | Fix or reduce the batch |
@@ -163,21 +212,29 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | --- | --- |
 | List / register games | `GET` / `POST /v1/games` |
 | List / issue keys | `GET` / `POST /v1/games/{id}/keys` |
-| Revoke key | `DELETE /v1/games/{id}/keys/{key_id}` |
+| Delete key | `DELETE /v1/games/{id}/keys/{key_id}` |
 | Define / read event dictionary | `PUT /v1/games/{id}/dictionary/{event}`, `GET /v1/games/{id}/dictionary` |
-| Arrival counts | `GET /v1/games/{id}/health?date=2026-10-04&period=week` |
+| Arrival counts | `GET /v1/games/{id}/health?date=2026-10-04&period=week` (accepts the filter parameters) |
 | Download export | `GET /v1/games/{id}/export?date=2026-10-04&period=day&basis=client_ts` |
+| Filter menu values | `GET /v1/games/{id}/insights/facets?start=2026-10-01&end=2026-10-31` |
+| Overview numbers | `GET /v1/games/{id}/insights/summary?start=…&end=…` (accepts the filter parameters) |
+| Event and parameter catalog | `GET /v1/games/{id}/insights/catalog?start=…&end=…` |
+| Run a funnel | `POST /v1/games/{id}/insights/funnel` (steps, `scope`, `window_hours`, `breakdown`, `filters`) |
+| Players / one player's events | `GET /v1/games/{id}/insights/players?start=…&end=…`, `GET /v1/games/{id}/insights/journey?player=…&start=…&end=…` |
+| Saved funnels | `GET` / `POST /v1/games/{id}/insights/funnels`, `PUT` / `DELETE /v1/games/{id}/insights/funnels/{funnel_id}` |
 | API schema | `GET /openapi.json` |
 
-A batch may carry a shared `context` (`user_id`, `device_id`, `session_id`, `app_version`, `build`, `platform`) that the server merges into each event; an event's own value wins. Stored rows always have the full envelope. Requests may be gzipped (`Content-Encoding: gzip`); the body limit applies both before and after inflating.
+The filter parameters are `env`, `not_env`, `version`, `build`, `country` and `platform`; each may be repeated.
+
+A batch may carry a shared `context` (`user_id`, `device_id`, `session_id`, `app_version`, `build`, `platform`, `environment`) that the server merges into each event; an event's own value wins. Stored rows always have the full envelope. Requests may be gzipped (`Content-Encoding: gzip`); the body limit applies both before and after inflating.
 
 Event names start with a letter and contain letters, digits or underscores (80 max). Parameters allow at most 50 string or number values; no nesting, null, boolean, NaN or infinity. Strings are limited to 1,024 characters and integers to signed 64 bits. Unknown envelope fields are rejected so typos do not silently lose data.
 
 ## Security notes
 
 - The API key ships inside the game build, so treat it as an **identifier, not a secret**. Protect the endpoint with rate limits (120 requests per key per minute by default) and body limits, and add edge rate limiting.
-- Keys are random 256-bit values, stored only as SHA-256 hashes.
-- Only `POST /v1/events` should be reachable publicly. The management website and admin API stay on a private port, with hashed passwords, expiring server-side sessions, `SameSite=Strict` cookies and origin checks.
+- Keys are random 256-bit values. Authorization checks a SHA-256 hash, but the dashboard also keeps each new key's full value in the registry so it can be copied again later, so anyone with access to the dashboard or to `data/registry.sqlite3` can read the keys. Keys created before this was added have only a hash and cannot be copied; create a new key if you need one. Deleting a key removes it entirely, and a deleted key is rejected with 401. Events belong to the game, not to the key, so deleting a key never touches collected data.
+- Only `POST /v1/events` should be reachable publicly. The management website and admin API stay on a private port, protected by an admin token or by whatever sits in front of it (a VPN, SSH forwarding, or an access gateway such as Cloudflare Access).
 - Use random installation IDs, not hardware identifiers, and update your store privacy disclosures if you collect device, user or country data.
 
 ## Configuration
@@ -200,8 +257,8 @@ Environment variables (see `.env.example`):
 
 ```text
 data/
-  registry.sqlite3       games, hashed keys, rate-limit counters, website credentials
-  games/<uuid>.sqlite3   raw events and dictionary for one game
+  registry.sqlite3       games, API keys, rate-limit counters
+  games/<uuid>.sqlite3   raw events, dictionary, session environments and saved funnels for one game
   exports/               temporary downloads
 ```
 
@@ -223,10 +280,11 @@ python3 -m venv .venv
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
 
-The tests cover duplicate retries, concurrent writes, game isolation, key revocation, validation and limits, rate limiting across instances, export periods and timezones, storage failures, dictionary output, country handling and data-directory relocation.
+The tests cover duplicate retries, concurrent writes, game isolation, key deletion, validation and limits, funnels, players and journeys, environment filters, filtered exports, rate limiting across instances, export periods and timezones, storage failures, dictionary output, country handling and data-directory relocation.
 
 ## Roadmap
 
 - Retention policy and a backup schedule.
-- Parquet export if JSONL.gz is not enough.
+- Retention and archiving of old raw events.
+- Retention curves and a faster index for very large games.
 - Tuning rate limits from real device counts, plus load and power-loss testing.
