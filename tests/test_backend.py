@@ -202,12 +202,15 @@ def test_limits_and_invalid_json(backend):
     assert send(ingest, game, [event()] * 501).status_code == 400
     assert ingest.post("/v1/events", headers=headers, content="{").status_code == 400
     assert ingest.post("/v1/events", headers=headers, content=" " * 1_048_577).status_code == 413
-    assert (
-        ingest.post(
-            "/v1/events", headers={**headers, "Content-Encoding": "gzip"}, content=b"invalid"
-        ).status_code
-        == 415
-    )
+    gzip_headers = {**headers, "Content-Encoding": "gzip"}
+    assert ingest.post("/v1/events", headers=gzip_headers, content=b"invalid").status_code == 400
+    truncated = gzip.compress(json.dumps({"events": [event()]}).encode())[:-8]
+    assert ingest.post("/v1/events", headers=gzip_headers, content=truncated).status_code == 400
+    bomb = gzip.compress(b" " * 5_000_000)  # tiny on the wire, huge when inflated
+    assert len(bomb) < 1_048_576
+    assert ingest.post("/v1/events", headers=gzip_headers, content=bomb).status_code == 413
+    brotli = {**headers, "Content-Encoding": "br"}
+    assert ingest.post("/v1/events", headers=brotli, content=b"x").status_code == 415
     assert ingest.post("/v1/events", json={"events": [event()]}).status_code == 401
     for bad_number in ["NaN", "Infinity", "-Infinity"]:
         content = json.dumps({"events": [event(params={"bad": "PLACEHOLDER"})]}).replace(
@@ -561,3 +564,51 @@ def test_schema_migrates_v1_registry(tmp_path):
     assert {"notes", "archived_at"} <= columns
     with TestClient(create_app(settings, admin=True)):  # second start must not re-migrate
         pass
+
+
+def test_gzip_and_shared_context_batches(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    headers = {
+        "X-API-Key": game["key"]["api_key"],
+        "Content-Type": "application/json",
+        "Content-Encoding": "gzip",
+    }
+    context_keys = ("user_id", "device_id", "session_id", "app_version", "build", "platform")
+    full = [event(session_id="s-one"), event(session_id="s-one"), event(user_id="player-1")]
+    compact = []
+    for item in full:
+        compact.append({k: v for k, v in item.items() if k not in context_keys})
+    context = {k: full[0][k] for k in context_keys if k in full[0]}
+    compact[2]["session_id"] = "s-two"  # per-event value overrides the batch context
+    body = gzip.compress(json.dumps({"context": context, "events": compact}).encode())
+    response = ingest.post("/v1/events", headers=headers, content=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] == 3
+    # retrying the same compressed batch is idempotent
+    assert ingest.post("/v1/events", headers=headers, content=body).json()["duplicates"] == 3
+    rows, _, _ = unpack(export(admin, game))
+    by_id = {row["event_id"]: row for row in rows}
+    for item in compact:
+        row = by_id[item["event_id"]]
+        assert row["device_id"] == context["device_id"]
+        assert row["app_version"] == context["app_version"]
+        assert row["platform"] == context["platform"]
+    assert by_id[compact[0]["event_id"]]["session_id"] == "s-one"
+    assert by_id[compact[2]["event_id"]]["session_id"] == "s-two"
+    # stored rows keep the same complete envelope as before
+    assert set(context_keys) <= set(rows[0])
+
+
+def test_context_cannot_fill_gaps_it_does_not_cover(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    key = {"X-API-Key": game["key"]["api_key"]}
+    bare = {k: v for k, v in event().items() if k not in ("session_id", "device_id")}
+    for context in (None, {"device_id": "d"}, {"session_id": "s"}):
+        body = {"events": [bare]} if context is None else {"context": context, "events": [bare]}
+        assert ingest.post("/v1/events", headers=key, json=body).status_code == 400
+    ok = {"context": {"device_id": "d", "session_id": "s"}, "events": [bare]}
+    assert ingest.post("/v1/events", headers=key, json=ok).status_code == 200
+    unknown = {"context": {"device_id": "d", "country": "ZZ"}, "events": [bare]}
+    assert ingest.post("/v1/events", headers=key, json=unknown).status_code == 400

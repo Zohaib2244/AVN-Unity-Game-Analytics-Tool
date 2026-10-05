@@ -238,7 +238,7 @@ To move to a new disk: stop, `rsync -a ./data/ /new/disk/avn-data/`, set `AVN_HO
 | Permission errors writing `data/` | `AVN_UID`/`AVN_GID` don't match the owner of the data directory. |
 | Game gets **401** | Wrong, revoked or missing API key, or the proxy strips the `X-API-Key` header. |
 | Game gets **404/405** | Proxy only allows `POST /v1/events`; check the URL path and method. |
-| Game gets **415** | Something compresses the request body in transit; the server accepts only plain JSON. |
+| Game gets **415** | A `Content-Encoding` other than gzip (for example a proxy re-encoding the body). An SDK talking to a server that predates gzip support falls back to plain JSON by itself. |
 | Game gets **429** | Per-key rate limit; the SDK backs off. Raise `AVN_REQUESTS_PER_MINUTE` if many players share a key. |
 | **503** responses | Database or disk problem (a full disk is the usual cause); check `docker compose logs` and `df -h`. |
 | Events never show up, SDK says "offline" | Device has no connectivity, or the endpoint URL in `AvnConfig` is wrong (check `LastStatus` in the demo). |

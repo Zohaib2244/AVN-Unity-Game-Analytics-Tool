@@ -31,6 +31,9 @@ namespace Avn.Analytics
         [Min(0.05f)]
         public float FlushIntervalMinutes = 2f;
 
+        [Tooltip("Gzip request bodies (about 5x smaller). Turned off automatically if the server is too old to accept gzip.")]
+        public bool CompressRequests = true;
+
         [Tooltip("Hard cap on one request body in bytes. Server limit is 1 MiB.")]
         public int MaxBatchBytes = 700 * 1024;
 

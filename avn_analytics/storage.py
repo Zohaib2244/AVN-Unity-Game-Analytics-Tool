@@ -294,7 +294,7 @@ class Storage:
     def ingest(self, game_id, batch: Batch, country: str | None = None):
         server_ts = timestamp()
         rows = []
-        for event in batch.events:
+        for event in batch.resolved:
             payload = event.model_dump(mode="json")
             payload["client_ts"] = timestamp(event.client_ts)
             payload["server_ts"] = server_ts

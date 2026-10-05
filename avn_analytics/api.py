@@ -1,5 +1,6 @@
 import logging
 import sqlite3
+import zlib
 from contextlib import asynccontextmanager
 from datetime import date
 from threading import BoundedSemaphore
@@ -31,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 
 class BodyLimit:
+    """Caps request size; inflates gzip bodies transparently (also capped, against zip bombs)."""
+
     def __init__(self, app, max_bytes):
         self.app = app
         self.max_bytes = max_bytes
@@ -40,8 +43,9 @@ class BodyLimit:
             await self.app(scope, receive, send)
             return
         headers = dict(scope["headers"])
-        if headers.get(b"content-encoding", b"identity").lower() != b"identity":
-            await JSONResponse({"detail": "Compressed requests are not supported"}, 415)(
+        encoding = headers.get(b"content-encoding", b"identity").strip().lower()
+        if encoding not in (b"identity", b"gzip"):
+            await JSONResponse({"detail": "Unsupported Content-Encoding"}, 415)(
                 scope, receive, send
             )
             return
@@ -56,13 +60,35 @@ class BodyLimit:
                 return
             if not message.get("more_body", False):
                 break
+        data = bytes(body)
+        if encoding == b"gzip":
+            inflater = zlib.decompressobj(wbits=31)  # gzip container only
+            try:
+                data = inflater.decompress(data, self.max_bytes + 1)
+                if not inflater.eof and not inflater.unconsumed_tail and not data:
+                    raise zlib.error("incomplete gzip stream")
+            except zlib.error:
+                await JSONResponse({"detail": "Invalid gzip body"}, 400)(scope, receive, send)
+                return
+            if len(data) > self.max_bytes or inflater.unconsumed_tail:
+                await JSONResponse({"detail": "Request body too large"}, 413)(scope, receive, send)
+                return
+            if not inflater.eof:
+                await JSONResponse({"detail": "Invalid gzip body"}, 400)(scope, receive, send)
+                return
+            scope = dict(scope)
+            scope["headers"] = [
+                (name, value)
+                for name, value in scope["headers"]
+                if name not in (b"content-encoding", b"content-length")
+            ] + [(b"content-length", str(len(data)).encode())]
         delivered = False
 
         async def replay():
             nonlocal delivered
             if not delivered:
                 delivered = True
-                return {"type": "http.request", "body": bytes(body), "more_body": False}
+                return {"type": "http.request", "body": data, "more_body": False}
             return await receive()
 
         await self.app(scope, replay, send)

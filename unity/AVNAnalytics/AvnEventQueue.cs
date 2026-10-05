@@ -146,7 +146,26 @@ namespace Avn.Analytics
             return 0; // unreadable cursor: resend, the server dedups
         }
 
-        static bool IsEventLine(string s) => s.Length > 2 && s[0] == '{' && s[s.Length - 1] == '}';
+        // A line is "<context json>\t<event json>", or a bare event json (queues written by older SDK versions).
+        static bool IsEventLine(string s)
+        {
+            if (s.Length <= 2 || s[0] != '{' || s[s.Length - 1] != '}') return false;
+            int tab = s.IndexOf('\t');
+            return tab < 0 || (tab > 0 && s[tab - 1] == '}' && tab + 1 < s.Length && s[tab + 1] == '{');
+        }
+
+        static string ContextOf(string line)
+        {
+            int tab = line.IndexOf('\t');
+            return tab < 0 ? "" : line.Substring(0, tab);
+        }
+
+        static bool SameContext(string line, string context)
+        {
+            if (context.Length == 0) return line.IndexOf('\t') < 0;
+            return line.Length > context.Length && line[context.Length] == '\t'
+                && string.CompareOrdinal(line, 0, context, 0, context.Length) == 0;
+        }
 
         /// <summary>Persist the event to disk, then add it to the pending list.</summary>
         internal bool Append(string line)
@@ -202,21 +221,29 @@ namespace Avn.Analytics
             return b;
         }
 
-        /// <summary>Returns a ready-to-send {"events":[...]} body of the oldest events, or null if empty.</summary>
+        /// <summary>
+        /// Returns a ready-to-send body for the oldest events, or null if empty:
+        /// {"context":{...},"events":[...]} when the events share a context (the batch stops at the
+        /// first event whose context differs), or plain {"events":[...]} for legacy lines.
+        /// </summary>
         internal string PeekBatch(int maxCount, int maxBodyBytes, out int count)
         {
             lock (gate)
             {
                 count = 0;
                 if (lines.Count == 0) return null;
-                var sb = new StringBuilder("{\"events\":[");
+                string context = ContextOf(lines[0]);
+                var sb = new StringBuilder(context.Length > 0 ? "{\"context\":" + context + ",\"events\":[" : "{\"events\":[");
                 long size = sb.Length + 2;
                 for (int i = 0; i < lines.Count && i < maxCount; i++)
                 {
-                    long add = Encoding.UTF8.GetByteCount(lines[i]) + 1;
+                    string line = lines[i];
+                    if (i > 0 && !SameContext(line, context)) break;
+                    string ev = context.Length > 0 ? line.Substring(context.Length + 1) : line;
+                    long add = Encoding.UTF8.GetByteCount(ev) + 1;
                     if (i > 0 && size + add > maxBodyBytes) break;
                     if (i > 0) sb.Append(',');
-                    sb.Append(lines[i]);
+                    sb.Append(ev);
                     size += add;
                     count++;
                 }

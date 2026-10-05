@@ -3,7 +3,16 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 Name = Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")]
 Context = Annotated[str, Field(min_length=1, max_length=128)]
@@ -23,16 +32,10 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class Event(StrictModel):
+class EventBase(StrictModel):
     event_id: UUID
     name: Name
     params: dict[str, str | int | float] = Field(default_factory=dict, max_length=50)
-    user_id: Context | None = None
-    device_id: Context | None = None
-    session_id: Context
-    app_version: Context
-    build: Context
-    platform: Context
     client_ts: AwareDatetime
 
     @field_validator("params", mode="before")
@@ -60,6 +63,32 @@ class Event(StrictModel):
             raise ValueError("client_ts must be an ISO 8601 timestamp with timezone")
         return value
 
+
+class EventContext(StrictModel):
+    """Fields shared by every event in a batch; an event's own value takes precedence."""
+
+    user_id: Context | None = None
+    device_id: Context | None = None
+    session_id: Context | None = None
+    app_version: Context | None = None
+    build: Context | None = None
+    platform: Context | None = None
+
+
+class EventIn(EventBase, EventContext):
+    """An event as sent: context fields may be omitted when the batch supplies them."""
+
+
+class Event(EventBase):
+    """An event as stored: the complete envelope."""
+
+    user_id: Context | None = None
+    device_id: Context | None = None
+    session_id: Context
+    app_version: Context
+    build: Context
+    platform: Context
+
     @model_validator(mode="after")
     def require_identity(self):
         if not self.user_id and not self.device_id:
@@ -68,7 +97,30 @@ class Event(StrictModel):
 
 
 class Batch(StrictModel):
-    events: list[Event] = Field(min_length=1, max_length=500)
+    context: EventContext | None = None
+    events: list[EventIn] = Field(min_length=1, max_length=500)
+    _resolved: list[Event] = PrivateAttr(default_factory=list)
+
+    @model_validator(mode="after")
+    def resolve_context(self):
+        shared = self.context.model_dump(exclude_none=True) if self.context else {}
+        resolved = []
+        for index, event in enumerate(self.events):
+            try:
+                resolved.append(
+                    Event.model_validate({**shared, **event.model_dump(exclude_none=True)})
+                )
+            except ValidationError as error:
+                first = error.errors()[0]
+                where = ".".join(str(part) for part in first["loc"])
+                raise ValueError(f"events.{index}.{where}: {first['msg']}") from None
+        self._resolved = resolved
+        return self
+
+    @property
+    def resolved(self) -> list[Event]:
+        """Events with the batch context merged in: the shape that gets stored."""
+        return self._resolved
 
 
 class GameCreate(StrictModel):

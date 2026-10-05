@@ -1,5 +1,7 @@
 using System;
 using System.Globalization;
+using System.IO;
+using System.IO.Compression;
 using System.Text;
 
 namespace Avn.Analytics
@@ -75,6 +77,19 @@ namespace Avn.Analytics
             if (v is decimal) { sb.Append(((decimal)v).ToString(CultureInfo.InvariantCulture)); return true; }
             WriteString(sb, Truncate(v.ToString() ?? "", 1024));
             return true;
+        }
+    }
+
+    internal static class AvnGzip
+    {
+        internal static byte[] Compress(byte[] data)
+        {
+            using (var output = new MemoryStream())
+            {
+                using (var gzip = new GZipStream(output, CompressionMode.Compress, true))
+                    gzip.Write(data, 0, data.Length);
+                return output.ToArray();
+            }
         }
     }
 }
