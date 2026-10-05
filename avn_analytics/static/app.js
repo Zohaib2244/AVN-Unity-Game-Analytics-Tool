@@ -206,7 +206,34 @@ const sameGame = (a, b) => a.name.trim().toLowerCase() === b.name.trim().toLower
 const PLATFORM_ORDER = ['android', 'ios'];
 const byPlatform = (a, b) => (PLATFORM_ORDER.indexOf(a.platform) + 1 || 9) - (PLATFORM_ORDER.indexOf(b.platform) + 1 || 9);
 const variantsOf = game => overview.games.filter(item => sameGame(item, game)).sort(byPlatform);
-const avatar = name => `<span class="game-avatar">${escapeHTML(name.slice(0,2).toUpperCase())}</span>`;
+// The game's icon when one was uploaded (for any of its platform versions), otherwise its initials.
+const iconURL = game => `${gameURL(game)}/icon?v=${encodeURIComponent(game.icon_updated_at)}`;
+const avatar = (name, ...games) => {
+  const withIcon = games.flat().find(item => item?.icon_updated_at);
+  return `<span class="game-avatar ${withIcon ? 'has-icon' : ''}">${withIcon ? `<img src="${iconURL(withIcon)}" alt="" loading="lazy" width="42" height="42">` : escapeHTML(name.slice(0,2).toUpperCase())}</span>`;
+};
+
+// Turns any picked image into a 256×256 PNG (centre-cropped square) before upload, so the server only ever
+// stores small PNGs and no image library is needed there.
+async function iconFromFile(file) {
+  if (!file || !file.type.startsWith('image/')) throw new Error('Choose an image file (PNG, JPEG, WebP or GIF).');
+  let bitmap;
+  try { bitmap = await createImageBitmap(file); } catch { throw new Error('That image couldn’t be read. Try a PNG or JPEG.'); }
+  const side = Math.min(bitmap.width, bitmap.height);
+  const canvas = Object.assign(document.createElement('canvas'), {width: 256, height: 256});
+  canvas.getContext('2d').drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 256, 256);
+  bitmap.close?.();
+  return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Couldn’t prepare the image.')), 'image/png'));
+}
+async function uploadIcon(game, file) {
+  const blob = await iconFromFile(file);
+  for (const item of (overview.games.some(other => other.id === game.id) ? variantsOf(game) : [game])) await request(`${gameURL(item)}/icon`, {method:'PUT', body: blob, headers: {'Content-Type': 'image/png'}});
+  cache.clear(); overviewStale = true;
+}
+async function removeIcon(game) {
+  for (const item of variantsOf(game)) if (item.icon_updated_at) await request(`${gameURL(item)}/icon`, {method:'DELETE'});
+  cache.clear(); overviewStale = true;
+}
 
 function gameGroups(games) {
   const groups = [];
@@ -234,7 +261,7 @@ function shell(title, content) {
   const link = ([url, symbol, label], active) => `<a href="${url}" aria-label="${label}" class="${active ? 'active' : ''}" ${active ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span></a>`;
   const game = currentGame;
   const main = game
-    ? `<a class="back-to-games" href="/">← All games</a><div class="sidebar-game">${avatar(game.name)}<div><strong>${escapeHTML(game.name)}</strong><span>${escapeHTML(game.bundle_id)}</span></div></div>${variantSwitch(game, currentSection)}<p class="nav-label eyebrow">Game</p><nav class="nav" aria-label="Game">${GAME_SECTIONS.map(([section, symbol, label]) => link([gamePath(game, section), symbol, label], section === currentSection)).join('')}</nav>`
+    ? `<a class="back-to-games" href="/">← All games</a><div class="sidebar-game">${avatar(game.name, variantsOf(game))}<div><strong>${escapeHTML(game.name)}</strong><span>${escapeHTML(game.bundle_id)}</span></div></div>${variantSwitch(game, currentSection)}<p class="nav-label eyebrow">Game</p><nav class="nav" aria-label="Game">${GAME_SECTIONS.map(([section, symbol, label]) => link([gamePath(game, section), symbol, label], section === currentSection)).join('')}</nav>`
     : `<p class="nav-label eyebrow">Workspace</p><nav class="nav" aria-label="Workspace">${link(['/', 'grid', 'Games'], ['/', '/games', '/games/new'].includes(location.pathname))}</nav>`;
   const crumbs = game ? `<a href="/">Games</a> <span>/</span> <a href="${gamePath(game)}">${escapeHTML(game.name)} · ${platformLabel(game.platform)}</a> <span>/</span> <strong>${escapeHTML(title)}</strong>` : `Workspace <span>/</span> <strong>${escapeHTML(title)}</strong>`;
   root.innerHTML = `<aside class="sidebar">${brand}${main}<nav class="nav nav-secondary" aria-label="Secondary">${secondary.map(item => link(item, location.pathname === item[0])).join('')}</nav><div class="sidebar-bottom"><div class="account"><span class="avatar">AV</span><div><strong>Administrator</strong><p>Workspace</p></div></div></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">${crumbs}</div><div class="topbar-right"><button class="icon-button" data-action="theme" title="Switch light/dark theme" aria-label="Switch light/dark theme">${icon(window.avnTheme?.theme() === 'light' ? 'moon' : 'sun',15)}</button><button class="icon-button" data-action="refresh" title="Refresh data" aria-label="Refresh data">${icon('refresh',15)}</button></div></header><main id="main">${content}<footer class="footnote"><span>${icon('shield',13)} Your data stays on your server.</span><span>AVN Analytics</span></footer></main></div>`;
@@ -262,7 +289,7 @@ function renderHome() {
     document.querySelectorAll('[data-filter]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.filter === state.filter)));
     const query = state.query.toLowerCase();
     const groups = all.filter(group => (state.filter === 'all' || (state.filter === 'archived') === group.archived) && `${group.name} ${group.variants.map(item => item.bundle_id).join(' ')} ${group.notes}`.toLowerCase().includes(query)).sort(sorters[state.sort]);
-    document.querySelector('#game-results').innerHTML = groups.length ? `<div class="game-grid">${groups.map(group => `<article class="game-card ${group.archived ? 'archived' : ''}"><div class="game-card-header">${avatar(group.name)}<span>${group.archived ? '<span class="pill bad">Archived</span>' : ''}</span></div><h3><a class="card-link" href="${gamePath(group.primary)}">${escapeHTML(group.name)}</a></h3><p class="mono">${escapeHTML([...new Set(group.variants.map(item => item.bundle_id))].join(' · '))}</p>${group.notes ? `<p class="game-notes">${escapeHTML(group.notes)}</p>` : ''}<div class="card-variants">${group.variants.map(item => `<a class="pill ${item.archived_at ? 'bad' : ''}" href="${gamePath(item)}" title="Open the ${platformLabel(item.platform)} version">${platformLabel(item.platform)} · ${number(item.events)}</a>`).join('')}${PLATFORM_ORDER.filter(platform => !group.variants.some(item => item.platform === platform)).map(platform => `<a class="pill variant-add" href="/games/new?${new URLSearchParams({name: group.name, bundle_id: group.primary.bundle_id, platform})}">+ ${platformLabel(platform)}</a>`).join('')}</div><div class="game-card-footer"><span>${number(group.events)} events</span><span>${group.archived ? 'Collection paused' : group.last_event ? `Last event ${displayDate(group.last_event)}` : 'Awaiting events'} ${icon('arrow',12)}</span></div></article>`).join('')}</div>` : `<section class="panel">${empty('No games found', 'Try another search or filter.')}</section>`;
+    document.querySelector('#game-results').innerHTML = groups.length ? `<div class="game-grid">${groups.map(group => `<article class="game-card ${group.archived ? 'archived' : ''}"><div class="game-card-header">${avatar(group.name, group.variants)}<span>${group.archived ? '<span class="pill bad">Archived</span>' : ''}</span></div><h3><a class="card-link" href="${gamePath(group.primary)}">${escapeHTML(group.name)}</a></h3><p class="mono">${escapeHTML([...new Set(group.variants.map(item => item.bundle_id))].join(' · '))}</p>${group.notes ? `<p class="game-notes">${escapeHTML(group.notes)}</p>` : ''}<div class="card-variants">${group.variants.map(item => `<a class="pill ${item.archived_at ? 'bad' : ''}" href="${gamePath(item)}" title="Open the ${platformLabel(item.platform)} version">${platformLabel(item.platform)} · ${number(item.events)}</a>`).join('')}${PLATFORM_ORDER.filter(platform => !group.variants.some(item => item.platform === platform)).map(platform => `<a class="pill variant-add" href="/games/new?${new URLSearchParams({name: group.name, bundle_id: group.primary.bundle_id, platform})}">+ ${platformLabel(platform)}</a>`).join('')}</div><div class="game-card-footer"><span>${number(group.events)} events</span><span>${group.archived ? 'Collection paused' : group.last_event ? `Last event ${displayDate(group.last_event)}` : 'Awaiting events'} ${icon('arrow',12)}</span></div></article>`).join('')}</div>` : `<section class="panel">${empty('No games found', 'Try another search or filter.')}</section>`;
   };
   document.querySelector('#game-search').addEventListener('input', event => { state.query = event.target.value; draw(); });
   document.querySelector('#game-sort').addEventListener('change', event => { state.sort = event.target.value; draw(); });
@@ -272,9 +299,20 @@ function renderHome() {
 
 function renderNewGame() {
   const prefill = new URLSearchParams(location.search);
-  shell('Register game', `<a class="back-link" href="/">← Back to games</a>` + heading('Make room for your next game.', 'A few details, and you’re ready to start collecting.') + `<div class="form-layout"><form id="register-form" class="panel form-panel"><h2>Game details</h2><p>Give your project a recognizable name.</p><div class="field"><label for="game-name">Game name</label><input id="game-name" name="name" placeholder="e.g. Tiny Adventures" required maxlength="128" autofocus value="${escapeHTML(prefill.get('name') || '')}"><p>Use the same name for the Android and iOS versions: they appear as one game with a platform switch.</p></div><div class="field"><label for="bundle-id">Bundle ID</label><input id="bundle-id" name="bundle_id" value="${escapeHTML(prefill.get('bundle_id') || '')}" placeholder="com.yourstudio.yourgame" pattern="[A-Za-z0-9_\\-]+(\\.[A-Za-z0-9_\\-]+)+" required maxlength="255"><p>The application identifier from your game’s project settings.</p></div><div class="field"><label for="platform">Platform</label><select id="platform" name="platform"><option value="android">Android</option><option value="ios" ${prefill.get('platform') === 'ios' ? 'selected' : ''}>iOS</option></select><p>Register each platform separately to keep its events isolated. The platform can’t be changed later.</p></div><div class="field"><label for="notes">Notes (optional)</label><textarea id="notes" name="notes" maxlength="2000" placeholder="Store links, release status, anything worth remembering"></textarea></div><div class="error" role="alert"></div><div class="form-actions"><a href="/" class="button">Cancel</a><button class="button primary" type="submit">Register game ${icon('arrow',14)}</button></div></form><aside class="aside-card">${icon('game',25)}<h3>A space of its own</h3><p>Every game gets a separate event database and its own collection keys.</p><ul><li>Duplicates are handled automatically</li><li>Keys can be rotated at any time</li><li>Your raw data stays on your server</li></ul><p class="small">After registration, copy your new API key. It’s shown only once.</p></aside></div>`);
+  shell('Register game', `<a class="back-link" href="/">← Back to games</a>` + heading('Make room for your next game.', 'A few details, and you’re ready to start collecting.') + `<div class="form-layout"><form id="register-form" class="panel form-panel"><h2>Game details</h2><p>Give your project a recognizable name.</p><div class="field"><label for="game-name">Game name</label><input id="game-name" name="name" placeholder="e.g. Tiny Adventures" required maxlength="128" autofocus value="${escapeHTML(prefill.get('name') || '')}"><p>Use the same name for the Android and iOS versions: they appear as one game with a platform switch.</p></div><div class="field"><label for="bundle-id">Bundle ID</label><input id="bundle-id" name="bundle_id" value="${escapeHTML(prefill.get('bundle_id') || '')}" placeholder="com.yourstudio.yourgame" pattern="[A-Za-z0-9_\\-]+(\\.[A-Za-z0-9_\\-]+)+" required maxlength="255"><p>The application identifier from your game’s project settings.</p></div><div class="field"><label for="platform">Platform</label><select id="platform" name="platform"><option value="android">Android</option><option value="ios" ${prefill.get('platform') === 'ios' ? 'selected' : ''}>iOS</option></select><p>Register each platform separately to keep its events isolated. The platform can’t be changed later.</p></div><div class="field"><label for="game-icon">Icon (optional)</label><div class="icon-picker"><span class="game-avatar icon-preview" id="icon-preview">?</span><input id="game-icon" type="file" accept="image/*"></div><p>Shown next to the game everywhere. Any image works; it is cropped to a square. You can change it later in Game settings.</p></div><div class="field"><label for="notes">Notes (optional)</label><textarea id="notes" name="notes" maxlength="2000" placeholder="Store links, release status, anything worth remembering"></textarea></div><div class="error" role="alert"></div><div class="form-actions"><a href="/" class="button">Cancel</a><button class="button primary" type="submit">Register game ${icon('arrow',14)}</button></div></form><aside class="aside-card">${icon('game',25)}<h3>A space of its own</h3><p>Every game gets a separate event database and its own collection keys.</p><ul><li>Duplicates are handled automatically</li><li>Keys can be rotated at any time</li><li>Your raw data stays on your server</li></ul><p class="small">After registration, copy your new API key. It’s shown only once.</p></aside></div>`);
+  const iconInput = document.querySelector('#game-icon');
+  iconInput.addEventListener('change', async () => {
+    const preview = document.querySelector('#icon-preview');
+    try { const url = await new Promise((resolve, reject) => { (async () => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(await iconFromFile(iconInput.files[0])); })().catch(reject); }); preview.classList.add('has-icon'); preview.innerHTML = `<img src="${url}" alt="" width="42" height="42">`; }
+    catch (error) { iconInput.value = ''; preview.classList.remove('has-icon'); preview.textContent = '?'; toast(error.message); }
+  });
   bindForm('#register-form', async (form, values) => {
+    delete values.icon;
     const game = await api('/v1/games', {method:'POST', body:JSON.stringify(values)});
+    if (iconInput.files[0]) {
+      try { await uploadIcon({...game, platform: values.platform, name: values.name}, iconInput.files[0]); }
+      catch (error) { toast(`The game was created, but its icon wasn’t saved: ${error.message}`); }
+    }
     showKey(game.key.api_key, 'Your game is ready.', `/games/${game.id}`);
     form.querySelector('button[type="submit"]').disabled = true;
     form.querySelector('button[type="submit"]').textContent = 'Game registered';
@@ -314,7 +352,8 @@ async function renderGameSettings() {
   shell('Game settings', heading('Game settings', `${game.bundle_id} · ${platformLabel(game.platform)}`, actions) +
     (archived ? `<div class="archived-banner">${icon('lock',18)}<div><strong>Archived ${displayDate(game.archived_at)}.</strong> Collection is paused: the server refuses new events, and the Unity SDK keeps them queued on players’ devices until you restore the game.</div><button class="button" data-game-action="unarchive">Restore game</button></div>` : '') +
     `<section class="metrics">${metric('Events collected',number(game.events),`${number(game.event_names)} distinct event names`,'pulse')}${metric('Events today',number(game.today),'Received today · UTC','export')}${metric('API keys',`${game.keys_active} active`,`${game.keys_total} created in total`,'key')}${metric('Storage',fileSize(game.storage_bytes),'Event database on disk','disk')}</section>
-    <div class="section-grid"><section class="panel"><div class="panel-header"><h2>Game information</h2><button class="button ghost" data-game-action="edit">Edit ${icon('arrow',12)}</button></div><div class="panel-body"><ul class="status-list">
+    <section class="panel section-spacing"><div class="panel-header"><div><h2>Game icon</h2><p>Shown next to the game in the sidebar and on the games page${variantsOf(game).length > 1 ? ' · applies to both platforms' : ''}</p></div></div><div class="panel-body icon-settings">${avatar(game.name, variantsOf(game)).replace('game-avatar', 'game-avatar icon-large')}<div class="icon-actions"><label class="button" for="icon-file">${icon('export',14)} ${game.icon_updated_at ? 'Change icon' : 'Upload icon'}</label><input id="icon-file" type="file" accept="image/*" hidden>${variantsOf(game).some(item => item.icon_updated_at) ? '<button type="button" class="button danger-text" id="icon-remove">Remove</button>' : ''}<p class="small muted">Any image works; it is cropped to a square.</p></div></div></section>
+    <div class="section-grid section-spacing"><section class="panel"><div class="panel-header"><h2>Game information</h2><button class="button ghost" data-game-action="edit">Edit ${icon('arrow',12)}</button></div><div class="panel-body"><ul class="status-list">
       <li><span>Name</span><strong>${escapeHTML(game.name)}</strong></li>
       <li><span>Bundle ID</span><code>${escapeHTML(game.bundle_id)}</code></li>
       <li><span>Platform</span><strong>${platformLabel(game.platform)}</strong></li>
@@ -333,6 +372,18 @@ async function renderGameSettings() {
       <div class="danger-row"><div><strong>Delete this game</strong><p>Removes the game and all of its API keys. Its event database is moved to the server’s <code>data/deleted</code> folder, not erased.</p></div><button class="button danger" data-game-action="delete">Delete game</button></div>
     </div></section>`);
   mountActivity(document.querySelector('#activity'), game);
+  const refreshAfterIcon = async message => {
+    overview = await api('/v1/overview'); overviewStale = false;
+    currentGame = overview.games.find(item => item.id === game.id) || currentGame;
+    await renderGameSettings(); toast(message);
+  };
+  document.querySelector('#icon-file')?.addEventListener('change', async event => {
+    const file = event.target.files[0]; if (!file) return;
+    try { await uploadIcon(game, file); await refreshAfterIcon('Icon updated.'); } catch (error) { toast(error.message); }
+  });
+  document.querySelector('#icon-remove')?.addEventListener('click', async () => {
+    try { await removeIcon(game); await refreshAfterIcon('Icon removed.'); } catch (error) { toast(error.message); }
+  });
   document.querySelectorAll('[data-copy]').forEach(button => button.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(button.dataset.copy); toast('Copied.'); } catch { toast('Select the text and copy it manually.'); }
   }));

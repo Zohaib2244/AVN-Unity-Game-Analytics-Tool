@@ -716,3 +716,15 @@ table.breakdown td,table.breakdown th,.compact-table td,.compact-table th{paddin
 .page-heading h1+p,.page-heading p{max-width:62ch}
 @media(max-width:560px){.chart-wrap{overflow-x:auto}.chart{min-width:560px}}
 .export-count{font-size:.95rem;color:var(--text-primary);margin:4px 0 18px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg-nested)}
+
+/* game icons */
+.game-avatar{overflow:hidden}
+.game-avatar.has-icon{background:transparent;border-color:var(--line)}
+.game-avatar img{width:100%;height:100%;object-fit:cover;display:block}
+.game-avatar.icon-large{width:84px;height:84px;border-radius:18px;font-size:1.8rem}
+.icon-settings{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+.icon-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.icon-actions p{flex-basis:100%}
+.icon-actions label.button{cursor:pointer;margin:0;text-transform:none}
+.icon-picker{display:flex;gap:14px;align-items:center}
+.icon-picker input{flex:1;min-width:0}

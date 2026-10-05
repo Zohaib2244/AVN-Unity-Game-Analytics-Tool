@@ -2,6 +2,7 @@ import hashlib
 import json
 import secrets
 import sqlite3
+import struct
 import time
 from contextlib import contextmanager
 from uuid import uuid4
@@ -14,6 +15,10 @@ from .models import Batch, EventDefinition, GameCreate, GameUpdate, timestamp
 
 # Normalizes a stored environment string (production, Editor, DEVELOPMENT...) to lower case.
 ENVIRONMENT_VALUE = "lower(substr(trim({column}), 1, 64))"
+
+
+MAX_ICON_BYTES = 512 * 1024
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 class Storage:
@@ -46,6 +51,7 @@ class Storage:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         (self.root / "games").mkdir(exist_ok=True, mode=0o700)
         (self.root / "exports").mkdir(exist_ok=True, mode=0o700)
+        (self.root / "icons").mkdir(exist_ok=True, mode=0o700)
         with self.connect(self.root / "registry.sqlite3") as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             if version > 2:
@@ -87,6 +93,9 @@ class Storage:
             key_columns = {row["name"] for row in connection.execute("PRAGMA table_info(api_keys)")}
             if "api_key" not in key_columns:
                 connection.execute("ALTER TABLE api_keys ADD COLUMN api_key TEXT")
+            game_columns = {row["name"] for row in connection.execute("PRAGMA table_info(games)")}
+            if "icon_updated_at" not in game_columns:  # set when the game has an uploaded icon
+                connection.execute("ALTER TABLE games ADD COLUMN icon_updated_at TEXT")
             game_ids = [row["id"] for row in connection.execute("SELECT id FROM games")]
         for game_id in game_ids:
             if self.game_path(game_id).exists():
@@ -185,6 +194,34 @@ class Storage:
             raise HTTPException(404, "Game not found")
         return dict(row)
 
+    def icon_path(self, game_id):
+        return self.root / "icons" / f"{game_id}.png"
+
+    def set_icon(self, game_id, data: bytes):
+        """Stores a game's icon. The dashboard sends a square PNG; anything else is refused."""
+        self.get_game(game_id)
+        if len(data) > MAX_ICON_BYTES:
+            raise HTTPException(413, "Icon too large; use an image under 512 KB")
+        if data[:8] != PNG_SIGNATURE or data[12:16] != b"IHDR" or len(data) < 24:
+            raise HTTPException(415, "Icon must be a PNG image")
+        width, height = struct.unpack(">II", data[16:24])
+        if not (16 <= width <= 1024 and 16 <= height <= 1024):
+            raise HTTPException(400, "Icon must be between 16 and 1024 pixels on each side")
+        path = self.icon_path(game_id)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_bytes(data)
+        temporary.replace(path)
+        stamp = timestamp()
+        with self.connect(self.root / "registry.sqlite3") as connection:
+            connection.execute("UPDATE games SET icon_updated_at=? WHERE id=?", (stamp, game_id))
+        return {"icon_updated_at": stamp}
+
+    def clear_icon(self, game_id):
+        self.get_game(game_id)
+        self.icon_path(game_id).unlink(missing_ok=True)
+        with self.connect(self.root / "registry.sqlite3") as connection:
+            connection.execute("UPDATE games SET icon_updated_at=NULL WHERE id=?", (game_id,))
+
     def game_files(self, game_id):
         path = self.game_path(game_id)
         return [path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")]
@@ -257,7 +294,7 @@ class Storage:
             registry.execute("BEGIN IMMEDIATE")
             registry.execute("DELETE FROM api_keys WHERE game_id=?", (game_id,))
             registry.execute("DELETE FROM games WHERE id=?", (game_id,))
-            for path in self.game_files(game_id):
+            for path in [*self.game_files(game_id), self.icon_path(game_id)]:
                 if path.exists():
                     path.rename(trash / f"{stamp}-{game['bundle_id']}-{path.name}")
         return {"status": "deleted", "moved_to": str(trash.relative_to(self.root))}

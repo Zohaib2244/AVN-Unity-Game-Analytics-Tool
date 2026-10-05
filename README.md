@@ -113,7 +113,9 @@ The website is organized around games. The home page lists your games; Android a
 | **Exports** | Download the raw events, using the same days and filters. |
 | **Event dictionary** | Describe each event and its parameters. |
 | **API keys** | Create, copy and delete the game's collection keys. |
-| **Game settings** | Game details, archive (pause collection) and delete. |
+| **Game settings** | Game icon, game details, archive (pause collection) and delete. |
+
+**Game icons:** add one when registering a game or later in Game settings. Any image works; the browser crops it to a square 256×256 PNG before uploading, and it applies to both platforms of the game. Icons are stored in `data/icons/` (a deleted game's icon is moved to `data/deleted/` with it) and fall back to the game's initials when none is set.
 
 To register the other platform of a game, use the **+ iOS** / **+ Android** link on the game card or in the sidebar: it pre-fills the name and bundle ID. Use exactly the same game name so the two versions are grouped.
 
@@ -213,6 +215,7 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | List / register games | `GET` / `POST /v1/games` |
 | List / issue keys | `GET` / `POST /v1/games/{id}/keys` |
 | Delete key | `DELETE /v1/games/{id}/keys/{key_id}` |
+| Set / read / remove game icon | `PUT` (raw PNG body, 16–1024 px, up to 512 KB) / `GET` / `DELETE /v1/games/{id}/icon` |
 | Define / read event dictionary | `PUT /v1/games/{id}/dictionary/{event}`, `GET /v1/games/{id}/dictionary` |
 | Arrival counts | `GET /v1/games/{id}/health?date=2026-10-04&period=week` (accepts the filter parameters) |
 | Download export | `GET /v1/games/{id}/export?date=2026-10-04&period=day&basis=client_ts` |
@@ -259,6 +262,7 @@ Environment variables (see `.env.example`):
 data/
   registry.sqlite3       games, API keys, rate-limit counters
   games/<uuid>.sqlite3   raw events, dictionary, session environments and saved funnels for one game
+  icons/<uuid>.png       game icons
   exports/               temporary downloads
 ```
 

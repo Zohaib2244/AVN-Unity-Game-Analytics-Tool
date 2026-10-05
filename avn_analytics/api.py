@@ -7,7 +7,7 @@ from threading import BoundedSemaphore
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import Field
@@ -212,6 +212,25 @@ def create_app(settings: Settings, *, admin: bool = False):
     @admin_api.delete("/v1/games/{game_id}")
     def delete_game(game_id: UUID, confirm: Annotated[str, Query(max_length=255)] = ""):
         return storage.delete_game(str(game_id), confirm)
+
+    @admin_api.put("/v1/games/{game_id}/icon")
+    async def set_icon(game_id: UUID, request: Request):
+        return storage.set_icon(str(game_id), await request.body())
+
+    @admin_api.delete("/v1/games/{game_id}/icon", status_code=204)
+    def clear_icon(game_id: UUID):
+        storage.clear_icon(str(game_id))
+
+    @admin_api.get("/v1/games/{game_id}/icon")
+    def get_icon(game_id: UUID):
+        storage.get_game(str(game_id))
+        path = storage.icon_path(str(game_id))
+        if not path.exists():
+            raise HTTPException(404, "No icon")
+        # The dashboard adds ?v=<icon_updated_at>, so a new upload gets a new URL.
+        return FileResponse(
+            path, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"}
+        )
 
     @admin_api.get("/v1/games/{game_id}/keys")
     def list_keys(game_id: UUID, response: Response):

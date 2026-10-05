@@ -784,3 +784,49 @@ def test_export_and_health_filters(backend):
     assert len(lines) == 1 and manifest["event_count"] == 1
     assert manifest["filters"] == {"exclude_environments": ["editor"]}
     assert full.status_code == 200
+
+
+def png(width=64, height=64):
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    pixels = zlib.compress(b"".join(b"\x00" + b"\xff\x00\x00" * width for _ in range(height)))
+    return (
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", pixels) + chunk(b"IEND", b"")
+    )
+
+
+def test_game_icons(backend):
+    admin, _, settings = backend
+    game = register(admin)
+    url = f"/v1/games/{game['id']}/icon"
+    assert admin.get(url, headers=AUTH).status_code == 404
+    assert admin.get("/v1/games", headers=AUTH).json()[0]["icon_updated_at"] is None
+    image = png()
+    saved = admin.put(url, headers=AUTH, content=image)
+    assert saved.status_code == 200, saved.text
+    fetched = admin.get(url, headers=AUTH)
+    assert fetched.status_code == 200 and fetched.content == image
+    assert fetched.headers["content-type"] == "image/png"
+    assert "max-age" in fetched.headers["cache-control"]
+    assert (
+        admin.get("/v1/games", headers=AUTH).json()[0]["icon_updated_at"]
+        == saved.json()["icon_updated_at"]
+    )
+    assert admin.put(url, headers=AUTH, content=b"GIF89a not a png").status_code == 415
+    assert admin.put(url, headers=AUTH, content=png(8, 8)).status_code == 400
+    assert admin.put(url, headers=AUTH, content=image + b"0" * 600_000).status_code in (413, 400)
+    assert admin.delete(url, headers=AUTH).status_code == 204
+    assert admin.get(url, headers=AUTH).status_code == 404
+    admin.put(url, headers=AUTH, content=image)
+    assert (settings.data_dir / "icons" / f"{game['id']}.png").exists()
+    deleted = admin.delete(
+        f"/v1/games/{game['id']}", headers=AUTH, params={"confirm": "com.avn.test"}
+    )
+    assert deleted.status_code == 200
+    assert not (settings.data_dir / "icons" / f"{game['id']}.png").exists()
