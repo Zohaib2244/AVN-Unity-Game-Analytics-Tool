@@ -893,16 +893,28 @@ tr.level-hard td{background:color-mix(in srgb,var(--status-down) 8%,transparent)
 .panel.collapsed .panel-header p{display:none}
 #funnel-result.many{max-height:min(640px,70vh);overflow-y:auto}
 /* ─── Players: sorting and event rules ─── */
-.players-toolbar{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:flex-end;padding:12px 20px;border-bottom:1.5px dashed var(--border)}
+.players-toolbar{display:flex;flex-wrap:wrap;gap:12px 14px;align-items:flex-end;padding:14px 20px;border-bottom:1.5px dashed var(--border)}
 .players-toolbar .button{margin:0;min-height:40px}
-.player-rules{flex:1 1 100%;margin-top:2px}
-.player-rules summary{cursor:pointer;color:var(--text-muted);font-size:var(--fs-label)}
-.player-rules-body{padding:10px 0 4px}
-.player-rules-body h3{margin:12px 0 4px;font-size:var(--fs-label);text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted-dim)}
-.rule-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 8px}
-.rule-row select,.rule-row input{width:auto;max-width:230px;min-height:36px;padding:6px 10px;font-size:var(--fs-label)}
+.players-toolbar .inline-field select{min-width:200px}
+.rules-toggle{display:inline-flex;align-items:center;gap:8px}
+.rules-toggle.active{border-color:var(--accent-orange);color:var(--accent-orange)}
+.rules-summary{flex:1 1 220px;min-width:0;align-self:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.player-rules{flex:1 1 100%;display:grid;gap:18px;padding-top:6px}
+.player-rules[hidden]{display:none}
+.player-rules h3{margin:0 0 4px;font-size:var(--fs-label);text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted-dim)}
+.player-rules .help{margin:0 0 10px;max-width:720px}
+.rule-row{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;margin:0 0 10px;padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg-nested)}
+.rule-row select,.rule-row input{width:auto;min-height:38px;padding-top:6px;padding-bottom:6px;font-size:var(--fs-label)}
+.rule-row select{padding-right:32px;min-width:96px}
+.rule-row .rule-verb{min-width:150px;font-weight:600}
+.rule-row .rule-event{min-width:220px}
+.rule-row .rule-param{min-width:210px}
+.rule-row .rule-op{min-width:110px}
+.rule-row .rule-value{width:140px}
 .rule-row input[type="number"]{width:84px}
-.rule-times{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-label);color:var(--text-muted)}
+.rule-times{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-label);color:var(--text-muted)}
+.rule-remove{margin-left:auto}
+.player-rules .small-button{margin-top:2px}
 th.sortable{padding:0}
 th.sortable button{display:inline-flex;gap:6px;align-items:center;width:100%;padding:12px 20px;border:0;background:transparent;color:inherit;font:inherit;text-transform:inherit;letter-spacing:inherit;cursor:pointer;white-space:nowrap}
 th.sortable.num button{justify-content:flex-end}

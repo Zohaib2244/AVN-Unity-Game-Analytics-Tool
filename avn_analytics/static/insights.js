@@ -592,14 +592,13 @@ function ruleFields(rule, index, catalog) {
   const params = (event?.params || []).map(param => param.key);
   const values = event?.params.find(param => param.key === rule.param)?.values || [];
   const needsValue = rule.param && rule.op !== 'exists';
-  return `<select data-rule-field="event" aria-label="Event">${ruleOptions(catalog.events.map(item => item.name), rule.event, rule.event ? undefined : 'Pick an event…')}</select>
-    <select data-rule-field="param" aria-label="Parameter">${ruleOptions(params, rule.param, 'any parameters')}</select>
-    <select data-rule-field="op" aria-label="Condition" ${rule.param ? '' : 'disabled'}>${OPERATORS.map(([key, label]) => `<option value="${key}" ${key === (rule.op || 'eq') ? 'selected' : ''}>${label}</option>`).join('')}</select>
-    <input data-rule-field="value" aria-label="Value" placeholder="${needsValue ? 'value' : '—'}" ${needsValue ? '' : 'disabled'} value="${escapeHTML(rule.value || '')}" list="rule-values-${index}"><datalist id="rule-values-${index}">${values.slice(0, 40).map(value => `<option value="${escapeHTML(value)}">`).join('')}</datalist>`;
+  return `<select class="rule-event" data-rule-field="event" aria-label="Event">${ruleOptions(catalog.events.map(item => item.name), rule.event, rule.event ? undefined : 'Pick an event…')}</select>
+    <select class="rule-param" data-rule-field="param" aria-label="Only when this parameter…">${ruleOptions(params, rule.param, '+ only when a parameter…')}</select>
+    ${rule.param ? `<select class="rule-op" data-rule-field="op" aria-label="Condition">${OPERATORS.map(([key, label]) => `<option value="${key}" ${key === (rule.op || 'eq') ? 'selected' : ''}>${label}</option>`).join('')}</select>${needsValue ? `<input class="rule-value" data-rule-field="value" aria-label="Value" placeholder="value" value="${escapeHTML(rule.value || '')}" list="rule-values-${index}"><datalist id="rule-values-${index}">${values.slice(0, 40).map(value => `<option value="${escapeHTML(value)}">`).join('')}</datalist>` : ''}` : ''}`;
 }
 function mountRuleList({container, rules, catalog, blank, before = () => '', after = () => '', onChange, addLabel = 'Add', empty = ''}) {
   const draw = () => {
-    container.innerHTML = `${rules.length ? rules.map((rule, index) => `<div class="rule-row" data-rule="${index}">${before(rule, index)}${ruleFields(rule, index, catalog())}${after(rule, index, catalog())}<button type="button" class="icon-button" data-rule-remove aria-label="Remove">${icon('close', 13)}</button></div>`).join('') : `<p class="help">${empty}</p>`}<button type="button" class="button small-button" data-rule-add>${icon('plus', 13)} ${escapeHTML(addLabel)}</button>`;
+    container.innerHTML = `${rules.length ? rules.map((rule, index) => `<div class="rule-row" data-rule="${index}">${before(rule, index)}${ruleFields(rule, index, catalog())}${after(rule, index, catalog())}<button type="button" class="icon-button rule-remove" data-rule-remove aria-label="Remove this rule" title="Remove">${icon('close', 14)}</button></div>`).join('') : `<p class="help">${empty}</p>`}<button type="button" class="button small-button" data-rule-add>${icon('plus', 13)} ${escapeHTML(addLabel)}</button>`;
   };
   container.addEventListener('change', event => {
     const row = event.target.closest('[data-rule]'); const field = event.target.dataset.ruleField;
@@ -622,15 +621,15 @@ function mountRuleList({container, rules, catalog, blank, before = () => '', aft
 
 /* ─── Players: sortable list with custom event-based columns and "only players who…" rules ─── */
 
-const AGG_LABELS = {count: 'Times they did', max: 'Highest', min: 'Lowest', sum: 'Total', first: 'First time', last: 'Last time'};
+const AGG_LABELS = {count: 'How many times', max: 'Highest value', min: 'Lowest value', sum: 'Total of', first: 'First time', last: 'Last time'};
 const ruleSubject = rule => `${rule.event}${rule.param ? ` · ${rule.param}${rule.op === 'exists' ? '' : ` ${operatorLabel(rule.op)} ${rule.value}`}` : ''}`;
 function metricLabel(metric) {
   if (metric.label) return metric.label;
-  if (['max', 'min', 'sum'].includes(metric.agg)) return `${AGG_LABELS[metric.agg]} ${metric.of || metric.param || '?'} · ${metric.event}`;
-  return `${AGG_LABELS[metric.agg]}: ${ruleSubject(metric)}`;
+  if (['max', 'min', 'sum'].includes(metric.agg)) return `${{max: 'Highest', min: 'Lowest', sum: 'Total'}[metric.agg]} ${metric.of || metric.param || '?'} · ${metric.event}`;
+  return `${{count: 'Times', first: 'First time', last: 'Last time'}[metric.agg]}: ${ruleSubject(metric)}`;
 }
 const metricValue = (metric, value) => value == null ? '—' : ['first', 'last'].includes(metric.agg) ? displayDate(value) : number(value);
-const usableRules = list => list.filter(rule => rule.event).map(({event, param, op, value, ...rest}) => ({event, param: param || '', op: param ? (op || 'eq') : 'eq', value: param && op !== 'exists' ? (value || '') : '', ...rest}));
+const usableRules = list => list.filter(rule => rule.event).map(({event, param, op, value, ...rest}) => ({event, param: param || '', op: param ? (op || 'eq') : 'eq', value: param && op !== 'exists' ? (value || '') : '', ...Object.fromEntries(Object.entries(rest).filter(([key]) => !key.startsWith('_')))}));
 const BASE_SORTS = [['last_seen', 'Last active'], ['first_seen', 'First seen'], ['events', 'Events'], ['sessions', 'Sessions']];
 
 async function renderPlayers() {
@@ -644,13 +643,18 @@ async function renderPlayers() {
     `<div id="filters"></div>
     <section class="panel section-spacing"><div class="panel-header"><h2>Players <span class="count" id="player-count">0</span></h2><div class="search">${icon('search',16)}<input id="player-search" type="search" aria-label="Search players" placeholder="Search by user or install ID…"></div></div>
       <div class="players-toolbar"><label class="inline-field">Sort by<select id="player-sort"></select></label><button type="button" class="button small-button" id="player-order"></button>
-        <details class="player-rules" id="player-rules"><summary>Event rules <span class="count" id="rules-count" hidden></span></summary>
-          <div class="player-rules-body"><h3>Only players who…</h3><p class="help">All of these must be true. Example: did <code>POWERUP_CONSUMED</code> at least 3 times, or never did <code>SETTINGS_OPENED</code>.</p><div id="condition-list"></div>
-            <h3>Extra columns (and sort keys)</h3><p class="help">Add a column from events: how many times, the highest or lowest value of a parameter, or when it first or last happened. Then sort by it.</p><div id="metric-list"></div></div></details></div>
+        <button type="button" class="button small-button rules-toggle" id="rules-toggle" aria-expanded="false" aria-controls="player-rules">${icon('funnel', 14)} Event rules <span class="count" id="rules-count" hidden></span></button><span class="rules-summary small muted" id="rules-summary"></span>
+        <div class="player-rules" id="player-rules" hidden>
+          <section><h3>Only show players who…</h3><p class="help">Every rule here must be true. For example: <em>Did</em> <code>POWERUP_CONSUMED</code> at least 3 times, or <em>Never did</em> <code>SETTINGS_OPENED</code>.</p><div id="condition-list"></div></section>
+          <section><h3>Add a column (and sort by it)</h3><p class="help">Pick what to work out for each player, from an event: how many times, the highest, lowest or total of one of its parameters, or when it first or last happened.</p><div id="metric-list"></div></section></div></div>
       <div id="player-list"><p class="help panel-body">Loading…</p></div></section>`);
   const list = document.querySelector('#player-list');
   let offset = 0; let search = ''; let latest = 0; let chosen = null; let lastMetrics = [];
   const persist = () => storeSet(viewKey, view);
+  const panel = document.querySelector('#player-rules'); const toggle = document.querySelector('#rules-toggle');
+  const showRules = open => { panel.hidden = !open; toggle.setAttribute('aria-expanded', String(open)); toggle.classList.toggle('active', open); };
+  toggle.addEventListener('click', () => { view.rulesOpen = panel.hidden; persist(); showRules(view.rulesOpen); });
+  showRules(Boolean(view.rulesOpen));
   const rulesBody = () => ({conditions: usableRules(view.conditions).map(rule => ({...rule, does: rule.does || 'did', min_times: rule.min_times || 1})), metrics: usableRules(view.metrics).map(rule => ({...rule, agg: rule.agg || 'count'}))});
 
   const drawControls = () => {
@@ -660,22 +664,27 @@ async function renderPlayers() {
     document.querySelector('#player-sort').innerHTML = options.map(([key, label]) => `<option value="${key}" ${key === view.sort ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('');
     const timeSort = ['last_seen', 'first_seen'].includes(view.sort) || metrics[Number(view.sort.replace('metric', ''))]?.agg?.match(/first|last/);
     document.querySelector('#player-order').innerHTML = view.order === 'desc' ? `↓ ${timeSort ? 'Newest first' : 'Highest first'}` : `↑ ${timeSort ? 'Oldest first' : 'Lowest first'}`;
-    const active = rulesBody().conditions.length + metrics.length;
+    const conditions = rulesBody().conditions;
+    const active = conditions.length + metrics.length;
     const count = document.querySelector('#rules-count'); count.hidden = !active; count.textContent = active;
+    document.querySelector('#rules-summary').textContent = active ? [...conditions.map(rule => `${rule.does === 'didnt' ? 'never' : 'did'} ${rule.event}${rule.param ? ` (${rule.param})` : ''}`), ...metrics.map(metricLabel)].join(' · ') : '';
   };
   const conditionList = mountRuleList({
     container: document.querySelector('#condition-list'), rules: view.conditions, catalog: () => catalog, addLabel: 'Add a condition', empty: 'No conditions yet.',
     blank: current => ({event: current.events[0]?.name || '', param: '', op: 'eq', value: '', does: 'did', min_times: 1}),
-    before: rule => `<select data-rule-field="does" aria-label="Did or didn’t"><option value="did" ${rule.does !== 'didnt' ? 'selected' : ''}>Did</option><option value="didnt" ${rule.does === 'didnt' ? 'selected' : ''}>Never did</option></select>`,
-    after: rule => rule.does === 'didnt' ? '' : `<span class="rule-times">at least <input type="number" min="1" max="100000" data-rule-field="min_times" aria-label="At least this many times" value="${rule.min_times || 1}"> ×</span>`,
+    before: rule => `<select class="rule-verb" data-rule-field="does" aria-label="Did or never did"><option value="did" ${rule.does !== 'didnt' ? 'selected' : ''}>Did</option><option value="didnt" ${rule.does === 'didnt' ? 'selected' : ''}>Never did</option></select>`,
+    after: rule => rule.does === 'didnt' ? '' : `<span class="rule-times">at least <input type="number" min="1" max="100000" data-rule-field="min_times" aria-label="At least this many times" value="${rule.min_times || 1}"> time${(rule.min_times || 1) === 1 ? '' : 's'}</span>`,
     onChange: (rules, redraw) => { persist(); if (redraw) conditionList.redraw(); drawControls(); offset = 0; load(); },
   });
   const metricList = mountRuleList({
     container: document.querySelector('#metric-list'), rules: view.metrics, catalog: () => catalog, addLabel: 'Add a column', empty: 'No extra columns yet.',
     blank: current => ({event: current.events[0]?.name || '', param: '', op: 'eq', value: '', agg: 'count', of: ''}),
-    before: rule => `<select data-rule-field="agg" aria-label="What to show">${Object.entries(AGG_LABELS).map(([key, label]) => `<option value="${key}" ${key === (rule.agg || 'count') ? 'selected' : ''}>${label}</option>`).join('')}</select>`,
-    after: (rule, index, current) => ['max', 'min', 'sum'].includes(rule.agg) ? `<label class="rule-times">of <select data-rule-field="of" aria-label="Which parameter">${ruleOptions((current.events.find(item => item.name === rule.event)?.params || []).map(param => param.key), rule.of || rule.param, 'pick…')}</select></label>` : '',
-    onChange: (rules, redraw) => { persist(); if (redraw) metricList.redraw(); drawControls(); offset = 0; load(); },
+    before: rule => `<select class="rule-verb" data-rule-field="agg" aria-label="What to show">${Object.entries(AGG_LABELS).map(([key, label]) => `<option value="${key}" ${key === (rule.agg || 'count') ? 'selected' : ''}>${label}</option>`).join('')}</select>`,
+    after: (rule, index, current) => ['max', 'min', 'sum'].includes(rule.agg) ? `<label class="rule-times">of this parameter <select class="rule-param" data-rule-field="of" aria-label="Which parameter">${ruleOptions((current.events.find(item => item.name === rule.event)?.params || []).map(param => param.key), rule.of || rule.param, 'pick…')}</select></label>` : '',
+    onChange: (rules, redraw) => {
+      rules.forEach(rule => { if (['max', 'min', 'sum'].includes(rule.agg) && !rule.of) rule.of = catalog.events.find(item => item.name === rule.event)?.params[0]?.key || ''; });
+      persist(); if (redraw) metricList.redraw(); drawControls(); offset = 0; load();
+    },
   });
 
   const load = async () => {
