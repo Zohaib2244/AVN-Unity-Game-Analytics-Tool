@@ -645,8 +645,8 @@ async function renderPlayers() {
       <div class="players-toolbar"><label class="inline-field">Sort by<select id="player-sort"></select></label><button type="button" class="button small-button" id="player-order"></button>
         <button type="button" class="button small-button rules-toggle" id="rules-toggle" aria-expanded="false" aria-controls="player-rules">${icon('funnel', 14)} Event rules <span class="count" id="rules-count" hidden></span></button><span class="rules-summary small muted" id="rules-summary"></span>
         <div class="player-rules" id="player-rules" hidden>
-          <section><h3>Only show players who…</h3><p class="help">Every rule here must be true. For example: <em>Did</em> <code>POWERUP_CONSUMED</code> at least 3 times, or <em>Never did</em> <code>SETTINGS_OPENED</code>.</p><div id="condition-list"></div></section>
-          <section><h3>Add a column (and sort by it)</h3><p class="help">Pick what to work out for each player, from an event: how many times, the highest, lowest or total of one of its parameters, or when it first or last happened.</p><div id="metric-list"></div></section></div></div>
+          <section class="rule-section" id="conditions-section"><button type="button" class="rule-section-toggle" aria-expanded="true"><span class="rule-chevron">${icon('chevron', 15)}</span><span class="rule-section-title">Only show players who…</span><span class="count" id="conditions-count" hidden></span><span class="rule-section-note small muted" id="conditions-note"></span></button><div class="rule-section-body"><p class="help">Every rule here must be true. For example: <em>Did</em> <code>POWERUP_CONSUMED</code> at least 3 times, or <em>Never did</em> <code>SETTINGS_OPENED</code>.</p><div id="condition-list"></div></div></section>
+          <section class="rule-section" id="metrics-section"><button type="button" class="rule-section-toggle" aria-expanded="true"><span class="rule-chevron">${icon('chevron', 15)}</span><span class="rule-section-title">Add a column (and sort by it)</span><span class="count" id="metrics-count" hidden></span><span class="rule-section-note small muted" id="metrics-note"></span></button><div class="rule-section-body"><p class="help">Pick what to work out for each player, from an event: how many times, the highest, lowest or total of one of its parameters, or when it first or last happened.</p><div id="metric-list"></div></div></section></div></div>
       <div id="player-list"><p class="help panel-body">Loading…</p></div></section>`);
   const list = document.querySelector('#player-list');
   let offset = 0; let search = ''; let latest = 0; let chosen = null; let lastMetrics = [];
@@ -655,6 +655,14 @@ async function renderPlayers() {
   const showRules = open => { panel.hidden = !open; toggle.setAttribute('aria-expanded', String(open)); toggle.classList.toggle('active', open); };
   toggle.addEventListener('click', () => { view.rulesOpen = panel.hidden; persist(); showRules(view.rulesOpen); });
   showRules(Boolean(view.rulesOpen));
+  view.fold = view.fold || {};
+  const foldSection = (id, name) => {
+    const section = document.querySelector(id); const button = section.querySelector('.rule-section-toggle');
+    const apply = () => { section.classList.toggle('collapsed', Boolean(view.fold[name])); button.setAttribute('aria-expanded', String(!view.fold[name])); };
+    button.addEventListener('click', () => { view.fold[name] = !view.fold[name]; persist(); apply(); });
+    apply();
+  };
+  foldSection('#conditions-section', 'conditions'); foldSection('#metrics-section', 'metrics');
   const rulesBody = () => ({conditions: usableRules(view.conditions).map(rule => ({...rule, does: rule.does || 'did', min_times: rule.min_times || 1})), metrics: usableRules(view.metrics).map(rule => ({...rule, agg: rule.agg || 'count'}))});
 
   const drawControls = () => {
@@ -667,6 +675,9 @@ async function renderPlayers() {
     const conditions = rulesBody().conditions;
     const active = conditions.length + metrics.length;
     const count = document.querySelector('#rules-count'); count.hidden = !active; count.textContent = active;
+    const part = (name, count, texts) => { const badge = document.querySelector(`#${name}-count`); badge.hidden = !count; badge.textContent = count; document.querySelector(`#${name}-note`).textContent = texts.join(' · '); };
+    part('conditions', conditions.length, conditions.map(rule => `${rule.does === 'didnt' ? 'never' : 'did'} ${rule.event}${rule.param ? ` (${rule.param})` : ''}`));
+    part('metrics', metrics.length, metrics.map(metricLabel));
     document.querySelector('#rules-summary').textContent = active ? [...conditions.map(rule => `${rule.does === 'didnt' ? 'never' : 'did'} ${rule.event}${rule.param ? ` (${rule.param})` : ''}`), ...metrics.map(metricLabel)].join(' · ') : '';
   };
   const conditionList = mountRuleList({
