@@ -25,6 +25,8 @@ ENVIRONMENT = (
     " '$.session_id')),"
     " CASE WHEN json_extract(payload, '$.platform')='editor' THEN 'editor' END, 'unknown')"
 )
+# Environments the dashboard hides by default ("Hide editor & development data").
+TEST_ENVIRONMENTS = ["editor", "development", "test", "debug"]
 DIMENSIONS = {
     "environment": ENVIRONMENT,
     "app_version": "coalesce(json_extract(payload, '$.app_version'), 'unknown')",
@@ -87,6 +89,43 @@ def facets(storage, game_id, start, end):
     return result
 
 
+def _day_start(moment):
+    return moment.strftime("%Y-%m-%dT00:00:00.000000+00:00")
+
+
+def active_users(connection, end, filters):
+    """DAU, WAU, MAU and stickiness, counted back from the last day before `end` (exclusive)."""
+    end_moment = datetime.fromisoformat(end)
+    month_condition, month_args = where(_day_start(end_moment - timedelta(days=30)), end, filters)
+    week_condition, week_args = where(_day_start(end_moment - timedelta(days=7)), end, filters)
+    daily = {
+        row["day"]: row["players"]
+        for row in connection.execute(
+            f"SELECT substr(client_ts, 1, 10) AS day, count(DISTINCT {PLAYER}) AS players "
+            f"FROM events WHERE {month_condition} GROUP BY day",
+            month_args,
+        )
+    }
+    mau = connection.execute(
+        f"SELECT count(DISTINCT {PLAYER}) FROM events WHERE {month_condition}", month_args
+    ).fetchone()[0]
+    wau = connection.execute(
+        f"SELECT count(DISTINCT {PLAYER}) FROM events WHERE {week_condition}", week_args
+    ).fetchone()[0]
+    days = [(end_moment - timedelta(days=n + 1)).date().isoformat() for n in range(30)]
+    average = sum(daily.get(day, 0) for day in days) / 30
+    return {
+        "last_day": days[0],
+        "dau": daily.get(days[0], 0),
+        "dau_previous": daily.get(days[1], 0),
+        "avg_dau_7": round(sum(daily.get(day, 0) for day in days[:7]) / 7, 1),
+        "avg_dau_30": round(average, 1),
+        "wau": wau,
+        "mau": mau,
+        "stickiness": round(100 * average / mau, 1) if mau else None,  # average DAU / MAU
+    }
+
+
 def summary(storage, game_id, start, end, filters):
     """Totals, a daily series and breakdowns for the game overview."""
     storage.get_game(game_id)
@@ -132,9 +171,17 @@ def summary(storage, game_id, start, end, filters):
                 args,
             )
         ]
+        active = active_users(connection, end, filters)
+    span = max(1, (datetime.fromisoformat(end) - datetime.fromisoformat(start)).days)
+    peak = max(days, key=lambda day: day["players"], default=None)
     return {
         **totals,
         "new_players": new_players,
+        "active": {
+            **active,
+            "avg_dau": round(sum(day["players"] for day in days) / span, 1),
+            "peak_dau": {"players": peak["players"], "day": peak["day"]} if peak else None,
+        },
         "days": days,
         "breakdowns": breakdowns,
         "top_events": top_events,

@@ -134,7 +134,7 @@ The website is organized around games. The home page lists your games; Android a
 
 | Page | What it shows |
 | --- | --- |
-| **Overview** | Players, new players, sessions and events; activity per day; a tabbed breakdown by environment, app version, build, country and platform (click a row to filter by it); top events. |
+| **Overview** | Players, new players, sessions and events; daily active users (DAU on the last day, average and peak DAU, WAU, MAU, stickiness); activity per day (players per day is the DAU); a tabbed breakdown by environment, app version, build, country and platform (click a row to filter by it); top events. |
 | **Funnels** | Steps you define, in order (up to 100): how many players reach each one, who stops where, and how long it takes. Below it, **Journeys** shows what players did between two steps in plain words, grouped into the most common journeys, plus where players stop. |
 | **Levels** | Per level: players who started and finished it, completion, tries per player, fails, median time, power-ups used and where players leave. |
 | **Players** | Everyone active in the chosen days, searchable and sortable (last active, first seen, events, sessions). **Event rules** add your own columns from events (times they did something, highest/lowest/total of a parameter, first/last time), sort by them, and keep only players who did, or never did, an event. Countries show their full name on hover. Open a player for their **story**: sessions as chapters, with runs of levels folded into one line ("Played levels 1–10, completed all"). The raw event list is one click away. |
@@ -185,7 +185,7 @@ NutBot is a chat assistant on every game page. You ask in plain words ("where do
 | Tool | What it does |
 | --- | --- |
 | `get_context`, `list_events` | The game, the dashboard's range and filters, the event dictionary, the events and parameters seen. |
-| `get_overview`, `get_level_progress` | Totals and breakdowns; per-level completion, tries, time and where players leave. |
+| `get_overview`, `get_level_progress` | Totals, DAU/WAU/MAU and breakdowns; per-level completion, tries, time and where players leave. |
 | `run_funnel`, `get_journeys`, `list_journey_players` | Funnels and the journeys between two steps, and who took them. |
 | `get_player_story`, `find_players` | A player's sessions in readable lines; player search. |
 | `save_funnel`, `set_event_label` | Change data. Need a team lead or admin, and a yes from the user. |

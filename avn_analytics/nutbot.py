@@ -42,7 +42,7 @@ IDLE_SECONDS = 120  # no output at all from the CLI for this long means it is st
 MAX_TOOL_RESULT = 14000
 MAX_SESSIONS = 2000
 RUN_TTL = 900
-TEST_ENVIRONMENTS = ["editor", "development", "test", "debug"]
+TEST_ENVIRONMENTS = insights.TEST_ENVIRONMENTS
 SKILL = Path(__file__).parent / "skill" / "SKILL.md"
 DEBUG_FILE = os.environ.get("AVN_NUTBOT_DEBUG_FILE", "")  # development only: raw CLI output
 SECRET_PATTERN = re.compile(r"(sk-ant-[A-Za-z0-9_\-]+|eyJ[A-Za-z0-9_\-\.]{20,}|Bearer\s+\S+)")
@@ -538,7 +538,7 @@ TOOLS = [
     ),
     _tool(
         "get_overview",
-        "Totals for the range: events, players, sessions, new players, a per-day series, and breakdowns by version, country, platform and environment.",
+        "Totals for the range: events, players, sessions, new players, an `active` block (DAU on the last day, average and peak DAU, WAU, MAU, stickiness), a per-day series (players per day is the DAU), and breakdowns by version, country, platform and environment.",
         RANGE_PROPS,
     ),
     _tool(

@@ -940,3 +940,11 @@ th.metric,td.metric{width:140px;min-width:110px}
 .rule-section.collapsed .rule-section-note{display:block}
 .rule-section.collapsed .rule-section-body{display:none}
 .rule-section-body{padding-top:6px}
+
+/* Daily active users */
+.card-dau{margin-top:14px;font-size:.82rem;color:var(--text-muted)}
+.card-dau strong{font-family:var(--font-pixel);font-size:1.15rem;font-weight:400;color:var(--accent-cyan)}
+.card-dau span{color:var(--text-muted-dim)}
+.active-users{margin-top:2px;margin-bottom:22px}
+.active-users .stat-strip{margin:0}
+.active-users .stat-label span{cursor:help;border-bottom:1px dotted var(--text-muted-dim)}

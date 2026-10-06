@@ -174,6 +174,20 @@ function bindChartTips(container, measureLabel) {
   container.querySelector('svg')?.addEventListener('pointerleave', () => { tip.hidden = true; container.querySelectorAll('.chart-hit.on').forEach(hit => hit.classList.remove('on')); });
 }
 
+const shortDay = value => new Date(`${value}T00:00:00Z`).toLocaleDateString(undefined, {day: 'numeric', month: 'short', timeZone: 'UTC'});
+
+const activeUsers = active => {
+  const change = active.dau - active.dau_previous;
+  const trend = `${change > 0 ? '+' : ''}${number(change)} vs ${shortDay(addDays(active.last_day, -1))}`;
+  const tip = text => `title="${escapeHTML(text)}"`;
+  return `<section class="panel active-users"><div class="panel-header"><h2>Daily active users</h2><span class="help">DAU, WAU and MAU count back from ${prettyDay(active.last_day)}, the last day of this range${active.last_day === new Date().toISOString().slice(0, 10) ? ' (today, still in progress)' : ''}</span></div><div class="panel-body">${stats([
+    [`<span ${tip('Distinct players with at least one event on that day')}>DAU</span>`, number(active.dau), trend],
+    [`<span ${tip('Average distinct players per day across the selected days, empty days count as 0')}>Average DAU</span>`, number(active.avg_dau), `last 7 days ${number(active.avg_dau_7)}`],
+    [`<span ${tip('The day in the range with the most distinct players')}>Peak DAU</span>`, number(active.peak_dau?.players || 0), active.peak_dau ? shortDay(active.peak_dau.day) : ''],
+    [`<span ${tip('Distinct players in the 7 days up to and including that day')}>WAU</span>`, number(active.wau), '7 days'],
+    [`<span ${tip('Distinct players in the 30 days up to and including that day')}>MAU</span>`, number(active.mau), '30 days'],
+    [`<span ${tip('Average DAU over the last 30 days divided by MAU: how much of the monthly audience plays on a typical day')}>Stickiness</span>`, active.stickiness === null ? '—' : `${active.stickiness}%`, 'avg DAU ÷ MAU']])}</div></section>`;
+};
 // A row of headline numbers without card chrome.
 const stats = items => `<div class="stat-strip">${items.map(([label, value, note]) => `<div class="stat"><span class="stat-label">${label}</span><strong class="stat-value">${value}</strong>${note ? `<span class="stat-note">${note}</span>` : ''}</div>`).join('')}</div>`;
 
@@ -186,8 +200,8 @@ async function renderGameOverview() {
   const game = currentGame;
   const archived = game.archived_at ? `<div class="archived-banner">${icon('lock',18)}<div><strong>Archived.</strong> Collection is paused for this platform.</div><a class="button" href="${gamePath(game, 'settings')}">Game settings</a></div>` : '';
   shell('Overview', heading(game.name, `${platformLabel(game.platform)} · ${game.bundle_id}`, `<a class="button primary" href="${gamePath(game, 'exports')}">${icon('export',15)} Export data</a>`) + archived +
-    `<div id="filters"></div><div id="totals"></div>
-    <section class="panel"><div class="panel-header"><h2>Activity per day</h2><div class="segmented" role="group" aria-label="Measure">${[['players','Players'],['sessions','Sessions'],['events','Events']].map(([key, label]) => `<button type="button" data-measure="${key}" aria-pressed="${key === 'players'}">${label}</button>`).join('')}</div></div><div class="panel-body chart-wrap" id="daily"><p class="help">Loading…</p></div></section>
+    `<div id="filters"></div><div id="totals"></div><div id="active"></div>
+    <section class="panel"><div class="panel-header"><h2>Activity per day</h2><div class="segmented" role="group" aria-label="Measure">${[['players','Players (DAU)'],['sessions','Sessions'],['events','Events']].map(([key, label]) => `<button type="button" data-measure="${key}" aria-pressed="${key === 'players'}">${label}</button>`).join('')}</div></div><div class="panel-body chart-wrap" id="daily"><p class="help">Loading…</p></div></section>
     <div class="section-grid overview-grid section-spacing"><section class="panel"><div class="panel-header"><h2>Who’s playing</h2><div class="segmented" aria-label="Break down by">${Object.entries(DIMENSION_LABELS).map(([key, label], index) => `<button type="button" data-dimension-tab="${key}" aria-pressed="${index === 0}">${label.replace('Device platform', 'Platform').replace('App version', 'Version')}</button>`).join('')}</div></div><div id="breakdowns"></div></section>
     <section class="panel"><div class="panel-header"><h2>Top events</h2><a class="text-link" href="${gamePath(game, 'dictionary')}">Dictionary ${icon('arrow',13)}</a></div><div id="top-events"></div></section></div>`);
   let summary = null; let measure = 'players'; let dimension = 'environment'; let latest = 0;
@@ -222,6 +236,7 @@ async function renderGameOverview() {
       if (ticket !== latest) return;
       summary = data;
       document.querySelector('#totals').innerHTML = stats([['Players', number(data.players), `${number(data.new_players)} new`], ['Sessions', number(data.sessions), data.players ? `${(data.sessions / data.players).toFixed(1)} per player` : ''], ['Events', number(data.events), data.players ? `${number(Math.round(data.events / data.players))} per player` : '']]);
+      document.querySelector('#active').innerHTML = data.events ? activeUsers(data.active) : '';
       drawDaily(); drawBreakdown();
       document.querySelector('#top-events').innerHTML = data.top_events.length ? `<table class="compact-table"><thead><tr><th>Event</th><th class="num">Events</th><th class="num">Players</th></tr></thead><tbody>${data.top_events.slice(0, 10).map(row => `<tr><td class="mono">${escapeHTML(row.name)}</td><td class="num">${number(row.events)}</td><td class="num">${number(row.players)}</td></tr>`).join('')}</tbody></table>` : '<p class="help panel-body">No events.</p>';
     } catch (error) { if (ticket === latest) document.querySelector('#daily').innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }

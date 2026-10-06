@@ -5,7 +5,7 @@ import sqlite3
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -807,6 +807,84 @@ def test_environment_filters(backend):
     }
     only_editor = admin.get(f"{base}/players", headers=AUTH, params={**days, "env": "editor"})
     assert [row["player"] for row in only_editor.json()["players"]] == ["tester"]
+
+
+def test_summary_reports_daily_active_users(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+
+    def seen(day, *players):
+        return [
+            event(
+                device_id=player, session_id=f"{player}-{day}", client_ts=f"2026-10-{day}T09:00:00Z"
+            )
+            for player in players
+        ]
+
+    events = seen("01", "a", "b") + seen("02", "a") + seen("04", "a", "b", "c")
+    events += seen("04", "a")  # the same player twice in a day counts once
+    assert send(ingest, game, events).status_code == 200
+    base = f"/v1/games/{game['id']}/insights"
+    data = admin.get(
+        f"{base}/summary", headers=AUTH, params={"start": "2026-10-02", "end": "2026-10-04"}
+    ).json()
+    active = data["active"]
+    assert active["last_day"] == "2026-10-04"
+    assert active["dau"] == 3 and active["dau_previous"] == 0  # 10-03 had nobody
+    assert active["avg_dau"] == 1.3  # (1 + 0 + 3) over the 3 selected days
+    assert active["peak_dau"] == {"players": 3, "day": "2026-10-04"}
+    # WAU and MAU look back from the end of the range, beyond its first day
+    assert active["wau"] == 3 and active["mau"] == 3
+    assert active["avg_dau_7"] == 0.9  # (3 + 0 + 1 + 2) over 7 days
+    assert active["avg_dau_30"] == 0.2  # (3 + 1 + 2) over 30 days
+    assert active["stickiness"] == 6.7  # 0.2 average DAU / 3 MAU
+    narrow = admin.get(
+        f"{base}/summary", headers=AUTH, params={"start": "2026-10-04", "end": "2026-10-04"}
+    ).json()
+    assert narrow["active"]["dau"] == 3 and narrow["active"]["dau_previous"] == 0
+    assert narrow["active"]["avg_dau"] == 3.0 and narrow["active"]["mau"] == 3
+    empty = admin.get(
+        f"{base}/summary", headers=AUTH, params={"start": "2026-09-01", "end": "2026-09-02"}
+    ).json()
+    assert empty["active"]["dau"] == 0 and empty["active"]["stickiness"] is None
+    assert empty["active"]["peak_dau"] is None
+
+
+def test_daily_active_users_leave_out_test_environments(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    for environment, players in (("production", ["real", "real-2"]), ("editor", ["tester"])):
+        batch = {
+            "context": {"environment": environment},
+            "events": [event(device_id=player) for player in players],
+        }
+        response = ingest.post(
+            "/v1/events", headers={"X-API-Key": game["key"]["api_key"]}, json=batch
+        )
+        assert response.status_code == 200, response.text
+    base = f"/v1/games/{game['id']}/insights/summary"
+    days = {"start": "2026-10-04", "end": "2026-10-04"}
+    assert admin.get(base, headers=AUTH, params=days).json()["active"]["dau"] == 3
+    real = admin.get(base, headers=AUTH, params={**days, "not_env": "editor"}).json()["active"]
+    assert real["dau"] == 2 and real["mau"] == 2
+
+
+def test_overview_counts_players_active_today_and_yesterday(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    now = datetime.now(UTC)
+    yesterday = now.replace(hour=0, minute=0, second=1) - timedelta(days=1)
+    events = [
+        event(device_id="a", client_ts=now.isoformat()),
+        event(device_id="a", client_ts=now.isoformat()),
+        event(device_id="b", client_ts=now.isoformat()),
+        event(device_id="a", client_ts=yesterday.isoformat()),
+    ]
+    assert send(ingest, game, events).status_code == 200
+    data = admin.get("/v1/overview", headers=AUTH).json()
+    (row,) = [item for item in data["games"] if item["id"] == game["id"]]
+    assert row["dau_today"] == 2 and row["dau_yesterday"] == 1
+    assert data["dau_today"] == 2
 
 
 def test_export_and_health_filters(backend):
