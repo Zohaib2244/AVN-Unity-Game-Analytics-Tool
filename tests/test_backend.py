@@ -1226,196 +1226,183 @@ def test_lan_and_token_access(tmp_path):
         assert lan.get("/v1/me").status_code == 401
 
 
-def _route_game(backend):
+def _level_player(device, session, base_minute, plan):
+    """Events for one player. plan: list of (name, params, seconds_after_start)."""
+    return [
+        event(
+            name=name,
+            device_id=device,
+            session_id=session,
+            client_ts=f"2026-10-04T10:{base_minute + seconds // 60:02d}:{seconds % 60:02d}Z",
+            params=params,
+        )
+        for name, params, seconds in plan
+    ]
+
+
+def _journey_game(backend):
     admin, ingest, _ = backend
     game = register(admin)
-    flows = {
-        "p1": ["first_open", "tutorial_start", "tutorial_complete", "level_start"],
-        "p2": ["first_open", "settings_open", "ad_view", "ad_view", "session_end"],
-        "p3": ["first_open", "tutorial_start", "tutorial_start", "level_start"],
-        "p4": ["first_open"],
-    }
     events = []
-    for device, names in flows.items():
-        for index, name in enumerate(names):
-            events.append(
-                event(
-                    name=name,
-                    device_id=device,
-                    session_id=f"s-{device}",
-                    client_ts=f"2026-10-04T10:{index:02d}:00Z",
-                    params={"level": 1} if name == "level_start" else {},
-                )
-            )
+    # p1: menu, levels 1-3 all completed, quits
+    events += _level_player(
+        "p1",
+        "s-p1",
+        0,
+        [
+            ("first_open", {}, 0),
+            ("MM_ANALYSIS", {"STATUS": "OPENED"}, 5),
+            ("MM_ANALYSIS", {"STATUS": "OPENED"}, 5),
+            ("LEVEL_ANALYSIS", {"Started": "1"}, 10),
+            ("LEVEL_ANALYSIS", {"Completed": "1"}, 30),
+            ("LEVEL_ANALYSIS", {"Started": "2"}, 31),
+            ("POWERUP_CONSUMED", {"POWERUP_TYPE": "Bomb", "LEVEL_NUMBER": "2"}, 40),
+            ("LEVEL_ANALYSIS", {"Completed": "2"}, 50),
+            ("LEVEL_ANALYSIS", {"Started": "3"}, 51),
+            ("LEVEL_ANALYSIS", {"Completed": "3"}, 70),
+            ("level_gate", {}, 80),
+        ],
+    )
+    # p2: same journey as p1 (should group with it)
+    events += _level_player(
+        "p2",
+        "s-p2",
+        5,
+        [
+            ("first_open", {}, 0),
+            ("MM_ANALYSIS", {"STATUS": "OPENED"}, 5),
+            ("LEVEL_ANALYSIS", {"Started": "1"}, 10),
+            ("LEVEL_ANALYSIS", {"Completed": "1"}, 30),
+            ("LEVEL_ANALYSIS", {"Started": "2"}, 31),
+            ("LEVEL_ANALYSIS", {"Completed": "2"}, 50),
+            ("LEVEL_ANALYSIS", {"Started": "3"}, 51),
+            ("LEVEL_ANALYSIS", {"Completed": "3"}, 70),
+            ("level_gate", {}, 80),
+        ],
+    )
+    # p3: menu, starts level 1, fails twice, leaves on level 1
+    events += _level_player(
+        "p3",
+        "s-p3",
+        10,
+        [
+            ("first_open", {}, 0),
+            ("MM_ANALYSIS", {"STATUS": "OPENED"}, 5),
+            ("LEVEL_ANALYSIS", {"Started": "1"}, 10),
+            ("LEVEL_ANALYSIS", {"Failed": "1"}, 40),
+            ("LEVEL_ANALYSIS", {"Restarted": "1"}, 41),
+            ("LEVEL_ANALYSIS", {"Failed": "1"}, 70),
+        ],
+    )
+    # p4: only opens the game
+    events += _level_player("p4", "s-p4", 15, [("first_open", {}, 0)])
     assert send(ingest, game, events).status_code == 200
     return admin, game
 
 
-def _routes_query(**extra):
+def _journey_query(**extra):
     return {
-        "steps": [{"event": "first_open"}, {"event": "level_start"}],
+        "steps": [{"event": "first_open"}, {"event": "level_gate"}],
         "start": "2026-10-04",
         "end": "2026-10-04",
         **extra,
     }
 
 
-def test_routes_graph_and_top_routes(backend):
-    admin, game = _route_game(backend)
-    data = admin.post(f"/v1/games/{game['id']}/insights/routes", json=_routes_query()).json()
-    assert (data["started"], data["reached"], data["stopped"]) == (4, 2, 2)
-    by_id = {node["id"]: node for node in data["nodes"]}
-    assert by_id["start:0:"]["players"] == 4
-    assert by_id["event:1:tutorial_start"]["players"] == 2
-    assert by_id["event:1:settings_open"]["players"] == 1
-    # repeated events collapse: p3's two tutorial_starts count once
-    assert by_id["event:2:tutorial_complete"]["players"] == 1
-    assert by_id["reached:2:"]["players"] == 1 and by_id["reached:3:"]["players"] == 1
-    links = {(link["source"], link["target"]): link["players"] for link in data["links"]}
-    assert links[("start:0:", "event:1:tutorial_start")] == 2
-    assert links[("start:0:", "stopped:1:")] == 1  # p4 stopped right after first_open
-    top = {
-        tuple(route["path"]) + (route["status"],): route["players"] for route in data["top_routes"]
-    }
-    assert top[("tutorial_start", "reached")] == 1
-    assert top[("settings_open", "ad_view", "session_end", "stopped")] == 1
-
-    no_collapse = admin.post(
-        f"/v1/games/{game['id']}/insights/routes", json=_routes_query(collapse=False)
+def test_player_story_reads_in_plain_words(backend):
+    admin, game = _journey_game(backend)
+    data = admin.get(
+        f"/v1/games/{game['id']}/insights/story",
+        params={"player": "p1", "start": "2026-10-04", "end": "2026-10-04"},
     ).json()
-    assert any(r["path"] == ["tutorial_start", "tutorial_start"] for r in no_collapse["top_routes"])
-
-    ignored = admin.post(
-        f"/v1/games/{game['id']}/insights/routes", json=_routes_query(ignore=["ad_view"])
+    (chapter,) = data["chapters"]
+    texts = [segment["text"] for segment in chapter["segments"]]
+    assert texts[0] == "First open"
+    assert texts[1].startswith("MM") and texts[1].endswith("×2")  # same-second repeats folded
+    assert texts[2] == "Played levels 1–3, completed all"
+    assert texts[3].lower().startswith("level gate")
+    run = chapter["segments"][2]
+    assert [row["level"] for row in run["levels"]] == [1, 2, 3]
+    assert run["extras"] == [{"text": "Powerup consumed · Bomb on level 2", "count": 1}]
+    assert data["highest_level"] == 3
+    p3 = admin.get(
+        f"/v1/games/{game['id']}/insights/story",
+        params={"player": "p3", "start": "2026-10-04", "end": "2026-10-04"},
     ).json()
-    assert any(r["path"] == ["settings_open", "session_end"] for r in ignored["top_routes"])
-
-
-def test_routes_players_drilldown_split_and_validation(backend):
-    admin, game = _route_game(backend)
-    url = f"/v1/games/{game['id']}/insights/routes/players"
-    node = admin.post(url, json={**_routes_query(), "target": {"node": "event:1:tutorial_start"}})
-    assert sorted(p["player"] for p in node.json()["players"]) == ["p1", "p3"]
-    link = admin.post(
-        url,
-        json={
-            **_routes_query(),
-            "target": {"link": ["event:1:settings_open", "event:2:ad_view"]},
-        },
-    ).json()
-    assert [p["player"] for p in link["players"]] == ["p2"]
-    route = admin.post(
-        url,
-        json={**_routes_query(), "target": {"route": ["tutorial_start"], "status": "reached"}},
-    ).json()
-    assert [p["player"] for p in route["players"]] == ["p3"]
-
-    split = admin.post(
-        f"/v1/games/{game['id']}/insights/routes",
-        json=_routes_query(
-            steps=[{"event": "first_open"}, {"event": "session_end"}],
-            split=[{"event": "tutorial_start", "param": "level"}],
-        ),
-    ).json()
-    assert split["started"] == 4 and split["reached"] == 1
-
-    bad = admin.post(
-        f"/v1/games/{game['id']}/insights/routes", json=_routes_query(route_from=2, route_to=2)
-    )
-    assert bad.status_code == 422 or bad.status_code == 400
-    depth = admin.post(
-        f"/v1/games/{game['id']}/insights/routes",
-        json=_routes_query(max_depth=1, steps=[{"event": "first_open"}, {"event": "level_start"}]),
-    ).json()
-    assert depth["continued"] >= 1
-
-
-def test_routes_exits_where_players_stop(backend):
-    admin, game = _route_game(backend)
-    data = admin.post(f"/v1/games/{game['id']}/insights/routes", json=_routes_query()).json()
-    exits = {item["label"]: item for item in data["exits"]}
-    assert exits["__start__"]["players"] == 1  # p4 never did anything after first_open
-    assert exits["session_end"]["players"] == 1  # p2 ended on session_end
+    last = p3["chapters"][0]["segments"][-1]
     assert (
-        exits["session_end"]["percent"] == 25.0
-        and exits["session_end"]["percent_of_stopped"] == 50.0
+        last["text"] == "Played level 1, didn't complete, failed 2×, restarted 1×, left on level 1"
     )
-    url = f"/v1/games/{game['id']}/insights/routes/players"
-    who = admin.post(url, json={**_routes_query(), "target": {"exit": "session_end"}}).json()
-    assert [p["player"] for p in who["players"]] == ["p2"]
-    direct = admin.post(url, json={**_routes_query(), "target": {"exit": "__start__"}}).json()
-    assert [p["player"] for p in direct["players"]] == ["p4"]
+    assert last["exit"] == "Left after failing level 1"
 
 
-def test_routes_show_parameter_values_per_step(backend):
-    admin, ingest, _ = backend
-    game = register(admin)
-    events = []
-    for device, level in (("a", 3), ("b", 3), ("c", 5)):
-        for index, (name, params) in enumerate(
-            [
-                ("first_open", {}),
-                ("LEVEL_ANALYSIS", {"Started": level, "TIME": 100 + ord(device) + level * 7}),
-                ("done", {}),
-            ]
-        ):
-            events.append(
-                event(
-                    name=name,
-                    device_id=device,
-                    session_id=f"s-{device}",
-                    client_ts=f"2026-10-04T10:{index:02d}:00Z",
-                    params=params,
-                )
-            )
-    assert send(ingest, game, events).status_code == 200
-    base = {
-        "steps": [{"event": "first_open"}, {"event": "done"}],
-        "start": "2026-10-04",
-        "end": "2026-10-04",
-    }
-    url = f"/v1/games/{game['id']}/insights/routes"
-    data = admin.post(url, json=base).json()
-    (route_,) = data["top_routes"]
-    assert route_["path"] == ["LEVEL_ANALYSIS"]  # grouped by event, not by level
-    assert route_["values"] == [
-        [{"text": "Started=3", "players": 2}, {"text": "Started=5", "players": 1}]
-    ]
-    node = next(n for n in data["nodes"] if n["label"] == "LEVEL_ANALYSIS")
-    assert node["values"][0] == {"text": "Started=3", "players": 2}
-    # TIME is skipped automatically; Started is on
-    listed = {
-        p["key"]: p["on"]
-        for e in data["detail_params"]
-        if e["event"] == "LEVEL_ANALYSIS"
-        for p in e["params"]
-    }
-    assert listed == {"Started": True, "TIME": False}
-
-    included = admin.post(
-        url, json={**base, "detail_include": [{"event": "LEVEL_ANALYSIS", "param": "TIME"}]}
+def test_dictionary_labels_and_hidden_events(backend):
+    admin, game = _journey_game(backend)
+    url = f"/v1/games/{game['id']}/dictionary"
+    admin.put(
+        f"{url}/MM_ANALYSIS",
+        json={"description": "Main menu", "params": {}, "labels": "STATUS => Main menu {STATUS}"},
+    )
+    admin.put(f"{url}/level_gate", json={"description": "x", "params": {}, "hidden": True})
+    data = admin.get(
+        f"/v1/games/{game['id']}/insights/story",
+        params={"player": "p2", "start": "2026-10-04", "end": "2026-10-04"},
     ).json()
-    assert "TIME=" in included["top_routes"][0]["values"][0][0]["text"]
-    excluded = admin.post(
-        url, json={**base, "detail_exclude": [{"event": "LEVEL_ANALYSIS", "param": "Started"}]}
+    texts = [segment["text"] for segment in data["chapters"][0]["segments"]]
+    assert texts == ["First open", "Main menu OPENED", "Played levels 1–3, completed all"]
+    shown = admin.get(
+        f"/v1/games/{game['id']}/insights/story",
+        params={"player": "p2", "start": "2026-10-04", "end": "2026-10-04", "hidden": True},
     ).json()
-    assert excluded["top_routes"][0]["values"] == [[]]
-    off = admin.post(url, json={**base, "details": "off"}).json()
-    assert off["top_routes"][0]["values"] == [[]]
+    assert shown["chapters"][0]["segments"][-1]["name"] == "level_gate"
 
-    split = admin.post(
-        url, json={**base, "split": [{"event": "LEVEL_ANALYSIS", "param": "Started"}]}
-    ).json()
-    assert {tuple(r["path"]): r["players"] for r in split["top_routes"]} == {
-        ("LEVEL_ANALYSIS · Started=3",): 2,
-        ("LEVEL_ANALYSIS · Started=5",): 1,
-    }
+
+def test_journeys_group_players_by_story_shape(backend):
+    admin, game = _journey_game(backend)
+    base = f"/v1/games/{game['id']}/insights/journeys"
+    data = admin.post(base, json=_journey_query()).json()
+    assert (data["started"], data["reached"], data["stopped"]) == (4, 2, 2)
+    top = data["journeys"][0]
+    assert top["players"] == 2 and top["status"] == "reached"
+    assert top["steps"][-1] == "Levels 1–3 (all completed)"
+    exits = {item["label"]: item["players"] for item in data["exits"]}
+    assert exits == {"Left after failing level 1": 1, "__start__": 1}
     who = admin.post(
-        f"{url}/players",
-        json={**base, "target": {"route": ["LEVEL_ANALYSIS"], "status": "reached"}},
+        f"{base}/players",
+        json={**_journey_query(), "target": {"steps": top["steps"], "status": "reached"}},
     ).json()
-    assert sorted(p["details"][0] for p in who["players"]) == [
-        "Started=3",
-        "Started=3",
-        "Started=5",
-    ]
+    assert sorted(p["player"] for p in who["players"]) == ["p1", "p2"]
+    gone = admin.post(
+        f"{base}/players", json={**_journey_query(), "target": {"exit": "__start__"}}
+    ).json()
+    assert [p["player"] for p in gone["players"]] == ["p4"]
+    ignored = admin.post(base, json=_journey_query(ignore=["MM_ANALYSIS"])).json()
+    assert all(not any("MM" in step for step in j["steps"]) for j in ignored["journeys"])
+    bad = admin.post(base, json=_journey_query(route_from=2, route_to=2))
+    assert bad.status_code in (400, 422)
+
+
+def test_level_progress_table(backend):
+    admin, game = _journey_game(backend)
+    data = admin.get(
+        f"/v1/games/{game['id']}/insights/levels",
+        params={"start": "2026-10-04", "end": "2026-10-04"},
+    ).json()
+    rows = {row["level"]: row for row in data["levels"]}
+    assert rows[1]["started"] == 3 and rows[1]["completed"] == 2
+    assert rows[1]["completion"] == 66.7 and rows[1]["fails"] == 2 and rows[1]["restarts"] == 1
+    assert rows[1]["attempts"] == 4 and rows[1]["quit"] == 1  # p3 never got past level 1
+    assert rows[2]["powerups"] == 1 and rows[2]["top_powerups"][0]["text"].startswith(
+        "Powerup consumed"
+    )
+    assert rows[3]["completed"] == 2 and rows[3]["median_seconds"] == 19.0
+
+
+def test_funnels_allow_up_to_100_steps(backend):
+    admin, game = _journey_game(backend)
+    steps = [{"event": "first_open"}] + [{"event": "MM_ANALYSIS"}] * 99
+    url = f"/v1/games/{game['id']}/insights/funnel"
+    body = {"steps": steps, "start": "2026-10-04", "end": "2026-10-04"}
+    assert admin.post(url, json=body).status_code == 200
+    body["steps"] = steps + [{"event": "MM_ANALYSIS"}]
+    assert admin.post(url, json=body).status_code == 400

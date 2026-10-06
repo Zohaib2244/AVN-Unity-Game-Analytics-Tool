@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import Field
 from starlette.background import BackgroundTask
 
-from . import insights
+from . import insights, journeys
 from .auth import AccessVerifier, Accounts, Principal
 from .config import Settings
 from .exports import build_export, period_bounds
@@ -25,10 +25,10 @@ from .models import (
     FunnelQuery,
     GameCreate,
     GameUpdate,
+    JourneyPlayersQuery,
+    JourneyQuery,
     KeyCreate,
     Name,
-    RoutePlayersQuery,
-    RoutesQuery,
     SavedFunnel,
     TeamAdd,
     TeamUpdate,
@@ -433,17 +433,33 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             storage, str(game_id), *day_range(query.start, query.end), query.model_dump()
         )
 
-    @admin_api.post("/v1/games/{game_id}/insights/routes")
-    def insights_routes(game_id: UUID, query: RoutesQuery):
-        return insights.routes(
+    @admin_api.post("/v1/games/{game_id}/insights/journeys")
+    def insights_journeys(game_id: UUID, query: JourneyQuery):
+        return journeys.journeys(
             storage, str(game_id), *day_range(query.start, query.end), query.model_dump()
         )
 
-    @admin_api.post("/v1/games/{game_id}/insights/routes/players")
-    def insights_route_players(game_id: UUID, query: RoutePlayersQuery):
-        return insights.route_players(
+    @admin_api.post("/v1/games/{game_id}/insights/journeys/players")
+    def insights_journey_players(game_id: UUID, query: JourneyPlayersQuery):
+        return journeys.journey_players(
             storage, str(game_id), *day_range(query.start, query.end), query.model_dump()
         )
+
+    @admin_api.get("/v1/games/{game_id}/insights/story")
+    def insights_story(
+        game_id: UUID,
+        player: Annotated[str, Query(min_length=1, max_length=128)],
+        start: DateParam,
+        end: DateParam,
+        hidden: bool = False,
+    ):
+        return journeys.player_story(
+            storage, str(game_id), player, *day_range(start, end), show_hidden=hidden
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/levels")
+    def insights_levels(game_id: UUID, start: DateParam, end: DateParam, chosen: Filtered):
+        return journeys.level_progress(storage, str(game_id), *day_range(start, end), chosen)
 
     @admin_api.get("/v1/games/{game_id}/insights/players")
     def insights_players(
