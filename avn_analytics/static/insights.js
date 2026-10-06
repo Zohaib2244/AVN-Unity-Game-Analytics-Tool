@@ -8,6 +8,21 @@ const DIMENSION_LABELS = {environment: 'Environment', app_version: 'App version'
 const FILTER_KEYS = {environment: 'env', app_version: 'version', build: 'build', country: 'country', platform: 'platform'};
 const OPERATORS = [['eq', '='], ['ne', '≠'], ['gt', '>'], ['gte', '≥'], ['lt', '<'], ['lte', '≤'], ['contains', 'contains'], ['exists', 'any value']];
 
+/* ─── Countries: show names, not two-letter codes ─── */
+
+const COUNTRY_SPECIAL = {XX: 'Unknown country', T1: 'Tor network', unknown: 'Unknown country'};
+const COUNTRY_NAMES = (() => { try { return new Intl.DisplayNames(['en'], {type: 'region'}); } catch { return null; } })();
+function countryName(code) {
+  if (!code) return '';
+  if (COUNTRY_SPECIAL[code]) return COUNTRY_SPECIAL[code];
+  try { return COUNTRY_NAMES?.of(String(code).toUpperCase()) || code; } catch { return code; }
+}
+// "Romania (RO)" for menus and tables where there is room; a hover tag where there isn't.
+const countryText = code => code && countryName(code) !== code ? `${countryName(code)} (${code})` : (code || '—');
+const countryTag = code => code ? `<abbr class="cc" title="${escapeHTML(countryName(code))}">${escapeHTML(code)}</abbr>` : '—';
+// Display text for a value of a filter dimension (only countries need translating).
+const dimensionText = (dimension, value) => dimension === 'country' ? countryText(value) : value;
+
 function duration(seconds) {
   if (seconds == null) return '—';
   const value = Math.round(seconds);
@@ -30,6 +45,30 @@ function downloadCSV(name, rows) {
   const url = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
   const anchor = Object.assign(document.createElement('a'), {href: url, download: name});
   document.body.append(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+/* ─── Collapsible panels (state remembered per game) ─── */
+
+// Adds a chevron to the panel's header that folds the panel down to just that header, with a one-line
+// note beside it while folded. Returns {setNote, set}.
+function collapsible(section, game, name) {
+  const header = section.querySelector(':scope > .panel-header');
+  if (!header) return {setNote() {}, set() {}};
+  const key = `avn-collapsed-${game.id}`;
+  const toggle = document.createElement('button');
+  toggle.type = 'button'; toggle.className = 'icon-button collapse-toggle';
+  toggle.innerHTML = icon('chevron', 16);
+  const note = document.createElement('span'); note.className = 'collapse-note muted';
+  header.prepend(toggle); header.append(note);
+  const set = (collapsed, remember = true) => {
+    section.classList.toggle('collapsed', collapsed);
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.title = toggle.ariaLabel = collapsed ? 'Expand' : 'Collapse';
+    if (remember) storeSet(key, {...(storeGet(key) || {}), [name]: collapsed});
+  };
+  toggle.addEventListener('click', () => set(!section.classList.contains('collapsed')));
+  set(Boolean((storeGet(key) || {})[name]), false);
+  return {setNote: text => { note.textContent = text || ''; }, set, section};
 }
 
 /* ─── Filters: days + environment, version, build, country, platform. Remembered per game. ─── */
@@ -66,13 +105,13 @@ function mountFilters(container, game, onChange) {
       Object.keys(FILTER_KEYS).map(dimension => {
         const values = [...new Set([...(facets[dimension] || []).map(item => item.value), ...state[dimension]])];
         const counts = Object.fromEntries((facets[dimension] || []).map(item => [item.value, item.events]));
-        return `<fieldset data-dimension="${dimension}"><legend>${DIMENSION_LABELS[dimension]}</legend>${values.length ? values.map(value => `<label><input type="checkbox" value="${escapeHTML(value)}" ${state[dimension].includes(value) ? 'checked' : ''}><span>${escapeHTML(value)}</span><small>${number(counts[value] || 0)}</small></label>`).join('') : '<p class="help">None in these days</p>'}</fieldset>`;
+        return `<fieldset data-dimension="${dimension}"><legend>${DIMENSION_LABELS[dimension]}</legend>${values.length ? values.map(value => `<label><input type="checkbox" value="${escapeHTML(value)}" ${state[dimension].includes(value) ? 'checked' : ''}><span>${escapeHTML(dimensionText(dimension, value))}</span><small>${number(counts[value] || 0)}</small></label>`).join('') : '<p class="help">None in these days</p>'}</fieldset>`;
       }).join('');
     options.scrollTop = scroll;
     const active = activeFilters(state);
     const count = container.querySelector('#filter-count');
     count.hidden = !active; count.textContent = active;
-    const chips = Object.keys(FILTER_KEYS).flatMap(dimension => state[dimension].map(value => `<button type="button" class="filter-chip" data-remove-dimension="${dimension}" data-remove-value="${escapeHTML(value)}" title="Remove this filter">${DIMENSION_LABELS[dimension]}: ${escapeHTML(value)} ${icon('close',11)}</button>`));
+    const chips = Object.keys(FILTER_KEYS).flatMap(dimension => state[dimension].map(value => `<button type="button" class="filter-chip" data-remove-dimension="${dimension}" data-remove-value="${escapeHTML(value)}" title="Remove this filter">${DIMENSION_LABELS[dimension]}: ${escapeHTML(dimensionText(dimension, value))} ${icon('close',11)}</button>`));
     container.querySelector('#filter-chips').innerHTML = chips.join('') + (state.hideTest && !state.environment.length ? '<span class="filter-note">Editor & development data hidden</span>' : '') + (chips.length > 1 ? '<button type="button" class="filter-clear" data-clear>Clear all</button>' : '');
   };
   container.addEventListener('change', event => {
@@ -140,7 +179,7 @@ const stats = items => `<div class="stat-strip">${items.map(([label, value, note
 
 function breakdownTable(dimension, rows, total, chosen) {
   const peak = Math.max(1, ...rows.map(row => row.players));
-  return rows.length ? `<table class="breakdown"><thead><tr><th>${DIMENSION_LABELS[dimension]}</th><th></th><th class="num">Players</th><th class="num">Share</th></tr></thead><tbody>${rows.map(row => `<tr class="${chosen.includes(row.value) ? 'chosen' : ''}"><td><button type="button" class="link-button" data-filter-dimension="${dimension}" data-filter-value="${escapeHTML(row.value)}" title="${chosen.includes(row.value) ? 'Remove this filter' : 'Show only this'}">${escapeHTML(row.value)}</button></td><td class="breakdown-bar"><span data-width="${Math.max(2, 100 * row.players / peak)}"></span></td><td class="num">${number(row.players)}</td><td class="num muted">${total ? percent(100 * row.players / total) : '—'}</td></tr>`).join('')}</tbody></table>` : '<p class="help panel-body">No data.</p>';
+  return rows.length ? `<table class="breakdown"><thead><tr><th>${DIMENSION_LABELS[dimension]}</th><th></th><th class="num">Players</th><th class="num">Share</th></tr></thead><tbody>${rows.map(row => `<tr class="${chosen.includes(row.value) ? 'chosen' : ''}"><td><button type="button" class="link-button" data-filter-dimension="${dimension}" data-filter-value="${escapeHTML(row.value)}" title="${chosen.includes(row.value) ? 'Remove this filter' : 'Show only this'}">${escapeHTML(dimensionText(dimension, row.value))}</button></td><td class="breakdown-bar"><span data-width="${Math.max(2, 100 * row.players / peak)}"></span></td><td class="num">${number(row.players)}</td><td class="num muted">${total ? percent(100 * row.players / total) : '—'}</td></tr>`).join('')}</tbody></table>` : '<p class="help panel-body">No data.</p>';
 }
 
 async function renderGameOverview() {
@@ -195,7 +234,7 @@ const blankStep = event => ({event: event || '', param: '', op: 'eq', value: '',
 
 async function renderFunnels() {
   const game = currentGame;
-  shell('Funnels', heading('Funnels', 'How many players get through each step, and where they stop.') +
+  shell('Funnels', heading('Funnels', 'How many players get through each step, and where they stop.', '<button class="button small-button" type="button" id="collapse-all">Collapse all</button>') +
     `<div id="filters"></div>
     <section class="panel section-spacing"><div class="panel-header funnel-header"><div class="saved-row"><select id="saved-funnel" aria-label="Saved funnels"></select></div><div class="quiet-actions"><button class="button small-button" type="button" id="save-funnel">Save</button><button class="button small-button" type="button" id="save-as">Save as…</button><button class="button small-button danger-text" type="button" id="delete-funnel">Delete</button></div></div>
       <div class="panel-body"><div id="funnel-steps"></div>
@@ -204,6 +243,16 @@ async function renderFunnels() {
     <section class="panel section-spacing"><div class="panel-header"><div><h2>Result</h2><p id="funnel-note">Add at least two steps.</p></div><button class="button small-button" type="button" id="funnel-csv" hidden>${icon('export',14)} CSV</button></div><div id="funnel-summary"></div><div class="panel-body" id="funnel-result"><p class="help">No result yet.</p></div></section>
     <section class="panel section-spacing" id="journeys-panel"></section>
     <section class="panel section-spacing" id="breakdown-panel" hidden><div class="panel-header"><div><h2 id="breakdown-title">Breakdown</h2><p>Players reaching each step, per segment · a player’s segment comes from their step 1 event</p></div></div><div id="breakdown-result"></div></section>`);
+  const panels = {};
+  const sections = document.querySelectorAll('main .panel.section-spacing');
+  panels.editor = collapsible(sections[0], game, 'editor');
+  panels.result = collapsible(sections[1], game, 'result');
+  panels.breakdown = collapsible(document.querySelector('#breakdown-panel'), game, 'breakdown');
+  document.querySelector('#collapse-all').addEventListener('click', event => {
+    const all = Object.values(panels);
+    const collapse = all.some(panel => !panel.section.classList.contains('collapsed'));
+    all.forEach(panel => panel.set(collapse)); event.target.textContent = collapse ? 'Expand all' : 'Collapse all';
+  });
   const draftKey = `avn-funnel-draft-${game.id}`;
   let saved = [];
   let current = storeGet(draftKey) || {id: null, name: '', steps: [], scope: 'player', window_hours: null};
@@ -249,7 +298,12 @@ async function renderFunnels() {
         ${step.label || step.naming ? `<input class="step-name" data-field="label" aria-label="Step ${index + 1} name" placeholder="Step name, e.g. Level 1 start" maxlength="80" value="${escapeHTML(step.label || '')}">` : ''}</div>`;
     }).join('');
   };
-  const changed = (redraw = true) => { persist(); drawSaved(); if (redraw) drawSteps(); };
+  const editorNote = () => {
+    const steps = current.steps.filter(step => step.event);
+    const name = step => step.label || `${step.event}${step.param ? ` · ${step.param}${step.value ? `=${step.value}` : ''}` : ''}`;
+    panels.editor.setNote(steps.length ? `${steps.length} step${steps.length === 1 ? '' : 's'}: ${name(steps[0])} → ${name(steps[steps.length - 1])}` : 'no steps yet');
+  };
+  const changed = (redraw = true) => { persist(); drawSaved(); editorNote(); if (redraw) drawSteps(); };
 
   stepsBox.addEventListener('change', event => {
     const row = event.target.closest('.funnel-step[data-index]'); if (!row) return;
@@ -355,9 +409,11 @@ async function renderFunnels() {
     const rows = data.steps; const first = rows[0].players; const last = rows[rows.length - 1];
     document.querySelector('#funnel-note').textContent = first ? `${current.scope === 'session' ? 'Each player’s best single session' : 'Each player, across all their sessions'}${current.window_hours ? ` · finished within ${document.querySelector('#funnel-window').selectedOptions[0].textContent}` : ''} · hover times for averages` : 'Nobody did the first step with these filters and days.';
     document.querySelector('#funnel-csv').hidden = false;
+    panels.result.setNote(first ? `${number(first)} started · ${number(last.players)} completed · ${percent(last.of_first)}` : 'nobody did step 1');
     document.querySelector('#funnel-summary').innerHTML = first ? `<div class="panel-body funnel-stats">${stats([['Started', number(first), 'did step 1'], ['Completed', number(last.players), 'reached the last step'], ['Conversion', percent(last.of_first), 'first → last step'], ['Time to complete', data.time_to_complete ? duration(data.time_to_complete.median) : '—', data.time_to_complete ? `median · 90% within ${duration(data.time_to_complete.p90)}` : 'nobody finished']])}</div>` : '';
     let worst = null;
     rows.forEach((row, index) => { if (index && rows[index - 1].players && row.of_previous < 100 && (!worst || row.of_previous < worst.rate)) worst = {index, rate: row.of_previous}; });
+    result.classList.toggle('many', rows.length > 15);
     result.innerHTML = `<ol class="funnel">${rows.map((row, index) => {
       const isWorst = worst && worst.index === index;
       const gap = index ? `<li class="funnel-gap ${isWorst ? 'worst' : ''}"><span>${percent(row.of_previous)} continued${isWorst ? ' · biggest drop' : ''}</span>${timing(row.time_from_previous)}</li>` : '';
@@ -369,7 +425,7 @@ async function renderFunnels() {
     panel.hidden = !data.breakdown;
     if (data.breakdown) {
       document.querySelector('#breakdown-title').textContent = `By ${DIMENSION_LABELS[data.breakdown].toLowerCase()}`;
-      document.querySelector('#breakdown-result').innerHTML = data.segments.length ? `<div class="table-wrap"><table><thead><tr><th>${DIMENSION_LABELS[data.breakdown]}</th>${rows.map((row, index) => `<th class="num" title="${escapeHTML(row.label || row.event)}">${String(index + 1).padStart(2, '0')}</th>`).join('')}<th class="num">Conversion</th></tr></thead><tbody>${data.segments.map(segment => `<tr><td>${escapeHTML(segment.value)}</td>${segment.players.map(count => `<td class="num">${number(count)}</td>`).join('')}<td class="num"><strong>${segment.players[0] ? percent(100 * segment.players[segment.players.length - 1] / segment.players[0]) : '—'}</strong></td></tr>`).join('')}</tbody></table></div>${data.segments_total > data.segments.length ? `<p class="help panel-body">Showing the ${data.segments.length} largest of ${data.segments_total} segments.</p>` : ''}` : '<p class="help panel-body">No segments.</p>';
+      document.querySelector('#breakdown-result').innerHTML = data.segments.length ? `<div class="table-wrap"><table><thead><tr><th>${DIMENSION_LABELS[data.breakdown]}</th>${rows.map((row, index) => `<th class="num" title="${escapeHTML(row.label || row.event)}">${String(index + 1).padStart(2, '0')}</th>`).join('')}<th class="num">Conversion</th></tr></thead><tbody>${data.segments.map(segment => `<tr><td>${escapeHTML(dimensionText(data.breakdown, segment.value))}</td>${segment.players.map(count => `<td class="num">${number(count)}</td>`).join('')}<td class="num"><strong>${segment.players[0] ? percent(100 * segment.players[segment.players.length - 1] / segment.players[0]) : '—'}</strong></td></tr>`).join('')}</tbody></table></div>${data.segments_total > data.segments.length ? `<p class="help panel-body">Showing the ${data.segments.length} largest of ${data.segments_total} segments.</p>` : ''}` : '<p class="help panel-body">No segments.</p>';
     }
   };
   document.querySelector('#funnel-csv').addEventListener('click', () => {
@@ -384,7 +440,8 @@ async function renderFunnels() {
     catalog: () => catalog,
     query: () => ({...filterBody(filters.state), ...(({steps, scope, window_hours}) => ({steps, scope, ...(window_hours ? {window_hours} : {})}))(definition())}),
   });
-  drawOptions(); drawSaved(); drawSteps();
+  panels.journeys = collapsible(document.querySelector('#journeys-panel'), game, 'journeys');
+  drawOptions(); drawSaved(); drawSteps(); editorNote();
   loadSaved().catch(() => {});
   const filters = mountFilters(document.querySelector('#filters'), game, async state => {
     try { catalog = await api(`${gameURL(game)}/insights/catalog?${filterQuery(state)}`); }
@@ -516,33 +573,144 @@ function mountJourneys(container, game, hooks) {
 
 /* ─── Players and journeys ─── */
 
+/* ─── Event rules: a reusable editor for "an event, optionally with a parameter test" ───
+   Used on the Players page for "only players who…" conditions and for custom columns / sort keys,
+   and shaped so any other page can reuse it (funnel-like steps, segments, cohorts…).
+
+   mountRuleList({container, rules, catalog, blank, before, after, onChange, addLabel, empty})
+     rules    the array the editor edits in place (each rule: {event, param, op, value, …})
+     catalog  {events: [{name, params: [{key, values}]}]} from /insights/catalog
+     before/  (rule, index) => html, inserted before / after the event fields; their controls carry
+     after    data-rule-field="name" and are read back into the rule (numbers for type=number)
+*/
+function ruleOptions(items, chosen, blank) {
+  const list = items.includes(chosen) || !chosen ? items : [chosen, ...items];
+  return (blank === undefined ? '' : `<option value="">${escapeHTML(blank)}</option>`) + list.map(item => `<option value="${escapeHTML(item)}" ${item === chosen ? 'selected' : ''}>${escapeHTML(item)}</option>`).join('');
+}
+function ruleFields(rule, index, catalog) {
+  const event = catalog.events.find(item => item.name === rule.event);
+  const params = (event?.params || []).map(param => param.key);
+  const values = event?.params.find(param => param.key === rule.param)?.values || [];
+  const needsValue = rule.param && rule.op !== 'exists';
+  return `<select data-rule-field="event" aria-label="Event">${ruleOptions(catalog.events.map(item => item.name), rule.event, rule.event ? undefined : 'Pick an event…')}</select>
+    <select data-rule-field="param" aria-label="Parameter">${ruleOptions(params, rule.param, 'any parameters')}</select>
+    <select data-rule-field="op" aria-label="Condition" ${rule.param ? '' : 'disabled'}>${OPERATORS.map(([key, label]) => `<option value="${key}" ${key === (rule.op || 'eq') ? 'selected' : ''}>${label}</option>`).join('')}</select>
+    <input data-rule-field="value" aria-label="Value" placeholder="${needsValue ? 'value' : '—'}" ${needsValue ? '' : 'disabled'} value="${escapeHTML(rule.value || '')}" list="rule-values-${index}"><datalist id="rule-values-${index}">${values.slice(0, 40).map(value => `<option value="${escapeHTML(value)}">`).join('')}</datalist>`;
+}
+function mountRuleList({container, rules, catalog, blank, before = () => '', after = () => '', onChange, addLabel = 'Add', empty = ''}) {
+  const draw = () => {
+    container.innerHTML = `${rules.length ? rules.map((rule, index) => `<div class="rule-row" data-rule="${index}">${before(rule, index)}${ruleFields(rule, index, catalog())}${after(rule, index, catalog())}<button type="button" class="icon-button" data-rule-remove aria-label="Remove">${icon('close', 13)}</button></div>`).join('') : `<p class="help">${empty}</p>`}<button type="button" class="button small-button" data-rule-add>${icon('plus', 13)} ${escapeHTML(addLabel)}</button>`;
+  };
+  container.addEventListener('change', event => {
+    const row = event.target.closest('[data-rule]'); const field = event.target.dataset.ruleField;
+    if (!row || !field) return;
+    const rule = rules[Number(row.dataset.rule)];
+    rule[field] = event.target.type === 'number' ? Number(event.target.value) || 1 : event.target.value;
+    if (field === 'event') Object.assign(rule, {param: '', op: 'eq', value: '', of: ''});
+    if (field === 'param') Object.assign(rule, {op: 'exists', value: ''});
+    if (field === 'op' && rule.op === 'exists') rule.value = '';
+    onChange(rules, ['event', 'param', 'op', 'agg', 'does'].includes(field)); 
+  });
+  container.addEventListener('click', event => {
+    const row = event.target.closest('[data-rule]');
+    if (event.target.closest('[data-rule-remove]') && row) { rules.splice(Number(row.dataset.rule), 1); onChange(rules, true); }
+    if (event.target.closest('[data-rule-add]')) { rules.push(blank(catalog())); onChange(rules, true); }
+  });
+  draw();
+  return {redraw: draw};
+}
+
+/* ─── Players: sortable list with custom event-based columns and "only players who…" rules ─── */
+
+const AGG_LABELS = {count: 'Times they did', max: 'Highest', min: 'Lowest', sum: 'Total', first: 'First time', last: 'Last time'};
+const ruleSubject = rule => `${rule.event}${rule.param ? ` · ${rule.param}${rule.op === 'exists' ? '' : ` ${operatorLabel(rule.op)} ${rule.value}`}` : ''}`;
+function metricLabel(metric) {
+  if (metric.label) return metric.label;
+  if (['max', 'min', 'sum'].includes(metric.agg)) return `${AGG_LABELS[metric.agg]} ${metric.of || metric.param || '?'} · ${metric.event}`;
+  return `${AGG_LABELS[metric.agg]}: ${ruleSubject(metric)}`;
+}
+const metricValue = (metric, value) => value == null ? '—' : ['first', 'last'].includes(metric.agg) ? displayDate(value) : number(value);
+const usableRules = list => list.filter(rule => rule.event).map(({event, param, op, value, ...rest}) => ({event, param: param || '', op: param ? (op || 'eq') : 'eq', value: param && op !== 'exists' ? (value || '') : '', ...rest}));
+const BASE_SORTS = [['last_seen', 'Last active'], ['first_seen', 'First seen'], ['events', 'Events'], ['sessions', 'Sessions']];
+
 async function renderPlayers() {
   const game = currentGame;
   const player = new URLSearchParams(location.search).get('player');
   if (player) return renderJourney(game, player);
-  shell('Players', heading('Players', 'Open a player to see everything they did, session by session.') +
+  const viewKey = `avn-players-view-${game.id}`;
+  const view = {sort: 'last_seen', order: 'desc', conditions: [], metrics: [], ...(storeGet(viewKey) || {})};
+  let catalog = {events: []};
+  shell('Players', heading('Players', 'Open a player to read their story. Sort the list, add your own event-based columns, or keep only players who did something.') +
     `<div id="filters"></div>
-    <section class="panel section-spacing"><div class="panel-header"><h2>Players <span class="count" id="player-count">0</span></h2><div class="search">${icon('search',16)}<input id="player-search" type="search" aria-label="Search players" placeholder="Search by user or install ID…"></div></div><div id="player-list"><p class="help panel-body">Loading…</p></div></section>`);
+    <section class="panel section-spacing"><div class="panel-header"><h2>Players <span class="count" id="player-count">0</span></h2><div class="search">${icon('search',16)}<input id="player-search" type="search" aria-label="Search players" placeholder="Search by user or install ID…"></div></div>
+      <div class="players-toolbar"><label class="inline-field">Sort by<select id="player-sort"></select></label><button type="button" class="button small-button" id="player-order"></button>
+        <details class="player-rules" id="player-rules"><summary>Event rules <span class="count" id="rules-count" hidden></span></summary>
+          <div class="player-rules-body"><h3>Only players who…</h3><p class="help">All of these must be true. Example: did <code>POWERUP_CONSUMED</code> at least 3 times, or never did <code>SETTINGS_OPENED</code>.</p><div id="condition-list"></div>
+            <h3>Extra columns (and sort keys)</h3><p class="help">Add a column from events: how many times, the highest or lowest value of a parameter, or when it first or last happened. Then sort by it.</p><div id="metric-list"></div></div></details></div>
+      <div id="player-list"><p class="help panel-body">Loading…</p></div></section>`);
   const list = document.querySelector('#player-list');
-  let offset = 0; let search = ''; let latest = 0; let chosen = null;
+  let offset = 0; let search = ''; let latest = 0; let chosen = null; let lastMetrics = [];
+  const persist = () => storeSet(viewKey, view);
+  const rulesBody = () => ({conditions: usableRules(view.conditions).map(rule => ({...rule, does: rule.does || 'did', min_times: rule.min_times || 1})), metrics: usableRules(view.metrics).map(rule => ({...rule, agg: rule.agg || 'count'}))});
+
+  const drawControls = () => {
+    const metrics = rulesBody().metrics;
+    const options = [...BASE_SORTS, ...metrics.map((metric, position) => [`metric${position}`, metricLabel(metric)])];
+    if (!options.some(([key]) => key === view.sort)) view.sort = 'last_seen';
+    document.querySelector('#player-sort').innerHTML = options.map(([key, label]) => `<option value="${key}" ${key === view.sort ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('');
+    const timeSort = ['last_seen', 'first_seen'].includes(view.sort) || metrics[Number(view.sort.replace('metric', ''))]?.agg?.match(/first|last/);
+    document.querySelector('#player-order').innerHTML = view.order === 'desc' ? `↓ ${timeSort ? 'Newest first' : 'Highest first'}` : `↑ ${timeSort ? 'Oldest first' : 'Lowest first'}`;
+    const active = rulesBody().conditions.length + metrics.length;
+    const count = document.querySelector('#rules-count'); count.hidden = !active; count.textContent = active;
+  };
+  const conditionList = mountRuleList({
+    container: document.querySelector('#condition-list'), rules: view.conditions, catalog: () => catalog, addLabel: 'Add a condition', empty: 'No conditions yet.',
+    blank: current => ({event: current.events[0]?.name || '', param: '', op: 'eq', value: '', does: 'did', min_times: 1}),
+    before: rule => `<select data-rule-field="does" aria-label="Did or didn’t"><option value="did" ${rule.does !== 'didnt' ? 'selected' : ''}>Did</option><option value="didnt" ${rule.does === 'didnt' ? 'selected' : ''}>Never did</option></select>`,
+    after: rule => rule.does === 'didnt' ? '' : `<span class="rule-times">at least <input type="number" min="1" max="100000" data-rule-field="min_times" aria-label="At least this many times" value="${rule.min_times || 1}"> ×</span>`,
+    onChange: (rules, redraw) => { persist(); if (redraw) conditionList.redraw(); drawControls(); offset = 0; load(); },
+  });
+  const metricList = mountRuleList({
+    container: document.querySelector('#metric-list'), rules: view.metrics, catalog: () => catalog, addLabel: 'Add a column', empty: 'No extra columns yet.',
+    blank: current => ({event: current.events[0]?.name || '', param: '', op: 'eq', value: '', agg: 'count', of: ''}),
+    before: rule => `<select data-rule-field="agg" aria-label="What to show">${Object.entries(AGG_LABELS).map(([key, label]) => `<option value="${key}" ${key === (rule.agg || 'count') ? 'selected' : ''}>${label}</option>`).join('')}</select>`,
+    after: (rule, index, current) => ['max', 'min', 'sum'].includes(rule.agg) ? `<label class="rule-times">of <select data-rule-field="of" aria-label="Which parameter">${ruleOptions((current.events.find(item => item.name === rule.event)?.params || []).map(param => param.key), rule.of || rule.param, 'pick…')}</select></label>` : '',
+    onChange: (rules, redraw) => { persist(); if (redraw) metricList.redraw(); drawControls(); offset = 0; load(); },
+  });
+
   const load = async () => {
+    if (!chosen) return;
     const ticket = ++latest;
+    const body = rulesBody();
+    lastMetrics = body.metrics;
+    drawControls();
     try {
-      const data = await api(`${gameURL(game)}/insights/players?${filterQuery(chosen)}&${new URLSearchParams({search, offset})}`);
+      const query = `${filterQuery(chosen)}&${new URLSearchParams({search, offset, sort: view.sort, order: view.order, ...(body.conditions.length || body.metrics.length ? {rules: JSON.stringify(body)} : {})})}`;
+      const data = await api(`${gameURL(game)}/insights/players?${query}`);
       if (ticket !== latest) return;
       document.querySelector('#player-count').textContent = number(data.total);
-      if (!data.players.length) { list.innerHTML = empty(search ? 'No matching players' : 'No players', search ? 'Try another ID.' : 'Pick other days or filters, or check that your game is sending events.', '', 'users'); return; }
+      if (!data.players.length) { list.innerHTML = empty(search || body.conditions.length ? 'No matching players' : 'No players', search || body.conditions.length ? 'Try another ID, or loosen the event rules.' : 'Pick other days or filters, or check that your game is sending events.', '', 'users'); return; }
       const link = row => `${gamePath(game, 'players')}?${new URLSearchParams({player: row.player})}`;
-      list.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Player</th><th class="num">Events</th><th class="num">Sessions</th><th>First seen</th><th>Last seen</th><th>Version</th><th>Env</th><th>Country</th></tr></thead><tbody>${data.players.map(row => `<tr><td><a class="row-title" href="${link(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a><p class="small muted">${row.has_user_id ? 'User ID' : 'Install ID'} · ${platformLabel(row.platform || '—')}</p></td><td class="num">${number(row.events)}</td><td class="num">${number(row.sessions)}</td><td class="small muted">${displayDate(row.first_seen)}</td><td class="small muted">${displayDate(row.last_seen)}</td><td class="small">${escapeHTML(row.app_version || '—')}</td><td><span class="pill ${TEST_ENVIRONMENTS.includes(row.environment) ? '' : 'good'}">${escapeHTML(row.environment || '—')}</span></td><td class="small">${escapeHTML(row.country || '—')}</td></tr>`).join('')}</tbody></table></div>
+      const head = (key, label, extra = '') => `<th class="${extra} sortable ${view.sort === key ? 'sorted' : ''}" data-sort="${key}" aria-sort="${view.sort === key ? (view.order === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button">${escapeHTML(label)}<span class="sort-arrow">${view.sort === key ? (view.order === 'asc' ? '▲' : '▼') : ''}</span></button></th>`;
+      list.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Player</th>${head('events', 'Events', 'num')}${head('sessions', 'Sessions', 'num')}${head('first_seen', 'First seen')}${head('last_seen', 'Last active')}${body.metrics.map((metric, position) => head(`metric${position}`, metricLabel(metric), 'num metric')).join('')}<th>Version</th><th>Env</th><th>Country</th></tr></thead><tbody>${data.players.map(row => `<tr><td><a class="row-title" href="${link(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a><p class="small muted">${row.has_user_id ? 'User ID' : 'Install ID'} · ${platformLabel(row.platform || '—')}</p></td><td class="num">${number(row.events)}</td><td class="num">${number(row.sessions)}</td><td class="small muted">${displayDate(row.first_seen)}</td><td class="small muted">${displayDate(row.last_seen)}</td>${body.metrics.map((metric, position) => `<td class="num metric">${metricValue(metric, row.metrics[position])}</td>`).join('')}<td class="small">${escapeHTML(row.app_version || '—')}</td><td><span class="pill ${TEST_ENVIRONMENTS.includes(row.environment) ? '' : 'good'}">${escapeHTML(row.environment || '—')}</span></td><td class="small">${countryTag(row.country)}</td></tr>`).join('')}</tbody></table></div>
         <div class="pager"><span class="small muted">${number(offset + 1)}–${number(offset + data.players.length)} of ${number(data.total)}</span><span><button class="button" data-page="-1" ${offset ? '' : 'disabled'}>Previous</button> <button class="button" data-page="1" ${offset + data.players.length < data.total ? '' : 'disabled'}>Next</button></span></div>`;
     } catch (error) { if (ticket === latest) list.innerHTML = `<p class="error panel-body">${escapeHTML(error.message)}</p>`; }
   };
-  list.addEventListener('click', event => { const page = event.target.closest('[data-page]'); if (page) { offset = Math.max(0, offset + 50 * Number(page.dataset.page)); load(); } });
+  list.addEventListener('click', event => {
+    const page = event.target.closest('[data-page]'); if (page) { offset = Math.max(0, offset + 50 * Number(page.dataset.page)); load(); return; }
+    const header = event.target.closest('[data-sort]');
+    if (header) { const key = header.dataset.sort; if (view.sort === key) view.order = view.order === 'desc' ? 'asc' : 'desc'; else { view.sort = key; view.order = 'desc'; } persist(); offset = 0; load(); }
+  });
+  document.querySelector('#player-sort').addEventListener('change', event => { view.sort = event.target.value; persist(); offset = 0; load(); });
+  document.querySelector('#player-order').addEventListener('click', () => { view.order = view.order === 'desc' ? 'asc' : 'desc'; persist(); offset = 0; load(); });
   let typing;
   document.querySelector('#player-search').addEventListener('input', event => { clearTimeout(typing); typing = setTimeout(() => { search = event.target.value.trim(); offset = 0; load(); }, 250); });
-  mountFilters(document.querySelector('#filters'), game, state => { chosen = state; offset = 0; load(); });
+  mountFilters(document.querySelector('#filters'), game, async state => {
+    chosen = state; offset = 0;
+    try { catalog = await api(`${gameURL(game)}/insights/catalog?${filterQuery(state)}`); conditionList.redraw(); metricList.redraw(); } catch { catalog = {events: []}; }
+    load();
+  });
 }
-
 
 /* ─── One player: their story in plain words (default) or every raw event ─── */
 
@@ -574,7 +742,7 @@ async function renderJourney(game, player) {
     body.innerHTML = '<p class="help">Reading their story…</p>';
     try {
       const data = await api(`${gameURL(game)}/insights/story?${new URLSearchParams({start: range.from, end: range.to, player, hidden: String(showHidden)})}`);
-      document.querySelector('#story-metrics').innerHTML = stats([['Sessions', number(data.sessions), data.first_seen ? `${displayDate(data.first_seen)} → ${displayDate(data.last_seen)}` : ''], ['Events', number(data.events), ''], ['Highest level', data.highest_level != null ? number(data.highest_level) : '—', ''], ['Where', [data.country, platformLabel(data.platform || ''), data.app_version && `v${data.app_version}`].filter(Boolean).join(' · ') || '—', data.environment || '']]);
+      document.querySelector('#story-metrics').innerHTML = stats([['Sessions', number(data.sessions), data.first_seen ? `${displayDate(data.first_seen)} → ${displayDate(data.last_seen)}` : ''], ['Events', number(data.events), ''], ['Highest level', data.highest_level != null ? number(data.highest_level) : '—', ''], ['Where', [countryName(data.country), platformLabel(data.platform || ''), data.app_version && `v${data.app_version}`].filter(Boolean).join(' · ') || '—', data.environment || '']]);
       body.innerHTML = data.chapters.length ? `<label class="check-row story-toggle"><input type="checkbox" id="story-hidden" ${showHidden ? 'checked' : ''}> Also show events hidden in the dictionary</label>${data.chapters.map(storyChapter).join('')}` : '<p class="help">No events from this player in these days.</p>';
       body.querySelector('#story-hidden')?.addEventListener('change', event => { showHidden = event.target.checked; draw(); });
     } catch (error) { body.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
@@ -643,7 +811,7 @@ async function renderLevels() {
     const slowest = [...data.levels].filter(row => row.median_seconds != null).sort((a, b) => b.median_seconds - a.median_seconds)[0];
     document.querySelector('#levels-summary').innerHTML = stats([['Levels seen', number(data.levels.length), `level ${data.levels[0].level} to ${data.levels[data.levels.length - 1].level}`], ['Hardest level', hardest ? `Level ${hardest.level}` : '—', hardest ? `${percent(hardest.completion)} of players finish it` : 'needs at least 3 players'], ['Most players leave at', biggest && biggest.quit ? `Level ${biggest.level}` : '—', biggest && biggest.quit ? `${number(biggest.quit)} player${biggest.quit === 1 ? '' : 's'} had their last event there` : ''], ['Slowest level', slowest ? `Level ${slowest.level}` : '—', slowest ? `median ${duration(slowest.median_seconds)}` : '']]);
     const peak = Math.max(1, ...data.levels.map(row => row.started));
-    box.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Level</th><th class="num">Started</th><th class="num">Finished</th><th>Completion</th><th class="num">Tries / player</th><th class="num">Fails</th><th class="num">Median time</th><th class="num">Slowest 10%</th><th class="num">Power-ups</th><th class="num">Left here</th></tr></thead><tbody>${rows().map(row => `<tr class="${row.completion != null && row.started >= 3 && row.completion < 60 ? 'level-hard' : ''}"><td><strong>${row.level}</strong></td><td class="num">${number(row.started)}</td><td class="num">${number(row.completed)}</td><td><div class="completion"><progress class="progress mini" max="100" value="${row.completion ?? 0}" aria-label="${row.completion != null ? percent(row.completion) : 'n/a'}"></progress><span>${row.completion != null ? percent(row.completion) : '—'}</span></div></td><td class="num">${row.tries_per_player ?? '—'}</td><td class="num">${number(row.fails)}${row.restarts ? ` <span class="muted small">· ${row.restarts} restart${row.restarts === 1 ? '' : 's'}</span>` : ''}</td><td class="num">${duration(row.median_seconds)}</td><td class="num">${duration(row.p90_seconds)}</td><td class="num" title="${escapeHTML(row.top_powerups.map(item => `${item.text} ×${item.count}`).join('\n'))}">${row.powerups ? number(row.powerups) : '—'}</td><td class="num">${row.quit ? `${number(row.quit)} <span class="muted small">· ${percent(row.quit_percent)}</span>` : '—'}</td></tr>`).join('')}</tbody></table></div>
+    box.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Level</th><th class="num">Started</th><th class="num">Finished</th><th>Completion</th><th class="num">Tries / player</th><th class="num">Fails</th><th class="num">Median time</th><th class="num">Slowest 10%</th><th class="num" title="Events with “powerup” or “boost” in their name that carry this level’s number">Power-ups</th><th class="num">Left here</th></tr></thead><tbody>${rows().map(row => `<tr class="${row.completion != null && row.started >= 3 && row.completion < 60 ? 'level-hard' : ''}"><td title="${escapeHTML(row.top_other.map(item => `${item.text} ×${item.count}`).join('\n'))}"><strong>${row.level}</strong>${row.other_events ? ` <span class="muted small" title="Other events that carry this level number">+${number(row.other_events)}</span>` : ''}</td><td class="num">${number(row.started)}</td><td class="num">${number(row.completed)}</td><td><div class="completion"><progress class="progress mini" max="100" value="${row.completion ?? 0}" aria-label="${row.completion != null ? percent(row.completion) : 'n/a'}"></progress><span>${row.completion != null ? percent(row.completion) : '—'}</span></div></td><td class="num">${row.tries_per_player ?? '—'}</td><td class="num">${number(row.fails)}${row.restarts ? ` <span class="muted small">· ${row.restarts} restart${row.restarts === 1 ? '' : 's'}</span>` : ''}</td><td class="num">${duration(row.median_seconds)}</td><td class="num">${duration(row.p90_seconds)}</td><td class="num" title="${escapeHTML(row.top_powerups.map(item => `${item.text} ×${item.count}`).join('\n'))}">${row.powerups ? number(row.powerups) : '—'}</td><td class="num">${row.quit ? `${number(row.quit)} <span class="muted small">· ${percent(row.quit_percent)}</span>` : '—'}</td></tr>`).join('')}</tbody></table></div>
       <p class="help panel-body">“Left here” counts players whose very last level event was on that level (they started, restarted or failed it and never came back to play on). Rows with less than 60% completion are highlighted.</p>`;
   };
   const load = async state => {

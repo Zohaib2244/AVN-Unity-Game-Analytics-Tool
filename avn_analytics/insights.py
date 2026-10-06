@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from . import rules
 from .models import timestamp
 
 PLAYER = "coalesce(json_extract(payload, '$.user_id'), json_extract(payload, '$.device_id'))"
@@ -404,18 +405,72 @@ def funnel(storage, game_id, start, end, query):
     }
 
 
-def players(storage, game_id, start, end, filters=None, search="", limit=50, offset=0):
-    """Players active in the range, most recently seen first."""
+PLAYER_SORTS = {
+    "last_seen": "last_seen",
+    "first_seen": "first_seen",
+    "events": "events",
+    "sessions": "sessions",
+}
+
+
+def players(
+    storage,
+    game_id,
+    start,
+    end,
+    filters=None,
+    search="",
+    limit=50,
+    offset=0,
+    sort="last_seen",
+    order="desc",
+    conditions=(),
+    metrics=(),
+):
+    """Players active in the range.
+
+    sort: last_seen, first_seen, events, sessions, or metric0..metric2 (one of `metrics`).
+    conditions keep only players who did (or never did) an event; metrics add a column per player.
+    See rules.py for what a condition and a metric are.
+    """
     storage.get_game(game_id)
     condition, args = where(start, end, filters)
-    having, extra = "", ()
+    if sort in PLAYER_SORTS:
+        order_by = PLAYER_SORTS[sort]
+    elif sort.startswith("metric") and sort[6:].isdigit() and int(sort[6:]) < len(metrics):
+        order_by = f"m{int(sort[6:])}"
+    else:
+        raise HTTPException(400, "Unknown sort")
+    direction = "ASC" if order == "asc" else "DESC"
+    columns, column_args = [], []
+    for position, metric in enumerate(metrics):
+        try:
+            expr, expr_args = rules.metric_sql(metric)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        columns.append(f", {expr} AS m{position}")
+        column_args += expr_args
+    clauses, having_args = [], []
     if search:
-        having, extra = "HAVING player LIKE ?", (f"%{search}%",)
+        clauses.append("player LIKE ?")
+        having_args.append(f"%{search}%")
+    for rule in conditions:
+        try:
+            expr, expr_args = rules.count_sql(rule)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        if rule.get("does") == "didnt":
+            clauses.append(f"coalesce({expr}, 0) = 0")
+        else:
+            clauses.append(f"coalesce({expr}, 0) >= ?")
+            expr_args = [*expr_args, rule.get("min_times") or 1]
+        having_args += expr_args
+    having = f"HAVING {' AND '.join(clauses)}" if clauses else ""
     with storage.connect(storage.game_path(game_id)) as connection:
         total = connection.execute(
             f"SELECT count(*) FROM (SELECT {PLAYER} AS player FROM events WHERE {condition} "
             f"GROUP BY player {having})",
-            (*args, *extra),
+            (*args, *having_args),
         ).fetchone()[0]
         rows = connection.execute(
             f"""SELECT {PLAYER} AS player, count(*) AS events,
@@ -426,11 +481,23 @@ def players(storage, game_id, start, end, filters=None, search="", limit=50, off
                        max(json_extract(payload, '$.country')) AS country,
                        max({ENVIRONMENT}) AS environment,
                        max(json_extract(payload, '$.user_id') IS NOT NULL) AS has_user_id
+                       {"".join(columns)}
                 FROM events WHERE {condition} GROUP BY player {having}
-                ORDER BY last_seen DESC LIMIT ? OFFSET ?""",
-            (*args, *extra, limit, offset),
+                ORDER BY {order_by} IS NULL, {order_by} {direction}, last_seen DESC, player
+                LIMIT ? OFFSET ?""",
+            (*column_args, *args, *having_args, limit, offset),
         )
-        return {"total": total, "players": [dict(row) for row in rows]}
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["metrics"] = [
+                round(item.pop(f"m{n}"), 2)
+                if isinstance(item.get(f"m{n}"), float)
+                else item.pop(f"m{n}")
+                for n in range(len(metrics))
+            ]
+            result.append(item)
+        return {"total": total, "players": result}
 
 
 def journey(storage, game_id, player, start, end):

@@ -32,6 +32,7 @@ from .models import (
     KeyCreate,
     Name,
     NutBotChat,
+    PlayerRules,
     SavedFunnel,
     TeamAdd,
     TeamUpdate,
@@ -529,9 +530,25 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         chosen: Filtered,
         search: Annotated[str, Query(max_length=128)] = "",
         offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+        sort: Annotated[str, Query(max_length=12)] = "last_seen",
+        order: Literal["asc", "desc"] = "desc",
+        rules: Annotated[str, Query(max_length=8000)] = "",
     ):
+        try:
+            parsed = PlayerRules.model_validate_json(rules) if rules else PlayerRules()
+        except ValueError as error:
+            raise HTTPException(400, "Those player rules aren't valid") from error
         return insights.players(
-            storage, str(game_id), *day_range(start, end), chosen, search=search, offset=offset
+            storage,
+            str(game_id),
+            *day_range(start, end),
+            chosen,
+            search=search,
+            offset=offset,
+            sort=sort,
+            order=order,
+            conditions=[item.model_dump() for item in parsed.conditions],
+            metrics=[item.model_dump() for item in parsed.metrics],
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/journey")

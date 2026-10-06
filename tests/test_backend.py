@@ -1406,3 +1406,90 @@ def test_funnels_allow_up_to_100_steps(backend):
     assert admin.post(url, json=body).status_code == 200
     body["steps"] = steps + [{"event": "MM_ANALYSIS"}]
     assert admin.post(url, json=body).status_code == 400
+
+
+def _players(admin, game, **params):
+    return admin.get(
+        f"/v1/games/{game['id']}/insights/players",
+        params={"start": "2026-10-04", "end": "2026-10-04", **params},
+    ).json()
+
+
+def test_players_sorting_and_event_rules(backend):
+    admin, game = _journey_game(backend)
+    order = lambda data: [p["player"] for p in data["players"]]  # noqa: E731
+    assert order(_players(admin, game, sort="events", order="desc"))[0] == "p1"
+    assert order(_players(admin, game, sort="events", order="asc"))[0] == "p4"
+    assert order(_players(admin, game, sort="last_seen", order="desc"))[0] == "p4"  # started last
+    assert order(_players(admin, game, sort="first_seen", order="asc"))[0] == "p1"
+    assert _players(admin, game, sort="sessions")["players"][0]["sessions"] == 1
+    assert (
+        admin.get(
+            f"/v1/games/{game['id']}/insights/players",
+            params={"start": "2026-10-04", "end": "2026-10-04", "sort": "bogus"},
+        ).status_code
+        == 400
+    )
+
+    def rules(**value):
+        return json.dumps(value)
+
+    # only players who completed level 3 (a parameter test), then who never failed
+    did = _players(
+        admin,
+        game,
+        rules=rules(
+            conditions=[
+                {"event": "LEVEL_ANALYSIS", "param": "Completed", "op": "gte", "value": "3"}
+            ]
+        ),
+    )
+    assert sorted(order(did)) == ["p1", "p2"] and did["total"] == 2
+    never = _players(
+        admin,
+        game,
+        rules=rules(
+            conditions=[
+                {"event": "LEVEL_ANALYSIS", "param": "Failed", "op": "exists", "does": "didnt"}
+            ]
+        ),
+    )
+    assert sorted(order(never)) == ["p1", "p2", "p4"]
+    twice = _players(
+        admin,
+        game,
+        rules=rules(
+            conditions=[
+                {"event": "LEVEL_ANALYSIS", "param": "Failed", "op": "exists", "min_times": 2}
+            ]
+        ),
+    )
+    assert order(twice) == ["p3"]
+    # a metric: highest level started, used as the sort key
+    metric = {"event": "LEVEL_ANALYSIS", "param": "Started", "op": "exists", "agg": "max"}
+    by_level = _players(admin, game, sort="metric0", order="desc", rules=rules(metrics=[metric]))
+    assert sorted(order(by_level)[:2]) == ["p1", "p2"]  # tie: latest first
+    assert by_level["players"][0]["metrics"] == [3.0]
+    assert by_level["players"][-1]["metrics"] == [None]  # p4 never started a level: sorted last
+    count = {"event": "LEVEL_ANALYSIS", "param": "Failed", "op": "exists", "agg": "count"}
+    counted = _players(admin, game, sort="metric0", order="desc", rules=rules(metrics=[count]))
+    assert order(counted)[0] == "p3" and counted["players"][0]["metrics"] == [2]
+    last = {"event": "level_gate", "agg": "last"}
+    stamped = _players(admin, game, rules=rules(metrics=[last]))
+    assert next(p for p in stamped["players"] if p["player"] == "p1")["metrics"][0].startswith(
+        "2026-10-04"
+    )
+    broken = admin.get(
+        f"/v1/games/{game['id']}/insights/players",
+        params={
+            "start": "2026-10-04",
+            "end": "2026-10-04",
+            "rules": rules(metrics=[{"event": "x", "agg": "max"}]),
+        },
+    )
+    assert broken.status_code == 400  # max needs a parameter
+    bad = admin.get(
+        f"/v1/games/{game['id']}/insights/players",
+        params={"start": "2026-10-04", "end": "2026-10-04", "rules": "{nope"},
+    )
+    assert bad.status_code == 400

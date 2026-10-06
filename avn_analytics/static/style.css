@@ -880,3 +880,40 @@ tr.level-hard td{background:color-mix(in srgb,var(--status-down) 8%,transparent)
 .nb-send{margin:0;min-height:44px}
 .nb-foot{padding:0 14px 10px;margin:0}
 @media (max-width:560px){#nutbot-root{width:100vw}.nb-launcher span:last-child{display:none}}
+
+/* ─── collapsible panels, long funnels ─── */
+.collapse-toggle{flex:none;margin-right:2px}
+.collapse-toggle svg{transition:transform .15s}
+.panel.collapsed .collapse-toggle svg{transform:rotate(-90deg)}
+.panel>.panel-header{flex-wrap:wrap}
+.collapse-note{display:none;flex:1;min-width:0;font-size:var(--fs-label);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.panel.collapsed .collapse-note{display:block}
+.panel.collapsed>:not(.panel-header){display:none!important}
+.panel.collapsed>.panel-header{border-bottom:0}
+.panel.collapsed .panel-header p{display:none}
+#funnel-result.many{max-height:min(640px,70vh);overflow-y:auto}
+/* ─── Players: sorting and event rules ─── */
+.players-toolbar{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:flex-end;padding:12px 20px;border-bottom:1.5px dashed var(--border)}
+.players-toolbar .button{margin:0;min-height:40px}
+.player-rules{flex:1 1 100%;margin-top:2px}
+.player-rules summary{cursor:pointer;color:var(--text-muted);font-size:var(--fs-label)}
+.player-rules-body{padding:10px 0 4px}
+.player-rules-body h3{margin:12px 0 4px;font-size:var(--fs-label);text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted-dim)}
+.rule-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 8px}
+.rule-row select,.rule-row input{width:auto;max-width:230px;min-height:36px;padding:6px 10px;font-size:var(--fs-label)}
+.rule-row input[type="number"]{width:84px}
+.rule-times{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-label);color:var(--text-muted)}
+th.sortable{padding:0}
+th.sortable button{display:inline-flex;gap:6px;align-items:center;width:100%;padding:12px 20px;border:0;background:transparent;color:inherit;font:inherit;text-transform:inherit;letter-spacing:inherit;cursor:pointer;white-space:nowrap}
+th.sortable.num button{justify-content:flex-end}
+th.sortable:hover button,th.sorted button{color:var(--accent-orange)}
+.sort-arrow{font-size:.7em;min-width:1em}
+th.metric,td.metric{background:color-mix(in srgb,var(--accent-cyan) 7%,transparent)}
+abbr.cc{text-decoration:underline dotted var(--text-muted-dim);text-underline-offset:3px;cursor:help}
+#player-list td:first-child,#player-list th:first-child{min-width:200px}
+#player-list td:first-child .mono{white-space:nowrap}
+#player-list td:first-child p{white-space:nowrap}
+th.metric button{white-space:normal;line-height:1.3;max-width:190px;text-align:right}
+th.metric,td.metric{width:140px;min-width:110px}
+#player-list td,#player-list th{vertical-align:middle}
+.panel-header .collapse-toggle+div{flex:1 1 0;min-width:0}

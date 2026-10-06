@@ -234,6 +234,39 @@ class JourneyPlayersQuery(JourneyQuery):
     target: JourneyTarget
 
 
+ParamName = Annotated[str, Field(max_length=80, pattern=r'^[^"\\]*$')]
+RuleOp = Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"]
+
+
+class PlayerCondition(StrictModel):
+    """Keep only players who did (or never did) an event, optionally with a parameter test."""
+
+    event: Name
+    param: ParamName = ""
+    op: RuleOp = "eq"
+    value: Annotated[str, Field(max_length=200)] = ""
+    does: Literal["did", "didnt"] = "did"
+    min_times: Annotated[int, Field(ge=1, le=100000)] = 1
+
+
+class PlayerMetric(StrictModel):
+    """An extra column per player, also usable as the sort key: how many times they did an event,
+    the highest/lowest/total of one of its parameters, or when they first/last did it."""
+
+    event: Name
+    param: ParamName = ""
+    op: RuleOp = "eq"
+    value: Annotated[str, Field(max_length=200)] = ""
+    agg: Literal["count", "max", "min", "sum", "first", "last"] = "count"
+    of: ParamName = ""  # the parameter to total/compare; defaults to `param`
+    label: Annotated[str, Field(max_length=80)] = ""
+
+
+class PlayerRules(StrictModel):
+    conditions: list[PlayerCondition] = Field(default_factory=list, max_length=6)
+    metrics: list[PlayerMetric] = Field(default_factory=list, max_length=3)
+
+
 class NutBotChat(StrictModel):
     message: Annotated[str, Field(min_length=1, max_length=4000)]
     harness: Annotated[str, Field(max_length=20)] | None = None

@@ -5,6 +5,7 @@ Built on the same live event queries as insights.py, but everything is named in 
 """
 
 import json
+import re
 from collections import Counter
 from statistics import median
 
@@ -26,6 +27,9 @@ JOURNEY_PLAYERS = 200
 MAX_PLAYER_EVENTS = 3000
 MAX_SIGNATURE = 14
 START_EXIT = "__start__"
+# Events counted as power-ups on a level: any event with one of these in its name that also
+# carries a level number (a parameter with "level" in its name, e.g. LEVEL_NUMBER).
+POWERUP_NAME = re.compile(r"power.?up|booster|boost", re.I)
 
 
 def _definitions(storage, game_id):
@@ -263,6 +267,7 @@ def level_progress(storage, game_id, start, end, filters=None):
                 "seconds": [],
                 "quit": 0,
                 "powerups": Counter(),
+                "other": Counter(),
             },
         )
 
@@ -295,7 +300,8 @@ def level_progress(storage, game_id, start, end, filters=None):
                 for key, value in params.items():
                     number = stories._int(value) if stories.LEVELISH_KEY.search(key) else None
                     if number is not None:
-                        entry(number)["powerups"][labeler.label(row["name"], params)] += 1
+                        bucket = "powerups" if POWERUP_NAME.search(row["name"]) else "other"
+                        entry(number)[bucket][labeler.label(row["name"], params)] += 1
                         break
                 continue
             verb, number = info
@@ -339,6 +345,10 @@ def level_progress(storage, game_id, start, end, filters=None):
                 "top_powerups": [
                     {"text": text, "count": count}
                     for text, count in item["powerups"].most_common(3)
+                ],
+                "other_events": sum(item["other"].values()),
+                "top_other": [
+                    {"text": text, "count": count} for text, count in item["other"].most_common(3)
                 ],
             }
         )

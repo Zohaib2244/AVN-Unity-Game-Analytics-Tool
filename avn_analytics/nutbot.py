@@ -26,7 +26,14 @@ from fastapi import HTTPException
 
 from . import insights, journeys
 from .exports import period_bounds
-from .models import EventDefinition, Filters, FunnelDefinition, FunnelQuery, timestamp
+from .models import (
+    EventDefinition,
+    Filters,
+    FunnelDefinition,
+    FunnelQuery,
+    PlayerRules,
+    timestamp,
+)
 
 MAX_MESSAGE = 4000
 MAX_CONTEXT = 3000
@@ -613,11 +620,62 @@ TOOLS = [
     ),
     _tool(
         "find_players",
-        "Players active in the range, newest first, with sessions, events, version, country, environment.",
+        "Players active in the range with sessions, events, version, country, environment. Sort them, keep only players who did (or never did) an event, and add columns computed from events (times they did it, highest/lowest/total of a parameter, first/last time), e.g. the top spenders of a power-up or players who never completed level 3.",
         {
             **RANGE_PROPS,
             "search": {"type": "string"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 25},
+            "sort": {
+                "type": "string",
+                "description": "last_seen (default), first_seen, events, sessions, or metric0..metric2 for one of the columns below.",
+            },
+            "order": {"type": "string", "enum": ["asc", "desc"]},
+            "conditions": {
+                "type": "array",
+                "description": "Players must satisfy all of these.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "event": {"type": "string"},
+                        "param": {"type": "string"},
+                        "op": {
+                            "type": "string",
+                            "enum": ["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"],
+                        },
+                        "value": {"type": "string"},
+                        "does": {"type": "string", "enum": ["did", "didnt"]},
+                        "min_times": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["event"],
+                    "additionalProperties": False,
+                },
+            },
+            "metrics": {
+                "type": "array",
+                "description": "Extra columns, at most 3.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "event": {"type": "string"},
+                        "param": {"type": "string"},
+                        "op": {
+                            "type": "string",
+                            "enum": ["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"],
+                        },
+                        "value": {"type": "string"},
+                        "agg": {
+                            "type": "string",
+                            "enum": ["count", "max", "min", "sum", "first", "last"],
+                        },
+                        "of": {
+                            "type": "string",
+                            "description": "Parameter to compare or total (max/min/sum); defaults to param.",
+                        },
+                    },
+                    "required": ["event"],
+                    "additionalProperties": False,
+                },
+            },
         },
     ),
     _tool(
@@ -1247,6 +1305,9 @@ Analysis guide
     def tool_find_players(self, run, game_id, args):
         start, end = self._range(run, args)
         limit = min(int(args.get("limit") or 15), 25)
+        parsed = PlayerRules.model_validate(
+            {"conditions": args.get("conditions") or [], "metrics": args.get("metrics") or []}
+        )
         return insights.players(
             self.storage,
             game_id,
@@ -1255,6 +1316,10 @@ Analysis guide
             self._filters(run, args),
             search=str(args.get("search") or "")[:128],
             limit=limit,
+            sort=str(args.get("sort") or "last_seen"),
+            order="asc" if args.get("order") == "asc" else "desc",
+            conditions=[item.model_dump() for item in parsed.conditions],
+            metrics=[item.model_dump() for item in parsed.metrics],
         )
 
     def tool_get_level_progress(self, run, game_id, args):

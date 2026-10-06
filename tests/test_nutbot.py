@@ -353,3 +353,24 @@ def test_abandoned_slot_does_not_lock_the_person_out(bot):
     token, _ = nutbot.active["local"]
     nutbot.active["local"] = (token, 0)  # pretend it is old
     assert chat(admin, game)[0].status_code == 200
+
+
+def test_find_players_can_sort_and_filter_by_events(tools):
+    _, _, nutbot, make = tools
+    run = make()
+    error, text = call(
+        nutbot,
+        run,
+        "find_players",
+        conditions=[{"event": "LEVEL_ANALYSIS", "param": "Completed", "op": "gte", "value": "3"}],
+        metrics=[{"event": "LEVEL_ANALYSIS", "param": "Started", "op": "exists", "agg": "max"}],
+        sort="metric0",
+    )
+    data = json.loads(text)
+    assert (
+        not error
+        and [p["player"] for p in data["players"]] == ["a"]
+        and data["players"][0]["metrics"] == [3.0]
+    )
+    error, text = call(nutbot, run, "find_players", metrics=[{"event": "x", "agg": "max"}])
+    assert error
