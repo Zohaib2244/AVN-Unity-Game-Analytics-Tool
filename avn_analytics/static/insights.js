@@ -344,7 +344,10 @@ async function renderFunnels() {
     const breakdown = document.querySelector('#funnel-breakdown').value;
     try {
       const data = await api(`${gameURL(game)}/insights/funnel`, {method:'POST', body: JSON.stringify({...filterBody(filters.state), steps: body.steps, scope: body.scope, ...(body.window_hours ? {window_hours: body.window_hours} : {}), ...(breakdown ? {breakdown} : {})})});
-      if (ticket === latest) { lastResult = data; drawResult(data); journeys.refresh(); }
+      if (ticket === latest) {
+        lastResult = data; drawResult(data);
+        if (storeGet(`avn-pending-journeys-${game.id}`)) { storeSet(`avn-pending-journeys-${game.id}`, null); journeys.run(); } else journeys.refresh();
+      }
     } catch (error) { if (ticket === latest) result.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
   }
   const timing = times => times ? `<span title="${number(times.count)} players · average ${duration(times.average)} · fastest ${duration(times.min)} · slowest ${duration(times.max)}">median ${duration(times.median)} · 90% within ${duration(times.p90)}</span>` : '';

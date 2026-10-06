@@ -37,6 +37,10 @@ CERTS_TTL = 3600.0
 CLOUDFLARE_MARKERS = ("cf-ray", "cf-connecting-ip", "cf-ipcountry", "cf-visitor")
 
 
+# NutBot is for admins and team leads unless an admin opens it up.
+DEFAULT_NUTBOT_ACCESS = "leads"
+
+
 @dataclass(frozen=True, eq=False)
 class Principal:
     email: str
@@ -188,6 +192,10 @@ class Accounts:
                     created_at TEXT NOT NULL
                 );
                 CREATE UNIQUE INDEX IF NOT EXISTS workspaces_name ON workspaces(lower(name));
+                CREATE TABLE IF NOT EXISTS workspace_nutbot (
+                    workspace_id TEXT PRIMARY KEY,
+                    access TEXT NOT NULL CHECK (access IN ('admins', 'leads', 'everyone'))
+                );
                 CREATE TABLE IF NOT EXISTS workspace_members (
                     workspace_id TEXT NOT NULL,
                     email TEXT NOT NULL,
@@ -329,11 +337,56 @@ class Accounts:
                     row["members"] = connection.execute(
                         "SELECT count(*) FROM workspace_members WHERE workspace_id=?", (row["id"],)
                     ).fetchone()[0]
+        with self.storage.connect(self.registry) as connection:
+            modes = {
+                row["workspace_id"]: row["access"]
+                for row in connection.execute("SELECT * FROM workspace_nutbot")
+            }
         result = []
         for row in rows:
             if principal.sees_workspace(row["id"]):
-                result.append({**row, "role": principal.role_in(row["id"])})
+                access = modes.get(row["id"], DEFAULT_NUTBOT_ACCESS)
+                result.append(
+                    {
+                        **row,
+                        "role": principal.role_in(row["id"]),
+                        "nutbot_access": access,
+                        "nutbot": self.nutbot_allowed(principal, row["id"], access),
+                    }
+                )
         return result
+
+    @staticmethod
+    def nutbot_allowed(principal, workspace_id, access):
+        """Admins always; leads if the workspace allows leads; members only if it allows all."""
+        role = principal.role_in(workspace_id)
+        if role == "admin":
+            return True
+        if role == "lead":
+            return access in ("leads", "everyone")
+        return role == "member" and access == "everyone"
+
+    def nutbot_access_of(self, workspace_id):
+        with self.storage.connect(self.registry) as connection:
+            row = connection.execute(
+                "SELECT access FROM workspace_nutbot WHERE workspace_id=?", (workspace_id,)
+            ).fetchone()
+        return row["access"] if row else DEFAULT_NUTBOT_ACCESS
+
+    def can_use_nutbot(self, principal, workspace_id):
+        return self.nutbot_allowed(principal, workspace_id, self.nutbot_access_of(workspace_id))
+
+    def set_nutbot_access(self, actor, workspace_id, access):
+        if access not in ("admins", "leads", "everyone"):
+            raise HTTPException(400, "Choose admins, leads or everyone")
+        with self.storage.connect(self.registry) as connection:
+            workspace = self._workspace(connection, workspace_id)
+            connection.execute(
+                "INSERT INTO workspace_nutbot VALUES (?, ?) ON CONFLICT(workspace_id) "
+                "DO UPDATE SET access=excluded.access",
+                (workspace_id, access),
+            )
+        self.audit(actor, "workspace.nutbot", None, f"{workspace['name']}: {access}")
 
     def pick_workspace(self, principal, requested=None):
         """The workspace a request is about: the one asked for, or the person's first."""
@@ -467,6 +520,7 @@ class Accounts:
             connection.execute(
                 "DELETE FROM workspace_members WHERE workspace_id=?", (workspace_id,)
             )
+            connection.execute("DELETE FROM workspace_nutbot WHERE workspace_id=?", (workspace_id,))
             connection.execute("DELETE FROM workspaces WHERE id=?", (workspace_id,))
         if games_to_delete:  # files go to data/deleted; the workspace is already gone
             self.storage.delete_games(games_to_delete)

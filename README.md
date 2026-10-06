@@ -135,8 +135,9 @@ The website is organized around games. The home page lists your games; Android a
 | Page | What it shows |
 | --- | --- |
 | **Overview** | Players, new players, sessions and events; activity per day; a tabbed breakdown by environment, app version, build, country and platform (click a row to filter by it); top events. |
-| **Funnels** | Steps you define, in order: how many players reach each one, who stops where, and how long it takes. |
-| **Players** | Everyone active in the chosen days, searchable. Open a player for a timeline of their events, grouped by session. |
+| **Funnels** | Steps you define, in order (up to 100): how many players reach each one, who stops where, and how long it takes. Below it, **Journeys** shows what players did between two steps in plain words, grouped into the most common journeys, plus where players stop. |
+| **Levels** | Per level: players who started and finished it, completion, tries per player, fails, median time, power-ups used and where players leave. |
+| **Players** | Everyone active in the chosen days, searchable. Open a player for their **story**: sessions as chapters, with runs of levels folded into one line ("Played levels 1–10, completed all"). The raw event list is one click away. |
 | **Exports** | Download the raw events, using the same days and filters. |
 | **Event dictionary** | Describe each event and its parameters. |
 | **API keys** | Create, copy and delete the game's collection keys. |
@@ -174,6 +175,31 @@ Each player (or each session, if you choose "Within one session") is matched aga
 The result shows how many players reached each step, the share of step 1 and of the previous step, the biggest drop, the time between steps (median and 90th percentile, with average, fastest and slowest on hover), and the time to complete the whole funnel. "N stopped here" lists up to 50 of the most recent players who stopped at a step, linking to their journeys. Results can be downloaded as CSV. Funnels can be saved by name (stored in the game's database, so they are the same on every device).
 
 Limits: a funnel refuses ranges with more than 5 million matching events, and a player journey shows the first 5,000 events of the chosen days. Player and filter queries scan the chosen days, which is instant for typical data and may take seconds with millions of events.
+
+## NutBot
+
+NutBot is a chat assistant on every game page. You ask in plain words ("where do players drop off in the first ten levels?"); it runs funnels, follows journeys, reads player stories and level numbers, and answers with the real figures. It can also save a funnel or rename events in the dictionary, but only after you say yes, and only for people who may change things. When it builds a funnel or finds a player worth reading, it adds a button that opens it in the dashboard.
+
+**How it works.** The server starts a local AI agent CLI (Claude Code, OpenCode or Codex) for each message and gives it this app's tools over MCP. The CLI's own tools (shell, files, web) are switched off, so it can only call the tools below; each one runs as the person who asked and only sees the games they may see. Answers stream back to the browser. The agent CLI uses your own subscription or keys; the server needs no API key of its own.
+
+| Tool | What it does |
+| --- | --- |
+| `get_context`, `list_events` | The game, the dashboard's range and filters, the event dictionary, the events and parameters seen. |
+| `get_overview`, `get_level_progress` | Totals and breakdowns; per-level completion, tries, time and where players leave. |
+| `run_funnel`, `get_journeys`, `list_journey_players` | Funnels and the journeys between two steps, and who took them. |
+| `get_player_story`, `find_players` | A player's sessions in readable lines; player search. |
+| `save_funnel`, `set_event_label` | Change data. Need a team lead or admin, and a yes from the user. |
+| `show_in_dashboard` | Adds an "open this" button to the answer. |
+
+**Who can use it.** An admin sets this per workspace on the **Workspaces** page: *Admins only*, *Admins + leads* (default) or *Everyone in it*. People without access see NutBot locked. Messages are limited per person per day (`AVN_NUTBOT_DAILY_LIMIT`), one answer runs at a time per person, and each answer is stopped after `AVN_NUTBOT_RUN_SECONDS`. Starting a chat and every change NutBot makes go in the activity log.
+
+**Setting it up.**
+
+1. Make a CLI available inside the admin container: bind-mount its binary folder and point `AVN_NUTBOT_CLAUDE_BIN` at it (see `deploy/nutbot.compose.example.yaml`).
+2. Sign it in once. Either run `claude setup-token` on a machine where you are signed in and put the token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN`, or sign in inside the container: `docker compose exec -it admin sh -c 'HOME=/data/nutbot/home "$(ls -d /opt/nutbot/claude/* | tail -1)" auth login'`. The sign-in is kept in `data/nutbot/home`.
+3. Open **Workspaces** and choose who may use it.
+
+Claude (default model `claude-sonnet-5-5`, others selectable in the panel) is the supported, tested assistant. OpenCode works through the same tools with built-in tools disabled; set `AVN_NUTBOT_OPENCODE_BIN` and a model such as `anthropic/claude-sonnet-5-5` plus that provider's key. Codex is off unless `AVN_NUTBOT_ALLOW_CODEX=true` because it can't be limited to this app's tools. Don't point NutBot at an agent that has a shell.
 
 ## Exporting data
 
@@ -288,6 +314,7 @@ Environment variables (see `.env.example`):
 | `AVN_BIND_HOST` | `127.0.0.1` | Address the ports bind to (`0.0.0.0` = all interfaces) |
 | `AVN_INGEST_PORT` / `AVN_ADMIN_PORT` | `8100` / `8101` | Host ports |
 | `AVN_MAX_EXPORT_BYTES` | `268435456` | Largest raw export |
+| `AVN_NUTBOT*` | see `.env.example` | NutBot assistant: agent CLI paths, default model, daily limit |
 
 ## Storage layout
 

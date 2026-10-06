@@ -669,7 +669,7 @@ async function renderRoute() {
       pathname = location.pathname;
     }
     const match = gameRoute(pathname);
-    if (routes[pathname] || !match) return await (routes[pathname] || renderNotFound)();
+    if (routes[pathname] || !match) { await (routes[pathname] || renderNotFound)(); if (typeof mountNutBot === 'function') mountNutBot(); return; }
     const wanted = decodeURIComponent(match[1]);
     currentGame = overview.games.find(item => item.id === wanted) || null;
     if (!currentGame && match[1] !== 'new') {  // maybe a game of another workspace the person belongs to
@@ -682,6 +682,7 @@ async function renderRoute() {
     currentSection = match[2] || 'overview';
     if (!currentGame || !sections[currentSection]) { currentGame = null; return renderNotFound(); }
     await sections[currentSection]();
+    if (typeof mountNutBot === 'function') mountNutBot();
   } catch (error) {
     const denied = error.status === 401 || error.status === 403;
     root.innerHTML = `<main id="main"><div class="boot"><span class="brand-mark">avn.</span><h1>${denied ? 'You don’t have access yet.' : 'Couldn’t open your workspace.'}</h1><p class="muted">${escapeHTML(error.message)}</p><button class="button" data-action="refresh">Try again</button></div></main>`;

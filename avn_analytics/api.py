@@ -1,3 +1,5 @@
+import asyncio
+import json
 import logging
 import sqlite3
 import zlib
@@ -9,7 +11,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import Field
 from starlette.background import BackgroundTask
 
@@ -29,14 +31,17 @@ from .models import (
     JourneyQuery,
     KeyCreate,
     Name,
+    NutBotChat,
     SavedFunnel,
     TeamAdd,
     TeamUpdate,
     WorkspaceCreate,
     WorkspaceMove,
+    WorkspaceNutBot,
     normalize_country,
     timestamp,
 )
+from .nutbot import NutBot
 from .storage import Storage
 from .website import add_website
 from .website import overview as website_overview
@@ -117,6 +122,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         else None
     )
     accounts = Accounts(storage, settings, verifier)
+    nutbot = NutBot(settings, storage, accounts)
     export_slot = BoundedSemaphore(1)
 
     @asynccontextmanager
@@ -169,6 +175,8 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         openapi_url=None,
     )
     app.state.storage = storage
+    app.state.accounts = accounts
+    app.state.nutbot = nutbot
     app.add_middleware(BodyLimit, max_bytes=settings.max_body_bytes)
 
     @app.exception_handler(RequestValidationError)
@@ -220,6 +228,58 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
 
     admin_api = APIRouter(dependencies=[Depends(current)])
     add_website(app)
+
+    # The agent CLI that NutBot starts calls back here with a one-off token.
+    def mcp_caller(request: Request):
+        host = request.client.host if request.client else ""
+        token = request.headers.get("authorization", "")
+        if host not in ("127.0.0.1", "::1") or not token.lower().startswith("bearer "):
+            raise HTTPException(403, "Not available")
+        return token[7:].strip()
+
+    @app.post("/nutbot/mcp", include_in_schema=False)
+    async def nutbot_mcp(request: Request):
+        token = mcp_caller(request)
+        try:
+            payload = await request.json()
+        except ValueError:
+            return JSONResponse({"error": "Invalid JSON"}, 400)
+        if not isinstance(payload, dict):
+            return JSONResponse({"error": "Batches are not supported"}, 400)
+        status, reply = await asyncio.to_thread(nutbot.mcp, token, payload)
+        return Response(status_code=202) if reply is None else JSONResponse(reply, status)
+
+    @app.get("/nutbot/mcp", include_in_schema=False)
+    def nutbot_mcp_stream(request: Request):
+        mcp_caller(request)
+        return Response(status_code=405, headers={"Allow": "POST"})
+
+    @admin_api.get("/v1/nutbot")
+    def nutbot_status(principal: Current):
+        return nutbot.describe()
+
+    @admin_api.post("/v1/games/{game_id}/nutbot/chat")
+    async def nutbot_chat(game_id: UUID, body: NutBotChat, principal: Current):
+        workspace_id = accounts.workspace_of_game(str(game_id))
+        if not workspace_id or not accounts.can_use_nutbot(principal, workspace_id):
+            raise HTTPException(403, "NutBot isn't switched on for you in this workspace")
+        game = storage.get_game(str(game_id))
+        prepared = nutbot.prepare(principal, game, workspace_id, body.model_dump())
+
+        async def lines():
+            async for event in nutbot.stream(prepared):
+                yield json.dumps(event, ensure_ascii=False, default=str) + "\n"
+
+        return StreamingResponse(
+            lines(),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
+    @admin_api.patch("/v1/workspaces/{workspace_id}/nutbot")
+    def set_workspace_nutbot(workspace_id: UUID, body: WorkspaceNutBot, principal: TeamAdmin):
+        accounts.set_nutbot_access(principal, str(workspace_id), body.access)
+        return {"status": "saved", "access": body.access}
 
     @admin_api.get("/v1/me")
     def me(principal: Current):

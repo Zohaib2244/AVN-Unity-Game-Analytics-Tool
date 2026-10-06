@@ -234,6 +234,18 @@ class JourneyPlayersQuery(JourneyQuery):
     target: JourneyTarget
 
 
+class NutBotChat(StrictModel):
+    message: Annotated[str, Field(min_length=1, max_length=4000)]
+    harness: Annotated[str, Field(max_length=20)] | None = None
+    model: Annotated[str, Field(max_length=80)] | None = None
+    session_id: Annotated[str, Field(max_length=80)] | None = None
+    context: dict = Field(default_factory=dict)
+
+
+class WorkspaceNutBot(StrictModel):
+    access: Literal["admins", "leads", "everyone"]
+
+
 class SavedFunnel(FunnelDefinition):
     name: Annotated[str, Field(min_length=1, max_length=80)]
 

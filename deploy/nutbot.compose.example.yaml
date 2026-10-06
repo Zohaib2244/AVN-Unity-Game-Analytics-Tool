@@ -1,0 +1,16 @@
+# Example override that makes the host's agent CLIs available to the admin container.
+# Copy to compose.override.yaml (merge with any existing one), adjust the host paths, then
+#   docker compose up -d
+# and sign the CLI in once (see README > NutBot).
+services:
+  admin:
+    volumes:
+      # claude: the folder holding the versioned binaries (newest is used automatically)
+      - /home/YOU/.local/share/claude/versions:/opt/nutbot/claude:ro
+      # opencode (optional)
+      # - /home/YOU/.opencode/bin:/opt/nutbot/opencode:ro
+    environment:
+      AVN_NUTBOT_CLAUDE_BIN: /opt/nutbot/claude/*
+      # AVN_NUTBOT_OPENCODE_BIN: /opt/nutbot/opencode/opencode
+      # AVN_NUTBOT_OPENCODE_MODEL: anthropic/claude-sonnet-5-5
+    mem_limit: 1g  # an agent CLI needs more than the 512 MB the service gets by default
