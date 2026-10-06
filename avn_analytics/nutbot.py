@@ -627,7 +627,7 @@ TOOLS = [
             "limit": {"type": "integer", "minimum": 1, "maximum": 25},
             "sort": {
                 "type": "string",
-                "description": "last_seen (default), first_seen, events, sessions, or metric0..metric2 for one of the columns below.",
+                "description": "last_seen (default), first_seen, events, sessions, version (newest app version first, ordered by number), or metric0..metric2 for one of the columns below.",
             },
             "order": {"type": "string", "enum": ["asc", "desc"]},
             "conditions": {

@@ -1493,6 +1493,36 @@ def _players(admin, game, **params):
     ).json()
 
 
+def test_players_sort_by_app_version_in_number_order(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    events = [
+        event(device_id="pa", app_version="1.9"),
+        event(device_id="pb", app_version="1.10"),
+        event(device_id="pc", app_version="1.2.1"),
+        event(device_id="pd", app_version="2.0"),
+        event(device_id="pe", app_version="1.5", client_ts="2026-10-04T08:00:00Z"),
+        event(device_id="pe", app_version="1.12", client_ts="2026-10-04T10:00:00Z"),
+        event(device_id="pe", app_version="1.7", client_ts="2026-10-04T11:00:00Z"),
+        event(device_id="pf", app_version="nightly"),
+    ]
+    assert send(ingest, game, events).status_code == 200
+    newest = _players(admin, game, sort="version", order="desc")["players"]
+    # 1.10 comes after 1.9 (not before it, as plain text order would put it)
+    assert [(p["player"], p["app_version"]) for p in newest] == [
+        ("pd", "2.0"),
+        ("pe", "1.12"),  # the newest version the player has used, not the last or text-max one
+        ("pb", "1.10"),
+        ("pa", "1.9"),
+        ("pc", "1.2.1"),
+        ("pf", "nightly"),
+    ]
+    oldest = _players(admin, game, sort="version", order="asc")["players"]
+    assert [p["player"] for p in oldest] == ["pf", "pc", "pa", "pb", "pe", "pd"]
+    first_page = _players(admin, game, sort="version", order="desc", offset=4)["players"]
+    assert [p["player"] for p in first_page] == ["pc", "pf"]
+
+
 def test_players_sorting_and_event_rules(backend):
     admin, game = _journey_game(backend)
     order = lambda data: [p["player"] for p in data["players"]]  # noqa: E731

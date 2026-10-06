@@ -6,6 +6,7 @@ app version, build, country or platform.
 """
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from statistics import median
 from uuid import uuid4
@@ -457,7 +458,36 @@ PLAYER_SORTS = {
     "first_seen": "first_seen",
     "events": "events",
     "sessions": "sessions",
+    "version": "version_key(app_version)",
 }
+
+
+def version_key(value):
+    """A string that sorts app versions the way people read them: 1.9 before 1.10.
+
+    Digit groups are compared as numbers (padded to at least four, so 1.2 equals 1.2.0.0); the
+    original text breaks ties, and text without digits sorts below every real version.
+    """
+    if value is None:
+        return None
+    text = str(value)
+    numbers = [int(part) for part in re.findall(r"\d+", text)[:8]]
+    numbers += [0] * (4 - len(numbers))
+    return ".".join(f"{number:012d}" for number in numbers) + "~" + text.lower()
+
+
+class _NewestVersion:
+    """SQL aggregate: the highest app version among a player's events, as written."""
+
+    def __init__(self):
+        self.best = None
+
+    def step(self, value):
+        if value is not None and (self.best is None or version_key(value) > version_key(self.best)):
+            self.best = value
+
+    def finalize(self):
+        return None if self.best is None else str(self.best)
 
 
 def players(
@@ -476,7 +506,8 @@ def players(
 ):
     """Players active in the range.
 
-    sort: last_seen, first_seen, events, sessions, or metric0..metric2 (one of `metrics`).
+    sort: last_seen, first_seen, events, sessions, version (the newest app version a player has
+    used, ordered by number), or metric0..metric2 (one of `metrics`).
     conditions keep only players who did (or never did) an event; metrics add a column per player.
     See rules.py for what a condition and a metric are.
     """
@@ -514,6 +545,8 @@ def players(
         having_args += expr_args
     having = f"HAVING {' AND '.join(clauses)}" if clauses else ""
     with storage.connect(storage.game_path(game_id)) as connection:
+        connection.create_function("version_key", 1, version_key, deterministic=True)
+        connection.create_aggregate("newest_version", 1, _NewestVersion)
         total = connection.execute(
             f"SELECT count(*) FROM (SELECT {PLAYER} AS player FROM events WHERE {condition} "
             f"GROUP BY player {having})",
@@ -524,7 +557,7 @@ def players(
                        count(DISTINCT {SESSION}) AS sessions,
                        min(client_ts) AS first_seen, max(client_ts) AS last_seen,
                        max(json_extract(payload, '$.platform')) AS platform,
-                       max(json_extract(payload, '$.app_version')) AS app_version,
+                       newest_version(json_extract(payload, '$.app_version')) AS app_version,
                        max(json_extract(payload, '$.country')) AS country,
                        max({ENVIRONMENT}) AS environment,
                        max(json_extract(payload, '$.user_id') IS NOT NULL) AS has_user_id
