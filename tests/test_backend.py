@@ -887,6 +887,145 @@ def test_overview_counts_players_active_today_and_yesterday(backend):
     assert data["dau_today"] == 2
 
 
+def _send_as(ingest, game, environment, events):
+    response = ingest.post(
+        "/v1/events",
+        headers={"X-API-Key": game["key"]["api_key"]},
+        json={"context": {"environment": environment}, "events": events},
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_environment_fix_recounts_a_build_shipped_in_the_wrong_mode(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    # 1.0 was published still in development mode; 2.0 went out properly; one editor session
+    _send_as(
+        ingest,
+        game,
+        "development",
+        [event(device_id=f"real-{n}", app_version="1.0", build="7") for n in range(3)],
+    )
+    _send_as(ingest, game, "development", [event(device_id="qa", app_version="2.0", build="8")])
+    _send_as(ingest, game, "production", [event(device_id="fan", app_version="2.0", build="8")])
+    _send_as(ingest, game, "editor", [event(device_id="dev", app_version="1.0", build="7")])
+    base = f"/v1/games/{game['id']}"
+    days = {"start": "2026-10-04", "end": "2026-10-04"}
+    real = {**days, "not_env": ["editor", "development"]}
+    assert admin.get(f"{base}/insights/summary", headers=AUTH, params=real).json()["players"] == 1
+
+    seen = admin.get(f"{base}/environment-fixes", headers=AUTH).json()["seen"]
+    wrong = [
+        row
+        for row in seen
+        if (row["environment"], row["app_version"], row["build"]) == ("development", "1.0", "7")
+    ]
+    assert [(row["players"], row["events"], row["fix"]) for row in wrong] == [(3, 3, None)]
+
+    response = admin.post(
+        f"{base}/environment-fixes",
+        headers=AUTH,
+        json={
+            "from_environment": "Development",
+            "to_environment": "production",
+            "app_version": "1.0",
+            "build": " ",
+        },
+    )
+    assert response.status_code == 201, response.text
+    fix = response.json()
+    assert (fix["players"], fix["events"], fix["build"]) == (3, 3, None)  # blank build = any build
+    # the 3 players now count as production; the 2.0 development tester and the editor do not
+    after = admin.get(f"{base}/insights/summary", headers=AUTH, params=real).json()
+    assert after["players"] == 4
+    assert {row["value"]: row["players"] for row in after["breakdowns"]["environment"]} == {
+        "production": 4
+    }
+    everything = admin.get(f"{base}/insights/summary", headers=AUTH, params=days).json()
+    assert {row["value"]: row["players"] for row in everything["breakdowns"]["environment"]} == {
+        "production": 4,
+        "development": 1,
+        "editor": 1,
+    }
+    only_fixed = admin.get(
+        f"{base}/insights/players", headers=AUTH, params={**days, "env": "production"}
+    ).json()
+    assert sorted(row["player"] for row in only_fixed["players"]) == [
+        "fan",
+        "real-0",
+        "real-1",
+        "real-2",
+    ]
+    fixed_row = admin.get(f"{base}/environment-fixes", headers=AUTH).json()
+    assert [row["fix"] for row in fixed_row["seen"] if row["app_version"] == "1.0"].count(
+        fix["id"]
+    ) == 1  # only the development rows of 1.0 are marked as fixed, not its editor row
+
+    # the stored events keep what they reported; the export says how they are re-counted
+    rows, manifest, notes = unpack(export(admin, game))
+    assert {row["device_id"] for row in rows if row.get("environment") == "development"} == {
+        "real-0",
+        "real-1",
+        "real-2",
+        "qa",
+    }
+    assert manifest["environment_fixes"] == [
+        {
+            "from_environment": "development",
+            "to_environment": "production",
+            "app_version": "1.0",
+            "build": None,
+            "note": "",
+        }
+    ]
+    assert "environment_fixes" in notes
+    filtered = unpack(export(admin, game, env="production"))[0]
+    assert sorted(row["device_id"] for row in filtered) == ["fan", "real-0", "real-1", "real-2"]
+
+    # the same fix again retargets it instead of adding a second one
+    again = {**fix, "to_environment": "staging"}
+    for key in ("id", "events", "players"):
+        again.pop(key)
+    retargeted = admin.post(f"{base}/environment-fixes", headers=AUTH, json=again).json()
+    assert retargeted["id"] == fix["id"]
+    assert len(admin.get(f"{base}/environment-fixes", headers=AUTH).json()["fixes"]) == 1
+    # undo
+    assert admin.delete(f"{base}/environment-fixes/{fix['id']}", headers=AUTH).status_code == 204
+    assert admin.delete(f"{base}/environment-fixes/{fix['id']}", headers=AUTH).status_code == 404
+    assert admin.get(f"{base}/insights/summary", headers=AUTH, params=real).json()["players"] == 1
+
+
+def test_environment_fix_must_change_something(backend):
+    admin, _, _ = backend
+    game = register(admin)
+    url = f"/v1/games/{game['id']}/environment-fixes"
+    same = {"from_environment": "development", "to_environment": "Development"}
+    assert admin.post(url, headers=AUTH, json=same).status_code == 400
+    assert admin.post(url, headers=AUTH, json={"from_environment": "x y"}).status_code == 400
+
+
+def test_environment_fixes_need_a_lead(team):
+    client, as_user, _ = team
+    boss = as_user(ADMIN_EMAIL)
+    work = client.get("/v1/workspaces", headers=boss).json()[0]
+    game = client.post("/v1/games", headers=boss, json={**GAME, "workspace_id": work["id"]}).json()
+    for person in (
+        {"email": "lead@example.com", "role": "lead"},
+        {"email": "dev@example.com", "role": "member", "game_ids": [game["id"]]},
+    ):
+        body = {**person, "workspace_id": work["id"]}
+        assert client.post("/v1/team", headers=boss, json=body).status_code == 201
+    url = f"/v1/games/{game['id']}/environment-fixes"
+    fix = {"from_environment": "development", "to_environment": "production", "app_version": "1"}
+    dev, lead = as_user("dev@example.com"), as_user("lead@example.com")
+    assert client.get(url, headers=dev).status_code == 200  # members may look
+    assert client.post(url, headers=dev, json=fix).status_code == 403
+    created = client.post(url, headers=lead, json=fix)
+    assert created.status_code == 201
+    assert client.delete(f"{url}/{created.json()['id']}", headers=dev).status_code == 403
+    assert client.delete(f"{url}/{created.json()['id']}", headers=lead).status_code == 204
+
+
 def test_export_and_health_filters(backend):
     admin, ingest, _ = backend
     game = register(admin)

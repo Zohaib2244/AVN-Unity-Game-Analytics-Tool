@@ -18,13 +18,23 @@ from .models import timestamp
 
 PLAYER = "coalesce(json_extract(payload, '$.user_id'), json_extract(payload, '$.device_id'))"
 SESSION = "json_extract(payload, '$.session_id')"
-# The environment of an event: sent with the batch, else recorded for its session from
+# The environment an event reported: sent with the batch, else recorded for its session from
 # session_start, else "editor" for Unity Editor builds; anything older is "unknown".
-ENVIRONMENT = (
+REPORTED_ENVIRONMENT = (
     "coalesce(lower(json_extract(payload, '$.environment')),"
     " (SELECT environment FROM sessions WHERE sessions.session_id=json_extract(events.payload,"
     " '$.session_id')),"
     " CASE WHEN json_extract(payload, '$.platform')='editor' THEN 'editor' END, 'unknown')"
+)
+# What the dashboard counts the event as: the reported environment unless the game has an
+# environment fix for that environment (and app version / build). The first fix added wins.
+ENVIRONMENT = (
+    "coalesce((SELECT fix.to_environment FROM environment_fixes AS fix"
+    f" WHERE fix.from_environment = {REPORTED_ENVIRONMENT}"
+    "   AND (fix.app_version IS NULL"
+    "        OR fix.app_version = json_extract(events.payload, '$.app_version'))"
+    "   AND (fix.build IS NULL OR fix.build = json_extract(events.payload, '$.build'))"
+    f" ORDER BY fix.id LIMIT 1), {REPORTED_ENVIRONMENT})"
 )
 # Environments the dashboard hides by default ("Hide editor & development data").
 TEST_ENVIRONMENTS = ["editor", "development", "test", "debug"]
@@ -614,6 +624,97 @@ def journey(storage, game_id, player, start, end):
             }
         )
     return {"player": player, "events": events, "truncated": len(rows) > MAX_JOURNEY_EVENTS}
+
+
+MAX_ENVIRONMENT_FIXES = 30
+SEEN_BUILDS = 60
+
+
+def environment_fixes(storage, game_id):
+    """The game's environment fixes, and what each build has reported (with the fix, if any)."""
+    storage.get_game(game_id)
+    with storage.connect(storage.game_path(game_id)) as connection:
+        fixes = [
+            dict(row) for row in connection.execute("SELECT * FROM environment_fixes ORDER BY id")
+        ]
+        seen = [
+            dict(row)
+            for row in connection.execute(
+                f"""SELECT {REPORTED_ENVIRONMENT} AS environment,
+                           json_extract(payload, '$.app_version') AS app_version,
+                           json_extract(payload, '$.build') AS build,
+                           count(*) AS events, count(DISTINCT {PLAYER}) AS players,
+                           min(client_ts) AS first_seen, max(client_ts) AS last_seen
+                    FROM events GROUP BY 1, 2, 3 ORDER BY events DESC LIMIT ?""",
+                (SEEN_BUILDS,),
+            )
+        ]
+    for row in seen:
+        row["fix"] = next(
+            (
+                fix["id"]
+                for fix in fixes
+                if fix["from_environment"] == row["environment"]
+                and fix["app_version"] in (None, row["app_version"])
+                and fix["build"] in (None, row["build"])
+            ),
+            None,
+        )
+    return {"fixes": fixes, "seen": seen}
+
+
+def add_environment_fix(storage, game_id, fix):
+    """Add (or retarget) a fix; says how many events and players it re-counts."""
+    storage.get_game(game_id)
+    with storage.connect(storage.game_path(game_id)) as connection:
+        same = connection.execute(
+            "SELECT id FROM environment_fixes WHERE from_environment=? "
+            "AND app_version IS ? AND build IS ?",
+            (fix["from_environment"], fix["app_version"], fix["build"]),
+        ).fetchone()
+        if same:
+            connection.execute(
+                "UPDATE environment_fixes SET to_environment=?, note=? WHERE id=?",
+                (fix["to_environment"], fix["note"], same["id"]),
+            )
+            fix_id = same["id"]
+        else:
+            count = connection.execute("SELECT count(*) FROM environment_fixes").fetchone()[0]
+            if count >= MAX_ENVIRONMENT_FIXES:
+                raise HTTPException(400, "This game has too many environment fixes; remove some")
+            fix_id = connection.execute(
+                "INSERT INTO environment_fixes (from_environment, to_environment, app_version,"
+                " build, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    fix["from_environment"],
+                    fix["to_environment"],
+                    fix["app_version"],
+                    fix["build"],
+                    fix["note"],
+                    timestamp(),
+                ),
+            ).lastrowid
+        counts = connection.execute(
+            f"""SELECT count(*) AS events, count(DISTINCT {PLAYER}) AS players FROM events
+                WHERE {REPORTED_ENVIRONMENT} = ?
+                  AND (? IS NULL OR json_extract(payload, '$.app_version') = ?)
+                  AND (? IS NULL OR json_extract(payload, '$.build') = ?)""",
+            (
+                fix["from_environment"],
+                fix["app_version"],
+                fix["app_version"],
+                fix["build"],
+                fix["build"],
+            ),
+        ).fetchone()
+    return {"id": fix_id, **fix, **dict(counts)}
+
+
+def delete_environment_fix(storage, game_id, fix_id):
+    storage.get_game(game_id)
+    with storage.connect(storage.game_path(game_id)) as connection:
+        if connection.execute("DELETE FROM environment_fixes WHERE id=?", (fix_id,)).rowcount == 0:
+            raise HTTPException(404, "Fix not found")
 
 
 def saved_funnels(storage, game_id):

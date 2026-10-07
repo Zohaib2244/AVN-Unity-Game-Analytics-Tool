@@ -6,7 +6,7 @@ const ACTION_LABELS = {
   'key.create': 'Created an API key', 'key.delete': 'Deleted an API key',
   'dictionary.set': 'Edited the event dictionary', 'dictionary.delete': 'Removed a dictionary entry',
   'export.download': 'Exported data', 'user.add': 'Added a person', 'user.role': 'Changed a role',
-  'user.remove': 'Removed a person', 'workspace.create': 'Created a workspace', 'workspace.rename': 'Renamed a workspace', 'workspace.delete': 'Deleted a workspace', 'game.move': 'Moved a game', 'access.set': 'Changed a person’s games', 'access.game': 'Changed who sees a game',
+  'user.remove': 'Removed a person', 'workspace.create': 'Created a workspace', 'workspace.rename': 'Renamed a workspace', 'workspace.delete': 'Deleted a workspace', 'game.move': 'Moved a game', 'environment.fix': 'Re-counted a build’s environment', 'environment.unfix': 'Undid an environment re-count', 'access.set': 'Changed a person’s games', 'access.game': 'Changed who sees a game',
 };
 const gameLabel = game => `${game.name} · ${platformLabel(game.platform)}`;
 

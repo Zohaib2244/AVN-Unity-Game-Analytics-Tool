@@ -189,6 +189,37 @@ class Filters(StrictModel):
     platforms: FilterValues = []
 
 
+EnvironmentName = Annotated[
+    str, Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9][A-Za-z0-9_\-]*$")
+]
+
+
+class EnvironmentFix(StrictModel):
+    """Count events a build sent as `from_environment` as `to_environment` instead."""
+
+    from_environment: EnvironmentName
+    to_environment: EnvironmentName
+    app_version: Annotated[str, Field(max_length=64)] | None = None  # None: every version
+    build: Annotated[str, Field(max_length=64)] | None = None  # None: every build
+    note: Annotated[str, Field(max_length=200)] = ""
+
+    @field_validator("from_environment", "to_environment")
+    @classmethod
+    def lowercase(cls, value):
+        return value.lower()
+
+    @field_validator("app_version", "build")
+    @classmethod
+    def blank_means_any(cls, value):
+        return (value or "").strip() or None
+
+    @model_validator(mode="after")
+    def must_change_something(self):
+        if self.from_environment == self.to_environment:
+            raise ValueError("Pick a different environment to count these events as")
+        return self
+
+
 class FunnelStep(StrictModel):
     event: Name
     param: Annotated[str, Field(max_length=80)] = ""

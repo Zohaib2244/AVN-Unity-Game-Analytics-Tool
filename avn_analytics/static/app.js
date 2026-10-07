@@ -392,6 +392,7 @@ async function renderGameSettings() {
       <li class="notes-row"><span>Notes</span>${game.notes ? `<p>${escapeHTML(game.notes)}</p>` : '<span class="muted">No notes yet</span>'}</li>
     </ul><div class="section-spacing"><a class="button" href="${gamePath(game, 'keys')}">${icon('key',15)} Manage keys</a> <a class="button" href="${gamePath(game, 'dictionary')}">${icon('book',15)} Event dictionary</a></div></div></section>
     <aside class="aside-card">${icon('pulse',25)}<h3>Connect your game</h3><p>Send batches to the collection endpoint with one of this game’s API keys in the <code>X-API-Key</code> header.</p><div class="connection"><code>POST ${escapeHTML(overview.ingest_url)}</code></div><p class="small section-spacing">Set <code>AVN_PUBLIC_INGEST_URL</code> on the server to show your public collection address here.</p></aside></div>
+    <section class="panel section-spacing" id="environment-panel"><div class="panel-header"><div><h2>Environment</h2><p>Each build reports whether it is production, development or editor. A published build that was left in development mode is hidden by “Hide editor &amp; development data”. Re-count it here: the stored events are never changed, and you can undo it.</p></div></div><div class="panel-body" id="environment-list"><p class="help">Loading…</p></div></section>
     <section class="panel section-spacing"><div class="panel-header"><div><h2>Event activity</h2><p>Pick any days on the calendar · received by the server · UTC</p></div></div><div class="panel-body" id="activity"></div></section>
     ${me.is_admin && me.workspaces.length > 1 ? `<section class="panel section-spacing"><div class="panel-header"><div><h2>Workspace</h2><p>This game is in <strong>${escapeHTML(workspaceName())}</strong>${variantsOf(game).length > 1 ? '; moving it also moves its other platform version' : ''}. Members’ per-game access is cleared when it moves.</p></div></div><div class="panel-body icon-actions"><select id="move-target" aria-label="Move to workspace">${me.workspaces.filter(item => item.id !== currentWorkspace).map(item => `<option value="${item.id}">${escapeHTML(item.name)}</option>`).join('')}</select><button class="button" type="button" id="move-game">Move game…</button></div></section>` : ''}
     ${manage ? `<section class="panel section-spacing danger-zone"><div class="panel-header"><div><h2>Danger zone</h2><p>Changes here affect live data collection.</p></div></div><div class="panel-body">
@@ -399,6 +400,7 @@ async function renderGameSettings() {
       <div class="danger-row"><div><strong>Delete this game</strong><p>Removes the game and all of its API keys. Its event database is moved to the server’s <code>data/deleted</code> folder, not erased.</p></div><button class="button danger" data-game-action="delete">Delete game</button></div>
     </div></section>` : ''}`);
   mountActivity(document.querySelector('#activity'), game);
+  mountEnvironment(document.querySelector('#environment-list'), game, manage);
   if (manage) loadGameAccess(game);
   document.querySelector('#move-game')?.addEventListener('click', () => {
     const target = document.querySelector('#move-target'); const name = target.selectedOptions[0].textContent;
@@ -441,6 +443,36 @@ function editGame(game, update) {
     <div class="error" role="alert"></div><div class="modal-actions"><button type="button" class="button" data-action="close">Cancel</button><button class="button primary" type="submit">Save changes ${icon('check',14)}</button></div></form>`;
   modal.showModal();
   bindForm('#edit-form', async (form, values) => { await update(values, 'Game updated.'); modal.close(); });
+}
+
+// What each build has reported as its environment, with one-click "count it as production" fixes.
+function mountEnvironment(box, game, manage) {
+  const wrong = ['development', 'test', 'debug'];
+  let data = null;
+  const draw = async () => {
+    try { data = await api(`${gameURL(game)}/environment-fixes`); }
+    catch (error) { box.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; return; }
+    if (!data.seen.length) { box.innerHTML = '<p class="help">No events yet. Builds appear here once they send data.</p>'; return; }
+    const fixes = new Map(data.fixes.map(fix => [fix.id, fix]));
+    box.innerHTML = `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Reported as</th><th>Version</th><th>Build</th><th class="num">Players</th><th class="num">Events</th><th>Counted as</th>${manage ? '<th></th>' : ''}</tr></thead><tbody>${data.seen.map((row, index) => {
+      const fix = fixes.get(row.fix);
+      const action = !manage ? '' : fix ? `<button type="button" class="button" data-undo="${fix.id}">Undo</button>` : wrong.includes(row.environment) && row.app_version ? `<button type="button" class="button" data-recount="${index}">Count as production…</button>` : '';
+      return `<tr><td><span class="pill ${wrong.includes(row.environment) || row.environment === 'editor' ? '' : 'good'}">${escapeHTML(row.environment)}</span></td><td>${escapeHTML(row.app_version || '—')}</td><td>${escapeHTML(row.build || '—')}</td><td class="num">${number(row.players)}</td><td class="num">${number(row.events)}</td><td>${fix ? `<span class="pill good">${escapeHTML(fix.to_environment)}</span> <span class="small muted">corrected</span>` : '<span class="small muted">as reported</span>'}</td>${manage ? `<td class="num">${action}</td>` : ''}</tr>`;
+    }).join('')}</tbody></table></div>${data.fixes.length ? '' : '<p class="help">Nothing is corrected. If real players show up as development, use “Count as production” on their build.</p>'}`;
+  };
+  const changed = async message => { cache.clear(); overviewStale = true; await draw(); toast(message); };
+  box.addEventListener('click', event => {
+    const undo = event.target.closest('[data-undo]');
+    if (undo) { request(`${gameURL(game)}/environment-fixes/${undo.dataset.undo}`, {method: 'DELETE'}).then(() => changed('Back to as reported.')).catch(error => toast(error.message)); return; }
+    const recount = event.target.closest('[data-recount]');
+    if (!recount) return;
+    const row = data.seen[Number(recount.dataset.recount)];
+    confirmDialog(`Count version ${row.app_version} as production?`, `${number(row.players)} ${row.players === 1 ? 'player' : 'players'} and ${number(row.events)} events from this build${row.build ? ` (build ${row.build})` : ''} reported ${row.environment}. They will be counted as production everywhere in the dashboard (overview, players, funnels, levels, filters and export filters), including events that arrive later from this build. Only do this if the build is really published. The stored events are not changed and you can undo it from this table.`, 'Count as production', async () => {
+      await request(`${gameURL(game)}/environment-fixes`, {method: 'POST', body: JSON.stringify({from_environment: row.environment, to_environment: 'production', app_version: row.app_version, build: row.build || null})});
+      await changed(`Version ${row.app_version} now counts as production.`);
+    });
+  });
+  draw();
 }
 
 function confirmDialog(title, message, label, onConfirm) {

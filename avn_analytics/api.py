@@ -22,6 +22,7 @@ from .exports import build_export, period_bounds
 from .models import (
     AccessUpdate,
     Batch,
+    EnvironmentFix,
     EventDefinition,
     Filters,
     FunnelQuery,
@@ -327,6 +328,24 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     @admin_api.get("/v1/games/{game_id}")
     def game_details(game_id: UUID):
         return storage.game_details(str(game_id))
+
+    @admin_api.get("/v1/games/{game_id}/environment-fixes")
+    def list_environment_fixes(game_id: UUID):
+        return insights.environment_fixes(storage, str(game_id))
+
+    @admin_api.post("/v1/games/{game_id}/environment-fixes", status_code=201)
+    def add_environment_fix(game_id: UUID, fix: EnvironmentFix, principal: Manager):
+        result = insights.add_environment_fix(storage, str(game_id), fix.model_dump())
+        detail = f"{fix.from_environment} → {fix.to_environment}" + (
+            f" · {fix.app_version}" if fix.app_version else ""
+        )
+        accounts.audit(principal, "environment.fix", str(game_id), detail)
+        return result
+
+    @admin_api.delete("/v1/games/{game_id}/environment-fixes/{fix_id}", status_code=204)
+    def delete_environment_fix(game_id: UUID, fix_id: int, principal: Manager):
+        insights.delete_environment_fix(storage, str(game_id), fix_id)
+        accounts.audit(principal, "environment.unfix", str(game_id), str(fix_id))
 
     @admin_api.patch("/v1/games/{game_id}")
     def update_game(game_id: UUID, update: GameUpdate, principal: Manager):

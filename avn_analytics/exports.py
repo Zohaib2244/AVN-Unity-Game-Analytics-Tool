@@ -216,6 +216,13 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None, 
                     archive.write(parquet_path, "events.parquet")
                 finally:
                     parquet_path.unlink(missing_ok=True)
+                environment_fixes = [
+                    dict(row)
+                    for row in connection.execute(
+                        "SELECT from_environment, to_environment, app_version, build, note "
+                        "FROM environment_fixes ORDER BY id"
+                    )
+                ]
                 manifest = {
                     "schema_version": 1,
                     "game": game,
@@ -226,6 +233,7 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None, 
                     "start_inclusive": start,
                     "end_exclusive": end,
                     "filters": {key: value for key, value in (filters or {}).items() if value},
+                    "environment_fixes": environment_fixes,
                     "event_count": count,
                     "uncompressed_bytes": raw_bytes,
                     "dictionary_truncated": dictionary_truncated,
@@ -250,7 +258,11 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None, 
                     "- environment: production / development / editor, when the SDK sends it",
                     "  with the batch. Older events: use session_start's environment param and",
                     "  match other events to it by session_id. Exclude editor/development",
-                    "  sessions from player analyses.",
+                    "  sessions from player analyses. The events are exactly as received: if a",
+                    "  build shipped in the wrong mode, manifest.json's environment_fixes lists",
+                    "  how the dashboard re-counts it (from_environment -> to_environment for",
+                    "  that app_version / build; null means any). Apply them before deciding",
+                    "  what is test data.",
                     "- client_ts: UTC-normalized client time; may have clock skew.",
                     "- server_ts: UTC server receipt time of the first committed copy.",
                     "- country: ISO country code derived by the server from the request IP",

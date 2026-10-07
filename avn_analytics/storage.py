@@ -110,6 +110,8 @@ class Storage:
         sessions: the environment (production, editor, development...) of each session, taken
         from the batch's `environment` or from session_start's `environment` param, so every event
         of a session can be filtered without the SDK repeating it. funnels: saved funnel steps.
+        environment_fixes: "count what this build sent as development as production" rules for a
+        build that shipped in the wrong mode; applied when events are read, never to the events.
         """
         connection.executescript("""
             CREATE TABLE IF NOT EXISTS sessions (
@@ -121,6 +123,15 @@ class Storage:
                 name TEXT NOT NULL,
                 definition TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS environment_fixes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_environment TEXT NOT NULL,
+                to_environment TEXT NOT NULL,
+                app_version TEXT,
+                build TEXT,
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
             );
         """)
         if connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0:
