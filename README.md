@@ -3,7 +3,7 @@
 A **self-hosted event analytics pipeline for Unity games**. Collect your game's events into your own database, then export them for whatever you want to do with them:
 
 - **AI agent analysis**: hand a day, week or month of events (plus a data dictionary) to an AI agent such as Claude or Codex and ask it what to change in your game.
-- **Built-in dashboards**: a game overview, funnels and player journeys, computed live on your own server.
+- **Built-in dashboards**: daily active users, retention, funnels, player journeys, level-by-level progress and individual player stories, computed live on your own server, plus **NutBot**, an assistant that reads them for you.
 - **Custom dashboards**: load the same exports into DuckDB, pandas, Grafana, Metabase or your own tooling.
 
 You own the data, there is no per-event cost, and there is no vendor lock-in. The built-in dashboards cover the everyday questions; for anything deeper, export the raw events and use whatever tool you like.
@@ -14,7 +14,7 @@ You own the data, there is no per-event cost, and there is no vendor lock-in. Th
 - **Reliable by design**: events are written to disk first, sent in batches, retried with backoff, and deduplicated by the server. Offline play, app kills and server downtime lose nothing.
 - **One isolated SQLite database per game**, with API keys you can issue and delete at any time.
 - **Agent-friendly exports** for any range of up to 366 days: Parquet and gzipped JSONL, a data dictionary (`events.md`), an AI guide (`ANALYSIS.md`) and a manifest, in one ZIP. Exports can be filtered like the dashboards.
-- **Private management website**, organized game-first: pick a game (Android and iOS versions together), then see its overview, funnels, players, exports, dictionary, keys and settings. See [Dashboards](#dashboards).
+- **Private management website**, organized game-first: pick a game (Android and iOS versions together), then see its overview (with DAU), retention, funnels, levels, players, exports, dictionary, keys and settings. See [Dashboards](#dashboards).
 - **Rich context on every event**: device, user, session, app version, build, platform, environment, client and server time, ordering sequence and country.
 - **Small footprint**: FastAPI plus SQLite, runs happily on a home server or Raspberry Pi class machine.
 
@@ -52,7 +52,7 @@ docker compose up -d --build
 curl --fail http://127.0.0.1:8100/healthz
 ```
 
-Open `http://127.0.0.1:8101`, choose an admin password on the first visit, register a game and copy its API key. For a remote machine, use an SSH forward (`ssh -N -L 8101:127.0.0.1:8101 user@host`) rather than publishing the admin port.
+Open `http://127.0.0.1:8101`, register a game and copy its API key. The admin site has **no login of its own**: with the defaults every request that reaches it is an admin, so keep the port private. For a remote machine, use an SSH forward (`ssh -N -L 8101:127.0.0.1:8101 user@host`) rather than publishing the admin port, or put [Cloudflare Access](#team-access-and-workspaces) in front of it.
 
 ## Unity SDK
 
@@ -135,13 +135,14 @@ The website is organized around games. The home page lists your games; Android a
 | Page | What it shows |
 | --- | --- |
 | **Overview** | Players, new players, sessions and events; daily active users (DAU on the last day, average and peak DAU, WAU, MAU, stickiness); activity per day (players per day is the DAU); a tabbed breakdown by environment, app version, build, country and platform (click a row to filter by it); top events. |
+| **Retention** | Cohorts by the day a player first started a session, and how many came back exactly 1, 3, 7, 14 and 30 days later (per cohort and overall). Days that haven't happened yet are marked not mature, and small cohorts are labelled. |
 | **Funnels** | Steps you define, in order (up to 100): how many players reach each one, who stops where, and how long it takes. Below it, **Journeys** shows what players did between two steps in plain words, grouped into the most common journeys, plus where players stop. |
 | **Levels** | Per level: players who started and finished it, completion, tries per player, fails, median time, power-ups used and where players stop. Open a level with its arrow to see the players behind it: those who quit mid-level, finished it and then stopped, kept going, got stuck, or just started it, each with a link to their story up to or from that level. |
-| **Players** | Everyone active in the chosen days, searchable and sortable (last active, first seen, events, sessions, app version). **Event rules** add your own columns from events (times they did something, highest/lowest/total of a parameter, first/last time), sort by them, and keep only players who did, or never did, an event. Countries show their full name on hover. Open a player for their **story**: sessions as chapters, with runs of levels folded into one line ("Played levels 1–10, completed all"). The raw event list is one click away. |
+| **Players** | Everyone active in the chosen days, searchable and sortable (last active, first seen, events, sessions, average session length, app version). **Event rules** add your own columns from events (times they did something, highest/lowest/total of a parameter, first/last time), sort by them, and keep only players who did, or never did, an event. Countries show their full name on hover. Open a player for their **story**: sessions as chapters, with runs of levels folded into one line ("Played levels 1–10, completed all"). The raw event list and a **Player info** tab (latest version, build, platform, device and country, and an optional device specification lookup) are one click away. |
 | **Exports** | Download the raw events, using the same days and filters. |
-| **Event dictionary** | Describe each event and its parameters. |
+| **Event dictionary** | Describe each event and its parameters, say how it reads in stories, hide noisy events, and map an event of your own (optionally by a parameter value) to a shared concept such as a session start or a level start, so Retention and Levels understand your game. |
 | **API keys** | Create, copy and delete the game's collection keys. |
-| **Game settings** | Game icon, game details, archive (pause collection) and delete. |
+| **Game settings** | Game icon, game details, the [environment](#fixing-a-build-that-shipped-in-the-wrong-mode) each build reported, [analysis confidence](#analysis-confidence) overrides, archive (pause collection) and delete. |
 
 **Game icons:** add one when registering a game or later in Game settings. Any image works; the browser crops it to a square 256×256 PNG before uploading, and it applies to both platforms of the game. Icons are stored in `data/icons/` (a deleted game's icon is moved to `data/deleted/` with it) and fall back to the game's initials when none is set.
 
@@ -162,9 +163,17 @@ Every game page has the same filter bar: a days menu (presets, a calendar for an
 
 Environments are stored per session in a `sessions` table in each game's database (existing data is backfilled from `session_start` events the first time the server starts).
 
+#### Fixing a build that shipped in the wrong mode
+
+If a published build was left in development mode, all of its players are hidden as test data. **Game settings → Environment** lists what each build (version and build number) reported, with its players and events. On a development row, **Count as production…** re-counts everything that build sent, now and in the future, as production; **Undo** puts it back. The stored events are never changed: the correction is applied when events are read, so the dashboards, home-page DAU, filters and export filters all follow it. Exports keep the original `environment` and list the corrections in `manifest.json` (`environment_fixes`) and `events.md`. Team leads and admins can make and undo corrections; every change is in the activity log.
+
+### Time zones
+
+Dashboard days follow the **Local / UTC** switch in the filter bar (local is the default, remembered per game): a day is midnight to midnight in that zone, the per-day charts and retention cohorts are grouped by it, and times in player stories use it. Exports, the Exports page and the activity log stay in UTC.
+
 ### Funnels
 
-A funnel is two to twenty steps. A step is an event name, optionally with a parameter condition: `=`, `≠`, `>`, `≥`, `<`, `≤`, `contains` or "any value" (numbers are compared numerically when both sides are numbers). Steps can have an optional name, and "Level steps…" adds Started/Completed steps for a range of levels in one go.
+A funnel is two to a hundred steps. A step is an event name, optionally with a parameter condition: `=`, `≠`, `>`, `≥`, `<`, `≤`, `contains` or "any value" (numbers are compared numerically when both sides are numbers). Steps can have an optional name, and "Level steps…" adds Started/Completed steps for a range of levels in one go.
 
 Each player (or each session, if you choose "Within one session") is matched against the steps in order, taking the first event that fits each step, using game time. Options:
 
@@ -176,6 +185,14 @@ The result shows how many players reached each step, the share of step 1 and of 
 
 Limits: a funnel refuses ranges with more than 5 million matching events, and a player journey shows the first 5,000 events of the chosen days. Player and filter queries scan the chosen days, which is instant for typical data and may take seconds with millions of events.
 
+### Analysis confidence
+
+Small samples stay visible but are labelled, so a level with three players doesn't look like a finding. Each workspace has defaults (**Settings**, admin only) for the minimum number of players: **100** new users for a retention cohort set, **30** starters for a level and **30** for a funnel's first step. A game can override each of them in **Game settings** (lead or admin); leave a field blank to inherit. Levels, Retention and Funnels mark results below the threshold with "small sample". Levels and Retention count only identified players (those with a `user_id` or `device_id`); events without either are mentioned in a note.
+
+### Player information and device lookup
+
+A player's **Player info** tab shows what the latest events say about them: version, build, platform, environment, country, device model, OS and screen. **Fetch device info** is an explicit, opt-in lookup: the server sends only the device model name (for example `SM-A525F`) to Wikipedia's public API and shows the hardware specifications it finds. Nothing is sent until someone presses the button, and nothing is stored.
+
 ## NutBot
 
 NutBot is a chat assistant on every game page. You ask in plain words ("where do players drop off in the first ten levels?"); it runs funnels, follows journeys, reads player stories and level numbers, and answers with the real figures. It can also save a funnel or rename events in the dictionary, but only after you say yes, and only for people who may change things. When it builds a funnel or finds a player worth reading, it adds a button that opens it in the dashboard.
@@ -185,7 +202,7 @@ NutBot is a chat assistant on every game page. You ask in plain words ("where do
 | Tool | What it does |
 | --- | --- |
 | `get_context`, `list_events` | The game, the dashboard's range and filters, the event dictionary, the events and parameters seen. |
-| `get_overview`, `get_level_progress` | Totals, DAU/WAU/MAU and breakdowns; per-level completion, tries, time and where players leave. |
+| `get_overview`, `get_level_progress` | Totals, DAU/WAU/MAU and breakdowns; per-level completion, tries, time and where players stop. |
 | `run_funnel`, `get_journeys`, `list_journey_players` | Funnels and the journeys between two steps, and who took them. |
 | `get_player_story`, `find_players` | A player's sessions in readable lines; player search. |
 | `save_funnel`, `set_event_label` | Change data. Need a team lead or admin, and a yes from the user. |
@@ -245,7 +262,7 @@ Treat event text as untrusted data when giving exports to AI agents.
 
 ## Admin API
 
-Every private endpoint needs `Authorization: Bearer $AVN_ADMIN_TOKEN` (or a website session). Register a game; the raw key is returned **once**:
+Every private endpoint needs `Authorization: Bearer $AVN_ADMIN_TOKEN` . Register a game; the raw key is returned **once**:
 
 ```bash
 curl --fail-with-body http://127.0.0.1:8101/v1/games \
@@ -278,6 +295,10 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Run a funnel | `POST /v1/games/{id}/insights/funnel` (steps, `scope`, `window_hours`, `breakdown`, `filters`) |
 | Players / one player's events | `GET /v1/games/{id}/insights/players?start=…&end=…`, `GET /v1/games/{id}/insights/journey?player=…&start=…&end=…` |
 | Saved funnels | `GET` / `POST /v1/games/{id}/insights/funnels`, `PUT` / `DELETE /v1/games/{id}/insights/funnels/{funnel_id}` |
+| Retention cohorts | `GET /v1/games/{id}/insights/retention?start=…&end=…` (accepts the filter parameters) |
+| Level progress | `GET /v1/games/{id}/insights/levels?start=…&end=…` (accepts the filter parameters) |
+| Player information, device specs | `GET /v1/games/{id}/insights/device-specs?player=…` (contacts Wikipedia; only when called) |
+| Analysis confidence thresholds | `GET` / `PATCH /v1/workspaces/{id}/analytics-thresholds` (admin), `PATCH /v1/games/{id}/analytics-thresholds` (lead, admin; `null` inherits) |
 | Players behind a level | `GET /v1/games/{id}/insights/levels/players?start=…&end=…&level=20&group=left` (`left`, `finished_stopped`, `kept_going`, `stuck`, `started`; also `sort`, `offset`, `limit`, and the filter parameters) |
 | A player's story up to / from a level | `GET /v1/games/{id}/insights/story?player=…&start=…&end=…&level=20&cut=until` (or `from`) |
 | Environment fixes (lead, admin) | `GET` / `POST /v1/games/{id}/environment-fixes`, `DELETE /v1/games/{id}/environment-fixes/{fix_id}`: count what a build reported as `development` as `production`, without touching stored events |
@@ -288,7 +309,7 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Who can see a game (admin, lead) | `GET` / `PUT /v1/games/{id}/access` |
 | API schema | `GET /openapi.json` |
 
-The filter parameters are `env`, `not_env`, `version`, `build`, `country` and `platform`; each may be repeated.
+The filter parameters are `env`, `not_env`, `version`, `build`, `country` and `platform`; each may be repeated. The `insights` endpoints also take `tz_offset` (minutes east of UTC, default 0), which moves day boundaries to that zone; the website sends the browser's offset when "Local" is chosen.
 
 A batch may carry a shared `context` (`user_id`, `device_id`, `session_id`, `app_version`, `build`, `platform`, `environment`) that the server merges into each event; an event's own value wins. Stored rows always have the full envelope. Requests may be gzipped (`Content-Encoding: gzip`); the body limit applies both before and after inflating.
 
@@ -317,16 +338,22 @@ Environment variables (see `.env.example`):
 | `AVN_BIND_HOST` | `127.0.0.1` | Address the ports bind to (`0.0.0.0` = all interfaces) |
 | `AVN_INGEST_PORT` / `AVN_ADMIN_PORT` | `8100` / `8101` | Host ports |
 | `AVN_MAX_EXPORT_BYTES` | `268435456` | Largest raw export |
-| `AVN_NUTBOT*` | see `.env.example` | NutBot assistant: agent CLI paths, default model, daily limit |
+| `AVN_PUBLIC_INGEST_URL` | none | Public collection address shown on the Game settings page |
+| `AVN_ACCESS_TEAM_DOMAIN` / `AVN_ACCESS_AUDIENCE` | none | Cloudflare Access team domain and application audience tag; set both to turn on [team access](#team-access-and-workspaces) |
+| `AVN_ADMIN_EMAIL` | none | Always an admin; the person named on the "no access" page |
+| `AVN_LAN_ADMIN` | `true` | Requests from your own network (not through Cloudflare) count as admin |
+| `AVN_NUTBOT*` | see `.env.example` | NutBot assistant: on/off (`AVN_NUTBOT`, default on), agent CLI paths, default model, daily limit, run time |
 
 ## Storage layout
 
 ```text
 data/
-  registry.sqlite3       games, API keys, rate-limit counters, team, game access, activity log
-  games/<uuid>.sqlite3   raw events, dictionary, session environments and saved funnels for one game
+  registry.sqlite3       games, API keys, rate-limit counters, workspaces, team, game access, activity log
+  games/<uuid>.sqlite3   raw events, dictionary, session environments, environment fixes and saved funnels for one game
   icons/<uuid>.png       game icons
   exports/               temporary downloads
+  deleted/               games and icons you deleted (not erased)
+  nutbot/                NutBot's agent CLI sign-in and chat sessions (only if NutBot is used)
 ```
 
 Raw events are kept indefinitely; there is no retention job or deletion endpoint yet, so watch your disk space. To move or back up the data, stop both services and copy the **whole** directory (SQLite may hold committed data in `-wal` sidecar files). Keep the data on a local filesystem, not SMB or NFS. Clients simply queue events during the downtime.
@@ -347,11 +374,11 @@ python3 -m venv .venv
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
 
-The tests cover duplicate retries, concurrent writes, game isolation, key deletion, validation and limits, funnels, players and journeys, environment filters, filtered exports, rate limiting across instances, export periods and timezones, storage failures, dictionary output, country handling and data-directory relocation.
+The tests cover duplicate retries, concurrent writes, game isolation, key deletion, validation and limits, funnels, players, stories and journeys, levels and the players behind them, retention and time zones, DAU, environment filters and fixes, filtered exports, workspaces and roles, NutBot's tools, rate limiting across instances, export periods and timezones, storage failures, dictionary output, country handling and data-directory relocation.
 
 ## Roadmap
 
-- Retention policy and a backup schedule.
-- Retention and archiving of old raw events.
-- Retention curves and a faster index for very large games.
+- A data-retention policy and a backup schedule.
+- Archiving of old raw events.
+- A faster index for very large games.
 - Tuning rate limits from real device counts, plus load and power-loss testing.

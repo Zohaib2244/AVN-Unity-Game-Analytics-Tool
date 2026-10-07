@@ -27,7 +27,7 @@ Website API tests additionally cover direct loopback access, Origin/hostname
 protection for writes, bearer-token access for non-local clients, no stored browser
 credentials and separation from the ingest service.
 
-See `DEPLOYMENT.md` for the installation on the AVNS server itself.
+See `DEPLOYMENT.md` for installing it on your own server.
 
 After deployment, Chromium loaded the real website from `http://127.0.0.1:8101/`
 and verified direct local access. Both deployed containers passed their health

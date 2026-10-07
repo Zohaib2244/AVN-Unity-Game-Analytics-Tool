@@ -56,7 +56,7 @@ The first build compiles a pinned SQLite (the server refuses SQLite versions wit
 ## 3. First use
 
 1. Open **`http://127.0.0.1:8101`** on that machine (or from your workstation: `ssh -N -L 8101:127.0.0.1:8101 you@your-server`, then open the same address locally).
-2. On the first visit, choose an admin password (12+ characters). Browser sign-in is separate from the `.env` token, which is for scripts.
+2. There is no sign-in page: the admin site has no login of its own, and (with the defaults) every request that reaches it is an admin. That is why the port stays private and the guide uses an SSH forward; to let other people in, put Cloudflare Access in front of it (see [Team access](#team-access)). The `.env` token is for scripts.
 3. **Games, Register a game**: enter a name, bundle ID (`com.example.mygame`) and platform (`android`, `ios`...). Register iOS and Android separately if you want separate databases.
 4. Copy the **API key**. It is shown once; you can issue more later (rotate by creating a new key, shipping it, then revoking the old one).
 5. Optionally describe your events on the **Event dictionary** page. These descriptions end up in every export.
@@ -185,9 +185,9 @@ Hand the ZIP to an AI agent or load it into DuckDB, pandas or a dashboard tool.
 
 ### Dashboards
 
-You don't need an export to look at your data: each game has an **Overview**, **Funnels** and **Players** page on the website, computed live from the event database. See the [README](README.md#dashboards) for what each shows, how environments are decided, and the limits (very large ranges and millions of events can take a few seconds).
+You don't need an export to look at your data: each game has **Overview** (with daily active users), **Retention**, **Funnels**, **Levels** and **Players** pages on the website, plus the optional [NutBot](README.md#nutbot) assistant, computed live from the event database. See the [README](README.md#dashboards) for what each shows, how environments are decided, and the limits (very large ranges and millions of events can take a few seconds).
 
-When you upgrade from a version without dashboards, nothing needs migrating by hand: on first start the server adds the new per-game tables (session environments and saved funnels) and fills the environments from existing `session_start` events. Back up `data/` first, as always.
+When you upgrade from a version without dashboards, nothing needs migrating by hand: on first start the server adds the new per-game tables (session environments, saved funnels and environment fixes) and fills the environments from existing `session_start` events. Back up `data/` first, as always.
 
 ## Team access
 
@@ -221,7 +221,7 @@ docker compose up -d --wait                # start
 
 - **Updating:** `git pull`, then `docker compose up -d --build --wait`. The ingest and admin services both use the image, so rebuild both: a brief restart of ingest is safe (games queue events and retry). Keep `.env` and `data/` as they are. Do not overwrite `.env` with `.env.example` or you will lose the admin token.
 - **Boot:** services use `restart: unless-stopped`; enable the Docker service at boot (`systemctl enable docker`).
-- **Rotating the admin token:** edit `AVN_ADMIN_TOKEN` in `.env`, then `docker compose up -d --force-recreate`. Website sessions are unaffected.
+- **Rotating the admin token:** edit `AVN_ADMIN_TOKEN` in `.env`, then `docker compose up -d --force-recreate`.
 - **Disk:** check free space occasionally. There is no automatic retention or deletion, and a full disk makes the server return 503 (clients keep their events and retry), so plan capacity or export and archive.
 - **Failures are safe:** if the server is down, games queue events on the device and catch up later.
 
@@ -231,8 +231,11 @@ All state lives in `data/`:
 
 ```text
 data/
-  registry.sqlite3       games, hashed keys, rate limits, website password
+  registry.sqlite3       games, keys, rate limits, workspaces, team, game access, activity log
   games/<uuid>.sqlite3   one database per game
+  icons/                 game icons
+  deleted/               deleted games and icons (moved here, not erased)
+  nutbot/                NutBot's agent CLI sign-in and chat sessions (if used)
   exports/               temporary download files (safe to delete when stopped)
 ```
 
@@ -252,7 +255,7 @@ To move to a new disk: stop, `rsync -a ./data/ /new/disk/avn-data/`, set `AVN_HO
 - [ ] HTTPS is enforced at your proxy or tunnel.
 - [ ] `.env` is `chmod 600`, and the admin token is not in any game build or repository.
 - [ ] Remember the dashboard stores each new API key's full value (so it can be copied again): keep port 8101 and `data/` private, and back them up as sensitive.
-- [ ] You chose a strong admin password; remote admin access goes through SSH forwarding or a VPN.
+- [ ] Remote admin access goes through SSH forwarding, a VPN or Cloudflare Access: the website has no login of its own, so nothing else should reach port 8101.
 - [ ] Edge rate limiting is on for the ingest hostname.
 - [ ] Backups run and have been restored at least once.
 - [ ] Your store privacy disclosures cover the device, user and (IP-derived) country data you collect.

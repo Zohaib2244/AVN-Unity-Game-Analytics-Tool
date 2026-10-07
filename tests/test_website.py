@@ -42,5 +42,5 @@ def test_no_login_routes_and_writes_from_any_host(website):
         assert client.get(path).status_code == 404
     payload = {"name": "Game", "bundle_id": "com.avn.game", "platform": "android"}
     app = create_app(website[1], admin=True)
-    with TestClient(app, base_url="http://analytics.avns.nut") as lan:
+    with TestClient(app, base_url="http://analytics.example.lan") as lan:
         assert lan.post("/v1/games", json=payload).status_code == 201
