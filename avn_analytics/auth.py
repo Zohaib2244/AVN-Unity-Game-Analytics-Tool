@@ -189,7 +189,10 @@ class Accounts:
                 CREATE TABLE IF NOT EXISTS workspaces (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    retention_min_users INTEGER NOT NULL DEFAULT 100,
+                    levels_min_players INTEGER NOT NULL DEFAULT 30,
+                    funnels_min_players INTEGER NOT NULL DEFAULT 30
                 );
                 CREATE UNIQUE INDEX IF NOT EXISTS workspaces_name ON workspaces(lower(name));
                 CREATE TABLE IF NOT EXISTS workspace_nutbot (
@@ -225,6 +228,19 @@ class Accounts:
                 );
                 CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log(at);
             """)
+            workspace_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(workspaces)")
+            }
+            for column, default in (
+                ("retention_min_users", 100),
+                ("levels_min_players", 30),
+                ("funnels_min_players", 30),
+            ):
+                if column not in workspace_columns:
+                    connection.execute(
+                        f"ALTER TABLE workspaces ADD COLUMN {column} INTEGER NOT NULL "
+                        f"DEFAULT {default}"
+                    )
             now = timestamp()
             if connection.execute("SELECT count(*) FROM workspaces").fetchone()[0] == 0:
                 # First start with workspaces: everything that exists lands in "Default", and the
@@ -232,7 +248,8 @@ class Accounts:
                 # any other value is just a nominal marker now.)
                 default = str(uuid4())
                 connection.execute(
-                    "INSERT INTO workspaces VALUES (?, 'Default', ?)", (default, now)
+                    "INSERT INTO workspaces (id, name, created_at) VALUES (?, 'Default', ?)",
+                    (default, now),
                 )
                 connection.execute(
                     """INSERT OR IGNORE INTO workspace_members
@@ -414,10 +431,39 @@ class Accounts:
             ).fetchone():
                 raise HTTPException(409, "A workspace with that name already exists")
             connection.execute(
-                "INSERT INTO workspaces VALUES (?, ?, ?)", (workspace_id, name, timestamp())
+                "INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?)",
+                (workspace_id, name, timestamp()),
             )
         self.audit(actor, "workspace.create", None, name)
         return {"id": workspace_id, "name": name}
+
+    def analytics_thresholds(self, workspace_id):
+        with self.storage.connect(self.registry) as connection:
+            row = self._workspace(connection, workspace_id)
+            return {
+                key: row[key]
+                for key in (
+                    "retention_min_users",
+                    "levels_min_players",
+                    "funnels_min_players",
+                )
+            }
+
+    def set_analytics_thresholds(self, actor, workspace_id, values):
+        with self.storage.connect(self.registry) as connection:
+            workspace = self._workspace(connection, workspace_id)
+            connection.execute(
+                """UPDATE workspaces SET retention_min_users=?, levels_min_players=?,
+                       funnels_min_players=? WHERE id=?""",
+                (
+                    values.retention_min_users,
+                    values.levels_min_players,
+                    values.funnels_min_players,
+                    workspace_id,
+                ),
+            )
+        self.audit(actor, "workspace.analytics", None, workspace["name"])
+        return self.analytics_thresholds(workspace_id)
 
     def rename_workspace(self, actor, workspace_id, name):
         name = self._check_name(name)

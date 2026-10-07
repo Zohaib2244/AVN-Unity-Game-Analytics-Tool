@@ -157,6 +157,18 @@ class KeyCreate(StrictModel):
     label: Annotated[str, Field(min_length=1, max_length=128)] = "default"
 
 
+CanonicalOp = Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"]
+
+
+class CanonicalMapping(StrictModel):
+    """Maps one raw event (optionally by a parameter condition) to a shared concept."""
+
+    action: Name
+    param: Annotated[str, Field(max_length=80)] = ""
+    op: CanonicalOp = "eq"
+    value: Annotated[str, Field(max_length=200)] = ""
+
+
 class EventDefinition(StrictModel):
     description: Annotated[str, Field(min_length=1, max_length=4000)]
     params: dict[str, str] = Field(default_factory=dict, max_length=50)
@@ -164,6 +176,7 @@ class EventDefinition(StrictModel):
     # A rule applies when the named parameter is present ("*" always); first match wins.
     labels: Annotated[str, Field(max_length=2000)] = ""
     hidden: bool = False  # left out of player stories and journeys (noise)
+    canonical: list[CanonicalMapping] = Field(default_factory=list, max_length=20)
 
     @field_validator("params")
     @classmethod
@@ -187,6 +200,15 @@ class Filters(StrictModel):
     builds: FilterValues = []
     countries: FilterValues = []
     platforms: FilterValues = []
+
+
+Threshold = Annotated[int, Field(ge=1, le=1_000_000)]
+
+
+class AnalyticsThresholds(StrictModel):
+    retention_min_users: Threshold = 100
+    levels_min_players: Threshold = 30
+    funnels_min_players: Threshold = 30
 
 
 EnvironmentName = Annotated[
@@ -220,6 +242,12 @@ class EnvironmentFix(StrictModel):
         return self
 
 
+class AnalyticsThresholdOverrides(StrictModel):
+    retention_min_users: Threshold | None = None
+    levels_min_players: Threshold | None = None
+    funnels_min_players: Threshold | None = None
+
+
 class FunnelStep(StrictModel):
     event: Name
     param: Annotated[str, Field(max_length=80)] = ""
@@ -239,6 +267,7 @@ class FunnelQuery(FunnelDefinition):
     end: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
     breakdown: Literal["environment", "app_version", "build", "country", "platform"] | None = None
     filters: Filters = Filters()
+    timezone_offset_minutes: Annotated[int, Field(ge=-840, le=840)] = 0
 
 
 class JourneyTarget(StrictModel):
@@ -259,6 +288,7 @@ class JourneyQuery(FunnelDefinition):
     route_to: Annotated[int, Field(ge=2, le=100)] | None = None
     ignore: list[Name] = Field(default_factory=list, max_length=100)
     span: Literal["session", "all"] = "session"
+    timezone_offset_minutes: Annotated[int, Field(ge=-840, le=840)] = 0
 
 
 class JourneyPlayersQuery(JourneyQuery):

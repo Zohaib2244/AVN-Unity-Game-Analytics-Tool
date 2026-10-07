@@ -608,7 +608,7 @@ TOOLS = [
     ),
     _tool(
         "get_player_story",
-        "One player's sessions as readable lines: what they did, levels played, power-ups used, how long levels took, when they came back.",
+        "One player's profile and sessions as readable lines: device, OS, location, build, what they did, levels played, power-ups used, how long levels took, and when they came back.",
         {
             "player": {
                 "type": "string",
@@ -620,14 +620,14 @@ TOOLS = [
     ),
     _tool(
         "find_players",
-        "Players active in the range with sessions, events, version, country, environment. Sort them, keep only players who did (or never did) an event, and add columns computed from events (times they did it, highest/lowest/total of a parameter, first/last time), e.g. the top spenders of a power-up or players who never completed level 3.",
+        "Players active in the range with sessions, average session length, events, version, country, environment. Sort them, keep only players who did (or never did) an event, and add columns computed from events (times they did it, highest/lowest/total of a parameter, first/last time), e.g. the top spenders of a power-up or players who never completed level 3.",
         {
             **RANGE_PROPS,
             "search": {"type": "string"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 25},
             "sort": {
                 "type": "string",
-                "description": "last_seen (default), first_seen, events, sessions, version (newest app version first, ordered by number), or metric0..metric2 for one of the columns below.",
+                "description": "last_seen (default), first_seen, events, sessions, session_length (average duration per session, using its final event when no end was reported), version (newest app version first, ordered by number), or metric0..metric2 for one of the columns below.",
             },
             "order": {"type": "string", "enum": ["asc", "desc"]},
             "conditions": {

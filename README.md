@@ -136,7 +136,7 @@ The website is organized around games. The home page lists your games; Android a
 | --- | --- |
 | **Overview** | Players, new players, sessions and events; daily active users (DAU on the last day, average and peak DAU, WAU, MAU, stickiness); activity per day (players per day is the DAU); a tabbed breakdown by environment, app version, build, country and platform (click a row to filter by it); top events. |
 | **Funnels** | Steps you define, in order (up to 100): how many players reach each one, who stops where, and how long it takes. Below it, **Journeys** shows what players did between two steps in plain words, grouped into the most common journeys, plus where players stop. |
-| **Levels** | Per level: players who started and finished it, completion, tries per player, fails, median time, power-ups used and where players leave. |
+| **Levels** | Per level: players who started and finished it, completion, tries per player, fails, median time, power-ups used and where players stop. Open a level with its arrow to see the players behind it: those who quit mid-level, finished it and then stopped, kept going, got stuck, or just started it, each with a link to their story up to or from that level. |
 | **Players** | Everyone active in the chosen days, searchable and sortable (last active, first seen, events, sessions, app version). **Event rules** add your own columns from events (times they did something, highest/lowest/total of a parameter, first/last time), sort by them, and keep only players who did, or never did, an event. Countries show their full name on hover. Open a player for their **story**: sessions as chapters, with runs of levels folded into one line ("Played levels 1–10, completed all"). The raw event list is one click away. |
 | **Exports** | Download the raw events, using the same days and filters. |
 | **Event dictionary** | Describe each event and its parameters. |
@@ -278,6 +278,9 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Run a funnel | `POST /v1/games/{id}/insights/funnel` (steps, `scope`, `window_hours`, `breakdown`, `filters`) |
 | Players / one player's events | `GET /v1/games/{id}/insights/players?start=…&end=…`, `GET /v1/games/{id}/insights/journey?player=…&start=…&end=…` |
 | Saved funnels | `GET` / `POST /v1/games/{id}/insights/funnels`, `PUT` / `DELETE /v1/games/{id}/insights/funnels/{funnel_id}` |
+| Players behind a level | `GET /v1/games/{id}/insights/levels/players?start=…&end=…&level=20&group=left` (`left`, `finished_stopped`, `kept_going`, `stuck`, `started`; also `sort`, `offset`, `limit`, and the filter parameters) |
+| A player's story up to / from a level | `GET /v1/games/{id}/insights/story?player=…&start=…&end=…&level=20&cut=until` (or `from`) |
+| Environment fixes (lead, admin) | `GET` / `POST /v1/games/{id}/environment-fixes`, `DELETE /v1/games/{id}/environment-fixes/{fix_id}`: count what a build reported as `development` as `production`, without touching stored events |
 | Who am I, my workspaces and roles | `GET /v1/me` |
 | Workspaces (admin) | `GET` / `POST /v1/workspaces`, `PATCH /v1/workspaces/{id}`, `DELETE /v1/workspaces/{id}?confirm=<name>&move_to=<id>` (or `&delete_games=true`) |
 | Move a game (admin) | `POST /v1/games/{id}/move` with `{"workspace_id": …}` |

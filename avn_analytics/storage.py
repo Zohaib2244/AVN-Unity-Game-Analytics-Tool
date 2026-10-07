@@ -98,6 +98,13 @@ class Storage:
                 connection.execute("ALTER TABLE games ADD COLUMN workspace_id TEXT")
             if "icon_updated_at" not in game_columns:  # set when the game has an uploaded icon
                 connection.execute("ALTER TABLE games ADD COLUMN icon_updated_at TEXT")
+            for column in (
+                "retention_min_users",
+                "levels_min_players",
+                "funnels_min_players",
+            ):
+                if column not in game_columns:
+                    connection.execute(f"ALTER TABLE games ADD COLUMN {column} INTEGER")
             game_ids = [row["id"] for row in connection.execute("SELECT id FROM games")]
         for game_id in game_ids:
             if self.game_path(game_id).exists():
@@ -221,6 +228,43 @@ class Storage:
             raise HTTPException(404, "Game not found")
         return dict(row)
 
+    def analytics_thresholds(self, game_id):
+        """Effective workspace defaults plus any overrides saved for this game."""
+        with self.connect(self.root / "registry.sqlite3") as connection:
+            row = connection.execute(
+                """SELECT
+                       coalesce(g.retention_min_users, w.retention_min_users, 100)
+                           AS retention_min_users,
+                       coalesce(g.levels_min_players, w.levels_min_players, 30)
+                           AS levels_min_players,
+                       coalesce(g.funnels_min_players, w.funnels_min_players, 30)
+                           AS funnels_min_players,
+                       g.retention_min_users AS retention_override,
+                       g.levels_min_players AS levels_override,
+                       g.funnels_min_players AS funnels_override
+                   FROM games g LEFT JOIN workspaces w ON w.id=g.workspace_id
+                   WHERE g.id=?""",
+                (game_id,),
+            ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Game not found")
+        return dict(row)
+
+    def set_analytics_thresholds(self, game_id, values):
+        self.get_game(game_id)
+        with self.connect(self.root / "registry.sqlite3") as connection:
+            connection.execute(
+                """UPDATE games SET retention_min_users=?, levels_min_players=?,
+                       funnels_min_players=? WHERE id=?""",
+                (
+                    values.retention_min_users,
+                    values.levels_min_players,
+                    values.funnels_min_players,
+                    game_id,
+                ),
+            )
+        return self.analytics_thresholds(game_id)
+
     def icon_path(self, game_id):
         return self.root / "icons" / f"{game_id}.png"
 
@@ -280,6 +324,7 @@ class Storage:
             "keys_total": keys["total"],
             "keys_active": keys["active"],
             "storage_bytes": size,
+            "analytics_thresholds": self.analytics_thresholds(game_id),
         }
 
     def update_game(self, game_id, update: GameUpdate):

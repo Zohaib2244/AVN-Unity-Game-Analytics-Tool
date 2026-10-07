@@ -4,7 +4,7 @@ import logging
 import sqlite3
 import zlib
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import UTC, date, datetime, timedelta, timezone
 from threading import BoundedSemaphore
 from typing import Annotated, Literal
 from uuid import UUID
@@ -15,12 +15,14 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import Field
 from starlette.background import BackgroundTask
 
-from . import insights, journeys
+from . import device_specs, insights, journeys
 from .auth import AccessVerifier, Accounts, Principal
 from .config import Settings
 from .exports import build_export, period_bounds
 from .models import (
     AccessUpdate,
+    AnalyticsThresholdOverrides,
+    AnalyticsThresholds,
     Batch,
     EnvironmentFix,
     EventDefinition,
@@ -295,11 +297,16 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         }
 
     @admin_api.get("/v1/overview")
-    def overview(principal: Current, workspace: UUID | None = None):
+    def overview(
+        principal: Current,
+        workspace: UUID | None = None,
+        tz_offset: Annotated[int, Query(ge=-840, le=840)] = 0,
+    ):
         workspace_id = accounts.pick_workspace(principal, str(workspace) if workspace else None)
         visible = {game["id"] for game in accounts.games_in(principal, workspace_id)}
-        result = website_overview(storage, visible)
+        result = website_overview(storage, visible, tz_offset)
         result["workspace"] = workspace_id
+        result["analytics_thresholds"] = accounts.analytics_thresholds(workspace_id)
         return result
 
     @admin_api.get("/openapi.json")
@@ -328,6 +335,26 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     @admin_api.get("/v1/games/{game_id}")
     def game_details(game_id: UUID):
         return storage.game_details(str(game_id))
+
+    @admin_api.patch("/v1/games/{game_id}/analytics-thresholds")
+    def set_game_analytics_thresholds(
+        game_id: UUID, update: AnalyticsThresholdOverrides, principal: Manager
+    ):
+        result = storage.set_analytics_thresholds(str(game_id), update)
+        accounts.audit(principal, "game.analytics", str(game_id))
+        return result
+
+    @admin_api.get("/v1/workspaces/{workspace_id}/analytics-thresholds")
+    def workspace_analytics_thresholds(workspace_id: UUID, principal: Current):
+        if not principal.sees_workspace(str(workspace_id)):
+            raise HTTPException(404, "Workspace not found")
+        return accounts.analytics_thresholds(str(workspace_id))
+
+    @admin_api.patch("/v1/workspaces/{workspace_id}/analytics-thresholds")
+    def set_workspace_analytics_thresholds(
+        workspace_id: UUID, update: AnalyticsThresholds, principal: TeamAdmin
+    ):
+        return accounts.set_analytics_thresholds(principal, str(workspace_id), update)
 
     @admin_api.get("/v1/games/{game_id}/environment-fixes")
     def list_environment_fixes(game_id: UUID):
@@ -425,8 +452,17 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     DateParam = Annotated[date, Query(ge=date(1970, 1, 1), le=date(9998, 12, 31))]
     Values = Annotated[list[Annotated[str, Field(max_length=128)]], Query(max_length=100)]
 
-    def day_range(start, end):
-        return bounds("custom", start, end)
+    TimezoneOffset = Annotated[int, Query(ge=-840, le=840)]
+
+    def day_range(start, end, timezone_offset_minutes=0):
+        if end < start:
+            raise HTTPException(400, "Choose an end date on or after the start date")
+        if (end - start).days > 365:
+            raise HTTPException(400, "Choose a range of 366 days or fewer")
+        zone = timezone(timedelta(minutes=timezone_offset_minutes))
+        first = datetime.combine(start, datetime.min.time(), zone).astimezone(UTC)
+        after = datetime.combine(end + timedelta(days=1), datetime.min.time(), zone).astimezone(UTC)
+        return timestamp(first), timestamp(after)
 
     def filters(
         env: Values = None,
@@ -496,33 +532,70 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/facets")
-    def insights_facets(game_id: UUID, start: DateParam, end: DateParam):
-        return insights.facets(storage, str(game_id), *day_range(start, end))
+    def insights_facets(
+        game_id: UUID, start: DateParam, end: DateParam, tz_offset: TimezoneOffset = 0
+    ):
+        return insights.facets(storage, str(game_id), *day_range(start, end, tz_offset))
 
     @admin_api.get("/v1/games/{game_id}/insights/summary")
-    def insights_summary(game_id: UUID, start: DateParam, end: DateParam, chosen: Filtered):
-        return insights.summary(storage, str(game_id), *day_range(start, end), chosen)
+    def insights_summary(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        return insights.summary(
+            storage, str(game_id), *day_range(start, end, tz_offset), chosen, tz_offset
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/retention")
+    def insights_retention(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        return insights.retention(
+            storage, str(game_id), *day_range(start, end, tz_offset), chosen, tz_offset
+        )
 
     @admin_api.get("/v1/games/{game_id}/insights/catalog")
-    def insights_catalog(game_id: UUID, start: DateParam, end: DateParam, chosen: Filtered):
-        return insights.catalog(storage, str(game_id), *day_range(start, end), chosen)
+    def insights_catalog(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        return insights.catalog(storage, str(game_id), *day_range(start, end, tz_offset), chosen)
 
     @admin_api.post("/v1/games/{game_id}/insights/funnel")
     def insights_funnel(game_id: UUID, query: FunnelQuery):
         return insights.funnel(
-            storage, str(game_id), *day_range(query.start, query.end), query.model_dump()
+            storage,
+            str(game_id),
+            *day_range(query.start, query.end, query.timezone_offset_minutes),
+            query.model_dump(),
         )
 
     @admin_api.post("/v1/games/{game_id}/insights/journeys")
     def insights_journeys(game_id: UUID, query: JourneyQuery):
         return journeys.journeys(
-            storage, str(game_id), *day_range(query.start, query.end), query.model_dump()
+            storage,
+            str(game_id),
+            *day_range(query.start, query.end, query.timezone_offset_minutes),
+            query.model_dump(),
         )
 
     @admin_api.post("/v1/games/{game_id}/insights/journeys/players")
     def insights_journey_players(game_id: UUID, query: JourneyPlayersQuery):
         return journeys.journey_players(
-            storage, str(game_id), *day_range(query.start, query.end), query.model_dump()
+            storage,
+            str(game_id),
+            *day_range(query.start, query.end, query.timezone_offset_minutes),
+            query.model_dump(),
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/story")
@@ -532,14 +605,68 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         start: DateParam,
         end: DateParam,
         hidden: bool = False,
+        level: Annotated[int, Query(ge=0, le=1_000_000)] | None = None,
+        cut: Literal["until", "from"] | None = None,
+        tz_offset: TimezoneOffset = 0,
     ):
         return journeys.player_story(
-            storage, str(game_id), player, *day_range(start, end), show_hidden=hidden
+            storage,
+            str(game_id),
+            player,
+            *day_range(start, end, tz_offset),
+            show_hidden=hidden,
+            level=level,
+            cut=cut,
         )
 
+    @admin_api.get("/v1/games/{game_id}/insights/device-specs")
+    def insights_device_specs(
+        game_id: UUID,
+        player: Annotated[str, Query(min_length=1, max_length=128)],
+    ):
+        try:
+            return device_specs.for_player(storage, str(game_id), player)
+        except device_specs.DeviceSpecsNotFound as error:
+            raise HTTPException(404, str(error)) from error
+        except device_specs.DeviceSpecsUnavailable as error:
+            raise HTTPException(502, str(error)) from error
+
     @admin_api.get("/v1/games/{game_id}/insights/levels")
-    def insights_levels(game_id: UUID, start: DateParam, end: DateParam, chosen: Filtered):
-        return journeys.level_progress(storage, str(game_id), *day_range(start, end), chosen)
+    def insights_levels(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        return journeys.level_progress(
+            storage, str(game_id), *day_range(start, end, tz_offset), chosen
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/levels/players")
+    def insights_level_players(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        level: Annotated[int, Query(ge=0, le=1_000_000)],
+        group: Literal["left", "finished_stopped", "kept_going", "stuck", "started"] = "left",
+        sort: Literal["exit_at", "tries", "fails"] = "exit_at",
+        offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+        limit: Annotated[int, Query(ge=1, le=2000)] = 50,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        return journeys.level_players(
+            storage,
+            str(game_id),
+            *day_range(start, end, tz_offset),
+            chosen,
+            level,
+            group=group,
+            offset=offset,
+            limit=limit,
+            sort=sort,
+        )
 
     @admin_api.get("/v1/games/{game_id}/insights/players")
     def insights_players(
@@ -549,9 +676,10 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         chosen: Filtered,
         search: Annotated[str, Query(max_length=128)] = "",
         offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
-        sort: Annotated[str, Query(max_length=12)] = "last_seen",
+        sort: Annotated[str, Query(max_length=20)] = "last_seen",
         order: Literal["asc", "desc"] = "desc",
         rules: Annotated[str, Query(max_length=8000)] = "",
+        tz_offset: TimezoneOffset = 0,
     ):
         try:
             parsed = PlayerRules.model_validate_json(rules) if rules else PlayerRules()
@@ -560,7 +688,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         return insights.players(
             storage,
             str(game_id),
-            *day_range(start, end),
+            *day_range(start, end, tz_offset),
             chosen,
             search=search,
             offset=offset,
@@ -576,8 +704,9 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         player: Annotated[str, Query(min_length=1, max_length=128)],
         start: DateParam,
         end: DateParam,
+        tz_offset: TimezoneOffset = 0,
     ):
-        return insights.journey(storage, str(game_id), player, *day_range(start, end))
+        return insights.journey(storage, str(game_id), player, *day_range(start, end, tz_offset))
 
     @admin_api.get("/v1/games/{game_id}/insights/funnels")
     def list_funnels(game_id: UUID):

@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from avn_analytics import device_specs
 from avn_analytics.api import BodyLimit, create_app
 from avn_analytics.config import Settings
 from avn_analytics.exports import period_bounds
@@ -664,7 +665,7 @@ def test_context_cannot_fill_gaps_it_does_not_cover(backend):
     admin, ingest, _ = backend
     game = register(admin)
     key = {"X-API-Key": game["key"]["api_key"]}
-    bare = {k: v for k, v in event().items() if k not in ("session_id", "device_id")}
+    bare = {k: v for k, v in event().items() if k not in ("session_id", "device_id", "user_id")}
     for context in (None, {"device_id": "d"}, {"session_id": "s"}):
         body = {"events": [bare]} if context is None else {"context": context, "events": [bare]}
         assert ingest.post("/v1/events", headers=key, json=body).status_code == 400
@@ -1553,6 +1554,294 @@ def test_player_story_reads_in_plain_words(backend):
     assert last["exit"] == "Left after failing level 1"
 
 
+def test_player_story_includes_latest_player_information_and_play_stats(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    common = {"device_id": "install-1", "user_id": "account-1"}
+    events = [
+        event(
+            **common,
+            name="session_start",
+            session_id="session-1",
+            app_version="1.2",
+            build="12",
+            client_ts="2026-10-04T09:00:00Z",
+            params={
+                "session_number": 1,
+                "device_model": "Old Phone",
+                "os_version": "Android OS 14 / API-34 (old-build)",
+            },
+        ),
+        event(
+            **common,
+            session_id="session-1",
+            client_ts="2026-10-04T09:01:00Z",
+        ),
+        event(
+            **common,
+            name="session_start",
+            session_id="session-2",
+            app_version="1.3",
+            build="13",
+            client_ts="2026-10-04T10:10:00Z",
+            params={
+                "session_number": 2,
+                "device_model": "Google Pixel 8",
+                "device_type": "Handheld",
+                "os_version": "Android OS 15 / API-35 (new-build)",
+                "language": "English",
+                "timezone_offset_minutes": 300,
+                "screen_width": 1080,
+                "screen_height": 2400,
+                "gpu_tier": "high",
+            },
+        ),
+        event(
+            **common,
+            session_id="session-2",
+            app_version="1.3",
+            build="13",
+            client_ts="2026-10-04T10:12:00Z",
+        ),
+    ]
+    assert send(ingest, game, events).status_code == 200
+
+    data = admin.get(
+        f"/v1/games/{game['id']}/insights/story",
+        params={"player": "account-1", "start": "2026-10-04", "end": "2026-10-04"},
+    ).json()
+    assert data["total_play_seconds"] == 180.0
+    assert data["average_session_seconds"] == 90.0
+    assert data["info"] == {
+        "user_id": "account-1",
+        "device_id": "install-1",
+        "app_version": "1.3",
+        "build": "13",
+        "platform": "android",
+        "environment": "unknown",
+        "country": None,
+        "updated_at": "2026-10-04T10:12:00.000000+00:00",
+        "profile_updated_at": "2026-10-04T10:10:00.000000+00:00",
+        "properties": {
+            "session_number": 2,
+            "device_model": "Google Pixel 8",
+            "device_type": "Handheld",
+            "os_version": "Android OS 15 / API-35 (new-build)",
+            "language": "English",
+            "timezone_offset_minutes": 300,
+            "screen_width": 1080,
+            "screen_height": 2400,
+            "gpu_tier": "high",
+        },
+    }
+
+
+def test_device_specs_lookup_is_explicit_and_uses_the_collected_model(backend, monkeypatch):
+    admin, ingest, _ = backend
+    game = register(admin)
+    assert (
+        send(
+            ingest,
+            game,
+            [
+                event(
+                    name="session_start",
+                    device_id="device-info-player",
+                    params={"device_model": "Example Phone X"},
+                )
+            ],
+        ).status_code
+        == 200
+    )
+    seen = []
+
+    def lookup(model):
+        seen.append(model)
+        return {
+            "provider": "Wikipedia",
+            "matched_device": "Example Phone X",
+            "source_url": "https://en.wikipedia.org/wiki/Example_Phone_X",
+            "specs": {"cpu": "Eight cores", "gpu": "Example GPU", "ram": "8 GB"},
+            "note": "Catalog values.",
+        }
+
+    monkeypatch.setattr(device_specs, "lookup", lookup)
+    response = admin.get(
+        f"/v1/games/{game['id']}/insights/device-specs",
+        params={"player": "device-info-player"},
+    )
+    assert response.status_code == 200
+    assert response.json()["specs"]["gpu"] == "Example GPU"
+    assert seen == ["Example Phone X"]
+
+
+def test_device_specs_infobox_parser_extracts_game_hardware():
+    html = """
+      <table class="infobox vevent"><tbody>
+        <tr><th class="infobox-above">Example Phone</th></tr>
+        <tr><th class="infobox-label">System on chip</th><td>Example SoC</td></tr>
+        <tr><th class="infobox-label">CPU</th><td>8-core CPU<sup>[1]</sup></td></tr>
+        <tr><th class="infobox-label">GPU</th><td>Fast GPU</td></tr>
+        <tr><th class="infobox-label">Memory</th><td>8 GB<br>12 GB</td></tr>
+        <tr><th class="infobox-label">Storage</th><td>128 GB or 256 GB</td></tr>
+      </tbody></table>
+    """
+    assert device_specs._specs_from_html(html) == {
+        "chipset": "Example SoC",
+        "cpu": "8-core CPU",
+        "gpu": "Fast GPU",
+        "ram": "8 GB · 12 GB",
+        "storage": "128 GB or 256 GB",
+    }
+
+
+def test_device_specs_resolves_vivo_model_code_to_retail_name(monkeypatch):
+    html = """
+      <table class="infobox"><tbody>
+        <tr><th>System on chip</th><td>MediaTek Dimensity 9500</td></tr>
+        <tr><th>CPU</th><td>Octa-core</td></tr>
+        <tr><th>GPU</th><td>Arm G1-Ultra</td></tr>
+        <tr><th>Memory</th><td>12 or 16 GB</td></tr>
+        <tr><th>Storage</th><td>256 GB, 512 GB or 1 TB</td></tr>
+      </tbody></table>
+    """
+    requests = []
+
+    def request_json(params):
+        requests.append(params)
+        return {"parse": {"text": html}}
+
+    monkeypatch.setattr(device_specs, "_request_json", request_json)
+    device_specs.lookup.cache_clear()
+    try:
+        result = device_specs.lookup("vivo V2514")
+    finally:
+        device_specs.lookup.cache_clear()
+
+    assert requests == [
+        {
+            "action": "parse",
+            "page": "Vivo X300 Pro",
+            "prop": "text",
+            "format": "json",
+            "formatversion": 2,
+        }
+    ]
+    assert result["matched_device"] == "Vivo X300 Pro"
+    assert result["specs"]["chipset"] == "MediaTek Dimensity 9500"
+
+
+def _level_players(admin, game, level, group, **params):
+    return admin.get(
+        f"/v1/games/{game['id']}/insights/levels/players",
+        params={
+            "start": "2026-10-04",
+            "end": "2026-10-05",
+            "level": level,
+            "group": group,
+            **params,
+        },
+    ).json()
+
+
+def test_level_players_group_who_left_who_finished_and_who_kept_going(backend):
+    admin, game = _journey_game(backend)
+    _, ingest, _ = backend
+    ids = lambda data: sorted(p["player"] for p in data["players"])  # noqa: E731
+    # p5 tries level 2 three times and leaves in the middle of it; p6 leaves level 1 on day 1
+    # and opens the game again the next day without playing another level
+    extra = _level_player(
+        "p5",
+        "s-p5",
+        20,
+        [
+            ("first_open", {}, 0),
+            ("LEVEL_ANALYSIS", {"Started": "2"}, 10),
+            ("LEVEL_ANALYSIS", {"Failed": "2"}, 30),
+            ("LEVEL_ANALYSIS", {"Restarted": "2"}, 31),
+            ("LEVEL_ANALYSIS", {"Failed": "2"}, 50),
+            ("LEVEL_ANALYSIS", {"Restarted": "2"}, 51),
+        ],
+    )
+    extra += _level_player(
+        "p6", "s-p6", 25, [("first_open", {}, 0), ("LEVEL_ANALYSIS", {"Started": "1"}, 10)]
+    )
+    extra.append(
+        event(
+            name="MM_ANALYSIS",
+            device_id="p6",
+            session_id="s-p6-2",
+            client_ts="2026-10-05T09:00:00Z",
+            params={"STATUS": "OPENED"},
+        )
+    )
+    assert send(ingest, game, extra).status_code == 200
+
+    left = _level_players(admin, game, 1, "left")
+    assert ids(left) == ["p3", "p6"]  # the table's "Left here" count for level 1
+    assert left["counts"] == {
+        "left": 2,
+        "finished_stopped": 0,
+        "kept_going": 2,
+        "stuck": 0,
+        "started": 4,
+    }
+    by_player = {row["player"]: row for row in left["players"]}
+    assert (by_player["p3"]["tries"], by_player["p3"]["fails"]) == (2, 2)
+    assert by_player["p3"]["came_back"] is False
+    assert by_player["p6"]["came_back"] is True  # opened the game the next day
+    assert by_player["p6"]["app_version"] == "1.0"
+    levels = admin.get(
+        f"/v1/games/{game['id']}/insights/levels",
+        params={"start": "2026-10-04", "end": "2026-10-05"},
+    ).json()["levels"]
+    assert {row["level"]: row["quit"] for row in levels}[1] == left["total"]
+    assert {row["level"]: row["started"] for row in levels}[1] == left["counts"]["started"]
+
+    assert ids(_level_players(admin, game, 1, "kept_going")) == ["p1", "p2"]
+    assert ids(_level_players(admin, game, 3, "finished_stopped")) == ["p1", "p2"]
+    assert ids(_level_players(admin, game, 2, "stuck")) == ["p5"]  # 3 tries, never finished
+    assert ids(_level_players(admin, game, 2, "left")) == ["p5"]
+    # sorting and paging
+    by_tries = _level_players(admin, game, 1, "started", sort="tries", limit=2)
+    assert by_tries["players"][0]["player"] == "p3" and len(by_tries["players"]) == 2
+    assert by_tries["total"] == 4
+    second = _level_players(admin, game, 1, "started", sort="tries", limit=2, offset=2)
+    assert len(second["players"]) == 2
+    assert not set(ids(by_tries)) & set(ids(second))
+    url = f"/v1/games/{game['id']}/insights/levels/players"
+    base = {"start": "2026-10-04", "end": "2026-10-05", "level": 1}
+    assert admin.get(url, params={**base, "group": "bogus"}).status_code == 400
+    assert admin.get(url, params={**base, "sort": "bogus"}).status_code == 400
+    nobody = _level_players(admin, game, 99, "left")
+    assert nobody["total"] == 0 and nobody["counts"]["started"] == 0
+
+
+def test_story_can_stop_at_or_start_from_a_level(backend):
+    admin, game = _journey_game(backend)
+    url = f"/v1/games/{game['id']}/insights/story"
+    base = {"player": "p1", "start": "2026-10-04", "end": "2026-10-04"}
+    texts = lambda data: [  # noqa: E731
+        segment["text"] for chapter in data["chapters"] for segment in chapter["segments"]
+    ]
+    everything = admin.get(url, params=base).json()
+    assert everything["cut"] is None
+
+    until = admin.get(url, params={**base, "level": 2, "cut": "until"}).json()
+    assert texts(until)[-1] == "Played levels 1–2, completed all"
+    assert until["cut"] == {"level": 2, "mode": "until", "found": True, "hidden": 3}
+    assert until["events"] == everything["events"] - 3
+
+    later = admin.get(url, params={**base, "level": 2, "cut": "from"}).json()
+    assert texts(later)[0] == "Played levels 2–3, completed all"
+    assert later["cut"]["hidden"] == 5 and later["cut"]["found"] is True
+
+    missing = admin.get(url, params={**base, "level": 9, "cut": "until"}).json()
+    assert missing["cut"] == {"level": 9, "mode": "until", "found": False, "hidden": 0}
+    assert texts(missing) == texts(everything)
+    assert admin.get(url, params={**base, "level": 2, "cut": "sideways"}).status_code == 400
+
+
 def test_dictionary_labels_and_hidden_events(backend):
     admin, game = _journey_game(backend)
     url = f"/v1/games/{game['id']}/dictionary"
@@ -1662,6 +1951,52 @@ def test_players_sort_by_app_version_in_number_order(backend):
     assert [p["player"] for p in first_page] == ["pc", "pf"]
 
 
+def test_players_sort_by_average_session_length_using_last_event_as_end(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    events = [
+        event(
+            device_id="long",
+            session_id="long-1",
+            name="session_end",
+            params={"duration_seconds": 100},
+            client_ts="2026-10-04T09:00:00Z",
+        ),
+        event(
+            device_id="long",
+            session_id="long-2",
+            name="session_end",
+            params={"duration_seconds": 300},
+            client_ts="2026-10-04T10:00:00Z",
+        ),
+        event(
+            device_id="short",
+            session_id="short-1",
+            name="session_end",
+            params={"duration_seconds": 30},
+            client_ts="2026-10-04T11:00:00Z",
+        ),
+        event(
+            device_id="short",
+            session_id="short-2",
+            name="session_end",
+            params={"duration_seconds": 60},
+            client_ts="2026-10-04T12:00:00Z",
+        ),
+        event(device_id="inferred", session_id="inferred-1", client_ts="2026-10-04T13:00:00Z"),
+        event(device_id="inferred", session_id="inferred-1", client_ts="2026-10-04T13:01:30Z"),
+        event(device_id="single", session_id="single-1", client_ts="2026-10-04T14:00:00Z"),
+    ]
+    assert send(ingest, game, events).status_code == 200
+
+    longest = _players(admin, game, sort="session_length", order="desc")["players"]
+    assert [player["player"] for player in longest] == ["long", "inferred", "short", "single"]
+    assert [player["avg_session_seconds"] for player in longest] == [200.0, 90.0, 45.0, 0.0]
+
+    shortest = _players(admin, game, sort="session_length", order="asc")["players"]
+    assert [player["player"] for player in shortest] == ["single", "short", "inferred", "long"]
+
+
 def test_players_sorting_and_event_rules(backend):
     admin, game = _journey_game(backend)
     order = lambda data: [p["player"] for p in data["players"]]  # noqa: E731
@@ -1740,3 +2075,158 @@ def test_players_sorting_and_event_rules(backend):
         params={"start": "2026-10-04", "end": "2026-10-04", "rules": "{nope"},
     )
     assert bad.status_code == 400
+
+
+def test_player_metrics_prefer_user_id_and_fall_back_to_device_id(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    identified = event(device_id="install-a", user_id="user-a")
+    install_only = event(device_id="install-b", user_id=None)
+    assert send(ingest, game, [identified, install_only]).status_code == 200
+    base = f"/v1/games/{game['id']}/insights"
+    days = {"start": "2026-10-04", "end": "2026-10-04"}
+    summary = admin.get(f"{base}/summary", params=days).json()
+    assert summary["events"] == 2 and summary["players"] == 2
+    assert summary["context"]["identified_events"] == 2
+    assert summary["context"]["anonymous_events"] == 0
+    players = admin.get(f"{base}/players", params=days).json()
+    assert {item["player"] for item in players["players"]} == {"user-a", "install-b"}
+    assert {item["player"]: item["has_user_id"] for item in players["players"]} == {
+        "user-a": 1,
+        "install-b": 0,
+    }
+    assert players["context"]["anonymous_events"] == 0
+
+
+def test_analytics_threshold_defaults_and_game_overrides(backend):
+    admin, _, _ = backend
+    game = register(admin)
+    workspace = admin.get("/v1/overview").json()["workspace"]
+    defaults = {
+        "retention_min_users": 40,
+        "levels_min_players": 12,
+        "funnels_min_players": 15,
+    }
+    response = admin.patch(f"/v1/workspaces/{workspace}/analytics-thresholds", json=defaults)
+    assert response.status_code == 200 and response.json() == defaults
+    details = admin.get(f"/v1/games/{game['id']}").json()["analytics_thresholds"]
+    assert details["levels_min_players"] == 12 and details["levels_override"] is None
+    response = admin.patch(
+        f"/v1/games/{game['id']}/analytics-thresholds",
+        json={
+            "retention_min_users": None,
+            "levels_min_players": 5,
+            "funnels_min_players": None,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["levels_min_players"] == 5
+    assert response.json()["retention_min_users"] == 40
+
+
+def test_parameter_condition_can_map_a_canonical_level_event(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    dictionary = f"/v1/games/{game['id']}/dictionary/GAME_STATE"
+    definition = {
+        "description": "A shared state event",
+        "params": {"STATE": "State", "LEVEL": "Level number"},
+        "canonical": [
+            {"action": "level_started", "param": "STATE", "op": "eq", "value": "Started"},
+            {
+                "action": "level_completed",
+                "param": "STATE",
+                "op": "eq",
+                "value": "Completed",
+            },
+        ],
+    }
+    assert admin.put(dictionary, json=definition).status_code == 200
+    events = [
+        event(name="GAME_STATE", params={"STATE": "Started", "LEVEL": 4}),
+        event(name="GAME_STATE", params={"STATE": "Completed", "LEVEL": 4}),
+    ]
+    assert send(ingest, game, events).status_code == 200
+    levels = admin.get(
+        f"/v1/games/{game['id']}/insights/levels",
+        params={"start": "2026-10-04", "end": "2026-10-04"},
+    ).json()["levels"]
+    assert levels[0]["level"] == 4
+    assert levels[0]["started"] == 1 and levels[0]["completed"] == 1
+
+
+def test_retention_uses_identified_session_starts_and_exact_days(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+
+    def session(player, day, user=True):
+        return event(
+            name="session_start",
+            device_id=f"install-{player}",
+            user_id=player if user else None,
+            session_id=f"{player}-{day}",
+            client_ts=f"2026-09-{day}T09:00:00Z",
+        )
+
+    events = [
+        session("p1", "01"),
+        session("p1", "02"),
+        session("p1", "04"),
+        session("p2", "01"),
+        session("p2", "02"),
+        session("p3", "02"),
+        session("install-only", "01", user=False),
+    ]
+    assert send(ingest, game, events).status_code == 200
+    data = admin.get(
+        f"/v1/games/{game['id']}/insights/retention",
+        params={"start": "2026-09-01", "end": "2026-09-01"},
+    ).json()
+    assert data["context"]["qualifying_event"] == "session_start"
+    assert data["context"]["anonymous_events"] == 0
+    assert data["context"]["identified_players"] == 3
+    assert len(data["cohorts"]) == 1
+    cohort = data["cohorts"][0]
+    assert cohort["players"] == 3
+    assert cohort["retained"]["1"] == {"players": 2, "percent": 66.7}
+    assert cohort["retained"]["3"] == {"players": 1, "percent": 33.3}
+
+
+def test_retention_honors_canonical_mapping_and_local_day(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    definition = {
+        "description": "The game opened a playable session",
+        "params": {"STATUS": "Session state"},
+        "canonical": [{"action": "session_start", "param": "STATUS", "op": "eq", "value": "Open"}],
+    }
+    assert (
+        admin.put(f"/v1/games/{game['id']}/dictionary/GAME_SESSION", json=definition).status_code
+        == 200
+    )
+    events = [
+        event(
+            name="GAME_SESSION",
+            device_id="install-a",
+            user_id="user-a",
+            session_id="session-a1",
+            params={"STATUS": "Open"},
+            client_ts="2026-09-01T23:30:00Z",
+        ),
+        event(
+            name="GAME_SESSION",
+            device_id="install-a",
+            user_id="user-a",
+            session_id="session-a2",
+            params={"STATUS": "Open"},
+            client_ts="2026-09-02T23:30:00Z",
+        ),
+    ]
+    assert send(ingest, game, events).status_code == 200
+    data = admin.get(
+        f"/v1/games/{game['id']}/insights/retention",
+        params={"start": "2026-09-02", "end": "2026-09-02", "tz_offset": 120},
+    ).json()
+    assert data["context"]["mapped_event_names"] == ["GAME_SESSION"]
+    assert data["cohorts"][0]["day"] == "2026-09-02"
+    assert data["cohorts"][0]["retained"]["1"]["percent"] == 100.0

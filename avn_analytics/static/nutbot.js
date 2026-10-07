@@ -255,6 +255,6 @@ async function mountNutBot() {
     if (!nutbotState.info.enabled) { toast('NutBot is turned off on this server.'); return; }
     nbOpen();
   });
-  document.body.append(launcher);
+  (document.querySelector('.topbar-right') || document.body).prepend(launcher);
   if (nutbotState.open && allowed) nbOpen();
 }

@@ -104,6 +104,32 @@ def parse_rules(text):
     return rules
 
 
+def _canonical_match(rule, params):
+    param = rule.get("param") or ""
+    if not param:
+        return True
+    actual = _lookup(params, param)
+    op = rule.get("op") or "eq"
+    if op == "exists":
+        return actual is not None
+    if actual is None:
+        return False
+    wanted = rule.get("value", "")
+    if op == "contains":
+        return str(wanted).lower() in str(actual).lower()
+    left, right = _number(actual), _number(wanted)
+    if left is None or right is None:
+        left, right = str(actual).lower(), str(wanted).lower()
+    return {
+        "eq": left == right,
+        "ne": left != right,
+        "gt": left > right,
+        "gte": left >= right,
+        "lt": left < right,
+        "lte": left <= right,
+    }.get(op, False)
+
+
 class Labeler:
     """Names events for people. definitions is the game's event dictionary."""
 
@@ -113,8 +139,41 @@ class Labeler:
     def hidden(self, name):
         return bool((self.definitions.get(name) or {}).get("hidden"))
 
+    def canonical(self, name, params):
+        """Shared analytics concepts matched by this raw event and its parameters."""
+        return [
+            rule["action"]
+            for rule in (self.definitions.get(name) or {}).get("canonical", [])
+            if _canonical_match(rule, params)
+        ]
+
     def level_info(self, name, params):
         """(verb, level number) when the event is a level start/complete/fail/restart."""
+        canonical_verbs = {
+            "level_started": "started",
+            "level_completed": "completed",
+            "level_failed": "failed",
+            "level_restarted": "restarted",
+        }
+        mapped = next(
+            (
+                canonical_verbs[action]
+                for action in self.canonical(name, params)
+                if action in canonical_verbs
+            ),
+            None,
+        )
+        if mapped:
+            number = next(
+                (
+                    _int(value)
+                    for key, value in params.items()
+                    if LEVEL_KEY.match(key) and _int(value) is not None
+                ),
+                None,
+            )
+            if number is not None:
+                return mapped, number
         for key, value in params.items():
             verb = LEVEL_VERBS.get(key.lower())
             number = _int(value)

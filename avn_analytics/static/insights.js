@@ -1,5 +1,5 @@
 // Game dashboards: overview, funnels and player journeys, computed live on the server from the game's
-// events (game time, UTC). Loaded before app.js; uses its helpers (api, shell, heading, metric,
+// events (game time, shown in local time by default). Loaded before app.js; uses its helpers (api, shell, heading, metric,
 // rangeMarkup, bindRange…) at call time.
 
 const MAX_STEPS = 100;
@@ -31,7 +31,9 @@ function duration(seconds) {
   if (value < 86400) return `${Math.floor(value / 3600)}h ${String(Math.floor(value % 3600 / 60)).padStart(2, '0')}m`;
   return `${Math.floor(value / 86400)}d ${Math.floor(value % 86400 / 3600)}h`;
 }
-const clock = value => new Date(value).toLocaleTimeString(undefined, {hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23'});
+const timeZoneOptions = timezone => timezone === 'utc' ? {timeZone: 'UTC'} : {};
+const clock = (value, timezone = 'local') => new Date(value).toLocaleTimeString(undefined, {hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23', ...timeZoneOptions(timezone)});
+const analysisDate = (value, timezone = 'local') => value ? new Date(value).toLocaleString(undefined, {dateStyle:'medium', timeStyle:'short', ...timeZoneOptions(timezone)}) : 'No events yet';
 const percent = value => `${Number(value).toLocaleString(undefined, {maximumFractionDigits: 1})}%`;
 const operatorLabel = op => OPERATORS.find(([key]) => key === op)?.[1] || '=';
 const stepLabel = step => step.label ? escapeHTML(step.label) : `${escapeHTML(step.event)}${step.param ? ` · ${escapeHTML(step.param)}${step.op === 'exists' || (step.value ?? '') === '' ? '' : ` ${operatorLabel(step.op)} ${escapeHTML(step.value)}`}` : ''}`;
@@ -75,17 +77,18 @@ function collapsible(section, game, name) {
 
 function filterState(game) {
   const saved = storeGet(`avn-filters-${game.id}`) || {};
-  return {range: saved.range || null, hideTest: saved.hideTest ?? true, environment: saved.environment || [], app_version: saved.app_version || [], build: saved.build || [], country: saved.country || [], platform: saved.platform || []};
+  return {range: saved.range || null, timezone: saved.timezone === 'utc' ? 'utc' : 'local', hideTest: saved.hideTest ?? true, environment: saved.environment || [], app_version: saved.app_version || [], build: saved.build || [], country: saved.country || [], platform: saved.platform || []};
 }
 function saveFilters(game, state) { storeSet(`avn-filters-${game.id}`, state); }
+const timezoneOffset = state => state.timezone === 'utc' ? 0 : localTimezoneOffset();
 function filterQuery(state) {
-  const query = new URLSearchParams({start: state.range.from, end: state.range.to});
+  const query = new URLSearchParams({start: state.range.from, end: state.range.to, tz_offset: timezoneOffset(state)});
   if (state.hideTest && !state.environment.length) TEST_ENVIRONMENTS.forEach(value => query.append('not_env', value));
   for (const [dimension, key] of Object.entries(FILTER_KEYS)) state[dimension].forEach(value => query.append(key, value));
   return query;
 }
 function filterBody(state) {
-  return {start: state.range.from, end: state.range.to, filters: {
+  return {start: state.range.from, end: state.range.to, timezone_offset_minutes: timezoneOffset(state), filters: {
     environments: state.environment, exclude_environments: state.hideTest && !state.environment.length ? TEST_ENVIRONMENTS : [],
     app_versions: state.app_version, builds: state.build, countries: state.country, platforms: state.platform}};
 }
@@ -96,7 +99,7 @@ const activeFilters = state => Object.keys(FILTER_KEYS).reduce((sum, dimension) 
 function mountFilters(container, game, onChange) {
   const state = filterState(game);
   let facets = {};
-  container.innerHTML = `<div class="filter-bar"><div id="filter-range"></div><details class="filter-menu"><summary>${icon('funnel',14)} Filters <span class="count" id="filter-count" hidden></span></summary><div class="filter-options filter-popover" id="filter-options"></div></details></div><div class="filter-chips" id="filter-chips"></div>`;
+  container.innerHTML = `<div class="filter-bar"><div id="filter-range"></div><div class="segmented timezone-toggle" role="group" aria-label="Time zone"><button type="button" data-timezone="local">Local</button><button type="button" data-timezone="utc">UTC</button></div><details class="filter-menu"><summary>${icon('funnel',14)} Filters <span class="count" id="filter-count" hidden></span></summary><div class="filter-options filter-popover" id="filter-options"></div></details></div><div class="filter-chips" id="filter-chips"></div><div class="analysis-context" aria-live="polite"></div>`;
   const changed = () => { saveFilters(game, state); draw(); onChange(state); };
   const draw = () => {
     const options = container.querySelector('#filter-options');
@@ -111,6 +114,7 @@ function mountFilters(container, game, onChange) {
     const active = activeFilters(state);
     const count = container.querySelector('#filter-count');
     count.hidden = !active; count.textContent = active;
+    container.querySelectorAll('[data-timezone]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.timezone === state.timezone)));
     const chips = Object.keys(FILTER_KEYS).flatMap(dimension => state[dimension].map(value => `<button type="button" class="filter-chip" data-remove-dimension="${dimension}" data-remove-value="${escapeHTML(value)}" title="Remove this filter">${DIMENSION_LABELS[dimension]}: ${escapeHTML(dimensionText(dimension, value))} ${icon('close',11)}</button>`));
     container.querySelector('#filter-chips').innerHTML = chips.join('') + (state.hideTest && !state.environment.length ? '<span class="filter-note">Editor & development data hidden</span>' : '') + (chips.length > 1 ? '<button type="button" class="filter-clear" data-clear>Clear all</button>' : '');
   };
@@ -121,6 +125,9 @@ function mountFilters(container, game, onChange) {
     changed();
   });
   container.addEventListener('click', event => {
+    const timezone = event.target.closest('[data-timezone]');
+    if (timezone && timezone.dataset.timezone !== state.timezone) { state.timezone = timezone.dataset.timezone; changed(); return; }
+    if (event.target.closest('[data-include-test]')) { state.hideTest = false; changed(); return; }
     const chip = event.target.closest('[data-remove-dimension]');
     if (chip) { state[chip.dataset.removeDimension] = state[chip.dataset.removeDimension].filter(value => value !== chip.dataset.removeValue); changed(); }
     if (event.target.closest('[data-clear]')) { for (const dimension of Object.keys(FILTER_KEYS)) state[dimension] = []; changed(); }
@@ -131,9 +138,18 @@ function mountFilters(container, game, onChange) {
     state.range = {from: range.from, to: range.to, preset: range.preset};
     saveFilters(game, state);
     draw(); onChange(state);
-    try { facets = await api(`${gameURL(game)}/insights/facets?${new URLSearchParams({start: range.from, end: range.to})}`); draw(); } catch { /* the menu keeps the chosen values */ }
+    try { facets = await api(`${gameURL(game)}/insights/facets?${new URLSearchParams({start: range.from, end: range.to, tz_offset: timezoneOffset(state)})}`); draw(); } catch { /* the menu keeps the chosen values */ }
   }, state.range?.preset || '30', state.range);
-  return {state, toggle(dimension, value) { const list = state[dimension]; state[dimension] = list.includes(value) ? list.filter(item => item !== value) : [...list, value]; changed(); }};
+  const setContext = (context = {}) => {
+    const parts = [`${prettyDay(state.range.from)}${state.range.from === state.range.to ? '' : ` → ${prettyDay(state.range.to)}`}`, state.timezone === 'utc' ? 'UTC' : 'Local time', 'player ID = user_id, otherwise device_id'];
+    if (context.anonymous_events) parts.push(`${number(context.anonymous_events)} event${context.anonymous_events === 1 ? '' : 's'} without a player ID`);
+    if (context.excluded_events) parts.push(`${number(context.excluded_events)} event${context.excluded_events === 1 ? '' : 's'} outside active filters`);
+    const warning = context.low_sample ? `<span class="sample-warning">Small sample: ${number(context.players || 0)} of ${number(context.minimum_players)} players</span>` : '';
+    const includeTest = context.excluded_events && state.hideTest && !state.environment.length ? `<button type="button" class="filter-clear" data-include-test>Include editor & development data</button>` : '';
+    container.querySelector('.analysis-context').innerHTML = `<span>${parts.map(escapeHTML).join(' · ')}</span><span>${warning}${includeTest}</span>`;
+  };
+  setContext();
+  return {state, setContext, toggle(dimension, value) { const list = state[dimension]; state[dimension] = list.includes(value) ? list.filter(item => item !== value) : [...list, value]; changed(); }};
 }
 
 // Clicking anywhere outside a filter menu closes it.
@@ -200,7 +216,7 @@ async function renderGameOverview() {
   const game = currentGame;
   const archived = game.archived_at ? `<div class="archived-banner">${icon('lock',18)}<div><strong>Archived.</strong> Collection is paused for this platform.</div><a class="button" href="${gamePath(game, 'settings')}">Game settings</a></div>` : '';
   shell('Overview', heading(game.name, `${platformLabel(game.platform)} · ${game.bundle_id}`, `<a class="button primary" href="${gamePath(game, 'exports')}">${icon('export',15)} Export data</a>`) + archived +
-    `<div id="filters"></div><div id="totals"></div><div id="active"></div>
+    `<div id="filters"></div><div id="totals"></div><div id="anomalies"></div><div id="active"></div>
     <section class="panel"><div class="panel-header"><h2>Activity per day</h2><div class="segmented" role="group" aria-label="Measure">${[['players','Players (DAU)'],['sessions','Sessions'],['events','Events']].map(([key, label]) => `<button type="button" data-measure="${key}" aria-pressed="${key === 'players'}">${label}</button>`).join('')}</div></div><div class="panel-body chart-wrap" id="daily"><p class="help">Loading…</p></div></section>
     <div class="section-grid overview-grid section-spacing"><section class="panel"><div class="panel-header"><h2>Who’s playing</h2><div class="segmented" aria-label="Break down by">${Object.entries(DIMENSION_LABELS).map(([key, label], index) => `<button type="button" data-dimension-tab="${key}" aria-pressed="${index === 0}">${label.replace('Device platform', 'Platform').replace('App version', 'Version')}</button>`).join('')}</div></div><div id="breakdowns"></div></section>
     <section class="panel"><div class="panel-header"><h2>Top events</h2><a class="text-link" href="${gamePath(game, 'dictionary')}">Dictionary ${icon('arrow',13)}</a></div><div id="top-events"></div></section></div>`);
@@ -235,11 +251,51 @@ async function renderGameOverview() {
       const data = await api(`${gameURL(game)}/insights/summary?${filterQuery(state)}`);
       if (ticket !== latest) return;
       summary = data;
-      document.querySelector('#totals').innerHTML = stats([['Players', number(data.players), `${number(data.new_players)} new`], ['Sessions', number(data.sessions), data.players ? `${(data.sessions / data.players).toFixed(1)} per player` : ''], ['Events', number(data.events), data.players ? `${number(Math.round(data.events / data.players))} per player` : '']]);
+      filters.setContext({...data.context, players: data.players});
+      document.querySelector('#totals').innerHTML = stats([['Players', number(data.players), `${number(data.new_players)} new · unique player IDs`], ['Sessions', number(data.sessions), data.players ? `${(data.sessions / data.players).toFixed(1)} per player` : 'with a player ID'], ['Events', number(data.events), `${number(data.context.identified_events)} player-linked · ${number(data.context.anonymous_events)} without an ID`]]);
+      document.querySelector('#anomalies').innerHTML = data.anomalies.length ? `<section class="anomaly-strip" aria-label="Notable changes from the preceding period"><div><strong>Notable change${data.anomalies.length === 1 ? '' : 's'}</strong><span>Compared with the preceding ${daysBetween(state.range.from, state.range.to) + 1}-day period</span></div>${data.anomalies.map(item => `<span class="anomaly-item ${item.direction}"><b>${escapeHTML(item.label)}</b> ${item.change_percent > 0 ? '+' : ''}${percent(item.change_percent)} <small>${number(item.previous)} → ${number(item.current)}</small></span>`).join('')}</section>` : '';
       document.querySelector('#active').innerHTML = data.events ? activeUsers(data.active) : '';
       drawDaily(); drawBreakdown();
       document.querySelector('#top-events').innerHTML = data.top_events.length ? `<table class="compact-table"><thead><tr><th>Event</th><th class="num">Events</th><th class="num">Players</th></tr></thead><tbody>${data.top_events.slice(0, 10).map(row => `<tr><td class="mono">${escapeHTML(row.name)}</td><td class="num">${number(row.events)}</td><td class="num">${number(row.players)}</td></tr>`).join('')}</tbody></table>` : '<p class="help panel-body">No events.</p>';
     } catch (error) { if (ticket === latest) document.querySelector('#daily').innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
+  });
+}
+
+/* ─── Retention: first qualifying session_start cohort, then exact return days ─── */
+
+const retentionTone = value => value == null ? '' : `retention-${Math.min(4, Math.floor(value / 20))}`;
+const retentionValue = value => value == null ? '<span class="muted">Not mature</span>' : `<strong>${percent(value.percent)}</strong><small>${number(value.players)} returned</small>`;
+
+async function renderRetention() {
+  const game = currentGame;
+  shell('Retention', heading('Retention', 'Group player IDs by their first session start, then see who returns on exact later days.') +
+    `<div id="filters"></div><div id="retention-summary"></div>
+    <section class="panel"><div class="panel-header"><div><h2>Cohort retention</h2><p id="retention-note">A return requires another session_start on that exact day.</p></div></div><div id="retention-table"><p class="help panel-body">Loading…</p></div></section>`);
+  let latest = 0;
+  const filters = mountFilters(document.querySelector('#filters'), game, async state => {
+    const ticket = ++latest;
+    try {
+      const data = await api(`${gameURL(game)}/insights/retention?${filterQuery(state)}`);
+      if (ticket !== latest) return;
+      filters.setContext({...data.context, players: data.context.identified_players});
+      const aggregate = day => data.aggregate[String(day)];
+      document.querySelector('#retention-summary').innerHTML = stats([
+        ['Cohort users', number(data.context.identified_players), 'first qualifying session start in these days'],
+        ['Day 1', aggregate(1).percent == null ? '—' : percent(aggregate(1).percent), aggregate(1).cohort_players ? `${number(aggregate(1).players)} of ${number(aggregate(1).cohort_players)}` : 'no mature cohorts'],
+        ['Day 7', aggregate(7).percent == null ? '—' : percent(aggregate(7).percent), aggregate(7).cohort_players ? `${number(aggregate(7).players)} of ${number(aggregate(7).cohort_players)}` : 'no mature cohorts'],
+        ['Day 30', aggregate(30).percent == null ? '—' : percent(aggregate(30).percent), aggregate(30).cohort_players ? `${number(aggregate(30).players)} of ${number(aggregate(30).cohort_players)}` : 'no mature cohorts'],
+      ]);
+      const mapped = data.context.mapped_event_names;
+      document.querySelector('#retention-note').textContent = `A return requires another session_start on that exact day · days after ${prettyDay(data.context.latest_complete_day)} are not mature${mapped.length ? ` · also mapped from ${mapped.join(', ')}` : ''}.`;
+      const box = document.querySelector('#retention-table');
+      if (!data.cohorts.length) {
+        box.innerHTML = empty('No retention cohorts in these days', 'Retention starts with a player ID and a session_start event. Try earlier days, loosen filters, or map your game’s session event in the dictionary.', '', 'pulse');
+        return;
+      }
+      box.innerHTML = `<div class="table-wrap"><table class="retention-table"><thead><tr><th>Cohort day</th><th class="num">New users</th>${data.days.map(day => `<th class="num">Day ${day}</th>`).join('')}</tr></thead><tbody>${data.cohorts.map(row => `<tr><td><strong>${escapeHTML(prettyDay(row.day))}</strong>${row.low_sample ? ' <span class="pill sample">small sample</span>' : ''}</td><td class="num"><strong>${number(row.players)}</strong></td>${data.days.map(day => { const value = row.retained[String(day)]; return `<td class="num retention-cell ${retentionTone(value?.percent)}">${retentionValue(value)}</td>`; }).join('')}</tr>`).join('')}</tbody><tfoot><tr><th>Weighted total</th><th class="num">${number(data.context.identified_players)}</th>${data.days.map(day => { const value = data.aggregate[String(day)]; return `<th class="num retention-cell ${retentionTone(value.percent)}">${retentionValue(value.percent == null ? null : value)}</th>`; }).join('')}</tr></tfoot></table></div><p class="help panel-body">The selected dates choose first-session cohort days. Rates are weighted by cohort size. “Not mature” means the return day has not fully ended yet.</p>`;
+    } catch (error) {
+      if (ticket === latest) document.querySelector('#retention-table').innerHTML = `<p class="error panel-body">${escapeHTML(error.message)}</p>`;
+    }
   });
 }
 
@@ -414,7 +470,7 @@ async function renderFunnels() {
     try {
       const data = await api(`${gameURL(game)}/insights/funnel`, {method:'POST', body: JSON.stringify({...filterBody(filters.state), steps: body.steps, scope: body.scope, ...(body.window_hours ? {window_hours: body.window_hours} : {}), ...(breakdown ? {breakdown} : {})})});
       if (ticket === latest) {
-        lastResult = data; drawResult(data);
+        lastResult = data; filters.setContext({...data.context, players: data.steps[0]?.players || 0}); drawResult(data);
         if (storeGet(`avn-pending-journeys-${game.id}`)) { storeSet(`avn-pending-journeys-${game.id}`, null); journeys.run(); } else journeys.refresh();
       }
     } catch (error) { if (ticket === latest) result.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
@@ -643,9 +699,9 @@ function metricLabel(metric) {
   if (['max', 'min', 'sum'].includes(metric.agg)) return `${{max: 'Highest', min: 'Lowest', sum: 'Total'}[metric.agg]} ${metric.of || metric.param || '?'} · ${metric.event}`;
   return `${{count: 'Times', first: 'First time', last: 'Last time'}[metric.agg]}: ${ruleSubject(metric)}`;
 }
-const metricValue = (metric, value) => value == null ? '—' : ['first', 'last'].includes(metric.agg) ? displayDate(value) : number(value);
+const metricValue = (metric, value, timezone = 'local') => value == null ? '—' : ['first', 'last'].includes(metric.agg) ? analysisDate(value, timezone) : number(value);
 const usableRules = list => list.filter(rule => rule.event).map(({event, param, op, value, ...rest}) => ({event, param: param || '', op: param ? (op || 'eq') : 'eq', value: param && op !== 'exists' ? (value || '') : '', ...Object.fromEntries(Object.entries(rest).filter(([key]) => !key.startsWith('_')))}));
-const BASE_SORTS = [['last_seen', 'Last active'], ['first_seen', 'First seen'], ['events', 'Events'], ['sessions', 'Sessions'], ['version', 'App version']];
+const BASE_SORTS = [['last_seen', 'Last active'], ['first_seen', 'First seen'], ['events', 'Events'], ['sessions', 'Sessions'], ['session_length', 'Session length'], ['version', 'App version']];
 
 async function renderPlayers() {
   const game = currentGame;
@@ -654,7 +710,7 @@ async function renderPlayers() {
   const viewKey = `avn-players-view-${game.id}`;
   const view = {sort: 'last_seen', order: 'desc', conditions: [], metrics: [], ...(storeGet(viewKey) || {})};
   let catalog = {events: []};
-  shell('Players', heading('Players', 'Open a player to read their story. Sort the list, add your own event-based columns, or keep only players who did something.') +
+  shell('Players', heading('Players', 'A player uses user_id when available, otherwise device_id. Open one to read their story, sort the list, or add event-based columns.') +
     `<div id="filters"></div>
     <section class="panel section-spacing"><div class="panel-header"><h2>Players <span class="count" id="player-count">0</span></h2><div class="search">${icon('search',16)}<input id="player-search" type="search" aria-label="Search players" placeholder="Search by user or install ID…"></div></div>
       <div class="players-toolbar"><label class="inline-field">Sort by<select id="player-sort"></select></label><button type="button" class="button small-button" id="player-order"></button>
@@ -686,7 +742,10 @@ async function renderPlayers() {
     if (!options.some(([key]) => key === view.sort)) view.sort = 'last_seen';
     document.querySelector('#player-sort').innerHTML = options.map(([key, label]) => `<option value="${key}" ${key === view.sort ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('');
     const timeSort = ['last_seen', 'first_seen', 'version'].includes(view.sort) || metrics[Number(view.sort.replace('metric', ''))]?.agg?.match(/first|last/);
-    document.querySelector('#player-order').innerHTML = view.order === 'desc' ? `↓ ${timeSort ? 'Newest first' : 'Highest first'}` : `↑ ${timeSort ? 'Oldest first' : 'Lowest first'}`;
+    const orderLabel = view.sort === 'session_length'
+      ? (view.order === 'desc' ? 'Longest first' : 'Shortest first')
+      : (view.order === 'desc' ? (timeSort ? 'Newest first' : 'Highest first') : (timeSort ? 'Oldest first' : 'Lowest first'));
+    document.querySelector('#player-order').innerHTML = `${view.order === 'desc' ? '↓' : '↑'} ${orderLabel}`;
     const conditions = rulesBody().conditions;
     const active = conditions.length + metrics.length;
     const count = document.querySelector('#rules-count'); count.hidden = !active; count.textContent = active;
@@ -723,11 +782,12 @@ async function renderPlayers() {
       const query = `${filterQuery(chosen)}&${new URLSearchParams({search, offset, sort: view.sort, order: view.order, ...(body.conditions.length || body.metrics.length ? {rules: JSON.stringify(body)} : {})})}`;
       const data = await api(`${gameURL(game)}/insights/players?${query}`);
       if (ticket !== latest) return;
+      filtersControl?.setContext(data.context || {});
       document.querySelector('#player-count').textContent = number(data.total);
       if (!data.players.length) { list.innerHTML = empty(search || body.conditions.length ? 'No matching players' : 'No players', search || body.conditions.length ? 'Try another ID, or loosen the event rules.' : 'Pick other days or filters, or check that your game is sending events.', '', 'users'); return; }
       const link = row => `${gamePath(game, 'players')}?${new URLSearchParams({player: row.player})}`;
       const head = (key, label, extra = '') => `<th class="${extra} sortable ${view.sort === key ? 'sorted' : ''}" data-sort="${key}" aria-sort="${view.sort === key ? (view.order === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button">${escapeHTML(label)}<span class="sort-arrow">${view.sort === key ? (view.order === 'asc' ? '▲' : '▼') : ''}</span></button></th>`;
-      list.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Player</th>${head('events', 'Events', 'num')}${head('sessions', 'Sessions', 'num')}${head('first_seen', 'First seen')}${head('last_seen', 'Last active')}${body.metrics.map((metric, position) => head(`metric${position}`, metricLabel(metric), 'num metric')).join('')}${head('version', 'Version')}<th>Env</th><th>Country</th></tr></thead><tbody>${data.players.map(row => `<tr><td><a class="row-title" href="${link(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a><p class="small muted">${row.has_user_id ? 'User ID' : 'Install ID'} · ${platformLabel(row.platform || '—')}</p></td><td class="num">${number(row.events)}</td><td class="num">${number(row.sessions)}</td><td class="small muted">${displayDate(row.first_seen)}</td><td class="small muted">${displayDate(row.last_seen)}</td>${body.metrics.map((metric, position) => `<td class="num metric">${metricValue(metric, row.metrics[position])}</td>`).join('')}<td class="small">${escapeHTML(row.app_version || '—')}</td><td><span class="pill ${TEST_ENVIRONMENTS.includes(row.environment) ? '' : 'good'}">${escapeHTML(row.environment || '—')}</span></td><td class="small">${countryTag(row.country)}</td></tr>`).join('')}</tbody></table></div>
+      list.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Player</th>${head('events', 'Events', 'num')}${head('sessions', 'Sessions', 'num')}${head('session_length', 'Avg session', 'num')}${head('first_seen', 'First seen')}${head('last_seen', 'Last active')}${body.metrics.map((metric, position) => head(`metric${position}`, metricLabel(metric), 'num metric')).join('')}${head('version', 'Version')}<th>Env</th><th>Country</th></tr></thead><tbody>${data.players.map(row => `<tr><td><a class="row-title" href="${link(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a><p class="small muted">${row.has_user_id ? 'User ID' : 'Install ID'} · ${platformLabel(row.platform || '—')}</p></td><td class="num">${number(row.events)}</td><td class="num">${number(row.sessions)}</td><td class="num">${duration(row.avg_session_seconds)}</td><td class="small muted">${analysisDate(row.first_seen, chosen.timezone)}</td><td class="small muted">${analysisDate(row.last_seen, chosen.timezone)}</td>${body.metrics.map((metric, position) => `<td class="num metric">${metricValue(metric, row.metrics[position], chosen.timezone)}</td>`).join('')}<td class="small">${escapeHTML(row.app_version || '—')}</td><td><span class="pill ${TEST_ENVIRONMENTS.includes(row.environment) ? '' : 'good'}">${escapeHTML(row.environment || '—')}</span></td><td class="small">${countryTag(row.country)}</td></tr>`).join('')}</tbody></table></div>
         <div class="pager"><span class="small muted">${number(offset + 1)}–${number(offset + data.players.length)} of ${number(data.total)}</span><span><button class="button" data-page="-1" ${offset ? '' : 'disabled'}>Previous</button> <button class="button" data-page="1" ${offset + data.players.length < data.total ? '' : 'disabled'}>Next</button></span></div>`;
     } catch (error) { if (ticket === latest) list.innerHTML = `<p class="error panel-body">${escapeHTML(error.message)}</p>`; }
   };
@@ -740,7 +800,8 @@ async function renderPlayers() {
   document.querySelector('#player-order').addEventListener('click', () => { view.order = view.order === 'desc' ? 'asc' : 'desc'; persist(); offset = 0; load(); });
   let typing;
   document.querySelector('#player-search').addEventListener('input', event => { clearTimeout(typing); typing = setTimeout(() => { search = event.target.value.trim(); offset = 0; load(); }, 250); });
-  mountFilters(document.querySelector('#filters'), game, async state => {
+  let filtersControl;
+  filtersControl = mountFilters(document.querySelector('#filters'), game, async state => {
     chosen = state; offset = 0;
     try { catalog = await api(`${gameURL(game)}/insights/catalog?${filterQuery(state)}`); conditionList.redraw(); metricList.redraw(); } catch { catalog = {events: []}; }
     load();
@@ -751,34 +812,134 @@ async function renderPlayers() {
 
 const levelTable = rows => `<table class="level-mini"><thead><tr><th>Level</th><th>Result</th><th class="num">Time</th></tr></thead><tbody>${rows.map(row => `<tr><td>${row.level}</td><td>${row.completed ? 'Completed' : row.failed ? 'Failed' : 'Started'}${row.failed ? ` · failed ${row.failed}×` : ''}${row.restarted ? ` · restarted ${row.restarted}×` : ''}${row.completed && row.started > 1 ? ` · ${row.started} tries` : ''}</td><td class="num">${row.seconds != null ? duration(row.seconds) : '—'}</td></tr>`).join('')}</tbody></table>`;
 
-function storyChapter(chapter) {
+function storyChapter(chapter, timezone, focusLevel = null) {
   const came = chapter.gap == null ? '' : chapter.gap >= 1800 ? ` · came back ${duration(chapter.gap)} after the last session` : ` · ${duration(chapter.gap)} after the last session`;
-  return `<section class="story-chapter"><div class="story-head"><strong>Session ${chapter.number}</strong><span>${displayDate(chapter.start)} · ${duration(chapter.seconds)} played${came}</span></div>
+  return `<section class="story-chapter"><div class="story-head"><strong>Session ${chapter.number}</strong><span>${analysisDate(chapter.start, timezone)} · ${duration(chapter.seconds)} played${came}</span></div>
     <ol class="story-lines">${chapter.segments.map(segment => {
       const slow = segment.slowest ? `<span class="story-flag">Level ${segment.slowest.level} took ${duration(segment.slowest.seconds)}</span>` : '';
       const extras = segment.extras?.length ? `<span class="story-extras">${segment.extras.map(extra => `<span class="chip">${escapeHTML(extra.text)}${extra.count > 1 ? ` ×${extra.count}` : ''}</span>`).join('')}</span>` : '';
-      const details = segment.type === 'levels' ? `<details class="story-details"><summary>Level by level</summary>${levelTable(segment.levels)}</details>` : Object.keys(segment.params || {}).filter(key => key !== 'seq').length ? `<details class="story-details"><summary>Details</summary><span class="story-params">${paramChips(Object.fromEntries(Object.entries(segment.params).filter(([key]) => key !== 'seq')))}</span></details>` : '';
-      return `<li class="story-line ${segment.type}"><time datetime="${escapeHTML(segment.t)}">${clock(segment.t)}</time><div><span class="story-text">${escapeHTML(segment.text)}</span>${slow}${extras}${details}</div></li>`;
+      const focus = focusLevel != null && segment.type === 'levels' && segment.levels.some(row => row.level === focusLevel);
+      const details = segment.type === 'levels' ? `<details class="story-details" ${focus ? 'open' : ''}><summary>Level by level</summary>${levelTable(segment.levels)}</details>` : Object.keys(segment.params || {}).filter(key => key !== 'seq').length ? `<details class="story-details"><summary>Details</summary><span class="story-params">${paramChips(Object.fromEntries(Object.entries(segment.params).filter(([key]) => key !== 'seq')))}</span></details>` : '';
+      return `<li class="story-line ${segment.type} ${focus ? 'focus' : ''}"><time datetime="${escapeHTML(segment.t)}">${clock(segment.t, timezone)}</time><div><span class="story-text">${escapeHTML(segment.text)}</span>${slow}${extras}${details}</div></li>`;
     }).join('') || '<li class="help">Nothing but session start and end.</li>'}</ol></section>`;
+}
+
+function playerOperatingSystem(raw, platform) {
+  const value = String(raw || '').trim();
+  let match = value.match(/^Android(?: OS)?\s+([^ /]+)(?:\s*\/\s*API-(\d+))?(?:\s*\((.*)\))?$/i);
+  if (match) return {name: 'Android', version: [match[1], match[2] && `API ${match[2]}`].filter(Boolean).join(' · '), build: match[3] || ''};
+  match = value.match(/^(?:iPhone OS|iOS)\s+([^\s(]+)(?:\s*\((.*)\))?$/i);
+  if (match) return {name: 'iOS', version: match[1], build: match[2] || ''};
+  match = value.match(/^Mac OS X\s+([^\s(]+)(?:\s*\((.*)\))?$/i);
+  if (match) return {name: 'macOS', version: match[1], build: match[2] || ''};
+  return {name: platformLabel(platform || '') || '—', version: value, build: ''};
+}
+
+const playerTimezone = value => {
+  const minutes = Number(value);
+  if (!Number.isFinite(minutes)) return value || '';
+  const sign = minutes < 0 ? '−' : '+';
+  return `UTC${sign}${String(Math.floor(Math.abs(minutes) / 60)).padStart(2, '0')}:${String(Math.abs(minutes) % 60).padStart(2, '0')}`;
+};
+const propertyLabel = key => key.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+
+function deviceCatalog(details) {
+  if (!details) return '';
+  if (details.loading) return '<div class="device-catalog loading">Looking up this model on Wikipedia…</div>';
+  const labels = {manufacturer: 'Manufacturer', type: 'Device type', released: 'Released', os: 'Original OS', chipset: 'Chipset', cpu: 'CPU', gpu: 'GPU', ram: 'RAM options', storage: 'Storage options', expandable_storage: 'Expandable storage', display: 'Display', battery: 'Battery', dimensions: 'Dimensions', weight: 'Weight', network: 'Network'};
+  const rows = Object.entries(labels).filter(([key]) => details.specs?.[key]).map(([key, label]) => `<div><dt>${label}</dt><dd>${escapeHTML(details.specs[key])}</dd></div>`).join('');
+  return `<section class="device-catalog"><div class="device-catalog-head"><div><h3>${escapeHTML(details.matched_device || details.requested_model)}</h3><p>${escapeHTML(details.note || '')}</p></div><a class="text-link" href="${escapeHTML(details.source_url)}" target="_blank" rel="noopener noreferrer">Wikipedia source ${icon('arrow', 12)}</a></div><dl>${rows}</dl></section>`;
+}
+
+function playerInformation(data, timezone, fetchedDevice = null) {
+  const info = data.info || {};
+  const profile = info.properties || {};
+  const os = playerOperatingSystem(profile.os_version, info.platform);
+  const screen = profile.screen_width != null && profile.screen_height != null ? `${profile.screen_width} × ${profile.screen_height}` : '';
+  const row = (label, value, mono = false) => value == null || value === '' ? '' : `<div><dt>${escapeHTML(label)}</dt><dd class="${mono ? 'mono' : ''}">${escapeHTML(value)}</dd></div>`;
+  const group = (title, rows) => {
+    const content = rows.filter(Boolean).join('');
+    return content ? `<section><h3>${title}</h3><dl>${content}</dl></section>` : '';
+  };
+  const identity = group('Identity', [
+    row('User ID', info.user_id, true),
+    row('Install ID', info.device_id, true),
+  ]);
+  const device = group('Device', [
+    row('Model', profile.device_model),
+    row('Type', profile.device_type),
+    row('Operating system', os.name),
+    row('OS version', os.version),
+    row('OS build', os.build, true),
+    row('Screen', screen),
+  ]);
+  const context = group('App & location', [
+    row('Location', info.country ? countryText(info.country) : ''),
+    row('Language', profile.language),
+    row('Player time zone', playerTimezone(profile.timezone_offset_minutes)),
+    row('Platform', platformLabel(info.platform || '')),
+    row('App version', info.app_version),
+    row('Build', info.build),
+    row('Environment', info.environment),
+    row('Latest session', profile.session_number),
+  ]);
+  const known = new Set(['seq', 'environment', 'session_number', 'device_model', 'device_type', 'os_version', 'language', 'timezone_offset_minutes', 'screen_width', 'screen_height']);
+  const other = group('Other collected properties', Object.entries(profile).filter(([key]) => !known.has(key)).map(([key, value]) => row(propertyLabel(key), value)));
+  const updated = info.updated_at ? `Latest information · ${analysisDate(info.updated_at, timezone)}` : 'No profile information collected';
+  const lookup = profile.device_model ? `<button type="button" class="button small-button" id="fetch-device-info">${icon('search', 14)} Fetch device info</button>` : '';
+  return `<section class="panel player-information"><div class="panel-header"><div><h2>Player information</h2><p>${escapeHTML(updated)} · location is IP-derived country${profile.device_model ? ' · lookup sends the device model to Wikipedia only when pressed' : ''}</p></div>${lookup}</div><div class="player-information-grid">${identity}${device}${context}${other}</div><div id="device-specs-result">${deviceCatalog(fetchedDevice)}</div></section>`;
 }
 
 async function renderJourney(game, player) {
   shell('Player story', `<a class="back-link" href="${gamePath(game, 'players')}">← Back to players</a>` + heading('Player story', player) +
-    `<div class="filter-bar"><div id="story-range"></div></div><div id="story-metrics"></div>
-    <div class="range-modes route-tabs" role="tablist" aria-label="View"><button type="button" role="tab" data-story-view="story">Story</button><button type="button" role="tab" data-story-view="raw">Raw events</button></div>
+    `<div class="filter-bar"><div id="story-range"></div><div class="segmented timezone-toggle" role="group" aria-label="Player event time zone"><button type="button" data-story-timezone="local">Local</button><button type="button" data-story-timezone="utc">UTC</button></div></div><div class="analysis-context" id="story-context"></div><div id="story-metrics"></div>
+    <div class="range-modes route-tabs" role="tablist" aria-label="View"><button type="button" role="tab" data-story-view="story">Story</button><button type="button" role="tab" data-story-view="raw">Raw events</button><button type="button" role="tab" data-story-view="info">Player info</button></div>
     <div id="story-body"></div>`);
   let view = storeGet(`avn-story-view-${game.id}`) || 'story';
-  let range = null; let showHidden = false;
+  const saved = filterState(game);
+  let range = null; let showHidden = false; let timezone = saved.timezone; let fetchedDevice = null;
+  // Opened from the Levels page: only up to (or from) the level they were looking at.
+  const asked = new URLSearchParams(location.search);
+  const focusLevel = /^\d{1,7}$/.test(asked.get('level') || '') ? Number(asked.get('level')) : null;
+  let focusCut = focusLevel != null && ['until', 'from'].includes(asked.get('cut')) ? asked.get('cut') : null;
   const body = document.querySelector('#story-body');
   const tabs = () => document.querySelectorAll('[data-story-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.storyView === view)));
   const draw = async () => {
     tabs();
-    if (view === 'raw') { await renderRawEvents(game, player, range); return; }
+    document.querySelectorAll('[data-story-timezone]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.storyTimezone === timezone)));
+    document.querySelector('#story-context').textContent = `${timezone === 'utc' ? 'UTC' : 'Local time'} · player ID = user_id, otherwise device_id`;
     body.innerHTML = '<p class="help">Reading their story…</p>';
     try {
-      const data = await api(`${gameURL(game)}/insights/story?${new URLSearchParams({start: range.from, end: range.to, player, hidden: String(showHidden)})}`);
-      document.querySelector('#story-metrics').innerHTML = stats([['Sessions', number(data.sessions), data.first_seen ? `${displayDate(data.first_seen)} → ${displayDate(data.last_seen)}` : ''], ['Events', number(data.events), ''], ['Highest level', data.highest_level != null ? number(data.highest_level) : '—', ''], ['Where', [countryName(data.country), platformLabel(data.platform || ''), data.app_version && `v${data.app_version}`].filter(Boolean).join(' · ') || '—', data.environment || '']]);
-      body.innerHTML = data.chapters.length ? `<label class="check-row story-toggle"><input type="checkbox" id="story-hidden" ${showHidden ? 'checked' : ''}> Also show events hidden in the dictionary</label>${data.chapters.map(storyChapter).join('')}` : '<p class="help">No events from this player in these days.</p>';
+      const data = await api(`${gameURL(game)}/insights/story?${new URLSearchParams({start: range.from, end: range.to, player, hidden: String(showHidden), tz_offset: timezone === 'utc' ? 0 : localTimezoneOffset(), ...(focusCut ? {level: focusLevel, cut: focusCut} : {})})}`);
+      document.querySelector('#story-metrics').innerHTML = stats([['Sessions', number(data.sessions), data.first_seen ? `${analysisDate(data.first_seen, timezone)} → ${analysisDate(data.last_seen, timezone)}` : ''], ['Events', number(data.events), ''], ['Play time', duration(data.total_play_seconds), data.average_session_seconds != null ? `${duration(data.average_session_seconds)} average session` : ''], ['Highest level', data.highest_level != null ? number(data.highest_level) : '—', '']]);
+      if (view === 'info') {
+        body.innerHTML = playerInformation(data, timezone, fetchedDevice);
+        const fetchButton = body.querySelector('#fetch-device-info');
+        fetchButton?.addEventListener('click', async () => {
+          fetchButton.disabled = true; fetchButton.textContent = 'Fetching…';
+          const result = body.querySelector('#device-specs-result');
+          result.innerHTML = deviceCatalog({loading: true});
+          try {
+            fetchedDevice = await api(`${gameURL(game)}/insights/device-specs?${new URLSearchParams({player})}`);
+            result.innerHTML = deviceCatalog(fetchedDevice);
+            fetchButton.textContent = 'Device info fetched';
+          } catch (error) {
+            result.innerHTML = deviceCatalog(fetchedDevice);
+            toast(error.message);
+            fetchButton.disabled = false; fetchButton.textContent = 'Try device lookup again';
+          }
+        });
+        return;
+      }
+      if (view === 'raw') { await renderRawEvents(game, player, range, timezone); return; }
+      const focusBar = focusLevel == null ? '' : `<div class="story-focus"><div class="segmented" role="group" aria-label="How much of the story">${[['until', `Up to level ${focusLevel}`], ['from', `From level ${focusLevel}`], [null, 'Everything']].map(([key, label]) => `<button type="button" data-story-cut="${key ?? ''}" aria-pressed="${focusCut === key}">${label}</button>`).join('')}</div><span class="small muted">${!focusCut ? `Level ${focusLevel} is highlighted.` : !data.cut?.found ? `This player has no level ${focusLevel} events in these days, so everything is shown.` : focusCut === 'until' ? `Up to the last time they played level ${focusLevel}${data.cut.hidden ? ` · ${number(data.cut.hidden)} later event${data.cut.hidden === 1 ? '' : 's'} hidden` : ''}.` : `From the first time they started level ${focusLevel}${data.cut.hidden ? ` · ${number(data.cut.hidden)} earlier event${data.cut.hidden === 1 ? '' : 's'} hidden` : ''}.`}</span></div>`;
+      body.innerHTML = focusBar + (data.chapters.length ? `<label class="check-row story-toggle"><input type="checkbox" id="story-hidden" ${showHidden ? 'checked' : ''}> Also show events hidden in the dictionary</label>${data.chapters.map(chapter => storyChapter(chapter, timezone, focusLevel)).join('')}` : '<p class="help">No events from this player in these days.</p>');
+      body.querySelector('[aria-label="How much of the story"]')?.addEventListener('click', event => {
+        const button = event.target.closest('[data-story-cut]'); if (!button) return;
+        focusCut = button.dataset.storyCut || null;
+        const url = new URL(location.href); focusCut ? url.searchParams.set('cut', focusCut) : url.searchParams.delete('cut');
+        history.replaceState(null, '', url); draw();
+      });
       body.querySelector('#story-hidden')?.addEventListener('change', event => { showHidden = event.target.checked; draw(); });
     } catch (error) { body.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
   };
@@ -786,14 +947,20 @@ async function renderJourney(game, player) {
     const tab = event.target.closest('[data-story-view]');
     if (tab && range) { view = tab.dataset.storyView; storeSet(`avn-story-view-${game.id}`, view); draw(); }
   });
-  const saved = filterState(game);
+  document.querySelector('[aria-label="Player event time zone"]').addEventListener('click', event => {
+    const button = event.target.closest('[data-story-timezone]');
+    if (!button || button.dataset.storyTimezone === timezone) return;
+    timezone = button.dataset.storyTimezone;
+    saveFilters(game, {...filterState(game), timezone});
+    if (range) draw();
+  });
   const rangeBox = document.querySelector('#story-range');
   rangeBox.innerHTML = compactRangeMarkup();
   bindRange(rangeBox, next => { range = next; draw(); }, saved.range?.preset || '30', saved.range);
 }
 
-async function renderRawEvents(game, player, range) {
-  document.querySelector('#story-body').innerHTML = `<section class="panel"><div class="panel-header"><div><h2>Timeline</h2><p>Every event, grouped by session · times in your local time · the gap is the time since the previous event</p></div><div class="search">${icon('search',16)}<input id="journey-filter" type="search" aria-label="Filter events" placeholder="Filter by event or parameter…"></div></div><div class="panel-body" id="journey"><p class="help">Loading…</p></div></section>`;
+async function renderRawEvents(game, player, range, timezone) {
+  document.querySelector('#story-body').innerHTML = `<section class="panel"><div class="panel-header"><div><h2>Timeline</h2><p>Every event, grouped by session · times in ${timezone === 'utc' ? 'UTC' : 'your local time'} · the gap is the time since the previous event</p></div><div class="search">${icon('search',16)}<input id="journey-filter" type="search" aria-label="Filter events" placeholder="Filter by event or parameter…"></div></div><div class="panel-body" id="journey"><p class="help">Loading…</p></div></section>`;
   let events = [];
   const box = document.querySelector('#journey');
   const draw = () => {
@@ -811,27 +978,108 @@ async function renderRawEvents(game, player, range) {
       const items = session.items.filter(matches);
       if (!items.length) return '';
       const start = session.items[0].client_ts; const end = session.items[session.items.length - 1].client_ts;
-      return `<div class="journey-session"><div class="journey-session-head"><strong>Session ${index + 1}</strong><span>${displayDate(start)} · ${duration((Date.parse(end) - Date.parse(start)) / 1000)} · ${session.items.length} event${session.items.length === 1 ? '' : 's'}</span></div>
-        <ol class="journey-events">${items.map(item => `<li><time datetime="${escapeHTML(item.client_ts)}">${clock(item.client_ts)}</time><span class="journey-gap ${item.gap > 60 ? 'long' : ''}">${item.gap == null ? '' : `+${duration(item.gap)}`}</span><span class="journey-name">${escapeHTML(item.name)}</span><span class="journey-params">${paramChips(item.params)}</span></li>`).join('')}</ol></div>`;
+      return `<div class="journey-session"><div class="journey-session-head"><strong>Session ${index + 1}</strong><span>${analysisDate(start, timezone)} · ${duration((Date.parse(end) - Date.parse(start)) / 1000)} · ${session.items.length} event${session.items.length === 1 ? '' : 's'}</span></div>
+        <ol class="journey-events">${items.map(item => `<li><time datetime="${escapeHTML(item.client_ts)}">${clock(item.client_ts, timezone)}</time><span class="journey-gap ${item.gap > 60 ? 'long' : ''}">${item.gap == null ? '' : `+${duration(item.gap)}`}</span><span class="journey-name">${escapeHTML(item.name)}</span><span class="journey-params">${paramChips(item.params)}</span></li>`).join('')}</ol></div>`;
     }).join('') || '<p class="help">No events match the filter.</p>';
   };
   document.querySelector('#journey-filter').addEventListener('input', draw);
   try {
-    const data = await api(`${gameURL(game)}/insights/journey?${new URLSearchParams({start: range.from, end: range.to, player})}`);
+    const data = await api(`${gameURL(game)}/insights/journey?${new URLSearchParams({start: range.from, end: range.to, player, tz_offset: timezone === 'utc' ? 0 : localTimezoneOffset()})}`);
     events = data.events;
-    document.querySelector('#story-metrics').innerHTML = stats([['Events', number(events.length), data.truncated ? 'first 5,000 shown' : ''], ['Sessions', number(new Set(events.map(event => event.session_id)).size), '']]);
     draw();
   } catch (error) { box.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
 }
 
 /* ─── Levels: how every level is going ─── */
 
+function levelTransition(row, levels) {
+  const next = levels.find(candidate => candidate.level === row.level + 1);
+  if (!next || !row.completed) return null;
+  const difference = row.completed - next.started;
+  return {next: next.level, started: next.started, difference, percent: Math.round(1000 * difference / row.completed) / 10};
+}
+
+function levelTransitionCell(row, levels) {
+  const transition = levelTransition(row, levels);
+  if (!transition) return '<span class="muted" title="No finishers or no data for the next numbered level">—</span>';
+  const {next, started, difference, percent: rate} = transition;
+  const detail = `Level ${row.level}: ${row.completed} finished → level ${next}: ${started} started. Count difference within the selected dates and filters; not a matched-player cohort.`;
+  return `<span title="${escapeHTML(detail)}">${percent(Math.abs(rate))}${difference < 0 ? ' gain' : ' drop'} <span class="muted small">· ${number(Math.abs(difference))} player${Math.abs(difference) === 1 ? '' : 's'}</span></span>`;
+}
+
 async function renderLevels() {
   const game = currentGame;
   shell('Levels', heading('Levels', 'How many players start and finish each level, how long it takes, and where they leave.') +
     `<div id="filters"></div><div id="levels-summary"></div>
-    <section class="panel section-spacing"><div class="panel-header"><div><h2>Level by level</h2><p id="levels-note">Counted from level start, complete, fail and restart events.</p></div><div class="quiet-actions"><label class="inline-field">Sort<select id="levels-sort"><option value="level">Level order</option><option value="completion">Lowest completion</option><option value="quit">Most players leaving</option><option value="tries">Most tries per player</option><option value="time">Slowest</option></select></label><button class="button small-button" type="button" id="levels-csv">${icon('export',14)} CSV</button></div></div><div id="levels-table"></div></section>`);
+    <section class="panel section-spacing"><div class="panel-header"><div><h2>Level by level</h2><p id="levels-note">Counted from level start, complete, fail and restart events.</p></div><div class="quiet-actions"><label class="inline-field">Sort<select id="levels-sort"><option value="level">Level order</option><option value="completion">Lowest completion</option><option value="quit">Most quit mid-level</option><option value="tries">Most tries per player</option><option value="time">Slowest</option></select></label><button class="button small-button" type="button" id="levels-csv">${icon('export',14)} CSV</button></div></div><div id="levels-table"></div></section>`);
   let data = null; let chosen = null; let latest = 0;
+  const open = new Set(); const drill = new Map();
+  const drillGroups = [['left', 'Quit mid-level'], ['finished_stopped', 'Finished, then stopped'], ['kept_going', 'Kept going'], ['stuck', 'Stuck'], ['started', 'Everyone who started']];
+  const drillNotes = {
+    left: 'Their very last level event in these days was starting, restarting or failing this level, so they stopped without finishing it. This is the table’s “Quit mid-level” number.',
+    finished_stopped: 'They finished this level and never started a higher one in these days. Someone still playing right now can be here too, so check when they were last seen.',
+    kept_going: 'They finished this level and later started a higher level.',
+    stuck: 'Three or more tries (or fails) on this level without finishing it.',
+    started: 'Everyone who started this level in these days.',
+  };
+  const storyLink = (row, level, cut) => `${gamePath(game, 'players')}?${new URLSearchParams({player: row.player, ...(cut ? {level, cut} : {})})}`;
+  const drillQuery = (level, state, extra = {}) => { const query = filterQuery(chosen); query.set('level', level); query.set('group', state.group); query.set('sort', state.sort); for (const [key, value] of Object.entries(extra)) query.set(key, value); return query; };
+  // The panel is as wide as the visible part of the table and stays in view when the table scrolls sideways.
+  const fitDrill = level => { const box = document.querySelector(`[data-level-drill="${level}"]`); const wrap = box?.closest('.table-wrap'); if (wrap) box.style.width = `${wrap.clientWidth}px`; };
+  let fitObserver = null;
+  const drawDrill = level => {
+    const box = document.querySelector(`[data-level-drill="${level}"]`); const state = drill.get(level);
+    if (!box || !state) return;
+    fitDrill(level);
+    const counts = state.counts;
+    const table = state.error ? `<p class="error">${escapeHTML(state.error)}</p>` : state.loading && !state.players.length ? '<p class="help">Reading players…</p>' : !state.players.length ? '<p class="help">Nobody is in this group in the selected days and filters.</p>' : `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Player</th><th class="num">Tries</th><th class="num">Fails</th><th>Last on this level</th><th>Opened the game later</th><th>Version</th><th>Country</th><th>Their story</th></tr></thead><tbody>${state.players.map(row => `<tr><td><a class="row-title" href="${storyLink(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a></td><td class="num">${number(row.tries)}</td><td class="num">${number(row.fails)}</td><td class="small muted">${analysisDate(row.exit_at, chosen.timezone)}</td><td>${row.came_back ? '<span class="pill good">came back</span>' : '<span class="small muted">—</span>'}</td><td class="small">${escapeHTML(row.app_version || '—')}</td><td class="small">${countryTag(row.country)}</td><td class="small level-story-links"><a class="text-link" href="${storyLink(row, level, 'until')}">Up to level ${level}</a> <a class="text-link" href="${storyLink(row, level, 'from')}">From level ${level}</a></td></tr>`).join('')}</tbody></table></div><div class="pager"><span class="small muted">${number(state.players.length)} of ${number(state.total)}</span>${state.players.length < state.total ? `<button type="button" class="button" data-drill-more>${state.loading ? 'Loading…' : 'Show more'}</button>` : ''}</div>`;
+    box.innerHTML = `<div class="level-drill-head"><div class="segmented" role="group" aria-label="Players on level ${level}">${drillGroups.map(([key, label]) => `<button type="button" data-drill-group="${key}" aria-pressed="${state.group === key}">${label}${counts ? ` <span class="drill-count">${number(counts[key])}</span>` : ''}</button>`).join('')}</div>
+      <div class="quiet-actions"><label class="inline-field">Sort<select data-drill-sort><option value="exit_at">Latest on this level</option><option value="tries">Most tries</option><option value="fails">Most fails</option></select></label><button type="button" class="button" data-drill-csv>${icon('export', 14)} CSV</button></div></div>
+      <p class="help level-drill-note">${drillNotes[state.group]}</p>${table}`;
+    box.querySelector('[data-drill-sort]').value = state.sort;
+  };
+  const fetchDrill = async (level, more = false) => {
+    const state = drill.get(level); const ticket = ++state.ticket;
+    state.loading = true; state.error = null;
+    if (!more) { state.players = []; state.total = 0; }
+    drawDrill(level);
+    try {
+      const result = await api(`${gameURL(game)}/insights/levels/players?${drillQuery(level, state, {offset: more ? state.players.length : 0, limit: 50})}`);
+      if (ticket !== state.ticket) return;
+      state.players = more ? [...state.players, ...result.players] : result.players; state.total = result.total; state.counts = result.counts;
+    } catch (error) { if (ticket === state.ticket) state.error = error.message; }
+    if (ticket === state.ticket) { state.loading = false; drawDrill(level); }
+  };
+  const ensureDrill = level => {
+    if (!drill.has(level)) drill.set(level, {group: 'left', sort: 'exit_at', players: [], total: 0, counts: null, loading: false, error: null, ticket: 0});
+    fetchDrill(level);
+  };
+  document.querySelector('#levels-table').addEventListener('click', async event => {
+    const toggle = event.target.closest('[data-level-toggle]');
+    if (toggle) {
+      const level = Number(toggle.dataset.levelToggle); const row = document.querySelector(`[data-level-detail="${level}"]`);
+      if (open.has(level)) { open.delete(level); row.hidden = true; toggle.setAttribute('aria-expanded', 'false'); return; }
+      open.add(level); row.hidden = false; toggle.setAttribute('aria-expanded', 'true');
+      if (!drill.has(level)) ensureDrill(level);
+      return;
+    }
+    const panel = event.target.closest('[data-level-drill]'); if (!panel) return;
+    const level = Number(panel.dataset.levelDrill); const state = drill.get(level); if (!state) return;
+    const tab = event.target.closest('[data-drill-group]');
+    if (tab) { state.group = tab.dataset.drillGroup; fetchDrill(level); return; }
+    if (event.target.closest('[data-drill-more]')) { fetchDrill(level, true); return; }
+    if (event.target.closest('[data-drill-csv]')) {
+      try {
+        const all = await api(`${gameURL(game)}/insights/levels/players?${drillQuery(level, state, {offset: 0, limit: 2000})}`);
+        downloadCSV(`${game.name}-${platformLabel(game.platform)}-level-${level}-${state.group}-${chosen.range.from}_${chosen.range.to}.csv`, [['player', 'tries', 'fails', 'finished_level', 'last_on_level_utc', 'last_seen_utc', 'opened_game_later', 'app_version', 'country'], ...all.players.map(row => [row.player, row.tries, row.fails, row.completed, row.exit_at, row.last_seen, row.came_back, row.app_version, row.country])]);
+      } catch (error) { toast(error.message); }
+    }
+  });
+  document.querySelector('#levels-table').addEventListener('change', event => {
+    const select = event.target.closest('[data-drill-sort]'); if (!select) return;
+    const level = Number(select.closest('[data-level-drill]').dataset.levelDrill); const state = drill.get(level);
+    state.sort = select.value; fetchDrill(level);
+  });
   const rows = () => {
     const sort = document.querySelector('#levels-sort').value;
     const list = [...data.levels];
@@ -840,26 +1088,34 @@ async function renderLevels() {
   };
   const draw = () => {
     const box = document.querySelector('#levels-table');
+    document.querySelector('#levels-note').textContent = 'Counted from level start, complete, fail and restart events.';
     if (!data.levels.length) { box.innerHTML = empty('No level data yet', 'Levels are read from events that start, complete, fail or restart a level, like “Started level 5”. Send some, or name yours in the event dictionary.', '', 'game'); document.querySelector('#levels-summary').innerHTML = ''; return; }
-    const hardest = [...data.levels].filter(row => row.started >= 3).sort((a, b) => (a.completion ?? 100) - (b.completion ?? 100))[0];
+    const minimum = data.context.minimum_players;
+    if (data.levels.some(row => row.low_sample)) {
+      document.querySelector('#levels-note').innerHTML = `Counted from level start, complete, fail and restart events. <span class="level-sample-legend"><span class="level-sample-marker" aria-hidden="true">·</span> Small sample: fewer than ${number(minimum)} players started.</span>`;
+    }
+    const hardest = [...data.levels].filter(row => !row.low_sample).sort((a, b) => (a.completion ?? 100) - (b.completion ?? 100))[0];
     const biggest = [...data.levels].sort((a, b) => b.quit - a.quit)[0];
     const slowest = [...data.levels].filter(row => row.median_seconds != null).sort((a, b) => b.median_seconds - a.median_seconds)[0];
-    document.querySelector('#levels-summary').innerHTML = stats([['Levels seen', number(data.levels.length), `level ${data.levels[0].level} to ${data.levels[data.levels.length - 1].level}`], ['Hardest level', hardest ? `Level ${hardest.level}` : '—', hardest ? `${percent(hardest.completion)} of players finish it` : 'needs at least 3 players'], ['Most players leave at', biggest && biggest.quit ? `Level ${biggest.level}` : '—', biggest && biggest.quit ? `${number(biggest.quit)} player${biggest.quit === 1 ? '' : 's'} had their last event there` : ''], ['Slowest level', slowest ? `Level ${slowest.level}` : '—', slowest ? `median ${duration(slowest.median_seconds)}` : '']]);
+    document.querySelector('#levels-summary').innerHTML = stats([['Levels seen', number(data.levels.length), `level ${data.levels[0].level} to ${data.levels[data.levels.length - 1].level}`], ['Hardest level', hardest ? `Level ${hardest.level}` : '—', hardest ? `${percent(hardest.completion)} of players finish it` : `needs at least ${number(minimum)} players`], ['Most quit mid-level at', biggest && biggest.quit ? `Level ${biggest.level}` : '—', biggest && biggest.quit ? `${number(biggest.quit)} player${biggest.quit === 1 ? '' : 's'} had their last event there` : ''], ['Slowest level', slowest ? `Level ${slowest.level}` : '—', slowest ? `median ${duration(slowest.median_seconds)}` : '']]);
     const peak = Math.max(1, ...data.levels.map(row => row.started));
-    box.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Level</th><th class="num">Started</th><th class="num">Finished</th><th>Completion</th><th class="num">Tries / player</th><th class="num">Fails</th><th class="num">Median time</th><th class="num">Slowest 10%</th><th class="num" title="Events with “powerup” or “boost” in their name that carry this level’s number">Power-ups</th><th class="num">Left here</th></tr></thead><tbody>${rows().map(row => `<tr class="${row.completion != null && row.started >= 3 && row.completion < 60 ? 'level-hard' : ''}"><td title="${escapeHTML(row.top_other.map(item => `${item.text} ×${item.count}`).join('\n'))}"><strong>${row.level}</strong>${row.other_events ? ` <span class="muted small" title="Other events that carry this level number">+${number(row.other_events)}</span>` : ''}</td><td class="num">${number(row.started)}</td><td class="num">${number(row.completed)}</td><td><div class="completion"><progress class="progress mini" max="100" value="${row.completion ?? 0}" aria-label="${row.completion != null ? percent(row.completion) : 'n/a'}"></progress><span>${row.completion != null ? percent(row.completion) : '—'}</span></div></td><td class="num">${row.tries_per_player ?? '—'}</td><td class="num">${number(row.fails)}${row.restarts ? ` <span class="muted small">· ${row.restarts} restart${row.restarts === 1 ? '' : 's'}</span>` : ''}</td><td class="num">${duration(row.median_seconds)}</td><td class="num">${duration(row.p90_seconds)}</td><td class="num" title="${escapeHTML(row.top_powerups.map(item => `${item.text} ×${item.count}`).join('\n'))}">${row.powerups ? number(row.powerups) : '—'}</td><td class="num">${row.quit ? `${number(row.quit)} <span class="muted small">· ${percent(row.quit_percent)}</span>` : '—'}</td></tr>`).join('')}</tbody></table></div>
-      <p class="help panel-body">“Left here” counts players whose very last level event was on that level (they started, restarted or failed it and never came back to play on). Rows with less than 60% completion are highlighted.</p>`;
+    box.innerHTML = `<div class="table-wrap"><table class="levels-grid"><thead><tr><th>Level</th><th class="num">Started</th><th class="num">Finished</th><th>Completion</th><th class="num" title="(Finished − next level started) ÷ Finished">Drop after finishing</th><th class="num">Tries / player</th><th class="num">Fails</th><th class="num">Median time</th><th class="num">Slowest 10%</th><th class="num" title="Events with “powerup” or “boost” in their name that carry this level’s number">Power-ups</th><th class="num" title="Players whose very last level event was starting, restarting or failing this level: they quit in the middle of it">Quit mid-level</th></tr></thead><tbody>${rows().map(row => `<tr class="${row.completion != null && !row.low_sample && row.completion < 60 ? 'level-hard' : ''}"><td class="level-number-cell" title="${escapeHTML(row.top_other.map(item => `${item.text} ×${item.count}`).join('\n'))}"><button type="button" class="level-toggle" data-level-toggle="${row.level}" aria-expanded="${open.has(row.level)}" aria-label="Show the players behind level ${row.level}">${icon('chevron', 14)}</button><strong>${row.level}</strong>${row.low_sample ? ` <span class="level-sample-marker" role="img" aria-label="Small sample: ${number(row.started)} of ${number(minimum)} players" title="Small sample: ${number(row.started)} players started; threshold is ${number(minimum)}">·</span>` : ''}${row.other_events ? ` <span class="muted small" title="Other events that carry this level number">+${number(row.other_events)}</span>` : ''}</td><td class="num">${number(row.started)}</td><td class="num">${number(row.completed)}</td><td><div class="completion"><progress class="progress mini" max="100" value="${row.completion ?? 0}" aria-label="${row.completion != null ? percent(row.completion) : 'n/a'}"></progress><span>${row.completion != null ? percent(row.completion) : '—'}</span></div></td><td class="num">${levelTransitionCell(row, data.levels)}</td><td class="num">${row.tries_per_player ?? '—'}</td><td class="num">${number(row.fails)}${row.restarts ? ` <span class="muted small">· ${row.restarts} restart${row.restarts === 1 ? '' : 's'}</span>` : ''}</td><td class="num">${duration(row.median_seconds)}</td><td class="num">${duration(row.p90_seconds)}</td><td class="num" title="${escapeHTML(row.top_powerups.map(item => `${item.text} ×${item.count}`).join('\n'))}">${row.powerups ? number(row.powerups) : '—'}</td><td class="num">${row.quit ? `${number(row.quit)} <span class="muted small">· ${percent(row.quit_percent)}</span>` : '—'}</td></tr><tr class="level-detail" data-level-detail="${row.level}" ${open.has(row.level) ? '' : 'hidden'}><td colspan="11"><div class="level-drill" data-level-drill="${row.level}"></div></td></tr>`).join('')}</tbody></table></div>
+      <p class="help panel-body">Two different groups of players stop at a level. <strong>Quit mid-level</strong> started it (or failed it) and never finished: their very last level event was on that level. <strong>Drop after finishing</strong> compares this level’s finishers with the next numbered level’s starters, so it only counts people who <em>did</em> finish and then never began the next one. It compares counts, so players returning from earlier days can produce a gain, and missing next-level data is shown as —. Open a row with the arrow to see the players behind each number. Completion below 60% is highlighted only when at least ${number(minimum)} players started; smaller samples remain visible and are labelled.</p>`;
+    open.forEach(drawDrill);
+    fitObserver?.disconnect();
+    const wrap = box.querySelector('.table-wrap');
+    if (wrap && window.ResizeObserver) { fitObserver = new ResizeObserver(() => open.forEach(fitDrill)); fitObserver.observe(wrap); }
   };
   const load = async state => {
     chosen = state; const ticket = ++latest;
     document.querySelector('#levels-table').innerHTML = '<p class="help panel-body">Counting…</p>';
-    try { const result = await api(`${gameURL(game)}/insights/levels?${filterQuery(state)}`); if (ticket === latest) { data = result; draw(); } }
+    try { const result = await api(`${gameURL(game)}/insights/levels?${filterQuery(state)}`); if (ticket === latest) { data = result; levelsFilters.setContext({anonymous_events: result.context.anonymous_events}); drill.clear(); draw(); open.forEach(ensureDrill); } }
     catch (error) { if (ticket === latest) document.querySelector('#levels-table').innerHTML = `<p class="error panel-body">${escapeHTML(error.message)}</p>`; }
   };
   document.querySelector('#levels-sort').addEventListener('change', () => data && draw());
   document.querySelector('#levels-csv').addEventListener('click', () => {
     if (!data) return;
-    downloadCSV(`${game.name}-${platformLabel(game.platform)}-levels-${chosen.range.from}_${chosen.range.to}.csv`, [['level', 'started', 'completed', 'completion_percent', 'attempts', 'tries_per_player', 'fails', 'restarts', 'median_seconds', 'p90_seconds', 'powerups', 'left_here', 'left_here_percent'], ...data.levels.map(row => [row.level, row.started, row.completed, row.completion, row.attempts, row.tries_per_player, row.fails, row.restarts, row.median_seconds, row.p90_seconds, row.powerups, row.quit, row.quit_percent])]);
+    downloadCSV(`${game.name}-${platformLabel(game.platform)}-levels-${chosen.range.from}_${chosen.range.to}.csv`, [['level', 'started', 'completed', 'completion_percent', 'next_level', 'next_level_started', 'drop_to_next_players', 'drop_to_next_percent', 'attempts', 'tries_per_player', 'fails', 'restarts', 'median_seconds', 'p90_seconds', 'powerups', 'left_here', 'left_here_percent'], ...data.levels.map(row => [row.level, row.started, row.completed, row.completion, levelTransition(row, data.levels)?.next, levelTransition(row, data.levels)?.started, levelTransition(row, data.levels)?.difference, levelTransition(row, data.levels)?.percent, row.attempts, row.tries_per_player, row.fails, row.restarts, row.median_seconds, row.p90_seconds, row.powerups, row.quit, row.quit_percent])]);
   });
-  mountFilters(document.querySelector('#filters'), game, load);
+  const levelsFilters = mountFilters(document.querySelector('#filters'), game, load);
 }
-

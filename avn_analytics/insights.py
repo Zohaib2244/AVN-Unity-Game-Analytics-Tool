@@ -1,8 +1,8 @@
 """Live game dashboards: summary, funnels and player journeys, from a game's event database.
 
-Everything here works on game time (client_ts) and identifies a player by user_id when the game
-sets one, otherwise by the per-install device_id. Filters narrow every query to an environment,
-app version, build, country or platform.
+Everything here works on game time (client_ts). Player analysis prefers user_id and falls back to
+device_id, which keeps account-linked players stable while still identifying anonymous installs.
+Filters narrow every query to an environment, app version, build, country or platform.
 """
 
 import json
@@ -13,10 +13,11 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from . import rules
+from . import rules, stories
 from .models import timestamp
 
 PLAYER = "coalesce(json_extract(payload, '$.user_id'), json_extract(payload, '$.device_id'))"
+IDENTIFIED = f"{PLAYER} IS NOT NULL"
 SESSION = "json_extract(payload, '$.session_id')"
 # The environment an event reported: sent with the batch, else recorded for its session from
 # session_start, else "editor" for Unity Editor builds; anything older is "unknown".
@@ -61,6 +62,7 @@ MAX_FUNNEL_EVENTS = 5_000_000
 MAX_JOURNEY_EVENTS = 5_000
 DROPPED_SAMPLE = 50
 BREAKDOWN_SEGMENTS = 12
+RETENTION_DAYS = (1, 3, 7, 14, 30)
 
 
 def where(start, end, filters=None, column="client_ts"):
@@ -104,26 +106,39 @@ def _day_start(moment):
     return moment.strftime("%Y-%m-%dT00:00:00.000000+00:00")
 
 
-def active_users(connection, end, filters):
+def day_expression(timezone_offset_minutes=0):
+    """Calendar day for a stored UTC timestamp in the viewer's chosen fixed offset."""
+    offset = int(timezone_offset_minutes)
+    if not -840 <= offset <= 840:
+        raise ValueError("Invalid timezone offset")
+    modifier = f"{offset:+d} minutes"
+    return f"substr(datetime(client_ts, '{modifier}'), 1, 10)"
+
+
+def active_users(connection, end, filters, timezone_offset_minutes=0):
     """DAU, WAU, MAU and stickiness, counted back from the last day before `end` (exclusive)."""
     end_moment = datetime.fromisoformat(end)
     month_condition, month_args = where(_day_start(end_moment - timedelta(days=30)), end, filters)
     week_condition, week_args = where(_day_start(end_moment - timedelta(days=7)), end, filters)
+    day_sql = day_expression(timezone_offset_minutes)
     daily = {
         row["day"]: row["players"]
         for row in connection.execute(
-            f"SELECT substr(client_ts, 1, 10) AS day, count(DISTINCT {PLAYER}) AS players "
-            f"FROM events WHERE {month_condition} GROUP BY day",
+            f"SELECT {day_sql} AS day, count(DISTINCT {PLAYER}) AS players "
+            f"FROM events WHERE {month_condition} AND {IDENTIFIED} GROUP BY day",
             month_args,
         )
     }
     mau = connection.execute(
-        f"SELECT count(DISTINCT {PLAYER}) FROM events WHERE {month_condition}", month_args
+        f"SELECT count(DISTINCT {PLAYER}) FROM events WHERE {month_condition} AND {IDENTIFIED}",
+        month_args,
     ).fetchone()[0]
     wau = connection.execute(
-        f"SELECT count(DISTINCT {PLAYER}) FROM events WHERE {week_condition}", week_args
+        f"SELECT count(DISTINCT {PLAYER}) FROM events WHERE {week_condition} AND {IDENTIFIED}",
+        week_args,
     ).fetchone()[0]
-    days = [(end_moment - timedelta(days=n + 1)).date().isoformat() for n in range(30)]
+    local_end = end_moment + timedelta(minutes=timezone_offset_minutes)
+    days = [(local_end - timedelta(days=n + 1)).date().isoformat() for n in range(30)]
     average = sum(daily.get(day, 0) for day in days) / 30
     return {
         "last_day": days[0],
@@ -137,27 +152,50 @@ def active_users(connection, end, filters):
     }
 
 
-def summary(storage, game_id, start, end, filters):
+def summary(storage, game_id, start, end, filters, timezone_offset_minutes=0):
     """Totals, a daily series and breakdowns for the game overview."""
     storage.get_game(game_id)
     condition, args = where(start, end, filters)
+    start_moment, end_moment = datetime.fromisoformat(start), datetime.fromisoformat(end)
+    previous_start = start_moment - (end_moment - start_moment)
+    previous_condition, previous_args = where(
+        timestamp(previous_start), timestamp(start_moment), filters
+    )
     with storage.connect(storage.game_path(game_id)) as connection:
         totals = dict(
             connection.execute(
                 f"SELECT count(*) AS events, count(DISTINCT {PLAYER}) AS players, "
-                f"count(DISTINCT {SESSION}) AS sessions FROM events WHERE {condition}",
+                f"count(DISTINCT CASE WHEN {IDENTIFIED} THEN {SESSION} END) AS sessions, "
+                f"count(*) FILTER (WHERE {IDENTIFIED}) AS identified_events, "
+                f"count(*) FILTER (WHERE NOT ({IDENTIFIED})) AS anonymous_events "
+                f"FROM events WHERE {condition}",
                 args,
             ).fetchone()
         )
+        raw_condition, raw_args = where(start, end)
+        raw_events = connection.execute(
+            f"SELECT count(*) FROM events WHERE {raw_condition}", raw_args
+        ).fetchone()[0]
+        previous = dict(
+            connection.execute(
+                f"SELECT count(*) AS events, count(DISTINCT {PLAYER}) AS players, "
+                f"count(DISTINCT CASE WHEN {IDENTIFIED} THEN {SESSION} END) AS sessions "
+                f"FROM events WHERE {previous_condition}",
+                previous_args,
+            ).fetchone()
+        )
         new_players = connection.execute(
-            f"SELECT count(DISTINCT {PLAYER}) FROM events WHERE {condition} AND name='first_open'",
+            f"SELECT count(DISTINCT {PLAYER}) FROM events "
+            f"WHERE {condition} AND {IDENTIFIED} AND name='first_open'",
             args,
         ).fetchone()[0]
+        day_sql = day_expression(timezone_offset_minutes)
         days = [
             dict(row)
             for row in connection.execute(
-                f"SELECT substr(client_ts, 1, 10) AS day, count(*) AS events, "
-                f"count(DISTINCT {PLAYER}) AS players, count(DISTINCT {SESSION}) AS sessions "
+                f"SELECT {day_sql} AS day, count(*) AS events, "
+                f"count(DISTINCT {PLAYER}) AS players, "
+                f"count(DISTINCT CASE WHEN {IDENTIFIED} THEN {SESSION} END) AS sessions "
                 f"FROM events WHERE {condition} GROUP BY day ORDER BY day",
                 args,
             )
@@ -182,12 +220,39 @@ def summary(storage, game_id, start, end, filters):
                 args,
             )
         ]
-        active = active_users(connection, end, filters)
+        active = active_users(connection, end, filters, timezone_offset_minutes)
+    thresholds = storage.analytics_thresholds(game_id)
     span = max(1, (datetime.fromisoformat(end) - datetime.fromisoformat(start)).days)
     peak = max(days, key=lambda day: day["players"], default=None)
+    anomalies = []
+    for metric, label in (("players", "Players"), ("sessions", "Sessions"), ("events", "Events")):
+        before, current = previous[metric], totals[metric]
+        if before:
+            change = round(100 * (current - before) / before, 1)
+            if abs(change) >= 25:
+                anomalies.append(
+                    {
+                        "metric": metric,
+                        "label": label,
+                        "current": current,
+                        "previous": before,
+                        "change_percent": change,
+                        "direction": "up" if change > 0 else "down",
+                    }
+                )
     return {
         **totals,
         "new_players": new_players,
+        "context": {
+            "timezone_offset_minutes": timezone_offset_minutes,
+            "raw_events": raw_events,
+            "excluded_events": max(0, raw_events - totals["events"]),
+            "anonymous_events": totals["anonymous_events"],
+            "identified_events": totals["identified_events"],
+            "identified_players": totals["players"],
+            "minimum_players": thresholds["retention_min_users"],
+            "low_sample": 0 < totals["players"] < thresholds["retention_min_users"],
+        },
         "active": {
             **active,
             "avg_dau": round(sum(day["players"] for day in days) / span, 1),
@@ -196,6 +261,128 @@ def summary(storage, game_id, start, end, filters):
         "days": days,
         "breakdowns": breakdowns,
         "top_events": top_events,
+        "anomalies": anomalies,
+    }
+
+
+def retention(storage, game_id, start, end, filters, timezone_offset_minutes=0):
+    """Cohort retention from each player ID's first qualifying session_start.
+
+    The selected range chooses cohort days. A return counts only when the same user has another
+    qualifying session_start on exactly D1/D3/D7/D14/D30. Dictionary mappings let a game map a
+    differently named or parameter-conditioned event to the canonical session_start action.
+    """
+    storage.get_game(game_id)
+    definitions = storage.get_dictionary(game_id)
+    labeler = stories.Labeler(definitions)
+    mapped_names = {
+        name
+        for name, definition in definitions.items()
+        if any(rule.get("action") == "session_start" for rule in definition.get("canonical", []))
+    }
+    candidate_names = sorted({"session_start", *mapped_names})
+    marks = ",".join("?" * len(candidate_names))
+    all_condition, all_args = where(
+        "1970-01-01T00:00:00+00:00", "9999-01-01T00:00:00+00:00", filters
+    )
+    selected_condition, selected_args = where(start, end, filters)
+    starts = {}
+    total_candidates = 0
+    offset = timedelta(minutes=timezone_offset_minutes)
+
+    def local_day(value):
+        return (datetime.fromisoformat(value).astimezone(UTC) + offset).date()
+
+    with storage.connect(storage.game_path(game_id)) as connection:
+        total_candidates = connection.execute(
+            f"SELECT count(*) FROM events WHERE {all_condition} AND {IDENTIFIED} "
+            f"AND name IN ({marks})",
+            (*all_args, *candidate_names),
+        ).fetchone()[0]
+        if total_candidates > MAX_FUNNEL_EVENTS:
+            raise HTTPException(400, "Too many session starts to analyze. Pick narrower filters.")
+        rows = connection.execute(
+            f"""SELECT {PLAYER} AS player, name, client_ts,
+                       json_extract(payload, '$.params') AS params
+                FROM events WHERE {all_condition} AND {IDENTIFIED} AND name IN ({marks})
+                ORDER BY player, client_ts, event_id""",
+            (*all_args, *candidate_names),
+        )
+        for row in rows:
+            params = json.loads(row["params"] or "{}")
+            if row["name"] != "session_start" and "session_start" not in labeler.canonical(
+                row["name"], params
+            ):
+                continue
+            player = starts.setdefault(row["player"], [])
+            player.append((datetime.fromisoformat(row["client_ts"]), local_day(row["client_ts"])))
+        anonymous_events = connection.execute(
+            f"SELECT count(*) FROM events WHERE {selected_condition} AND NOT ({IDENTIFIED})",
+            selected_args,
+        ).fetchone()[0]
+
+    start_moment, end_moment = datetime.fromisoformat(start), datetime.fromisoformat(end)
+    cohorts = {}
+    for player, sessions in starts.items():
+        first_moment, first_day = sessions[0]
+        if not start_moment <= first_moment < end_moment:
+            continue
+        cohort = cohorts.setdefault(first_day, {"players": set(), "active": {}})
+        cohort["players"].add(player)
+        cohort["active"][player] = {day for _, day in sessions}
+
+    latest_complete_day = (datetime.now(UTC) + offset).date() - timedelta(days=1)
+    threshold = storage.analytics_thresholds(game_id)["retention_min_users"]
+    result = []
+    for cohort_day in sorted(cohorts):
+        cohort = cohorts[cohort_day]
+        size = len(cohort["players"])
+        retained = {}
+        for day in RETENTION_DAYS:
+            target = cohort_day + timedelta(days=day)
+            count = sum(target in cohort["active"][player] for player in cohort["players"])
+            retained[str(day)] = (
+                {
+                    "players": count,
+                    "percent": round(100 * count / size, 1) if size else 0,
+                }
+                if target <= latest_complete_day
+                else None
+            )
+        result.append(
+            {
+                "day": cohort_day.isoformat(),
+                "players": size,
+                "low_sample": size < threshold,
+                "retained": retained,
+            }
+        )
+
+    aggregate = {}
+    for day in RETENTION_DAYS:
+        eligible = [row for row in result if row["retained"][str(day)] is not None]
+        denominator = sum(row["players"] for row in eligible)
+        retained = sum(row["retained"][str(day)]["players"] for row in eligible)
+        aggregate[str(day)] = {
+            "players": retained,
+            "cohort_players": denominator,
+            "percent": round(100 * retained / denominator, 1) if denominator else None,
+        }
+    total_players = sum(row["players"] for row in result)
+    return {
+        "days": list(RETENTION_DAYS),
+        "cohorts": result,
+        "aggregate": aggregate,
+        "context": {
+            "identified_players": total_players,
+            "anonymous_events": anonymous_events,
+            "minimum_players": threshold,
+            "low_sample": 0 < total_players < threshold,
+            "timezone_offset_minutes": timezone_offset_minutes,
+            "qualifying_event": "session_start",
+            "mapped_event_names": sorted(mapped_names),
+            "latest_complete_day": latest_complete_day.isoformat(),
+        },
     }
 
 
@@ -384,8 +571,11 @@ def funnel(storage, game_id, start, end, query):
     segment_sql = DIMENSIONS[breakdown] if breakdown else "NULL"
     attempts = {}  # (player, session or None) -> {"times": [...], "segment": ...}
     with storage.connect(storage.game_path(game_id)) as connection:
+        anonymous_events = connection.execute(
+            f"SELECT count(*) FROM events WHERE {condition} AND NOT ({IDENTIFIED})", args
+        ).fetchone()[0]
         total = connection.execute(
-            f"SELECT count(*) FROM events WHERE {condition} AND name IN ({marks})",
+            f"SELECT count(*) FROM events WHERE {condition} AND {IDENTIFIED} AND name IN ({marks})",
             (*args, *names),
         ).fetchone()[0]
         if total > MAX_FUNNEL_EVENTS:
@@ -394,7 +584,7 @@ def funnel(storage, game_id, start, end, query):
             f"""SELECT {PLAYER} AS player, {SESSION} AS session, name,
                        unixepoch(client_ts, 'subsec') AS ts, client_ts,
                        json_extract(payload, '$.params') AS params, {segment_sql} AS segment
-                FROM events WHERE {condition} AND name IN ({marks})
+                FROM events WHERE {condition} AND {IDENTIFIED} AND name IN ({marks})
                 ORDER BY player, client_ts, event_id""",
             (*args, *names),
         )
@@ -452,6 +642,7 @@ def funnel(storage, game_id, start, end, query):
             }
         )
     ordered = sorted(segments.items(), key=lambda item: -item[1][0])
+    threshold = storage.analytics_thresholds(game_id)["funnels_min_players"]
     return {
         "steps": result,
         "time_to_complete": _times(complete),
@@ -460,6 +651,12 @@ def funnel(storage, game_id, start, end, query):
             :BREAKDOWN_SEGMENTS
         ],
         "segments_total": len(ordered),
+        "context": {
+            "identified_players": reached[0] if reached else 0,
+            "anonymous_events": anonymous_events,
+            "minimum_players": threshold,
+            "low_sample": bool(reached and 0 < reached[0] < threshold),
+        },
     }
 
 
@@ -468,6 +665,7 @@ PLAYER_SORTS = {
     "first_seen": "first_seen",
     "events": "events",
     "sessions": "sessions",
+    "session_length": "avg_session_seconds",
     "version": "version_key(app_version)",
 }
 
@@ -500,6 +698,34 @@ class _NewestVersion:
         return None if self.best is None else str(self.best)
 
 
+class _AverageSessionLength:
+    """Average per-session duration, using the final event when no end was reported."""
+
+    def __init__(self):
+        self.sessions = {}
+
+    def step(self, session_id, event_name, duration, client_ts):
+        if session_id is None or client_ts is None:
+            return
+        current = self.sessions.setdefault(session_id, [client_ts, client_ts, None])
+        current[0] = min(current[0], client_ts)
+        current[1] = max(current[1], client_ts)
+        if event_name == "session_end" and isinstance(duration, (int, float)) and duration >= 0:
+            current[2] = max(current[2] or 0, float(duration))
+
+    def finalize(self):
+        durations = []
+        for first, last, reported in self.sessions.values():
+            if reported is not None:
+                durations.append(reported)
+            else:
+                elapsed = (
+                    datetime.fromisoformat(last) - datetime.fromisoformat(first)
+                ).total_seconds()
+                durations.append(max(0, elapsed))
+        return sum(durations) / len(durations) if durations else None
+
+
 def players(
     storage,
     game_id,
@@ -516,8 +742,9 @@ def players(
 ):
     """Players active in the range.
 
-    sort: last_seen, first_seen, events, sessions, version (the newest app version a player has
-    used, ordered by number), or metric0..metric2 (one of `metrics`).
+    sort: last_seen, first_seen, events, sessions, session_length (average duration per session,
+    using its final event when no end duration was reported), version (the newest app version a
+    player has used, ordered by number), or metric0..metric2 (one of `metrics`).
     conditions keep only players who did (or never did) an event; metrics add a column per player.
     See rules.py for what a condition and a metric are.
     """
@@ -557,14 +784,23 @@ def players(
     with storage.connect(storage.game_path(game_id)) as connection:
         connection.create_function("version_key", 1, version_key, deterministic=True)
         connection.create_aggregate("newest_version", 1, _NewestVersion)
+        connection.create_aggregate("average_session_length", 4, _AverageSessionLength)
+        anonymous_events = connection.execute(
+            f"SELECT count(*) FROM events WHERE {condition} AND NOT ({IDENTIFIED})", args
+        ).fetchone()[0]
         total = connection.execute(
-            f"SELECT count(*) FROM (SELECT {PLAYER} AS player FROM events WHERE {condition} "
+            f"SELECT count(*) FROM (SELECT {PLAYER} AS player FROM events "
+            f"WHERE {condition} AND {IDENTIFIED} "
             f"GROUP BY player {having})",
             (*args, *having_args),
         ).fetchone()[0]
         rows = connection.execute(
             f"""SELECT {PLAYER} AS player, count(*) AS events,
                        count(DISTINCT {SESSION}) AS sessions,
+                       average_session_length(
+                           {SESSION}, name,
+                           json_extract(payload, '$.params.duration_seconds'), client_ts)
+                           AS avg_session_seconds,
                        min(client_ts) AS first_seen, max(client_ts) AS last_seen,
                        max(json_extract(payload, '$.platform')) AS platform,
                        newest_version(json_extract(payload, '$.app_version')) AS app_version,
@@ -572,7 +808,7 @@ def players(
                        max({ENVIRONMENT}) AS environment,
                        max(json_extract(payload, '$.user_id') IS NOT NULL) AS has_user_id
                        {"".join(columns)}
-                FROM events WHERE {condition} GROUP BY player {having}
+                FROM events WHERE {condition} AND {IDENTIFIED} GROUP BY player {having}
                 ORDER BY {order_by} IS NULL, {order_by} {direction}, last_seen DESC, player
                 LIMIT ? OFFSET ?""",
             (*column_args, *args, *having_args, limit, offset),
@@ -580,6 +816,8 @@ def players(
         result = []
         for row in rows:
             item = dict(row)
+            if item["avg_session_seconds"] is not None:
+                item["avg_session_seconds"] = round(item["avg_session_seconds"], 1)
             item["metrics"] = [
                 round(item.pop(f"m{n}"), 2)
                 if isinstance(item.get(f"m{n}"), float)
@@ -587,7 +825,11 @@ def players(
                 for n in range(len(metrics))
             ]
             result.append(item)
-        return {"total": total, "players": result}
+        return {
+            "total": total,
+            "players": result,
+            "context": {"anonymous_events": anonymous_events},
+        }
 
 
 def journey(storage, game_id, player, start, end):
