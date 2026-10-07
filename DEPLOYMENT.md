@@ -56,7 +56,7 @@ The first build compiles a pinned SQLite (the server refuses SQLite versions wit
 ## 3. First use
 
 1. Open **`http://127.0.0.1:8101`** on that machine (or from your workstation: `ssh -N -L 8101:127.0.0.1:8101 you@your-server`, then open the same address locally).
-2. On the first visit, choose an admin password (12+ characters). Browser sign-in is separate from the `.env` token, which is for scripts.
+2. There is no sign-in page: the admin site has no login of its own, and (with the defaults) every request that reaches it is an admin. That is why the port stays private and the guide uses an SSH forward; to let other people in, put Cloudflare Access in front of it (see [Team access](#team-access)). The `.env` token is for scripts.
 3. **Games, Register a game**: enter a name, bundle ID (`com.example.mygame`) and platform (`android`, `ios`...). Register iOS and Android separately if you want separate databases.
 4. Copy the **API key**. It is shown once; you can issue more later (rotate by creating a new key, shipping it, then revoking the old one).
 5. Optionally describe your events on the **Event dictionary** page. These descriptions end up in every export.
@@ -173,15 +173,42 @@ Use the demo component in the SDK folder to test. Confirm arrival on the website
 
 ## 6. Exports
 
-On the **Exports** page choose a game, a day, week or month, and a time basis (`server_ts` = arrival, `client_ts` = when it happened). You get a ZIP with `events.jsonl.gz`, `events.md` (the data dictionary) and `manifest.json`. Scripted version:
+Open a game, then its **Exports** page. Choose the days (up to 366), optional filters (environment, app version, build, country, platform; editor and development data is hidden by default) and a time basis (`server_ts` = arrival, `client_ts` = when it happened). You get a ZIP with `events.parquet`, `events.jsonl.gz`, `events.md` (the data dictionary), `ANALYSIS.md` (a guide for AI assistants) and `manifest.json`. Scripted version:
 
 ```bash
 set -a; . ./.env; set +a
 curl -H "Authorization: Bearer $AVN_ADMIN_TOKEN" -o export.zip \
-  "http://127.0.0.1:8101/v1/games/$GAME_ID/export?date=2026-10-04&period=week&basis=client_ts"
+  "http://127.0.0.1:8101/v1/games/$GAME_ID/export?date=2026-10-04&period=week&basis=client_ts&not_env=editor"
 ```
 
 Hand the ZIP to an AI agent or load it into DuckDB, pandas or a dashboard tool.
+
+### Dashboards
+
+You don't need an export to look at your data: each game has **Overview** (with daily active users), **Retention**, **Funnels**, **Levels** and **Players** pages on the website, plus the optional [NutBot](README.md#nutbot) assistant, computed live from the event database. See the [README](README.md#dashboards) for what each shows, how environments are decided, and the limits (very large ranges and millions of events can take a few seconds).
+
+When you upgrade from a version without dashboards, nothing needs migrating by hand: on first start the server adds the new per-game tables (session environments, saved funnels and environment fixes) and fills the environments from existing `session_start` events. Back up `data/` first, as always.
+
+## Team access
+
+Skip this if you are the only user. To let a team in, with workspaces and roles (see the [README](README.md#team-access-and-workspaces)):
+
+1. **Cloudflare Access:** in Zero Trust → Access → Applications, edit the application that protects the admin hostname and add an Allow policy for the people who should reach the site (their emails, or *Emails ending in* a company domain). Leave the separate Bypass application for `POST /v1/events` as it is, so games can still send events. Cloudflare only decides who reaches the site; the app's Team page decides what they can do.
+2. **Find two values:** the team domain (Zero Trust → Settings → Custom pages, shown as `<team>.cloudflareaccess.com`) and the application's **Application Audience (AUD) Tag** (on the application's page under Access controls → Applications; the tab it lives on varies between dashboard versions, so look for the label).
+3. **Set them in `.env`:**
+
+   ```bash
+   AVN_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com
+   AVN_ACCESS_AUDIENCE=<the AUD tag>
+   AVN_ADMIN_EMAIL=you@yourcompany.com     # the email you sign in with; always an admin
+   AVN_LAN_ADMIN=true
+   ```
+
+4. **Restart the admin service:** `docker compose up -d admin`. Open the site through Cloudflare, sign in, then use **Workspaces** and **Team** to set up who can do what. Anyone who passes Cloudflare without being listed sees a page telling them to contact `AVN_ADMIN_EMAIL`.
+
+The team domain and audience tag let the server verify Cloudflare's signed sign-in token, so nobody can pretend to be someone else. If something is misconfigured and you can't sign in remotely, you are not locked out: open the site from your own network (it counts as the admin), or call the API with the admin token. Remove the `AVN_ACCESS_*` values to return to single-user mode. Your reverse proxy must forward the `Cf-Access-Jwt-Assertion` header (Caddy and nginx do by default) and should set `X-Forwarded-For` (Caddy does), because the server uses it to tell a request from your home network from one that came through Cloudflare.
+
+**Upgrading from a version without workspaces:** nothing to do by hand. On first start the server creates a "Default" workspace, puts every game and person in it, and keeps their roles. Back up `data/` first, as always.
 
 ## 7. Operating it
 
@@ -192,9 +219,9 @@ docker compose stop                        # stop (data is untouched)
 docker compose up -d --wait                # start
 ```
 
-- **Updating:** `git pull`, then `docker compose up -d --build --wait`. Keep `.env` and `data/` as they are. Do not overwrite `.env` with `.env.example` or you will lose the admin token.
+- **Updating:** `git pull`, then `docker compose up -d --build --wait`. The ingest and admin services both use the image, so rebuild both: a brief restart of ingest is safe (games queue events and retry). Keep `.env` and `data/` as they are. Do not overwrite `.env` with `.env.example` or you will lose the admin token.
 - **Boot:** services use `restart: unless-stopped`; enable the Docker service at boot (`systemctl enable docker`).
-- **Rotating the admin token:** edit `AVN_ADMIN_TOKEN` in `.env`, then `docker compose up -d --force-recreate`. Website sessions are unaffected.
+- **Rotating the admin token:** edit `AVN_ADMIN_TOKEN` in `.env`, then `docker compose up -d --force-recreate`.
 - **Disk:** check free space occasionally. There is no automatic retention or deletion, and a full disk makes the server return 503 (clients keep their events and retry), so plan capacity or export and archive.
 - **Failures are safe:** if the server is down, games queue events on the device and catch up later.
 
@@ -204,8 +231,11 @@ All state lives in `data/`:
 
 ```text
 data/
-  registry.sqlite3       games, hashed keys, rate limits, website password
+  registry.sqlite3       games, keys, rate limits, workspaces, team, game access, activity log
   games/<uuid>.sqlite3   one database per game
+  icons/                 game icons
+  deleted/               deleted games and icons (moved here, not erased)
+  nutbot/                NutBot's agent CLI sign-in and chat sessions (if used)
   exports/               temporary download files (safe to delete when stopped)
 ```
 
@@ -224,7 +254,8 @@ To move to a new disk: stop, `rsync -a ./data/ /new/disk/avn-data/`, set `AVN_HO
 - [ ] Only `POST /v1/events` is reachable from the internet; port 8101 is not routed anywhere public.
 - [ ] HTTPS is enforced at your proxy or tunnel.
 - [ ] `.env` is `chmod 600`, and the admin token is not in any game build or repository.
-- [ ] You chose a strong admin password; remote admin access goes through SSH forwarding or a VPN.
+- [ ] Remember the dashboard stores each new API key's full value (so it can be copied again): keep port 8101 and `data/` private, and back them up as sensitive.
+- [ ] Remote admin access goes through SSH forwarding, a VPN or Cloudflare Access: the website has no login of its own, so nothing else should reach port 8101.
 - [ ] Edge rate limiting is on for the ingest hostname.
 - [ ] Backups run and have been restored at least once.
 - [ ] Your store privacy disclosures cover the device, user and (IP-derived) country data you collect.
@@ -236,7 +267,7 @@ To move to a new disk: stop, `rsync -a ./data/ /new/disk/avn-data/`, set `AVN_HO
 | `docker compose up` complains about `AVN_ADMIN_TOKEN` | It is empty in `.env`. |
 | Ingest or admin container restarts, log says "Use SQLite 3.51.3+" | You are running outside the Docker image on an older system SQLite. Use the image. |
 | Permission errors writing `data/` | `AVN_UID`/`AVN_GID` don't match the owner of the data directory. |
-| Game gets **401** | Wrong, revoked or missing API key, or the proxy strips the `X-API-Key` header. |
+| Game gets **401** | Wrong, deleted or missing API key, or the proxy strips the `X-API-Key` header. |
 | Game gets **404/405** | Proxy only allows `POST /v1/events`; check the URL path and method. |
 | Game gets **415** | A `Content-Encoding` other than gzip (for example a proxy re-encoding the body). An SDK talking to a server that predates gzip support falls back to plain JSON by itself. |
 | Game gets **429** | Per-key rate limit; the SDK backs off. Raise `AVN_REQUESTS_PER_MINUTE` if many players share a key. |

@@ -1,5 +1,6 @@
 import math
 from datetime import UTC, datetime
+from datetime import date as datetime_date
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -73,6 +74,9 @@ class EventContext(StrictModel):
     app_version: Context | None = None
     build: Context | None = None
     platform: Context | None = None
+    environment: Context | None = (
+        None  # production, development, editor...: lets dashboards hide test data
+    )
 
 
 class EventIn(EventBase, EventContext):
@@ -88,6 +92,7 @@ class Event(EventBase):
     app_version: Context
     build: Context
     platform: Context
+    environment: Context | None = None
 
     @model_validator(mode="after")
     def require_identity(self):
@@ -130,6 +135,7 @@ class GameCreate(StrictModel):
     ]
     platform: Literal["android", "ios"]
     notes: Annotated[str, Field(max_length=2000)] = ""
+    workspace_id: UUID | None = None  # defaults to the caller's only (or first) workspace
 
 
 class GameUpdate(StrictModel):
@@ -151,9 +157,26 @@ class KeyCreate(StrictModel):
     label: Annotated[str, Field(min_length=1, max_length=128)] = "default"
 
 
+CanonicalOp = Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"]
+
+
+class CanonicalMapping(StrictModel):
+    """Maps one raw event (optionally by a parameter condition) to a shared concept."""
+
+    action: Name
+    param: Annotated[str, Field(max_length=80)] = ""
+    op: CanonicalOp = "eq"
+    value: Annotated[str, Field(max_length=200)] = ""
+
+
 class EventDefinition(StrictModel):
     description: Annotated[str, Field(min_length=1, max_length=4000)]
     params: dict[str, str] = Field(default_factory=dict, max_length=50)
+    # How the event reads in stories, one rule per line: "Started => Started level {Started}".
+    # A rule applies when the named parameter is present ("*" always); first match wins.
+    labels: Annotated[str, Field(max_length=2000)] = ""
+    hidden: bool = False  # left out of player stories and journeys (noise)
+    canonical: list[CanonicalMapping] = Field(default_factory=list, max_length=20)
 
     @field_validator("params")
     @classmethod
@@ -163,3 +186,193 @@ class EventDefinition(StrictModel):
         ):
             raise ValueError("Invalid parameter name or description length")
         return params
+
+
+FilterValues = Annotated[list[Annotated[str, Field(max_length=128)]], Field(max_length=100)]
+
+
+class Filters(StrictModel):
+    """Narrows dashboard queries; an empty list means no restriction."""
+
+    environments: FilterValues = []
+    exclude_environments: FilterValues = []
+    app_versions: FilterValues = []
+    builds: FilterValues = []
+    countries: FilterValues = []
+    platforms: FilterValues = []
+
+
+Threshold = Annotated[int, Field(ge=1, le=1_000_000)]
+
+
+class AnalyticsThresholds(StrictModel):
+    retention_min_users: Threshold = 100
+    levels_min_players: Threshold = 30
+    funnels_min_players: Threshold = 30
+
+
+EnvironmentName = Annotated[
+    str, Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9][A-Za-z0-9_\-]*$")
+]
+
+
+class EnvironmentFix(StrictModel):
+    """Count events a build sent as `from_environment` as `to_environment` instead."""
+
+    from_environment: EnvironmentName
+    to_environment: EnvironmentName
+    app_version: Annotated[str, Field(max_length=64)] | None = None  # None: every version
+    build: Annotated[str, Field(max_length=64)] | None = None  # None: every build
+    note: Annotated[str, Field(max_length=200)] = ""
+
+    @field_validator("from_environment", "to_environment")
+    @classmethod
+    def lowercase(cls, value):
+        return value.lower()
+
+    @field_validator("app_version", "build")
+    @classmethod
+    def blank_means_any(cls, value):
+        return (value or "").strip() or None
+
+    @model_validator(mode="after")
+    def must_change_something(self):
+        if self.from_environment == self.to_environment:
+            raise ValueError("Pick a different environment to count these events as")
+        return self
+
+
+class AnalyticsThresholdOverrides(StrictModel):
+    retention_min_users: Threshold | None = None
+    levels_min_players: Threshold | None = None
+    funnels_min_players: Threshold | None = None
+
+
+class FunnelStep(StrictModel):
+    event: Name
+    param: Annotated[str, Field(max_length=80)] = ""
+    op: Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"] = "eq"
+    value: Annotated[str, Field(max_length=200)] = ""
+    label: Annotated[str, Field(max_length=80)] = ""
+
+
+class FunnelDefinition(StrictModel):
+    steps: list[FunnelStep] = Field(min_length=2, max_length=100)
+    window_hours: Annotated[float, Field(gt=0, le=24 * 366)] | None = None
+    scope: Literal["player", "session"] = "player"
+
+
+class FunnelQuery(FunnelDefinition):
+    start: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    end: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    breakdown: Literal["environment", "app_version", "build", "country", "platform"] | None = None
+    filters: Filters = Filters()
+    timezone_offset_minutes: Annotated[int, Field(ge=-840, le=840)] = 0
+
+
+class JourneyTarget(StrictModel):
+    """Which players to list: one whole journey (its steps and outcome), or one exit."""
+
+    steps: list[Annotated[str, Field(max_length=300)]] | None = Field(default=None, max_length=40)
+    status: Literal["reached", "stopped", "continued"] | None = None
+    exit: Annotated[str, Field(max_length=300)] | None = None
+
+
+class JourneyQuery(FunnelDefinition):
+    """Journeys of players between two steps of a funnel (default: first to last)."""
+
+    start: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    end: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    filters: Filters = Filters()
+    route_from: Annotated[int, Field(ge=1, le=100)] = 1
+    route_to: Annotated[int, Field(ge=2, le=100)] | None = None
+    ignore: list[Name] = Field(default_factory=list, max_length=100)
+    span: Literal["session", "all"] = "session"
+    timezone_offset_minutes: Annotated[int, Field(ge=-840, le=840)] = 0
+
+
+class JourneyPlayersQuery(JourneyQuery):
+    target: JourneyTarget
+
+
+ParamName = Annotated[str, Field(max_length=80, pattern=r'^[^"\\]*$')]
+RuleOp = Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"]
+
+
+class PlayerCondition(StrictModel):
+    """Keep only players who did (or never did) an event, optionally with a parameter test."""
+
+    event: Name
+    param: ParamName = ""
+    op: RuleOp = "eq"
+    value: Annotated[str, Field(max_length=200)] = ""
+    does: Literal["did", "didnt"] = "did"
+    min_times: Annotated[int, Field(ge=1, le=100000)] = 1
+
+
+class PlayerMetric(StrictModel):
+    """An extra column per player, also usable as the sort key: how many times they did an event,
+    the highest/lowest/total of one of its parameters, or when they first/last did it."""
+
+    event: Name
+    param: ParamName = ""
+    op: RuleOp = "eq"
+    value: Annotated[str, Field(max_length=200)] = ""
+    agg: Literal["count", "max", "min", "sum", "first", "last"] = "count"
+    of: ParamName = ""  # the parameter to total/compare; defaults to `param`
+    label: Annotated[str, Field(max_length=80)] = ""
+
+
+class PlayerRules(StrictModel):
+    conditions: list[PlayerCondition] = Field(default_factory=list, max_length=6)
+    metrics: list[PlayerMetric] = Field(default_factory=list, max_length=3)
+
+
+class NutBotChat(StrictModel):
+    message: Annotated[str, Field(min_length=1, max_length=4000)]
+    harness: Annotated[str, Field(max_length=20)] | None = None
+    model: Annotated[str, Field(max_length=80)] | None = None
+    session_id: Annotated[str, Field(max_length=80)] | None = None
+    context: dict = Field(default_factory=dict)
+
+
+class WorkspaceNutBot(StrictModel):
+    access: Literal["admins", "leads", "everyone"]
+
+
+class SavedFunnel(FunnelDefinition):
+    name: Annotated[str, Field(min_length=1, max_length=80)]
+
+
+Role = Literal["admin", "lead", "member"]
+MemberRole = Literal["lead", "member"]
+Email = Annotated[str, Field(min_length=3, max_length=254)]
+WorkspaceName = Annotated[str, Field(min_length=1, max_length=60)]
+
+
+class TeamAdd(StrictModel):
+    email: Email
+    name: Annotated[str, Field(max_length=80)] = ""
+    role: Role = "member"  # "admin" is global; lead and member apply to workspace_id
+    workspace_id: UUID | None = None
+    game_ids: list[UUID] = Field(default_factory=list, max_length=500)
+
+
+class TeamUpdate(StrictModel):
+    name: Annotated[str, Field(max_length=80)] | None = None
+    admin: bool | None = None
+    workspace_id: UUID | None = None
+    role: MemberRole | None = None
+    game_ids: list[UUID] | None = Field(default=None, max_length=500)
+
+
+class AccessUpdate(StrictModel):
+    emails: list[Email] = Field(max_length=500)
+
+
+class WorkspaceCreate(StrictModel):
+    name: WorkspaceName
+
+
+class WorkspaceMove(StrictModel):
+    workspace_id: UUID

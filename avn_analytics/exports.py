@@ -9,11 +9,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from fastapi import HTTPException
 
+from . import insights
 from .models import timestamp
 
 SKILL = Path(__file__).parent / "skill" / "SKILL.md"
 # Sent automatically by the Unity SDK and documented in the skill itself.
-SDK_EVENTS = {"first_open", "session_start", "session_end"}
+SDK_EVENTS = insights.SDK_EVENTS
 
 
 def skill_body():
@@ -67,6 +68,7 @@ FIXED_COLUMNS = [
     ("app_version", pa.string()),
     ("build", pa.string()),
     ("platform", pa.string()),
+    ("environment", pa.string()),
     ("country", pa.string()),
     ("client_ts", pa.timestamp("us", tz="UTC")),
     ("server_ts", pa.timestamp("us", tz="UTC")),
@@ -148,11 +150,12 @@ def period_bounds(period: str, selected_date: date, end_date: date | None = None
     )
 
 
-def build_export(storage, game_id, period, selected_date, basis, end_date=None):
+def build_export(storage, game_id, period, selected_date, basis, end_date=None, filters=None):
     game = storage.get_game(game_id)
     start, end = period_bounds(period, selected_date, end_date)
     if basis not in ("server_ts", "client_ts"):
         raise ValueError("Invalid timestamp basis")
+    condition, args = insights.where(start, end, filters, column=basis)
     with tempfile.NamedTemporaryFile(
         dir=storage.root / "exports", suffix=".zip", delete=False
     ) as temp:
@@ -175,9 +178,9 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None):
                 with archive.open("events.jsonl.gz", "w", force_zip64=True) as member:
                     with gzip.GzipFile(fileobj=member, mode="wb", mtime=0) as compressed:
                         rows = connection.execute(
-                            f"""SELECT payload FROM events WHERE {basis}>=? AND {basis}<?
+                            f"""SELECT payload FROM events WHERE {condition}
                                 ORDER BY {basis}, event_id""",
-                            (start, end),
+                            args,
                         )
                         for row in rows:
                             encoded = (row["payload"] + "\n").encode("utf-8")
@@ -205,14 +208,21 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None):
                 try:
                     parquet_columns = write_parquet(
                         connection,
-                        f"""SELECT payload FROM events WHERE {basis}>=? AND {basis}<?
+                        f"""SELECT payload FROM events WHERE {condition}
                             ORDER BY {basis}, event_id""",
-                        (start, end),
+                        args,
                         parquet_path,
                     )
                     archive.write(parquet_path, "events.parquet")
                 finally:
                     parquet_path.unlink(missing_ok=True)
+                environment_fixes = [
+                    dict(row)
+                    for row in connection.execute(
+                        "SELECT from_environment, to_environment, app_version, build, note "
+                        "FROM environment_fixes ORDER BY id"
+                    )
+                ]
                 manifest = {
                     "schema_version": 1,
                     "game": game,
@@ -222,6 +232,8 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None):
                     "timezone": "UTC",
                     "start_inclusive": start,
                     "end_exclusive": end,
+                    "filters": {key: value for key, value in (filters or {}).items() if value},
+                    "environment_fixes": environment_fixes,
                     "event_count": count,
                     "uncompressed_bytes": raw_bytes,
                     "dictionary_truncated": dictionary_truncated,
@@ -243,6 +255,14 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None):
                     "- user_id / device_id: game-supplied identifiers; at least one is present.",
                     "- session_id: game-supplied session identifier.",
                     "- app_version / build / platform: game build context.",
+                    "- environment: production / development / editor, when the SDK sends it",
+                    "  with the batch. Older events: use session_start's environment param and",
+                    "  match other events to it by session_id. Exclude editor/development",
+                    "  sessions from player analyses. The events are exactly as received: if a",
+                    "  build shipped in the wrong mode, manifest.json's environment_fixes lists",
+                    "  how the dashboard re-counts it (from_environment -> to_environment for",
+                    "  that app_version / build; null means any). Apply them before deciding",
+                    "  what is test data.",
                     "- client_ts: UTC-normalized client time; may have clock skew.",
                     "- server_ts: UTC server receipt time of the first committed copy.",
                     "- country: ISO country code derived by the server from the request IP",

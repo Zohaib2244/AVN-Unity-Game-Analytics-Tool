@@ -2,14 +2,23 @@ import hashlib
 import json
 import secrets
 import sqlite3
+import struct
 import time
 from contextlib import contextmanager
 from uuid import uuid4
 
 from fastapi import HTTPException
 
+from . import insights
 from .config import Settings
 from .models import Batch, EventDefinition, GameCreate, GameUpdate, timestamp
+
+# Normalizes a stored environment string (production, Editor, DEVELOPMENT...) to lower case.
+ENVIRONMENT_VALUE = "lower(substr(trim({column}), 1, 64))"
+
+
+MAX_ICON_BYTES = 512 * 1024
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 class Storage:
@@ -42,6 +51,7 @@ class Storage:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         (self.root / "games").mkdir(exist_ok=True, mode=0o700)
         (self.root / "exports").mkdir(exist_ok=True, mode=0o700)
+        (self.root / "icons").mkdir(exist_ok=True, mode=0o700)
         with self.connect(self.root / "registry.sqlite3") as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             if version > 2:
@@ -78,11 +88,77 @@ class Storage:
                 if "archived_at" not in columns:
                     connection.execute("ALTER TABLE games ADD COLUMN archived_at TEXT")
                 connection.execute("PRAGMA user_version=2")
+            # Keys created from here on keep their full value so the dashboard can copy them again.
+            # Older keys only have a hash and stay uncopyable. Added without bumping user_version.
+            key_columns = {row["name"] for row in connection.execute("PRAGMA table_info(api_keys)")}
+            if "api_key" not in key_columns:
+                connection.execute("ALTER TABLE api_keys ADD COLUMN api_key TEXT")
+            game_columns = {row["name"] for row in connection.execute("PRAGMA table_info(games)")}
+            if "workspace_id" not in game_columns:  # filled in by the first start with workspaces
+                connection.execute("ALTER TABLE games ADD COLUMN workspace_id TEXT")
+            if "icon_updated_at" not in game_columns:  # set when the game has an uploaded icon
+                connection.execute("ALTER TABLE games ADD COLUMN icon_updated_at TEXT")
+            for column in (
+                "retention_min_users",
+                "levels_min_players",
+                "funnels_min_players",
+            ):
+                if column not in game_columns:
+                    connection.execute(f"ALTER TABLE games ADD COLUMN {column} INTEGER")
+            game_ids = [row["id"] for row in connection.execute("SELECT id FROM games")]
+        for game_id in game_ids:
+            if self.game_path(game_id).exists():
+                with self.connect(self.game_path(game_id)) as database:
+                    self.upgrade_game_database(database)
+
+    def upgrade_game_database(self, connection):
+        """Tables added after v1, created on demand so existing game databases keep working.
+
+        sessions: the environment (production, editor, development...) of each session, taken
+        from the batch's `environment` or from session_start's `environment` param, so every event
+        of a session can be filtered without the SDK repeating it. funnels: saved funnel steps.
+        environment_fixes: "count what this build sent as development as production" rules for a
+        build that shipped in the wrong mode; applied when events are read, never to the events.
+        """
+        connection.executescript("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                environment TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS funnels (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                definition TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS environment_fixes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_environment TEXT NOT NULL,
+                to_environment TEXT NOT NULL,
+                app_version TEXT,
+                build TEXT,
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+        """)
+        if connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0:
+            declared = ENVIRONMENT_VALUE.format(
+                column="json_extract(payload, '$.params.environment')"
+            )
+            connection.execute(f"""
+                INSERT OR IGNORE INTO sessions
+                SELECT json_extract(payload, '$.session_id'),
+                       {declared}
+                FROM events
+                WHERE name='session_start' AND json_extract(payload, '$.session_id') IS NOT NULL
+                  AND json_type(payload, '$.params.environment')='text'
+                ORDER BY client_ts
+            """)
 
     def game_path(self, game_id):
         return self.root / "games" / f"{game_id}.sqlite3"
 
-    def register_game(self, game: GameCreate):
+    def register_game(self, game: GameCreate, workspace_id=None):
         game_id = str(uuid4())
         created_at = timestamp()
         with self.connect(self.root / "registry.sqlite3") as registry:
@@ -110,25 +186,40 @@ class Storage:
                     );
                     PRAGMA user_version=1;
                 """)
+                self.upgrade_game_database(database)
             registry.execute(
-                "INSERT INTO games (id, name, bundle_id, platform, notes, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (game_id, game.name, game.bundle_id, game.platform, game.notes, created_at),
+                "INSERT INTO games "
+                "(id, name, bundle_id, platform, notes, created_at, workspace_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    game_id,
+                    game.name,
+                    game.bundle_id,
+                    game.platform,
+                    game.notes,
+                    created_at,
+                    workspace_id,
+                ),
             )
             key = self._new_key(registry, game_id, "initial")
         return {
             "id": game_id,
-            **game.model_dump(),
+            **game.model_dump(mode="json", exclude={"workspace_id"}),
+            "workspace_id": workspace_id,
             "created_at": created_at,
             "archived_at": None,
             "key": key,
         }
 
-    def list_games(self):
+    def list_games(self, workspace_id=None):
         with self.connect(self.root / "registry.sqlite3") as connection:
-            return [
-                dict(row) for row in connection.execute("SELECT * FROM games ORDER BY created_at")
-            ]
+            if workspace_id:
+                rows = connection.execute(
+                    "SELECT * FROM games WHERE workspace_id=? ORDER BY created_at", (workspace_id,)
+                )
+            else:
+                rows = connection.execute("SELECT * FROM games ORDER BY created_at")
+            return [dict(row) for row in rows]
 
     def get_game(self, game_id):
         with self.connect(self.root / "registry.sqlite3") as connection:
@@ -136,6 +227,71 @@ class Storage:
         if row is None:
             raise HTTPException(404, "Game not found")
         return dict(row)
+
+    def analytics_thresholds(self, game_id):
+        """Effective workspace defaults plus any overrides saved for this game."""
+        with self.connect(self.root / "registry.sqlite3") as connection:
+            row = connection.execute(
+                """SELECT
+                       coalesce(g.retention_min_users, w.retention_min_users, 100)
+                           AS retention_min_users,
+                       coalesce(g.levels_min_players, w.levels_min_players, 30)
+                           AS levels_min_players,
+                       coalesce(g.funnels_min_players, w.funnels_min_players, 30)
+                           AS funnels_min_players,
+                       g.retention_min_users AS retention_override,
+                       g.levels_min_players AS levels_override,
+                       g.funnels_min_players AS funnels_override
+                   FROM games g LEFT JOIN workspaces w ON w.id=g.workspace_id
+                   WHERE g.id=?""",
+                (game_id,),
+            ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Game not found")
+        return dict(row)
+
+    def set_analytics_thresholds(self, game_id, values):
+        self.get_game(game_id)
+        with self.connect(self.root / "registry.sqlite3") as connection:
+            connection.execute(
+                """UPDATE games SET retention_min_users=?, levels_min_players=?,
+                       funnels_min_players=? WHERE id=?""",
+                (
+                    values.retention_min_users,
+                    values.levels_min_players,
+                    values.funnels_min_players,
+                    game_id,
+                ),
+            )
+        return self.analytics_thresholds(game_id)
+
+    def icon_path(self, game_id):
+        return self.root / "icons" / f"{game_id}.png"
+
+    def set_icon(self, game_id, data: bytes):
+        """Stores a game's icon. The dashboard sends a square PNG; anything else is refused."""
+        self.get_game(game_id)
+        if len(data) > MAX_ICON_BYTES:
+            raise HTTPException(413, "Icon too large; use an image under 512 KB")
+        if data[:8] != PNG_SIGNATURE or data[12:16] != b"IHDR" or len(data) < 24:
+            raise HTTPException(415, "Icon must be a PNG image")
+        width, height = struct.unpack(">II", data[16:24])
+        if not (16 <= width <= 1024 and 16 <= height <= 1024):
+            raise HTTPException(400, "Icon must be between 16 and 1024 pixels on each side")
+        path = self.icon_path(game_id)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_bytes(data)
+        temporary.replace(path)
+        stamp = timestamp()
+        with self.connect(self.root / "registry.sqlite3") as connection:
+            connection.execute("UPDATE games SET icon_updated_at=? WHERE id=?", (stamp, game_id))
+        return {"icon_updated_at": stamp}
+
+    def clear_icon(self, game_id):
+        self.get_game(game_id)
+        self.icon_path(game_id).unlink(missing_ok=True)
+        with self.connect(self.root / "registry.sqlite3") as connection:
+            connection.execute("UPDATE games SET icon_updated_at=NULL WHERE id=?", (game_id,))
 
     def game_files(self, game_id):
         path = self.game_path(game_id)
@@ -168,6 +324,7 @@ class Storage:
             "keys_total": keys["total"],
             "keys_active": keys["active"],
             "storage_bytes": size,
+            "analytics_thresholds": self.analytics_thresholds(game_id),
         }
 
     def update_game(self, game_id, update: GameUpdate):
@@ -200,27 +357,42 @@ class Storage:
         game = self.get_game(game_id)
         if confirm != game["bundle_id"]:
             raise HTTPException(400, "Type the game's bundle ID to confirm deletion")
-        with self.connect(self.game_path(game_id)) as database:
-            database.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.delete_games([game])
+        return {"status": "deleted", "moved_to": "deleted"}
+
+    def delete_games(self, games):
+        """Removes games and their keys together; files go to data/deleted/. All or nothing."""
+        for game in games:
+            with self.connect(self.game_path(game["id"])) as database:
+                database.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         trash = self.root / "deleted"
         trash.mkdir(exist_ok=True, mode=0o700)
         stamp = timestamp().replace(":", "").replace("+", "_")
-        with self.connect(self.root / "registry.sqlite3") as registry:
-            registry.execute("BEGIN IMMEDIATE")
-            registry.execute("DELETE FROM api_keys WHERE game_id=?", (game_id,))
-            registry.execute("DELETE FROM games WHERE id=?", (game_id,))
-            for path in self.game_files(game_id):
-                if path.exists():
-                    path.rename(trash / f"{stamp}-{game['bundle_id']}-{path.name}")
-        return {"status": "deleted", "moved_to": str(trash.relative_to(self.root))}
+        moved = []
+        try:
+            with self.connect(self.root / "registry.sqlite3") as registry:
+                registry.execute("BEGIN IMMEDIATE")
+                for game in games:
+                    game_id = game["id"]
+                    registry.execute("DELETE FROM api_keys WHERE game_id=?", (game_id,))
+                    registry.execute("DELETE FROM games WHERE id=?", (game_id,))
+                    for path in [*self.game_files(game_id), self.icon_path(game_id)]:
+                        if path.exists():
+                            target = trash / f"{stamp}-{game['bundle_id']}-{path.name}"
+                            path.rename(target)
+                            moved.append((target, path))
+        except Exception:
+            for target, original in reversed(moved):  # put the files back; the rows roll back
+                target.rename(original)
+            raise
 
     def _new_key(self, connection, game_id, label):
         raw_key = "avn_" + secrets.token_urlsafe(32)
         key_id = str(uuid4())
         created_at = timestamp()
         connection.execute(
-            """INSERT INTO api_keys (id, game_id, key_hash, prefix, label, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO api_keys (id, game_id, key_hash, prefix, label, created_at, api_key)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 key_id,
                 game_id,
@@ -228,6 +400,7 @@ class Storage:
                 raw_key[:12],
                 label,
                 created_at,
+                raw_key,
             ),
         )
         return {"id": key_id, "api_key": raw_key, "label": label, "created_at": created_at}
@@ -243,17 +416,17 @@ class Storage:
             return [
                 dict(row)
                 for row in connection.execute(
-                    "SELECT id, prefix, label, created_at, revoked_at "
+                    "SELECT id, prefix, label, created_at, revoked_at, api_key "
                     "FROM api_keys WHERE game_id=?",
                     (game_id,),
                 )
             ]
 
-    def revoke_key(self, game_id, key_id):
+    def delete_key(self, game_id, key_id):
+        # Events are stored per game, not per key, so deleting a key never touches collected data.
         with self.connect(self.root / "registry.sqlite3") as connection:
             result = connection.execute(
-                "UPDATE api_keys SET revoked_at=COALESCE(revoked_at, ?) WHERE id=? AND game_id=?",
-                (timestamp(), key_id, game_id),
+                "DELETE FROM api_keys WHERE id=? AND game_id=?", (key_id, game_id)
             )
             if result.rowcount == 0:
                 raise HTTPException(404, "Key not found")
@@ -308,12 +481,24 @@ class Storage:
                     json.dumps(payload, ensure_ascii=True, allow_nan=False),
                 )
             )
+        environments = {}
+        for event in batch.resolved:
+            declared = event.environment
+            if event.name == "session_start" and isinstance(event.params.get("environment"), str):
+                declared = declared or event.params["environment"]
+            if declared and event.session_id:
+                environments[event.session_id] = declared.strip().lower()[:64]
         with self.connect(self.game_path(game_id)) as connection:
             connection.executemany(
                 "INSERT INTO events VALUES (?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING",
                 rows,
             )
             accepted = connection.total_changes
+            connection.executemany(
+                "INSERT INTO sessions VALUES (?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET environment=excluded.environment",
+                environments.items(),
+            )
         return {"accepted": accepted, "duplicates": len(rows) - accepted, "server_ts": server_ts}
 
     def set_definition(self, game_id, name, definition: EventDefinition):
@@ -339,17 +524,18 @@ class Storage:
                 for row in connection.execute("SELECT * FROM dictionary ORDER BY name")
             }
 
-    def health(self, game_id, start, end, basis="server_ts"):
+    def health(self, game_id, start, end, basis="server_ts", filters=None):
         if basis not in ("server_ts", "client_ts"):
             raise ValueError("Invalid timestamp basis")
         self.get_game(game_id)
+        condition, args = insights.where(start, end, filters, column=basis)
         with self.connect(self.game_path(game_id)) as connection:
             days = [
                 dict(row)
                 for row in connection.execute(
                     f"""SELECT substr({basis}, 1, 10) AS day, count(*) AS events
-                   FROM events WHERE {basis}>=? AND {basis}<? GROUP BY day ORDER BY day""",
-                    (start, end),
+                   FROM events WHERE {condition} GROUP BY day ORDER BY day""",
+                    args,
                 )
             ]
         return {
