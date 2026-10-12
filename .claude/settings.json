@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit",
+      "Write",
+      "Bash(scripts/check.sh)",
+      "Bash(scripts/setup.sh)",
+      "Bash(.venv/bin/python -m pytest:*)",
+      "Bash(.venv/bin/ruff:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(sudo:*)",
+      "Bash(docker:*)",
+      "Bash(systemctl:*)",
+      "Read(./.env)",
+      "Read(./data/**)"
+    ]
+  }
+}
