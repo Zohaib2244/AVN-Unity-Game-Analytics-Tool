@@ -28,6 +28,8 @@ full picture; `DEPLOYMENT.md` for self-hosting.
 scripts/setup.sh   # create .venv and install deps (run once per checkout/worktree)
 scripts/check.sh   # ruff check + ruff format --check + pytest — must pass before you finish
 scripts/dev.sh     # admin website on 127.0.0.1:${PORT:-8201} with a throwaway ./data
+scripts/release.sh # (owner) run the gate, tag main vX.Y.Z, push
+scripts/deploy.sh  # (owner) deploy the newest tag on the server, health-checked, auto-rollback
 ```
 
 The app refuses to run on SQLite older than 3.51.3 (WAL-reset fix). When the
@@ -43,7 +45,8 @@ tests through `scripts/check.sh` (or `. scripts/_env.sh` first); a bare
 - Ruff: line length 100, rules E/F/I/UP/B (see `pyproject.toml`). Format with `.venv/bin/ruff format`.
 - New configuration goes through environment variables, documented in `.env.example` and the Configuration table in `README.md`.
 - Never commit `.env`, anything under `data/`, API keys or tokens. Never read or modify real data directories.
-- Keep this branch generic: no hostnames, IPs, domains or personal deployment details. Deployment-specific changes live on a private branch, not here.
+- Keep the repo generic: no hostnames, IPs, domains or personal deployment details. Per-server settings live outside git (`.env`, `compose.override.yaml`, both gitignored; commit only the `*.example`).
+- Releases and deploys are the owner's job: `scripts/release.sh` tags and pushes, `scripts/deploy.sh` updates the server. Agents never run them.
 - The admin website follows the AVN Style ("Nutstyle") design system. If a `nutstyle` skill is available, read it before changing UI.
 - Raw events are kept indefinitely and SQLite may hold committed data in `-wal` files: never "clean up" data files as part of a change.
 - Don't push, merge or open PRs yourself; leave the branch for review.

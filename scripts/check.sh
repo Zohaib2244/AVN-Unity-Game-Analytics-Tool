@@ -10,4 +10,9 @@ cd "$(dirname "$0")/.."
 echo "== ruff check";  .venv/bin/ruff check .
 echo "== ruff format"; .venv/bin/ruff format --check .
 echo "== pytest";      .venv/bin/python -m pytest -q
+if command -v gitleaks >/dev/null; then
+  echo "== gitleaks"; gitleaks detect --no-banner --redact
+else
+  echo "== gitleaks: not installed, skipping secret scan"
+fi
 echo "check: all passed"

@@ -1,0 +1,24 @@
+# Per-server settings. Copy to config/compose.override.yaml on the server (it is gitignored)
+# and adjust. scripts/deploy.sh layers it over compose.yaml.
+services:
+  ingest:
+    networks:
+      default: {}
+      caddy:
+        aliases: [avn-analytics-ingest]
+  admin:
+    networks:
+      default: {}
+      caddy:
+        aliases: [avn-analytics-admin]
+    # Optional NutBot: mount the host's agent CLIs read-only (see README > NutBot)
+    volumes:
+      - /home/<user>/.local/share/claude/versions:/opt/nutbot/claude:ro
+    environment:
+      AVN_NUTBOT_CLAUDE_BIN: /opt/nutbot/claude/*
+    mem_limit: 1g
+
+networks:
+  caddy:
+    external: true
+    name: caddy_default   # the reverse proxy's Docker network

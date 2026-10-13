@@ -1,8 +1,16 @@
+# Secrets and per-server configuration never go in git. Commit a *.example instead.
 .env
+.env.*
+!.env.example
+compose.override.yaml
+compose.override.yml
+*.pem
+*.key
+deploy.log
+
 .venv/
 data/
 __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
-
