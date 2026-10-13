@@ -470,13 +470,15 @@ def discovery(storage, game_id):
             for key, param in event["params"].items()
             if key not in (defined or {}).get("params", {})
         ]
-        if defined is not None and not undescribed:
+        # a definition that only carries a mapping or a label has no description yet
+        described = bool(defined and (defined.get("description") or "").strip())
+        if described and not undescribed:
             continue
         missing.append(
             {
                 **{key: value for key, value in event.items() if key != "params"},
                 "description": defined["description"] if defined else "",
-                "defined": defined is not None,
+                "defined": described,
                 "params": sorted(undescribed, key=lambda item: -item["count"]),
             }
         )

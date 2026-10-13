@@ -47,6 +47,7 @@ const icons = {
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>',
   funnel: '<path d="M3 4h18l-7 8v6l-4 2v-8Z"/>',
   chevron: '<path d="m6 9 6 6 6-6"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1-1"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.3-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.8c1.6.8 2.6 2.6 3 5.2"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m13 7 4 4"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
@@ -99,6 +100,7 @@ function bindRange(container, onChange, initialPreset = '7', initialRange = null
   const input = container.querySelector('[data-range-picker]');
   const hidden = {from: container.querySelector('[data-range="from"]'), to: container.querySelector('[data-range="to"]')};
   const picker = flatpickr(input, {
+    ...(container.closest('dialog') ? {appendTo: container, static: true} : {}),
     mode: 'range', showMonths: 1, dateFormat: 'Y-m-d', altInput: true, altFormat: 'M j, Y', closeOnSelect: false,
     altInputClass: 'range-input', minDate: '1970-01-01', maxDate: '9998-12-31', locale: {firstDayOfWeek: 1}, allowInput: false,
     // The calendar stays open after the second click (so the range can be adjusted); it closes when you
@@ -229,7 +231,7 @@ function metric(title, value, footer, symbol) {
 // sections and an Android/iOS switch between its registered variants.
 let currentGame = null;
 let currentSection = 'overview';
-const GAME_SECTIONS = [['overview','grid','Overview'],['retention','pulse','Retention'],['funnels','funnel','Funnels'],['levels','game','Levels'],['players','users','Players'],['exports','export','Exports'],['dictionary','book','Event dictionary'],['keys','key','API keys'],['settings','settings','Game settings']];
+const GAME_SECTIONS = [['overview','grid','Overview'],['funnels','funnel','Funnels'],['levels','game','Levels'],['players','users','Players'],['exports','export','Exports'],['dictionary','book','Events'],['mappings','link','Mappings'],['keys','key','API keys'],['settings','settings','Game settings']];
 const gamePath = (game, section = 'overview') => `/games/${encodeURIComponent(game.id)}${section === 'overview' ? '' : `/${section}`}`;
 const sameGame = (a, b) => a.name.trim().toLowerCase() === b.name.trim().toLowerCase();
 const PLATFORM_ORDER = ['android', 'ios'];
@@ -396,10 +398,9 @@ async function renderGameSettings() {
       <li><span>Latest event</span><strong>${displayDate(game.last_event)}</strong></li>
       <li><span>Event definitions</span><strong>${number(game.definitions)}</strong></li>
       <li class="notes-row"><span>Notes</span>${game.notes ? `<p>${escapeHTML(game.notes)}</p>` : '<span class="muted">No notes yet</span>'}</li>
-    </ul><div class="section-spacing"><a class="button" href="${gamePath(game, 'keys')}">${icon('key',15)} Manage keys</a> <a class="button" href="${gamePath(game, 'dictionary')}">${icon('book',15)} Event dictionary</a></div></div></section>
+    </ul><div class="section-spacing"><a class="button" href="${gamePath(game, 'keys')}">${icon('key',15)} Manage keys</a> <a class="button" href="${gamePath(game, 'dictionary')}">${icon('book',15)} Events</a></div></div></section>
     <aside class="aside-card">${icon('pulse',25)}<h3>Connect your game</h3><p>Send batches to the collection endpoint with one of this game’s API keys in the <code>X-API-Key</code> header.</p><div class="connection"><code>POST ${escapeHTML(overview.ingest_url)}</code></div><p class="small section-spacing">Set <code>AVN_PUBLIC_INGEST_URL</code> on the server to show your public collection address here.</p></aside></div>
     <section class="panel section-spacing"><div class="panel-header"><div><h2>Analysis confidence</h2><p>Small samples stay visible with a warning. Leave a field blank to inherit the workspace default.</p></div></div><form class="panel-body" id="game-threshold-form"><div class="threshold-grid">
-      <div class="field"><label for="game-retention-min">Retention minimum users</label><input id="game-retention-min" name="retention_min_users" type="number" min="1" max="1000000" value="${game.analytics_thresholds.retention_override ?? ''}" placeholder="${game.analytics_thresholds.retention_min_users}"><p>Effective: ${number(game.analytics_thresholds.retention_min_users)}</p></div>
       <div class="field"><label for="game-levels-min">Level minimum players</label><input id="game-levels-min" name="levels_min_players" type="number" min="1" max="1000000" value="${game.analytics_thresholds.levels_override ?? ''}" placeholder="${game.analytics_thresholds.levels_min_players}"><p>Effective: ${number(game.analytics_thresholds.levels_min_players)}</p></div>
       <div class="field"><label for="game-funnels-min">Funnel minimum players</label><input id="game-funnels-min" name="funnels_min_players" type="number" min="1" max="1000000" value="${game.analytics_thresholds.funnels_override ?? ''}" placeholder="${game.analytics_thresholds.funnels_min_players}"><p>Effective: ${number(game.analytics_thresholds.funnels_min_players)}</p></div>
     </div><div class="error" role="alert"></div>${manage ? '<button class="button primary" type="submit">Save game overrides</button>' : '<p class="help">Only an admin or team lead can change these values.</p>'}</form></section>
@@ -414,6 +415,7 @@ async function renderGameSettings() {
   mountEnvironment(document.querySelector('#environment-list'), game, manage);
   if (!manage) document.querySelectorAll('#game-threshold-form input').forEach(input => { input.disabled = true; });
   if (manage) bindForm('#game-threshold-form', async (form, values) => {
+    values.retention_min_users = game.analytics_thresholds.retention_override ?? '';
     const payload = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value === '' ? null : Number(value)]));
     await api(`${gameURL(game)}/analytics-thresholds`, {method: 'PATCH', body: JSON.stringify(payload)});
     await renderGameSettings(); toast('Game confidence thresholds saved.');
@@ -565,74 +567,6 @@ function renderExports() {
   });
 }
 
-const storyFields = definition => ({labels: definition?.labels || '', hidden: Boolean(definition?.hidden), canonical: definition?.canonical || []});
-const canonicalText = mappings => (mappings || []).map(mapping => `${mapping.action}${mapping.param ? ` when ${mapping.param} ${mapping.op === 'eq' ? '=' : mapping.op === 'ne' ? '!=' : mapping.op} ${mapping.op === 'exists' ? '' : mapping.value}` : ''}`.trim()).join('\n');
-function parseCanonical(value) {
-  const mappings = [];
-  for (const raw of value.split('\n')) {
-    const line = raw.trim(); if (!line) continue;
-    const [action, condition, ...extra] = line.split(/\s+when\s+/i);
-    if (extra.length || !/^[A-Za-z][A-Za-z0-9_]*$/.test(action.trim())) throw new Error(`Invalid canonical mapping: ${line}`);
-    const mapping = {action: action.trim(), param: '', op: 'eq', value: ''};
-    if (condition) {
-      const match = condition.trim().match(/^([A-Za-z][A-Za-z0-9_]*)\s*(!=|>=|<=|=|>|<|contains|exists)\s*(.*)$/i);
-      if (!match) throw new Error(`Write the condition as “parameter = value” in: ${line}`);
-      const operators = {'=':'eq', '!=':'ne', '>':'gt', '>=':'gte', '<':'lt', '<=':'lte', contains:'contains', exists:'exists'};
-      Object.assign(mapping, {param: match[1], op: operators[match[2].toLowerCase()], value: match[2].toLowerCase() === 'exists' ? '' : match[3].trim()});
-      if (mapping.op !== 'exists' && !mapping.value) throw new Error(`Add a value to the condition in: ${line}`);
-    }
-    mappings.push(mapping);
-  }
-  return mappings;
-}
-
-async function renderDictionary() {
-  if (needsGame('Event dictionary', 'Give your events context, so the numbers mean something.')) return;
-  const game = selectedGame();
-  const [definitions, found] = await Promise.all([api(`${gameURL(game)}/dictionary`), api(`${gameURL(game)}/dictionary/discovery`)]);
-  const drafts = new Map([...document.querySelectorAll('[data-draft]')].filter(field => field.value.trim()).map(field => [field.dataset.draft, field.value]));
-  const ago = value => { const seconds = (Date.now() - Date.parse(value)) / 1000; return !(seconds >= 60) ? 'just now' : seconds < 3600 ? `${Math.round(seconds / 60)} min ago` : seconds < 86400 ? `${Math.round(seconds / 3600)} h ago` : `${Math.round(seconds / 86400)} d ago`; };
-  const activity = name => { const seen = found.activity[name]; return !seen ? '<span class="pill bad">Never received</span>' : found.stale.includes(name) ? `<span class="pill bad">Not seen in ${found.stale_days} days</span>` : `<span class="pill">${number(seen.count)} events · last ${ago(seen.last_seen)}</span>`; };
-  const foundCard = (item, index) => `<form class="discovery-card" id="found-${index}"><div class="discovery-head"><h3><code>${escapeHTML(item.name)}</code></h3><span class="pill ${item.defined ? '' : 'good'}">${item.defined ? 'New parameters' : 'New event'}</span><span class="pill">${number(item.count)} events · last ${ago(item.last_seen)}</span></div><div class="field"><label for="found-${index}-description">What does it mean?</label><textarea id="found-${index}-description" name="description" data-draft="${escapeHTML(item.name)}|description" placeholder="The player finished a level successfully." maxlength="4000" required>${escapeHTML(item.description)}</textarea></div>${item.params.length ? `<p class="eyebrow">${item.defined ? 'Parameters without a description' : 'Parameters'} (optional)</p><div class="discovery-params">${item.params.map(param => `<div class="discovery-param"><div><code>${escapeHTML(param.key)}</code><small class="${param.types.length > 1 ? 'warn-text' : ''}">${escapeHTML(param.types.join(' + '))} · e.g. ${escapeHTML(param.examples.join(', '))}</small></div><input name="param:${escapeHTML(param.key)}" data-draft="${escapeHTML(item.name)}|param:${escapeHTML(param.key)}" placeholder="What is it?" maxlength="2000" aria-label="Description of ${escapeHTML(param.key)}"></div>`).join('')}</div>` : ''}<div class="error" role="alert"></div><button class="button primary" type="submit">Save definition ${icon('check',14)}</button></form>`;
-  const discovery = found.missing.length ? `<section class="panel section-spacing"><div class="panel-header"><h2>Needs a definition <span class="count">${found.missing.length}</span></h2>${icon('pulse',17)}</div><p class="discovery-intro">Found in the events your game has sent, including editor and development builds. Names and parameters are filled in for you — just say what they mean. Parameters you leave blank stay on this list.</p>${found.missing.map(foundCard).join('')}</section>` : found.events_seen ? `<section class="panel section-spacing"><div class="panel-body discovery-done">${icon('check',17)} Every event your game sends has a description.</div></section>` : '';
-  shell('Event dictionary', heading('Give every event meaning.', 'A shared reference for you and the tools analyzing your data.') + picker(game) + discovery + `<div class="form-layout"><section class="panel"><div class="panel-header"><h2>Defined events <span class="count">${Object.keys(definitions).length}</span></h2>${icon('book',17)}</div>${Object.keys(definitions).length ? Object.entries(definitions).map(([name, definition]) => `<article class="dictionary-entry"><h3><code>${escapeHTML(name)}</code> ${activity(name)}</h3><p>${escapeHTML(definition.description)}</p>${definition.hidden ? '<p class="small"><span class="pill">Hidden from stories</span></p>' : ''}${definition.labels ? `<p class="small muted">In stories: ${escapeHTML(definition.labels.split('\n').join(' · '))}</p>` : ''}${definition.canonical?.length ? `<p class="small muted">Canonical: ${escapeHTML(canonicalText(definition.canonical).split('\n').join(' · '))}</p>` : ''}<dl>${Object.entries(definition.params).map(([parameter, meaning]) => `<dt>${escapeHTML(parameter)}</dt><dd>${escapeHTML(meaning)}</dd>`).join('')}</dl><button class="button ghost" data-edit="${escapeHTML(name)}">Edit definition ${icon('arrow',12)}</button> <button class="button ghost danger-text" data-delete-definition="${escapeHTML(name)}">Delete</button></article>`).join('') : empty('Make your events understandable', 'Describe what each event means in your game. Definitions travel with every export.', '', 'book')}</section><form id="dictionary-form" class="panel form-panel"><h2>Add an event definition</h2><p>Use the exact name sent by your game.</p><div class="field"><label for="event-name">Event name</label><input id="event-name" name="name" placeholder="level_complete" pattern="[A-Za-z][A-Za-z0-9_]*" maxlength="80" required></div><div class="field"><label for="description">What does it mean?</label><textarea id="description" name="description" placeholder="The player finished a level successfully." maxlength="4000" required></textarea></div><div class="field"><label for="parameters">Parameters (optional)</label><textarea id="parameters" name="params" placeholder="level: One-based level number&#10;duration: Time spent, in seconds"></textarea><p>One parameter per line: name: description. Saving an existing event replaces its definition.</p></div><div class="field"><label for="canonical">Canonical analytics mappings (optional)</label><textarea id="canonical" name="canonical" placeholder="level_started when STATE = Started&#10;level_completed when STATE = Completed&#10;session_start"></textarea><p>One shared action per line. Map the whole event with just an action, or add <code>when parameter = value</code>. Operators: <code>= != &gt; &gt;= &lt; &lt;= contains exists</code>.</p></div><div class="field"><label for="labels">How it reads in player stories (optional)</label><textarea id="labels" name="labels" placeholder="Started =&gt; Started level {Started}&#10;Completed =&gt; Completed level {Completed}&#10;* =&gt; Opened the main menu"></textarea><p>One rule per line: <code>parameter =&gt; text</code>. The first rule whose parameter is present wins; <code>{name}</code> inserts a value; <code>*</code> always matches. Without rules, events are named automatically (levels are recognised on their own).</p></div><label class="check-row"><input type="checkbox" name="hidden" value="1"> Hide this event from stories and journeys (noise)</label><div class="error" role="alert"></div><button class="button primary" type="submit">Save definition ${icon('check',14)}</button></form></div>`);
-  bindPicker();
-  document.querySelectorAll('[data-draft]').forEach(field => { if (drafts.has(field.dataset.draft)) field.value = drafts.get(field.dataset.draft); });
-  found.missing.forEach((item, index) => bindForm(`#found-${index}`, async (form, values) => {
-    const params = Object.assign(Object.create(null), definitions[item.name]?.params);
-    for (const [key, value] of Object.entries(values)) if (key.startsWith('param:') && value.trim()) params[key.slice(6)] = value.trim();
-    await api(`${gameURL(game)}/dictionary/${encodeURIComponent(item.name)}`, {method:'PUT', body:JSON.stringify({...storyFields(definitions[item.name]), description:values.description.trim(), params})});
-    await renderDictionary(); toast(`${item.name} saved.`);
-  }));
-  document.querySelectorAll('[data-edit]').forEach(button => button.addEventListener('click', () => {
-    const definition = definitions[button.dataset.edit];
-    document.querySelector('#event-name').value = button.dataset.edit;
-    document.querySelector('#description').value = definition.description;
-    document.querySelector('#parameters').value = Object.entries(definition.params).map(([name, meaning]) => `${name}: ${meaning}`).join('\n');
-    document.querySelector('#canonical').value = canonicalText(definition.canonical);
-    document.querySelector('#labels').value = definition.labels || '';
-    document.querySelector('[name="hidden"]').checked = Boolean(definition.hidden);
-    document.querySelector('#event-name').focus();
-  }));
-  document.querySelectorAll('[data-delete-definition]').forEach(button => button.addEventListener('click', () => {
-    const name = button.dataset.deleteDefinition;
-    confirmDialog(`Delete the definition of ${name}?`, 'Only the description is removed. Collected events are not affected.', 'Delete definition', async () => {
-      await api(`${gameURL(game)}/dictionary/${encodeURIComponent(name)}`, {method:'DELETE'});
-      await renderDictionary(); toast('Definition deleted.');
-    });
-  }));
-  bindForm('#dictionary-form', async (form, values) => {
-    const params = Object.create(null);
-    for (const line of values.params.split('\n').filter(line => line.trim())) {
-      const separator = line.indexOf(':');
-      if (separator <= 0 || !line.slice(separator + 1).trim()) throw new Error('Write each parameter as name: description.');
-      params[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
-    }
-    await api(`${gameURL(game)}/dictionary/${encodeURIComponent(values.name)}`, {method:'PUT', body:JSON.stringify({description:values.description, params, canonical:parseCanonical(values.canonical || ''), labels:(values.labels || '').trim(), hidden:values.hidden === '1'})});
-    await renderDictionary(); toast('Event definition saved.');
-  });
-}
-
 async function renderStatus() {
   const game = selectedGame();
   shell('Status', heading('Status', 'Recent event arrivals.', '<button class="button" data-action="refresh">'+icon('refresh',14)+' Refresh</button>') + `<div class="section-grid"><section class="panel"><div class="panel-header"><h2>At a glance</h2>${icon('server',17)}</div><div class="panel-body"><ul class="status-list"><li><span>Active game keys</span><strong>${overview.active_keys}</strong></li><li><span>Registered games</span><strong>${overview.games.length}</strong></li><li><span>Events collected</span><strong>${number(overview.events)}</strong></li></ul></div></section></div><section class="panel section-spacing"><div class="panel-header"><div><h2>Event arrivals</h2><p>Received by the server · choose any days · UTC</p></div></div><div class="panel-body">${game ? picker(game) : ''}${game ? '<div id="arrivals"></div>' : empty('No arrivals yet', 'Register a game and daily counts will appear here.', '', 'pulse')}</div></section>`);
@@ -643,9 +577,10 @@ async function renderStatus() {
 function renderSettings() {
   const packs = [["ember", "#1e1a14", "#ff6b2b", "#00b4c8"], ["slate", "#161b22", "#4da3ff", "#00c8a0"], ["moss", "#141c14", "#8fc63c", "#d89a28"], ["plum", "#1c141e", "#e84a8a", "#d8a830"], ["reef", "#102321", "#ff7a59", "#5ad7b7"], ["berry", "#21151a", "#ff4d6d", "#39c6d6"], ["circuit", "#151b19", "#f2c94c", "#2dd4bf"], ["graphite", "#1b1b1b", "#f0623d", "#b4d455"]];
   const thresholds = overview.analytics_thresholds;
-  shell('Settings', heading('Settings', 'Appearance and workspace details.') + `<div class="section-grid"><div><section class="panel"><div class="panel-header"><h2>Appearance</h2>${icon('settings',17)}</div><div class="panel-body"><p class="eyebrow">Theme</p><div class="seg-row range-modes" id="theme-modes">${['dark','light'].map(mode => `<button type="button" data-theme-mode="${mode}" aria-pressed="false">${mode}</button>`).join('')}</div><p class="eyebrow">Palette</p><div class="palette-grid" id="palette-grid">${packs.map(([id]) => `<button type="button" class="palette-btn" data-palette-id="${id}" aria-pressed="false"><span class="palette-swatch" data-swatch="${id}"><i></i><i></i><i></i></span>${id}</button>`).join('')}</div><p class="help section-spacing">Same themes as AVN Hub. Saved in this browser only.</p></div></section><section class="panel section-spacing"><div class="panel-header"><div><h2>Analysis confidence defaults</h2><p>Used for every game unless that game has an override.</p></div></div><form class="panel-body" id="workspace-threshold-form"><div class="threshold-grid"><div class="field"><label for="workspace-retention-min">Retention minimum users</label><input id="workspace-retention-min" name="retention_min_users" type="number" min="1" max="1000000" value="${thresholds.retention_min_users}"></div><div class="field"><label for="workspace-levels-min">Level minimum players</label><input id="workspace-levels-min" name="levels_min_players" type="number" min="1" max="1000000" value="${thresholds.levels_min_players}"></div><div class="field"><label for="workspace-funnels-min">Funnel minimum players</label><input id="workspace-funnels-min" name="funnels_min_players" type="number" min="1" max="1000000" value="${thresholds.funnels_min_players}"></div></div><div class="error" role="alert"></div>${me.can_manage_team ? '<button class="button primary" type="submit">Save workspace defaults</button>' : '<p class="help">Only the workspace admin can change these defaults.</p>'}</form></section><section class="panel section-spacing"><div class="panel-header"><h2>Workspace</h2>${icon('server',17)}</div><div class="panel-body"><ul class="status-list"><li><span>Application</span><strong>AVN Analytics</strong></li><li><span>Local timezone</span><strong>${escapeHTML(localTimezone)}</strong></li><li><span>Export contents</span><strong>Parquet · JSONL.gz · dictionary · AI guide</strong></li><li><span>Collection address</span><code>${escapeHTML(overview.ingest_url)}</code></li></ul><p class="help section-spacing">Storage location and limits are set in the server's .env file.</p></div></section></div><aside class="aside-card">${icon('shield',25)}<h3>Protect this workspace</h3><p>This dashboard has no sign-in of its own. Put it behind your own access control, such as Cloudflare Access, a VPN or a private network, and never expose it directly.</p></aside></div>`);
+  shell('Settings', heading('Settings', 'Appearance and workspace details.') + `<div class="section-grid"><div><section class="panel"><div class="panel-header"><h2>Appearance</h2>${icon('settings',17)}</div><div class="panel-body"><p class="eyebrow">Theme</p><div class="seg-row range-modes" id="theme-modes">${['dark','light'].map(mode => `<button type="button" data-theme-mode="${mode}" aria-pressed="false">${mode}</button>`).join('')}</div><p class="eyebrow">Palette</p><div class="palette-grid" id="palette-grid">${packs.map(([id]) => `<button type="button" class="palette-btn" data-palette-id="${id}" aria-pressed="false"><span class="palette-swatch" data-swatch="${id}"><i></i><i></i><i></i></span>${id}</button>`).join('')}</div><p class="help section-spacing">Same themes as AVN Hub. Saved in this browser only.</p></div></section><section class="panel section-spacing"><div class="panel-header"><div><h2>Analysis confidence defaults</h2><p>Used for every game unless that game has an override.</p></div></div><form class="panel-body" id="workspace-threshold-form"><div class="threshold-grid"><div class="field"><label for="workspace-levels-min">Level minimum players</label><input id="workspace-levels-min" name="levels_min_players" type="number" min="1" max="1000000" value="${thresholds.levels_min_players}"></div><div class="field"><label for="workspace-funnels-min">Funnel minimum players</label><input id="workspace-funnels-min" name="funnels_min_players" type="number" min="1" max="1000000" value="${thresholds.funnels_min_players}"></div></div><div class="error" role="alert"></div>${me.can_manage_team ? '<button class="button primary" type="submit">Save workspace defaults</button>' : '<p class="help">Only the workspace admin can change these defaults.</p>'}</form></section><section class="panel section-spacing"><div class="panel-header"><h2>Workspace</h2>${icon('server',17)}</div><div class="panel-body"><ul class="status-list"><li><span>Application</span><strong>AVN Analytics</strong></li><li><span>Local timezone</span><strong>${escapeHTML(localTimezone)}</strong></li><li><span>Export contents</span><strong>Parquet · JSONL.gz · dictionary · AI guide</strong></li><li><span>Collection address</span><code>${escapeHTML(overview.ingest_url)}</code></li></ul><p class="help section-spacing">Storage location and limits are set in the server's .env file.</p></div></section></div><aside class="aside-card">${icon('shield',25)}<h3>Protect this workspace</h3><p>This dashboard has no sign-in of its own. Put it behind your own access control, such as Cloudflare Access, a VPN or a private network, and never expose it directly.</p></aside></div>`);
   if (!me.can_manage_team) document.querySelectorAll('#workspace-threshold-form input').forEach(input => { input.disabled = true; });
   if (me.can_manage_team) bindForm('#workspace-threshold-form', async (form, values) => {
+    values.retention_min_users = thresholds.retention_min_users;
     const payload = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, Number(value)]));
     overview.analytics_thresholds = await api(`/v1/workspaces/${encodeURIComponent(currentWorkspace)}/analytics-thresholds`, {method: 'PATCH', body: JSON.stringify(payload)});
     renderSettings(); toast('Workspace confidence defaults saved.');
@@ -693,7 +628,7 @@ document.addEventListener('click', async event => {
     const sidebar = document.querySelector('#sidebar'); const button = event.target.closest('[data-action="nav"]');
     const open = !sidebar.classList.contains('mobile-open'); sidebar.classList.toggle('mobile-open', open); button.setAttribute('aria-expanded', String(open)); button.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
   }
-  if (action === 'close') { modal.close(); modal.innerHTML = ''; }
+  if (action === 'close') dismissModal();
   if (action === 'refresh') {
     // Fetch everything again and redraw the current page in place, without reloading the site.
     cache.clear(); overviewStale = true;
@@ -707,10 +642,55 @@ document.addEventListener('click', async event => {
   }
   if (action === 'theme') { window.avnTheme.setTheme(window.avnTheme.theme() === 'light' ? 'dark' : 'light'); const button = event.target.closest('[data-action="theme"]'); if (button) button.innerHTML = icon(window.avnTheme.theme() === 'light' ? 'moon' : 'sun', 15); }
 });
-modal.addEventListener('close', () => { modal.innerHTML = ''; });
+let modalDismissal = null;
+function dismissModal() {
+  if (!modal.open) return Promise.resolve();
+  if (modalDismissal) return modalDismissal;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches || !modal.animate) {
+    modal.close();
+    return Promise.resolve();
+  }
+  const content = modal.firstElementChild;
+  const animation = modal.animate([
+    {opacity: 1, transform: 'translateY(0) scale(1)'},
+    {opacity: 0, transform: 'translateY(8px) scale(.985)'},
+  ], {duration: 150, easing: 'cubic-bezier(.4, 0, 1, 1)', fill: 'forwards'});
+  modal.classList.add('is-dismissing');
+  modalDismissal = animation.finished.catch(() => {}).then(() => {
+    if (modal.open && modal.firstElementChild === content) modal.close();
+  }).finally(() => {
+    animation.cancel();
+    modal.classList.remove('is-dismissing');
+    modalDismissal = null;
+  });
+  return modalDismissal;
+}
+let backdropPressed = false;
+const outsideModal = event => {
+  if (event.target !== modal) return false;
+  const bounds = modal.getBoundingClientRect();
+  return event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
+};
+modal.addEventListener('pointerdown', event => { backdropPressed = event.button === 0 && outsideModal(event); });
+modal.addEventListener('pointercancel', () => { backdropPressed = false; });
+modal.addEventListener('click', event => {
+  const dismiss = backdropPressed && outsideModal(event);
+  backdropPressed = false;
+  if (dismiss && modal.classList.contains('player-dialog')) dismissModal();
+});
+modal.addEventListener('cancel', event => {
+  if (event.defaultPrevented || modal.querySelector('[data-range-picker]')?._flatpickr?.isOpen) return;
+  event.preventDefault();
+  dismissModal();
+});
+modal.addEventListener('close', () => {
+  backdropPressed = false;
+  modal.getAnimations().forEach(animation => animation.cancel());
+  modal.innerHTML = '';
+});
 
 const routes = {'/':renderHome, '/games':renderHome, '/games/new':renderNewGame, '/team':renderTeam, '/workspaces':renderWorkspaces, '/status':renderStatus, '/settings':renderSettings};
-const sections = {overview:renderGameOverview, retention:renderRetention, funnels:renderFunnels, levels:renderLevels, players:renderPlayers, exports:renderExports, dictionary:renderDictionary, keys:renderKeys, settings:renderGameSettings};
+const sections = {overview:renderGameOverview, funnels:renderFunnels, levels:renderLevels, players:renderPlayers, exports:renderExports, dictionary:renderDictionary, mappings:renderMappings, keys:renderKeys, settings:renderGameSettings};
 const LEGACY = ['/keys', '/exports', '/dictionary', '/funnels', '/players']; // old ?game= pages
 const gameRoute = pathname => pathname.match(/^\/games\/([^/]+)(?:\/([a-z]+))?\/?$/);
 
@@ -760,7 +740,8 @@ async function renderRoute() {
         currentGame = overview.games.find(item => item.id === wanted) || null;
       }
     }
-    currentSection = match[2] || 'overview';
+    currentSection = match[2] === 'retention' ? 'levels' : match[2] || 'overview';
+    if (match[2] === 'retention' && currentGame) history.replaceState({}, '', gamePath(currentGame, 'levels') + location.search);
     if (!currentGame || !sections[currentSection]) { currentGame = null; return renderNotFound(); }
     await sections[currentSection]();
     if (typeof mountNutBot === 'function') mountNutBot();

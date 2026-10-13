@@ -59,7 +59,7 @@ The first build compiles a pinned SQLite (the server refuses SQLite versions wit
 2. There is no sign-in page: the admin site has no login of its own, and (with the defaults) every request that reaches it is an admin. That is why the port stays private and the guide uses an SSH forward; to let other people in, put Cloudflare Access in front of it (see [Team access](#team-access)). The `.env` token is for scripts.
 3. **Games, Register a game**: enter a name, bundle ID (`com.example.mygame`) and platform (`android`, `ios`...). Register iOS and Android separately if you want separate databases.
 4. Copy the **API key**. It is shown once; you can issue more later (rotate by creating a new key, shipping it, then revoking the old one).
-5. Optionally describe your events on the **Event dictionary** page. These descriptions end up in every export.
+5. Optionally describe your events on the **Events** page, and, if your game names its session and level events differently, map them on the **Mappings** page. The descriptions end up in every export.
 
 Send a test event from the server itself:
 

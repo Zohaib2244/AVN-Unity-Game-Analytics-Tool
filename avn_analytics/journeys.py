@@ -8,6 +8,7 @@ import json
 import re
 import threading
 import time
+from bisect import bisect_left
 from collections import Counter
 from statistics import median
 
@@ -34,7 +35,17 @@ START_EXIT = "__start__"
 # carries a level number (a parameter with "level" in its name, e.g. LEVEL_NUMBER).
 POWERUP_NAME = re.compile(r"power.?up|booster|boost", re.I)
 # The groups of players behind one level's numbers (see level_players).
-LEVEL_GROUPS = ("left", "finished_stopped", "kept_going", "stuck", "started")
+LEVEL_GROUPS = (
+    "total_drop",
+    "left",
+    "finished_stopped",
+    "kept_going",
+    "unknown_progress",
+    "stuck",
+    "started",
+    "returning",
+    "missing_history",
+)
 LEVEL_PLAYER_SORTS = ("exit_at", "tries", "fails")
 STUCK_TRIES = 3
 LEVEL_CACHE_SECONDS = 60
@@ -384,17 +395,21 @@ def level_progress(storage, game_id, start, end, filters=None):
             elif verb == "failed":
                 item["fails"] += 1
         close_player()
+    transitions = _level_transitions(storage, game_id, start, end, filters)
     result = []
     threshold = storage.analytics_thresholds(game_id)["levels_min_players"]
     for number in sorted(levels):
         item = levels[number]
-        started, completed = len(item["started"]), len(item["completed"])
+        started = len(item["started"])
+        transition = transitions.get(number, {}).get("summary")
+        completed = transition["matched_completed"] if transition else 0
         seconds = item["seconds"]
         result.append(
             {
                 "level": number,
                 "started": started,
                 "completed": completed,
+                "observed_completed": len(item["completed"]),
                 "completion": round(100 * completed / started, 1) if started else None,
                 "attempts": item["attempts"],
                 "tries_per_player": round(item["attempts"] / started, 2) if started else None,
@@ -414,6 +429,7 @@ def level_progress(storage, game_id, start, end, filters=None):
                     {"text": text, "count": count} for text, count in item["other"].most_common(3)
                 ],
                 "low_sample": started < threshold,
+                "transition": transition,
             }
         )
     return {
@@ -422,103 +438,299 @@ def level_progress(storage, game_id, start, end, filters=None):
             "anonymous_events": anonymous_events,
             "minimum_players": threshold,
             "low_sample_levels": sum(1 for item in result if item["low_sample"]),
+            "transition_basis": "Selected starters, followed across versions until range end",
         },
     }
 
 
-def _scan_level(storage, game_id, start, end, filters, level):
-    """Everyone who played one level, sorted into the groups that level_progress counts.
-
-    Same definitions as the Levels table: "left" is a player whose very last level event was
-    starting, restarting or failing this level; "finished_stopped" is one whose last level event
-    was finishing it. "kept_going" finished it and later started a higher level; "stuck" has
-    STUCK_TRIES or more tries (or fails) without finishing; "started" is everyone who started it.
-    """
+def level_funnel(
+    storage,
+    game_id,
+    start,
+    end,
+    filters,
+    origin="level1",
+    last_level=20,
+    include_finishes=False,
+):
+    """Ordered progression for players whose entry event matches the selected filters."""
+    storage.get_game(game_id)
+    if origin not in ("level1", "session") or not 1 <= last_level <= 1000:
+        raise HTTPException(400, "Choose a funnel origin and an end level from 1 to 1000.")
     labeler = stories.Labeler(_definitions(storage, game_id))
+    steps = [("session", None)] if origin == "session" else []
+    for number in range(1, last_level + 1):
+        steps.append(("started", number))
+        if include_finishes:
+            steps.append(("completed", number))
+    counts = Counter()
+    observed = Counter()
+    active_players = 0
     condition, args = where(start, end, filters)
-    groups = {name: [] for name in LEVEL_GROUPS}
+    follow_condition, follow_args = where(
+        start,
+        end,
+        {
+            key: value
+            for key, value in (filters or {}).items()
+            if key in ("environments", "exclude_environments", "platforms")
+        },
+    )
 
-    def finish(state):
-        if state is None or state["exit_at"] is None:
+    def finish(events):
+        nonlocal active_players
+        if not events:
             return
-        record = {
-            "player": state["player"],
-            "tries": state["tries"],
-            "fails": state["fails"],
-            "completed": state["completed"],
-            "exit_at": state["exit_at"],
-            "last_seen": state["last_seen"],
-            # opened the game on a later (UTC) day than the one they last played this level
-            "came_back": state["last_seen"][:10] > state["exit_at"][:10],
-            "app_version": state["app_version"],
-            "country": state["country"],
-        }
-        last_number, last_verb = state["last_level"]
-        if last_number == level and last_verb in ("started", "restarted", "failed"):
-            groups["left"].append(record)
-        if last_number == level and last_verb == "completed":
-            groups["finished_stopped"].append(record)
-        if state["kept_going"]:
-            groups["kept_going"].append(record)
-        if not state["completed"] and (
-            state["tries"] >= STUCK_TRIES or state["fails"] >= STUCK_TRIES
-        ):
-            groups["stuck"].append(record)
-        if state["tries"]:
-            groups["started"].append(record)
+        active_players += 1
+        times = {}
+        entered = None
+        for row, keys in events:
+            for key in keys:
+                times.setdefault(key, []).append(row["client_ts"])
+            if entered is None and row["selected"] and steps[0] in keys:
+                entered = row["client_ts"]
+        for key in times:
+            observed[key] += 1
+        if entered is None:
+            return
+        previous = entered
+        for key in steps:
+            available = times.get(key, [])
+            position = bisect_left(available, previous)
+            if position == len(available):
+                break
+            previous = available[position]
+            counts[key] += 1
 
     with storage.connect(storage.game_path(game_id)) as connection:
-        total = connection.execute(
-            f"SELECT count(*) FROM events WHERE {condition} AND {IDENTIFIED}", args
-        ).fetchone()[0]
-        if total > MAX_FUNNEL_EVENTS:
-            raise HTTPException(400, "Too many events in this range. Pick fewer days.")
         rows = connection.execute(
-            f"""SELECT {PLAYER} AS player, name, client_ts,
+            f"""WITH selected AS (
+                    SELECT event_id, {PLAYER} AS player FROM events
+                    WHERE {condition} AND {IDENTIFIED}
+                )
+                SELECT {PLAYER} AS player, name, client_ts,
                        json_extract(payload, '$.params') AS params,
-                       json_extract(payload, '$.app_version') AS app_version,
-                       json_extract(payload, '$.country') AS country
-                FROM events WHERE {condition} AND {IDENTIFIED}
-                ORDER BY player, client_ts, event_id""",
-            args,
+                       event_id IN (SELECT event_id FROM selected) AS selected
+                FROM events WHERE {follow_condition} AND {IDENTIFIED}
+                    AND {PLAYER} IN (SELECT player FROM selected)
+                ORDER BY player, client_ts, event_id LIMIT ?""",
+            (*args, *follow_args, MAX_FUNNEL_EVENTS + 1),
         )
-        state = None
-        for row in rows:
-            if state is None or row["player"] != state["player"]:
-                finish(state)
-                state = {
-                    "player": row["player"],
-                    "tries": 0,
-                    "fails": 0,
-                    "completed": False,
-                    "kept_going": False,
-                    "exit_at": None,
-                    "last_level": None,
-                    "last_seen": None,
-                    "app_version": None,
-                    "country": None,
-                }
-            state["last_seen"] = row["client_ts"]
-            state["app_version"] = row["app_version"]
-            state["country"] = row["country"]
+        player, events = None, []
+        for count, row in enumerate(rows, 1):
+            if count > MAX_FUNNEL_EVENTS:
+                raise HTTPException(400, "Too many events for this funnel. Pick fewer days.")
+            if row["player"] != player:
+                finish(events)
+                player, events = row["player"], []
             params = json.loads(row["params"]) if row["params"] else {}
             info = labeler.level_info(row["name"], params)
-            if info is None:
+            keys = []
+            if info:
+                verb, number = info
+                if verb == "restarted":
+                    verb = "started"
+                keys.append((verb, number))
+            if row["name"] == "session_start" or "session_start" in labeler.canonical(
+                row["name"], params
+            ):
+                keys.append(("session", None))
+            events.append((row, keys))
+        finish(events)
+    entered = counts[steps[0]]
+    previous = entered
+    result = []
+    for index, key in enumerate(steps):
+        reached = counts[key]
+        result.append(
+            {
+                "action": key[0],
+                "level": key[1],
+                "players": reached,
+                "percent": round(100 * reached / entered, 1) if entered else None,
+                "drop": previous - reached if index else 0,
+                "drop_percent": round(100 * (previous - reached) / previous, 1)
+                if index and previous
+                else None,
+                "outside_funnel": observed[key] - reached,
+            }
+        )
+        previous = reached
+    return {
+        "origin": origin,
+        "last_level": last_level,
+        "include_finishes": include_finishes,
+        "players": entered,
+        "without_entry": active_players - entered,
+        "steps": result,
+        "minimum_players": storage.analytics_thresholds(game_id)["funnels_min_players"],
+    }
+
+
+def _level_transitions(storage, game_id, start, end, filters):
+    """Match selected starters to subsequent progress, retaining historical entry context."""
+    labeler = stories.Labeler(_definitions(storage, game_id))
+    condition, args = where(start, end, filters)
+    history_condition, history_args = where(
+        "0001-01-01",
+        end,
+        {
+            key: value
+            for key, value in (filters or {}).items()
+            if key in ("environments", "exclude_environments", "platforms")
+        },
+    )
+    levels = {}
+    observed_starts = set()
+
+    def entry(number):
+        return levels.setdefault(number, {name: [] for name in LEVEL_GROUPS})
+
+    def finish(player, events):
+        if not events:
+            return
+        selected_starts = {}
+        first_starts = {}
+        for index, (row, info) in enumerate(events):
+            if info and info[0] in ("started", "restarted"):
+                first_starts.setdefault(info[1], index)
+                observed_starts.add(info[1])
+                if row["selected"]:
+                    selected_starts.setdefault(info[1], index)
+        for number, began in selected_starts.items():
+            initial = events[began][0]
+            progress = [
+                (index, row, info)
+                for index, (row, info) in enumerate(events)
+                if row["client_ts"] >= initial["client_ts"] and info
+            ]
+            own = [(row, info) for _, row, info in progress if info[1] == number]
+            completed = any(info[0] == "completed" for row, info in own)
+            continued = any(
+                info[1] == number + 1 and info[0] in ("started", "restarted")
+                for index, row, info in progress
+                if row["client_ts"] >= initial["client_ts"]
+            )
+            higher = any(info[1] > number for index, row, info in progress)
+            tries = sum(info[0] in ("started", "restarted") for row, info in own)
+            fails = sum(info[0] == "failed" for row, info in own)
+            latest = events[-1][0]
+            record = {
+                "player": player,
+                "tries": tries,
+                "fails": fails,
+                "completed": completed,
+                "exit_at": own[-1][0]["client_ts"],
+                "last_seen": latest["client_ts"],
+                "came_back": latest["client_ts"][:10] > own[-1][0]["client_ts"][:10],
+                "app_version": latest["app_version"],
+                "start_version": initial["app_version"],
+                "country": latest["country"],
+                "history": "Observed start",
+            }
+            groups = entry(number)
+            groups["started"].append(record)
+            if continued:
+                groups["kept_going"].append(record)
+            else:
+                groups["total_drop"].append(record)
+                category = (
+                    "unknown_progress" if higher else "finished_stopped" if completed else "left"
+                )
+                groups[category].append(record)
+            if not completed and not higher and (tries >= STUCK_TRIES or fails >= STUCK_TRIES):
+                groups["stuck"].append(record)
+            previous = selected_starts.get(number - 1)
+            if number <= 0 or (
+                previous is not None and events[previous][0]["client_ts"] <= initial["client_ts"]
+            ):
                 continue
-            verb, number = info
-            state["last_level"] = (number, verb)
-            if number == level:
-                state["exit_at"] = row["client_ts"]
-                if verb in ("started", "restarted"):
-                    state["tries"] += 1
-                elif verb == "completed":
-                    state["completed"] = True
-                elif verb == "failed":
-                    state["fails"] += 1
-            elif number > level and state["completed"] and verb in ("started", "restarted"):
-                state["kept_going"] = True
-        finish(state)
-    return groups
+            prior = events[:began]
+            recorded_history = first_starts.get(number - 1, began) < began or any(
+                row["client_ts"] < start
+                or (
+                    row["app_version"]
+                    and initial["app_version"]
+                    and row["app_version"] != initial["app_version"]
+                )
+                or (info and info[1] < number)
+                for row, info in prior
+            )
+            category = "returning" if recorded_history else "missing_history"
+            entrant = {
+                **record,
+                "history": (
+                    "Earlier activity recorded; outside the previous start cohort"
+                    if recorded_history
+                    else "Earlier level history unavailable; install or upgrade is unknown"
+                ),
+            }
+            if number > 1:
+                record["history"] = entrant["history"]
+                record["entry_context"] = category
+            entry(number - 1)[category].append(entrant)
+
+    with storage.connect(storage.game_path(game_id)) as connection:
+        rows = connection.execute(
+            f"""WITH selected AS (
+                    SELECT event_id, {PLAYER} AS player FROM events
+                    WHERE {condition} AND {IDENTIFIED}
+                )
+                SELECT {PLAYER} AS player, name, client_ts,
+                       json_extract(payload, '$.params') AS params,
+                       json_extract(payload, '$.app_version') AS app_version,
+                       json_extract(payload, '$.country') AS country,
+                       event_id IN (SELECT event_id FROM selected) AS selected
+                FROM events
+                WHERE {history_condition} AND {IDENTIFIED}
+                  AND {PLAYER} IN (SELECT player FROM selected)
+                ORDER BY player, client_ts, event_id
+                LIMIT ?""",
+            (*args, *history_args, MAX_FUNNEL_EVENTS + 1),
+        )
+        player, events = None, []
+        for count, row in enumerate(rows, 1):
+            if count > MAX_FUNNEL_EVENTS:
+                raise HTTPException(400, "Too much player history. Pick fewer players or days.")
+            if row["player"] != player:
+                finish(player, events)
+                player, events = row["player"], []
+            params = json.loads(row["params"]) if row["params"] else {}
+            events.append((row, labeler.level_info(row["name"], params)))
+        finish(player, events)
+    result = {}
+    for number, groups in levels.items():
+        started = len(groups["started"])
+        available = number + 1 in observed_starts and started > 0
+        counts = {name: len(members) for name, members in groups.items()}
+        result[number] = {
+            "groups": groups,
+            "summary": {
+                **counts,
+                "next_level": number + 1,
+                "available": available,
+                "drop_percent": round(100 * counts["total_drop"] / started, 1)
+                if available
+                else None,
+                "matched_completed": sum(row["completed"] for row in groups["started"]),
+                "entrants": counts["returning"] + counts["missing_history"],
+                "starters_returning": sum(
+                    row.get("entry_context") == "returning" for row in groups["started"]
+                ),
+                "starters_missing_history": sum(
+                    row.get("entry_context") == "missing_history" for row in groups["started"]
+                ),
+                "net_change": len(levels.get(number + 1, {}).get("started", [])) - started
+                if available
+                else None,
+            },
+        }
+    return result
+
+
+def _scan_level(storage, game_id, start, end, filters, level):
+    transitions = _level_transitions(storage, game_id, start, end, filters)
+    return transitions.get(level, {}).get("groups", {name: [] for name in LEVEL_GROUPS})
 
 
 def level_players(
@@ -528,7 +740,7 @@ def level_players(
     end,
     filters,
     level,
-    group="left",
+    group="total_drop",
     offset=0,
     limit=50,
     sort="exit_at",
@@ -542,7 +754,13 @@ def level_players(
         raise HTTPException(400, "Unknown group")
     if sort not in LEVEL_PLAYER_SORTS:
         raise HTTPException(400, "Unknown sort")
-    key = (game_id, start, end, json.dumps(filters or {}, sort_keys=True), level)
+    key = (
+        str(storage.game_path(game_id)),
+        start,
+        end,
+        json.dumps(filters or {}, sort_keys=True),
+        level,
+    )
     now = time.monotonic()
     with _level_cache_lock:
         cached = _level_cache.get(key)

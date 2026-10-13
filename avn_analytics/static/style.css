@@ -1032,3 +1032,129 @@ th.metric,td.metric{width:140px;min-width:110px}
 .story-line.focus>div{border-left:3px solid var(--accent-orange);padding-left:10px}
 .levels-grid th{white-space:normal;vertical-align:bottom;line-height:1.3}
 .level-drill .compact-table td,.level-drill .compact-table th{white-space:nowrap}
+
+/* Events and Mappings */
+.spark{width:90px;height:22px;display:block}
+.spark polyline{fill:none;stroke:var(--accent-cyan);stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.spark circle{fill:var(--accent-cyan)}
+.events-toolbar{padding:12px 20px;border-bottom:1px solid var(--border);margin:0}
+.events-grid th{white-space:normal;vertical-align:bottom;line-height:1.3}
+.events-grid td{vertical-align:middle}
+.event-name-cell{white-space:nowrap}
+.event-name-cell code{margin-right:6px}
+.event-body{margin-top:14px;display:grid;gap:14px}
+.event-form{display:grid;gap:14px}
+.event-form .field{margin:0}
+.event-sub{font-size:var(--fs-label);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);margin:4px 0 8px}
+.event-counts-as{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.event-counts-as>div{flex:1 1 220px;line-height:1.9}
+.event-params td{vertical-align:middle}
+.event-params input{width:100%;min-width:200px}
+.event-actions{justify-content:flex-end;flex-wrap:wrap}
+.event-actions .danger-text{margin-right:auto}
+.event-chart{margin:0}
+.event-warning{display:flex;gap:8px;align-items:center;margin:0;padding:10px 12px;border:1px solid var(--accent-orange);border-radius:8px;color:var(--text-primary)}
+.event-breakdowns{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}
+.event-breakdowns table{width:100%}
+.event-examples td{vertical-align:top}
+.mapping-card .panel-header .button{flex:none}
+.mapping-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px 18px;align-items:start}
+.mapping-fields .field{margin:0}
+.mapping-condition{display:flex;flex-wrap:wrap;gap:8px}
+.mapping-condition select,.mapping-condition input{flex:1 1 120px;min-width:0}
+.mapping-form{margin-top:16px;padding-top:12px;border-top:1px dashed var(--border);display:grid;gap:12px}
+.mapping-preview{margin:0}
+.mapping-silent{margin-top:12px}
+.mapping-ask .quiet-actions{margin-top:10px}
+dialog.player-dialog{width:min(1180px,calc(100vw - 32px));max-width:1180px;max-height:92dvh;padding:24px;overscroll-behavior:contain}
+.player-dialog-head{position:sticky;top:-24px;z-index:5;display:flex;align-items:center;justify-content:space-between;gap:16px;background:var(--bg-card);padding:16px 0;border-bottom:1px solid var(--border);margin-bottom:20px}
+.player-dialog-head h2{margin:0}
+.player-dialog .page-heading p{overflow-wrap:anywhere}
+body:has(dialog.player-dialog[open]){overflow:hidden}
+.level-drop-button{border:0;background:none;padding:4px 0;white-space:nowrap}
+.level-net{display:block;margin-top:6px;font-size:11px;color:var(--text-muted)}
+.level-net.gain{color:var(--accent-cyan)}
+.level-net.loss{color:var(--status-down)}
+.level-breakdown{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.level-breakdown>div{background:var(--bg-card);padding:14px;border:1px solid var(--border);border-radius:8px}
+.level-breakdown strong,.level-breakdown span{display:block}
+.level-breakdown strong{font-size:20px;margin-bottom:6px}
+.level-breakdown small,.level-breakdown span{font-size:11px;color:var(--text-muted)}
+.level-drill-head .segmented{flex-wrap:wrap}
+@media(max-width:640px){.level-breakdown{grid-template-columns:repeat(2,minmax(0,1fr))}dialog.player-dialog{padding:16px}.player-dialog-head{top:-16px}.player-dialog .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+:root{--motion-fast:160ms;--motion-normal:240ms;--motion-ease:cubic-bezier(.2,.75,.25,1)}
+.level-explore{margin-bottom:24px}
+.level-saved-views,.levels-navigation,.level-analysis-controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 20px}
+.level-analysis-controls{padding:0;align-items:end}
+.level-analysis-controls>label{min-width:140px}
+.level-analysis-controls input[type=number]{max-width:130px}
+.level-analysis-controls .check-row{align-self:center;min-width:0}
+.level-analysis-controls .check-row input{width:auto}
+.level-saved-views select{max-width:280px}
+.levels-navigation{border-bottom:1px solid var(--border)}
+.levels-navigation form{display:flex;align-items:center;gap:8px}
+.levels-navigation label{margin:0}
+.levels-navigation input{max-width:110px}
+.levels-navigation select{width:auto}
+.levels-navigation>.quiet-actions{margin-left:auto}
+.level-scroll{overflow:auto;overscroll-behavior:contain;max-height:65vh;scroll-padding-top:70px}
+.level-scroll table{isolation:isolate}
+.level-scroll thead{position:sticky;top:0;z-index:4;background:var(--bg-card)}
+.levels-grid>thead th:first-child,.levels-grid>tbody>tr:not(.level-detail)>td:first-child{position:sticky;left:0;z-index:2;background:var(--bg-card)}
+.levels-grid>thead th:first-child{z-index:5}
+.levels-grid .level-highlight>td{background:color-mix(in srgb,var(--accent-cyan) 12%,var(--bg-card))}
+.levels-grid .level-highlight>td:first-child{box-shadow:inset 3px 0 var(--accent-cyan)}
+.comparison-scroll,.funnel-scroll{max-height:420px;margin-top:16px}
+.comparison-table th,.comparison-table td{white-space:nowrap}
+.comparison-table thead th[colspan]{text-align:center;color:var(--accent-cyan)}
+.level-jump-link{border:0;background:none;padding:0;text-align:left;font:inherit;cursor:pointer}
+.level-funnel-bar{height:6px;min-width:90px;background:var(--bg-nested);border-radius:4px;overflow:hidden;margin-bottom:5px}
+.level-funnel-bar span{display:block;height:100%;background:var(--accent-cyan);width:0}
+.gain{color:var(--accent-cyan)}.loss{color:var(--status-down)}
+.player-browse{display:flex;align-items:center;justify-content:center;gap:10px;margin-left:auto;font-size:12px}
+.player-dialog-head{flex-wrap:wrap}
+@media(max-width:640px){.player-browse{order:3;width:100%;justify-content:space-between}.player-browse .button{font-size:11px;padding:6px}.level-saved-views,.levels-navigation{padding:12px}.levels-navigation>.quiet-actions{margin-left:0}.levels-navigation form{flex-wrap:wrap}.level-scroll{max-height:65dvh}}
+@keyframes avn-enter{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+@keyframes avn-fade-in{from{opacity:0}to{opacity:1}}
+@keyframes avn-fade-out{from{opacity:1}to{opacity:0}}
+@keyframes avn-dialog-enter{from{opacity:0;transform:translateY(12px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes avn-drawer-enter{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:translateX(0)}}
+@media(prefers-reduced-motion:no-preference){
+  .button,.icon-button,.nav a,.game-card,.text-link,.back-link,.segmented button,.range-modes button,.variant-switch a,.palette-btn,.level-toggle,.level-drop-button,.filter-menu summary,.range-nav,.nb-tab{
+    transition:color var(--motion-fast) ease,background-color var(--motion-fast) ease,border-color var(--motion-fast) ease,box-shadow var(--motion-normal) var(--motion-ease),transform var(--motion-fast) var(--motion-ease),opacity var(--motion-fast) ease;
+  }
+  input,select,textarea{transition:border-color var(--motion-fast) ease,box-shadow var(--motion-fast) ease,background-color var(--motion-normal) ease}
+  .level-toggle svg,.collapse-toggle svg,.rule-chevron{transition:transform var(--motion-normal) var(--motion-ease)}
+  .page-heading,.welcome,.stat-strip,.metrics,.toolbar,.filter-bar{animation:avn-enter 300ms var(--motion-ease) backwards}
+  main .panel,main .aside-card,main .game-card,.metric,.empty-card{animation:avn-enter 320ms var(--motion-ease) backwards}
+  .game-grid .game-card:nth-child(2),.metrics .metric:nth-child(2){animation-delay:35ms}
+  .game-grid .game-card:nth-child(3),.metrics .metric:nth-child(3){animation-delay:70ms}
+  .game-grid .game-card:nth-child(n+4):nth-child(-n+8),.metrics .metric:nth-child(n+4){animation-delay:105ms}
+  .stat-strip .stat:nth-child(-n+6){animation:avn-fade-in 300ms ease backwards}
+  .stat-strip .stat:nth-child(2){animation-delay:35ms}
+  .stat-strip .stat:nth-child(3){animation-delay:70ms}
+  .stat-strip .stat:nth-child(n+4){animation-delay:105ms}
+  .level-detail:not([hidden]) .level-drill,.level-drill>.level-breakdown,.level-drill>.table-wrap,.player-rules:not([hidden]),.rule-section:not(.collapsed) .rule-section-body{animation:avn-enter var(--motion-normal) var(--motion-ease) backwards}
+  .filter-menu[open] .filter-popover,details[open]>:not(summary),.flatpickr-calendar.open{animation:avn-enter 180ms var(--motion-ease) backwards}
+  #story-body>.panel,#story-body>.story-chapter:nth-child(-n+8),#story-body>.story-focus,.journey-session:nth-child(-n+8){animation:avn-enter var(--motion-normal) var(--motion-ease) backwards}
+  .compact-table tbody tr:nth-child(-n+12){animation:avn-fade-in var(--motion-normal) ease backwards}
+  dialog[open]{animation:avn-dialog-enter var(--motion-normal) var(--motion-ease) backwards}
+  dialog[open]::backdrop{animation:avn-fade-in var(--motion-normal) ease backwards}
+  dialog.is-dismissing::backdrop{animation:avn-fade-out 150ms ease forwards}
+  #notice:not(:empty){animation:avn-fade-in 180ms ease}
+  #nutbot-root.open .nb-panel{animation:avn-drawer-enter var(--motion-normal) var(--motion-ease) backwards}
+  .sidebar.mobile-open{animation:avn-enter var(--motion-normal) var(--motion-ease) backwards}
+  ::view-transition-old(root){animation:avn-fade-out 140ms ease both}
+  ::view-transition-new(root){animation:avn-fade-in 240ms var(--motion-ease) both}
+  ::view-transition-group(sidebar),::view-transition-group(topbar){animation-duration:240ms;animation-timing-function:var(--motion-ease)}
+}
+@media(hover:hover) and (prefers-reduced-motion:no-preference){
+  .game-card:hover{transform:translateY(-3px)}
+  .icon-button:hover,.level-toggle:hover,.level-drop-button:hover{transform:translateY(-1px)}
+  .segmented button:active,.range-modes button:active,.range-nav:active{transform:scale(.97)}
+  .nav a:hover{transform:translateX(2px)}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+}

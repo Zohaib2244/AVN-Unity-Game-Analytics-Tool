@@ -3,7 +3,7 @@
 A **self-hosted event analytics pipeline for Unity games**. Collect your game's events into your own database, then export them for whatever you want to do with them:
 
 - **AI agent analysis**: hand a day, week or month of events (plus a data dictionary) to an AI agent such as Claude or Codex and ask it what to change in your game.
-- **Built-in dashboards**: daily active users, retention, funnels, player journeys, level-by-level progress and individual player stories, computed live on your own server, plus **NutBot**, an assistant that reads them for you.
+- **Built-in dashboards**: daily active users, funnels, player journeys, level-by-level progress and individual player stories, computed live on your own server, plus **NutBot**, an assistant that reads them for you.
 - **Custom dashboards**: load the same exports into DuckDB, pandas, Grafana, Metabase or your own tooling.
 
 You own the data, there is no per-event cost, and there is no vendor lock-in. The built-in dashboards cover the everyday questions; for anything deeper, export the raw events and use whatever tool you like.
@@ -14,7 +14,7 @@ You own the data, there is no per-event cost, and there is no vendor lock-in. Th
 - **Reliable by design**: events are written to disk first, sent in batches, retried with backoff, and deduplicated by the server. Offline play, app kills and server downtime lose nothing.
 - **One isolated SQLite database per game**, with API keys you can issue and delete at any time.
 - **Agent-friendly exports** for any range of up to 366 days: Parquet and gzipped JSONL, a data dictionary (`events.md`), an AI guide (`ANALYSIS.md`) and a manifest, in one ZIP. Exports can be filtered like the dashboards.
-- **Private management website**, organized game-first: pick a game (Android and iOS versions together), then see its overview (with DAU), retention, funnels, levels, players, exports, dictionary, keys and settings. See [Dashboards](#dashboards).
+- **Private management website**, organized game-first: pick a game (Android and iOS versions together), then see its overview (with DAU), funnels, levels, players, exports, events, mappings, keys and settings. See [Dashboards](#dashboards).
 - **Rich context on every event**: device, user, session, app version, build, platform, environment, client and server time, ordering sequence and country.
 - **Small footprint**: FastAPI plus SQLite, runs happily on a home server or Raspberry Pi class machine.
 
@@ -135,12 +135,12 @@ The website is organized around games. The home page lists your games; Android a
 | Page | What it shows |
 | --- | --- |
 | **Overview** | Players, new players, sessions and events; daily active users (DAU on the last day, average and peak DAU, WAU, MAU, stickiness); activity per day (players per day is the DAU); a tabbed breakdown by environment, app version, build, country and platform (click a row to filter by it); top events. |
-| **Retention** | Cohorts by the day a player first started a session, and how many came back exactly 1, 3, 7, 14 and 30 days later (per cohort and overall). Days that haven't happened yet are marked not mature, and small cohorts are labelled. |
 | **Funnels** | Steps you define, in order (up to 100): how many players reach each one, who stops where, and how long it takes. Below it, **Journeys** shows what players did between two steps in plain words, grouped into the most common journeys, plus where players stop. |
-| **Levels** | Per level: players who started and finished it, completion, tries per player, fails, median time, power-ups used and where players stop. Open a level with its arrow to see the players behind it: those who quit mid-level, finished it and then stopped, kept going, got stuck, or just started it, each with a link to their story up to or from that level. |
+| **Levels** | The main metric follows the same players from this level’s start to the next numbered level’s start. Expand a row to split the total into no finish recorded, finished without a next start, and missing progress events. Returning entrants and unavailable earlier history are separate groups. Net gains/losses compare starter totals separately and have distinct arrows and labels. Player story, raw events and info open in a popup that preserves Levels filters, sorting, expanded rows and scroll position. |
 | **Players** | Everyone active in the chosen days, searchable and sortable (last active, first seen, events, sessions, average session length, app version). **Event rules** add your own columns from events (times they did something, highest/lowest/total of a parameter, first/last time), sort by them, and keep only players who did, or never did, an event. Countries show their full name on hover. Open a player for their **story**: sessions as chapters, with runs of levels folded into one line ("Played levels 1–10, completed all"). The raw event list and a **Player info** tab (latest version, build, platform, device and country, and an optional device specification lookup) are one click away. |
 | **Exports** | Download the raw events, using the same days and filters. |
-| **Event dictionary** | Describe each event and its parameters, say how it reads in stories, hide noisy events, and map an event of your own (optionally by a parameter value) to a shared concept such as a session start or a level start, so Retention and Levels understand your game. |
+| **Events** | The event dictionary as a working page: every event your game has sent or defined, in the chosen days and filters, with how often it was sent, how many players sent it, a per-day trend, when it was last sent, and what it counts as. Open one to describe it and each of its parameters (with their observed types and most common values) in place, say how it reads in stories, hide it from stories, see its activity per day, by app version, environment and country, and its latest raw examples. Flags: events with no description, undescribed or type-changing parameters, events that went quiet or were never received, similar names (`LEVEL_START` / `level_start`), and an event the newest app version no longer sends. "Save and next" walks through the events that still need a description. CSV export. |
+| **Mappings** | Which of your events stand for the moments the dashboards understand: session start (session analytics) and a level being started, completed, failed or restarted (Levels, stories, journeys). Shows what is understood automatically and by which event, lets you point any event you have received (described or not) at a moment, optionally only when a parameter has a value and with the parameter that holds the level number, previews how many events and players a mapping catches before you save it, and flags mappings that match nothing. |
 | **API keys** | Create, copy and delete the game's collection keys. |
 | **Game settings** | Game icon, game details, the [environment](#fixing-a-build-that-shipped-in-the-wrong-mode) each build reported, [analysis confidence](#analysis-confidence) overrides, archive (pause collection) and delete. |
 
@@ -169,7 +169,7 @@ If a published build was left in development mode, all of its players are hidden
 
 ### Time zones
 
-Dashboard days follow the **Local / UTC** switch in the filter bar (local is the default, remembered per game): a day is midnight to midnight in that zone, the per-day charts and retention cohorts are grouped by it, and times in player stories use it. Exports, the Exports page and the activity log stay in UTC.
+Dashboard days follow the **Local / UTC** switch in the filter bar (local is the default, remembered per game): a day is midnight to midnight in that zone, the per-day charts are grouped by it, and times in player stories use it. Exports, the Exports page and the activity log stay in UTC.
 
 ### Funnels
 
@@ -185,9 +185,31 @@ The result shows how many players reached each step, the share of step 1 and of 
 
 Limits: a funnel refuses ranges with more than 5 million matching events, and a player journey shows the first 5,000 events of the chosen days. Player and filter queries scan the chosen days, which is instant for typical data and may take seconds with millions of events.
 
+### Level progression and updates
+
+The table orders its main columns as **Start → Finish → Drop**, without a completion bar. Player popups close with the Close button, Escape, or a click on the background; clicks inside the popup and drags from inside to outside keep it open.
+
+**Previous player / Next player** browse the current drilldown group and sort order without closing the popup, including players not yet loaded in the table. The selected story/info/raw tab, dates and level focus stay unchanged.
+
+**Jump to level**, 25/50/100/all row sizes and previous/next pages make long level lists easier to navigate. Table headings and level numbers remain visible while scrolling. Sorting and row size are remembered in this browser; **Save current view** also remembers filters and analysis settings. Saved views are browser-local, not shared with teammates. CSV still includes every matching level, not just the visible page.
+
+**Compare releases** shows Start, Finish and Drop side by side using the same dates and other filters. Its two release selectors replace the app-version filter only for the comparison. Drop change is expressed in percentage points, with distinct more-drop/less-drop labels; missing comparisons and small samples are explicit. Players can appear in both samples after replaying in another release, so this is an observational comparison, not a causal experiment.
+
+**Level funnel** switches its entry between Level 1 start and Session start, with optional finish steps and an end level from 1 to 1000. The earliest matching entry in the date range defines each player's cohort; subsequent steps follow the same player across sessions and updates, retaining environment/platform restrictions. Steps must occur in order (ties are allowed), and missing steps are never invented. Session-start mode still passes through Level 1. Players without a matching entry are excluded, and observed events without the required earlier path are counted separately. This cumulative funnel differs from the table's independent start-to-start comparison for each level. It refuses ranges exceeding five million scanned events.
+
+Pages, panels, filters, player tabs and dialogs use short fades and movement, with subtle hover feedback. Animations and transitions are disabled when the device requests reduced motion.
+
+Dates and filters select each level’s starting players. The analysis follows those same IDs through later events up to the selected end date, across app versions, builds and countries; environment and platform restrictions still apply. Recorded history before the date range helps distinguish returning players from players whose earlier history is unavailable. An upgrade from an untracked build cannot be identified with certainty and is never treated as proof of a new install.
+
+Total drop is the number of selected starters without an observed next-level start, divided by selected starters. Its expandable breakdown includes no finish recorded, finished without a next start, and higher progress with a missing next-start event. Players with missing finish events who did start the next level count as continuing. Drop describes observations by the end date, not permanent churn. If the next numbered level has no observed starts, the comparison is unavailable, including at a possible final level.
+
+Completion uses finishers from the selected starter cohort, so unrelated finish-only records cannot push completion above 100%. The API also returns raw finishers as `observed_completed`. Other attempt, failure and timing columns describe events matching the selected filters. Net gain/loss is a separate comparison of filtered start totals, not the matched-player drop. Every group is available in the drilldown and CSV.
+
+The Retention page and navigation have been removed; old page links open Levels. The retention API remains available for existing clients.
+
 ### Analysis confidence
 
-Small samples stay visible but are labelled, so a level with three players doesn't look like a finding. Each workspace has defaults (**Settings**, admin only) for the minimum number of players: **100** new users for a retention cohort set, **30** starters for a level and **30** for a funnel's first step. A game can override each of them in **Game settings** (lead or admin); leave a field blank to inherit. Levels, Retention and Funnels mark results below the threshold with "small sample". Levels and Retention count only identified players (those with a `user_id` or `device_id`); events without either are mentioned in a note.
+Small samples stay visible but are labelled, so a level with three players doesn't look like a finding. Each workspace has defaults (**Settings**, admin only) for the minimum number of players: **30** starters for a level and **30** for a funnel's first step. A game can override each of them in **Game settings** (lead or admin); leave a field blank to inherit. Levels and Funnels mark results below the threshold with "small sample". Levels counts only identified players (those with a `user_id` or `device_id`); events without either are mentioned in a note.
 
 ### Player information and device lookup
 
@@ -287,6 +309,8 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Delete key | `DELETE /v1/games/{id}/keys/{key_id}` |
 | Set / read / remove game icon | `PUT` (raw PNG body, 16–1024 px, up to 512 KB) / `GET` / `DELETE /v1/games/{id}/icon` |
 | Define / read event dictionary | `PUT /v1/games/{id}/dictionary/{event}`, `GET /v1/games/{id}/dictionary` |
+| Events with counts, one event's activity | `GET /v1/games/{id}/insights/events?start=…&end=…`, `GET /v1/games/{id}/insights/events/detail?name=…&start=…&end=…` (accept the filter parameters) |
+| Mappings: what is understood, set, preview | `GET /v1/games/{id}/mappings`, `PUT /v1/games/{id}/dictionary/{event}/mappings` with `{"canonical": [{"action": "level_started", "param": "mode", "op": "eq", "value": "normal", "number_param": "Stage"}]}` (replaces the event's mapping rules; the event needn't have a description), `POST /v1/games/{id}/mappings/preview` with `{"event": …, "rule": …}`. Actions: `session_start`, `level_started`, `level_completed`, `level_failed`, `level_restarted` |
 | Arrival counts | `GET /v1/games/{id}/health?date=2026-10-04&period=week` (accepts the filter parameters) |
 | Download export | `GET /v1/games/{id}/export?date=2026-10-04&period=day&basis=client_ts` |
 | Filter menu values | `GET /v1/games/{id}/insights/facets?start=2026-10-01&end=2026-10-31` |
@@ -297,9 +321,10 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Saved funnels | `GET` / `POST /v1/games/{id}/insights/funnels`, `PUT` / `DELETE /v1/games/{id}/insights/funnels/{funnel_id}` |
 | Retention cohorts | `GET /v1/games/{id}/insights/retention?start=…&end=…` (accepts the filter parameters) |
 | Level progress | `GET /v1/games/{id}/insights/levels?start=…&end=…` (accepts the filter parameters) |
+| Ordered level funnel | `GET /v1/games/{id}/insights/levels/funnel?start=…&end=…&origin=level1&last_level=20&include_finishes=false` (`origin=level1` or `session`; accepts the filter parameters) |
 | Player information, device specs | `GET /v1/games/{id}/insights/device-specs?player=…` (contacts Wikipedia; only when called) |
 | Analysis confidence thresholds | `GET` / `PATCH /v1/workspaces/{id}/analytics-thresholds` (admin), `PATCH /v1/games/{id}/analytics-thresholds` (lead, admin; `null` inherits) |
-| Players behind a level | `GET /v1/games/{id}/insights/levels/players?start=…&end=…&level=20&group=left` (`left`, `finished_stopped`, `kept_going`, `stuck`, `started`; also `sort`, `offset`, `limit`, and the filter parameters) |
+| Players behind a level | `GET /v1/games/{id}/insights/levels/players?start=…&end=…&level=20&group=left` (`total_drop`, `left`, `finished_stopped`, `unknown_progress`, `kept_going`, `returning`, `missing_history`, `stuck`, `started`; also `sort`, `offset`, `limit`, and the filter parameters) |
 | A player's story up to / from a level | `GET /v1/games/{id}/insights/story?player=…&start=…&end=…&level=20&cut=until` (or `from`) |
 | Environment fixes (lead, admin) | `GET` / `POST /v1/games/{id}/environment-fixes`, `DELETE /v1/games/{id}/environment-fixes/{fix_id}`: count what a build reported as `development` as `production`, without touching stored events |
 | Who am I, my workspaces and roles | `GET /v1/me` |

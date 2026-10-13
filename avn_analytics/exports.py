@@ -292,7 +292,7 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None, 
                     definition = definitions.get(name, {})
                     record = {
                         "name": name,
-                        "description": definition.get("description", "UNDOCUMENTED"),
+                        "description": definition.get("description") or "UNDOCUMENTED",
                         "params": definition.get("params", {}),
                         "observed_param_types": {
                             key: sorted(types) for key, types in observed.get(name, {}).items()
@@ -306,7 +306,8 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None, 
                 undocumented = {
                     name
                     for name in name_counts
-                    if name not in definitions and name not in SDK_EVENTS
+                    if not (definitions.get(name, {}).get("description") or "").strip()
+                    and name not in SDK_EVENTS
                 }
                 archive.writestr("ANALYSIS.md", analysis_guide(manifest, name_counts, undocumented))
                 archive.write(SKILL, "skill/avn-game-analysis/SKILL.md")

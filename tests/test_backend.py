@@ -1780,11 +1780,15 @@ def test_level_players_group_who_left_who_finished_and_who_kept_going(backend):
     left = _level_players(admin, game, 1, "left")
     assert ids(left) == ["p3", "p6"]  # the table's "Left here" count for level 1
     assert left["counts"] == {
+        "total_drop": 2,
         "left": 2,
         "finished_stopped": 0,
         "kept_going": 2,
         "stuck": 0,
         "started": 4,
+        "unknown_progress": 0,
+        "returning": 0,
+        "missing_history": 1,
     }
     by_player = {row["player"]: row for row in left["players"]}
     assert (by_player["p3"]["tries"], by_player["p3"]["fails"]) == (2, 2)
@@ -1902,6 +1906,246 @@ def test_level_progress_table(backend):
         "Powerup consumed"
     )
     assert rows[3]["completed"] == 2 and rows[3]["median_seconds"] == 19.0
+
+
+def test_level_transitions_match_players_across_updates_and_missing_history(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+
+    def progress(player, level, verb, moment, version="0.3", **extra):
+        return event(
+            device_id=player,
+            name=f"level_{verb}",
+            params={"level": level},
+            session_id=f"{player}-{version}-{moment}",
+            client_ts=f"2026-10-{moment}Z",
+            app_version=version,
+            **extra,
+        )
+
+    records = [
+        progress("during", 1, "start", "04T09:00:00"),
+        progress("after", 1, "start", "04T09:00:00"),
+        progress("after", 1, "complete", "04T09:01:00"),
+        progress("update", 1, "start", "04T09:00:00", "0.2"),
+        progress("update", 1, "complete", "04T09:01:00"),
+        progress("update", 2, "start", "04T09:02:00"),
+        progress("missing-finish", 1, "start", "04T09:00:00"),
+        progress("missing-finish", 2, "start", "04T09:02:00"),
+        progress("missing-next", 1, "start", "04T09:00:00"),
+        progress("missing-next", 3, "start", "04T09:02:00"),
+        progress("returning", 1, "start", "03T09:00:00", "0.2"),
+        progress("returning", 1, "complete", "03T09:01:00", "0.2"),
+        progress("returning", 2, "start", "04T09:02:00"),
+        progress("untracked-upgrade", 2, "start", "04T09:02:00"),
+        progress("finish-only", 1, "complete", "04T09:01:00"),
+        progress("during", 2, "start", "05T09:00:00"),
+        progress("reverse", 2, "start", "04T08:00:00"),
+        progress("reverse", 1, "start", "04T09:00:00"),
+        progress("during", 2, "start", "04T10:00:00", environment="editor"),
+    ]
+    assert send(ingest, game, records).status_code == 200
+    url = f"/v1/games/{game['id']}/insights/levels"
+    selected = {
+        "start": "2026-10-04",
+        "end": "2026-10-04",
+        "not_env": "editor",
+    }
+    response = admin.get(url, params=selected)
+    assert response.status_code == 200, response.text
+    rows = {row["level"]: row for row in response.json()["levels"]}
+    summary = rows[1]["transition"]
+    assert rows[1]["started"] == 6
+    assert rows[1]["completed"] == 2
+    assert rows[1]["observed_completed"] == 3
+    assert summary["kept_going"] == 2
+    assert summary["total_drop"] == 4
+    assert summary["left"] == 2
+    assert summary["finished_stopped"] == 1
+    assert summary["unknown_progress"] == 1
+    assert summary["drop_percent"] == 66.7
+    assert summary["returning"] == 1
+    assert summary["missing_history"] == 2
+    assert summary["net_change"] == -1
+    assert rows[2]["transition"]["starters_returning"] == 1
+    assert rows[2]["transition"]["starters_missing_history"] == 2
+    assert rows[3]["transition"]["available"] is False
+    assert rows[3]["transition"]["drop_percent"] is None
+    for group in ("total_drop", "left", "finished_stopped", "unknown_progress", "kept_going"):
+        details = _level_players(admin, game, 1, group, **selected)
+        assert details["total"] == summary[group]
+    filtered = admin.get(url, params={**selected, "version": "0.2"}).json()["levels"]
+    earlier = next(row for row in filtered if row["level"] == 1)
+    assert earlier["started"] == 1
+    assert earlier["completed"] == 1
+    assert earlier["transition"]["total_drop"] == 0
+    assert earlier["transition"]["kept_going"] == 1
+    later = admin.get(url, params={**selected, "version": "0.3"}).json()["levels"]
+    assert next(row for row in later if row["level"] == 1)["transition"]["returning"] == 2
+    extended = admin.get(url, params={**selected, "end": "2026-10-05"}).json()["levels"]
+    assert next(row for row in extended if row["level"] == 1)["transition"]["total_drop"] == 3
+
+
+def test_level_funnel_matches_order_and_version_updates_without_inventing_history(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    mapping = {"description": "Open game", "canonical": [{"action": "session_start"}]}
+    assert (
+        admin.put(f"/v1/games/{game['id']}/dictionary/OPEN_GAME", json=mapping).status_code == 200
+    )
+
+    def step(player, name, minute, level=None, version="0.2", **extra):
+        return event(
+            device_id=player,
+            session_id=f"{player}-{minute}",
+            name=name,
+            params={"level": level} if level is not None else {},
+            client_ts=f"2026-10-04T09:{minute:02d}:00Z",
+            app_version=version,
+            **extra,
+        )
+
+    records = [
+        step("complete", "OPEN_GAME", 0),
+        step("complete", "level_start", 1, 1),
+        step("complete", "level_complete", 2, 1),
+        step("complete", "level_start", 3, 2, "0.3"),
+        step("complete", "level_complete", 4, 2, "0.3"),
+        step("complete", "level_start", 5, 3, "0.3"),
+        step("missing-finish", "session_start", 0),
+        step("missing-finish", "level_start", 1, 1),
+        step("missing-finish", "level_start", 2, 2),
+        step("gap", "session_start", 0),
+        step("gap", "level_start", 1, 1),
+        step("gap", "level_start", 3, 3),
+        step("returner", "session_start", 0),
+        step("returner", "level_start", 1, 2),
+        step("no-session", "level_start", 1, 1),
+        step("no-session", "level_start", 2, 2),
+        step("backwards", "level_start", 0, 2),
+        step("backwards", "level_start", 1, 1),
+        step("menu-only", "session_start", 0),
+        step("ignored", "session_start", 0, environment="editor"),
+        step("ignored", "level_start", 1, 1, environment="editor"),
+    ]
+    assert send(ingest, game, records).status_code == 200
+    url = f"/v1/games/{game['id']}/insights/levels/funnel"
+    params = {
+        "start": "2026-10-04",
+        "end": "2026-10-04",
+        "last_level": 3,
+        "version": "0.2",
+        "not_env": "editor",
+    }
+    response = admin.get(url, params=params)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["players"] == 5
+    assert data["without_entry"] == 2
+    assert [item["players"] for item in data["steps"]] == [5, 3, 1]
+    assert [item["drop"] for item in data["steps"]] == [0, 2, 2]
+    assert [item["outside_funnel"] for item in data["steps"]] == [0, 2, 1]
+    session = admin.get(url, params={**params, "origin": "session"}).json()
+    assert [item["players"] for item in session["steps"]] == [5, 3, 2, 1]
+    assert session["without_entry"] == 2
+    finishes = admin.get(url, params={**params, "include_finishes": True}).json()
+    assert [item["players"] for item in finishes["steps"]] == [5, 1, 1, 1, 1, 0]
+    assert admin.get(url, params={**params, "origin": "unknown"}).status_code == 400
+    assert admin.get(url, params={**params, "last_level": 1001}).status_code == 400
+    empty = admin.get(url, params={**params, "version": "missing"}).json()
+    assert empty["players"] == 0
+    assert all(item["percent"] is None for item in empty["steps"])
+
+
+def test_level_funnel_handles_simultaneous_events_and_first_entry(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = [
+        event(name="level_start", params={"level": 2}),
+        event(name="level_start", params={"level": 1}),
+        event(name="session_start", params={}),
+        event(name="level_start", params={"level": 1}, client_ts="2026-10-05T09:00:00Z"),
+    ]
+    assert send(ingest, game, records).status_code == 200
+    data = admin.get(
+        f"/v1/games/{game['id']}/insights/levels/funnel",
+        params={"start": "2026-10-04", "end": "2026-10-04", "origin": "session", "last_level": 2},
+    ).json()
+    assert [item["players"] for item in data["steps"]] == [1, 1, 1]
+
+
+def test_level_funnel_entry_filters_timezone_and_threshold(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    assert (
+        admin.patch(
+            f"/v1/games/{game['id']}/analytics-thresholds",
+            json={"funnels_min_players": 12},
+        ).status_code
+        == 200
+    )
+    records = [
+        event(
+            name="level_start",
+            params={"level": 1},
+            app_version="0.2",
+            client_ts="2026-10-03T19:00:00Z",
+        ),
+        event(
+            name="level_start",
+            params={"level": 2},
+            app_version="0.2",
+            client_ts="2026-10-03T19:01:00Z",
+        ),
+        event(
+            name="level_start",
+            params={"level": 1},
+            app_version="0.3",
+            client_ts="2026-10-03T19:02:00Z",
+        ),
+        event(
+            name="level_start",
+            params={"level": 2},
+            app_version="0.3",
+            environment="editor",
+            client_ts="2026-10-03T19:03:00Z",
+        ),
+        event(
+            name="level_start",
+            params={"level": 2},
+            app_version="0.3",
+            client_ts="2026-10-04T19:00:00Z",
+        ),
+    ]
+    for record in records:
+        record.setdefault("environment", "production")
+    assert send(ingest, game, records).status_code == 200
+    params = {
+        "start": "2026-10-04",
+        "end": "2026-10-04",
+        "tz_offset": 300,
+        "version": "0.3",
+        "not_env": "editor",
+        "last_level": 2,
+    }
+    data = admin.get(f"/v1/games/{game['id']}/insights/levels/funnel", params=params).json()
+    assert [item["players"] for item in data["steps"]] == [1, 0]
+    assert data["minimum_players"] == 12
+
+
+def test_level_funnel_event_limit(backend, monkeypatch):
+    from avn_analytics import journeys
+
+    admin, ingest, _ = backend
+    game = register(admin)
+    assert send(ingest, game, [event(name="level_start"), event()]).status_code == 200
+    monkeypatch.setattr(journeys, "MAX_FUNNEL_EVENTS", 1)
+    response = admin.get(
+        f"/v1/games/{game['id']}/insights/levels/funnel",
+        params={"start": "2026-10-04", "end": "2026-10-04"},
+    )
+    assert response.status_code == 400
+    assert "Too many events" in response.text
 
 
 def test_funnels_allow_up_to_100_steps(backend):
@@ -2230,3 +2474,180 @@ def test_retention_honors_canonical_mapping_and_local_day(backend):
     assert data["context"]["mapped_event_names"] == ["GAME_SESSION"]
     assert data["cohorts"][0]["day"] == "2026-09-02"
     assert data["cohorts"][0]["retained"]["1"]["percent"] == 100.0
+
+
+def _insights(admin, game, path, **params):
+    response = admin.get(
+        f"/v1/games/{game['id']}/{path}",
+        params={"start": "2026-10-04", "end": "2026-10-04", **params},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_events_overview_lists_every_event_with_counts_and_meaning(backend):
+    admin, game = _journey_game(backend)
+    url = f"/v1/games/{game['id']}/dictionary"
+    assert (
+        admin.put(
+            f"{url}/MM_ANALYSIS",
+            json={"description": "Main menu", "params": {"STATUS": "OPENED or CLOSED"}},
+        ).status_code
+        == 200
+    )
+    admin.put(f"{url}/ghost_event", json={"description": "Never sent", "params": {}})
+    data = _insights(admin, game, "insights/events")
+    rows = {row["name"]: row for row in data["events"]}
+    assert set(rows) == {
+        "first_open",
+        "MM_ANALYSIS",
+        "LEVEL_ANALYSIS",
+        "POWERUP_CONSUMED",
+        "level_gate",
+        "ghost_event",
+    }
+    assert rows["LEVEL_ANALYSIS"]["range"]["events"] == 16
+    assert rows["LEVEL_ANALYSIS"]["range"]["players"] == 3
+    assert rows["first_open"]["range"]["players"] == 4 and rows["first_open"]["sdk"]
+    assert rows["MM_ANALYSIS"]["described"] and rows["MM_ANALYSIS"]["params_missing"] == []
+    assert rows["LEVEL_ANALYSIS"]["described"] is False
+    assert sorted(rows["LEVEL_ANALYSIS"]["params_missing"]) == [
+        "Completed",
+        "Failed",
+        "Restarted",
+        "Started",
+    ]
+    assert rows["ghost_event"]["status"] == "never" and rows["ghost_event"]["ever"] is None
+    assert rows["MM_ANALYSIS"]["status"] == "active"  # sent within the last 30 days
+    assert data["days"] == ["2026-10-04"] and rows["LEVEL_ANALYSIS"]["series"] == [16]
+    assert data["summary"]["needs_description"] == 3  # level events, power-up, level_gate
+    assert data["summary"]["never_received"] == 1
+    # outside the range the events keep their all-time numbers but show nothing in range
+    empty = _insights(admin, game, "insights/events", start="2026-09-01", end="2026-09-02")
+    level = next(row for row in empty["events"] if row["name"] == "LEVEL_ANALYSIS")
+    assert level["range"]["events"] == 0 and level["ever"]["events"] == 16
+
+
+def test_event_detail_shows_activity_parameters_and_examples(backend):
+    admin, game = _journey_game(backend)
+    detail = _insights(admin, game, "insights/events/detail", name="LEVEL_ANALYSIS")
+    assert detail["days"] == [{"day": "2026-10-04", "events": 16, "players": 3}]
+    assert [item["version"] for item in detail["versions"]] == ["1.0"]
+    assert detail["missing_in_newest"] is False
+    by_key = {item["key"]: item for item in detail["params"]}
+    assert set(by_key) == {"Started", "Completed", "Failed", "Restarted"}
+    assert by_key["Started"]["count"] == 7 and by_key["Started"]["types"] == ["string"]
+    assert (
+        by_key["Started"]["values"][0]["value"] == "1"
+        and by_key["Started"]["values"][0]["count"] == 3
+    )
+    assert len(detail["samples"]) == 5
+    assert all(sample["version"] == "1.0" for sample in detail["samples"])
+    missing = admin.get(
+        f"/v1/games/{game['id']}/insights/events/detail",
+        params={"start": "2026-10-04", "end": "2026-10-04", "name": "nothing_like_it"},
+    )
+    assert missing.status_code == 404
+
+
+def test_event_detail_flags_an_event_missing_from_the_newest_version(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    send(
+        ingest,
+        game,
+        [
+            event(name="old_feature", app_version="1.0", device_id="a"),
+            event(name="other", app_version="1.0", device_id="a"),
+            event(name="other", app_version="1.10", device_id="b"),
+        ],
+    )
+    detail = _insights(admin, game, "insights/events/detail", name="old_feature")
+    assert detail["newest_version"] == "1.10" and detail["missing_in_newest"] is True
+    fine = _insights(admin, game, "insights/events/detail", name="other")
+    assert fine["missing_in_newest"] is False
+
+
+def test_mappings_show_what_is_understood_and_let_any_event_be_mapped(backend):
+    admin, game = _journey_game(backend)
+    _, ingest, _ = backend
+    data = _insights(admin, game, "mappings")
+    concepts = {item["key"]: item for item in data["concepts"]}
+    assert list(concepts) == [
+        "session_start",
+        "level_started",
+        "level_completed",
+        "level_failed",
+        "level_restarted",
+    ]
+    assert concepts["session_start"]["status"] == "missing"  # this game sends no session_start
+    started = concepts["level_started"]
+    assert started["status"] == "auto"
+    assert [(s["event"], s["via"]) for s in started["sources"]] == [("LEVEL_ANALYSIS", "auto")]
+    assert started["sources"][0]["levels"] == {"count": 3, "min": 1, "max": 3}
+    assert any(item["name"] == "MM_ANALYSIS" for item in data["events"])
+
+    # an event that is not defined yet can be mapped; it then counts as a session start
+    url = f"/v1/games/{game['id']}/dictionary/MM_ANALYSIS/mappings"
+    rule = {"action": "session_start", "param": "STATUS", "op": "eq", "value": "OPENED"}
+    assert admin.put(url, json={"canonical": [rule]}).status_code == 200
+    mapped = {item["key"]: item for item in _insights(admin, game, "mappings")["concepts"]}
+    source = mapped["session_start"]["sources"][0]
+    assert mapped["session_start"]["status"] == "mapped"
+    assert (source["event"], source["via"], source["events"], source["players"]) == (
+        "MM_ANALYSIS",
+        "mapped",
+        4,
+        3,
+    )
+    definition = admin.get(f"/v1/games/{game['id']}/dictionary").json()["MM_ANALYSIS"]
+    assert definition["description"] == "" and definition["canonical"][0]["value"] == "OPENED"
+    # still listed as needing a description, with its mapping kept when it is described later
+    found = admin.get(f"/v1/games/{game['id']}/dictionary/discovery").json()["missing"]
+    assert any(item["name"] == "MM_ANALYSIS" and item["defined"] is False for item in found)
+    full = {**definition, "description": "Main menu"}
+    assert admin.put(f"/v1/games/{game['id']}/dictionary/MM_ANALYSIS", json=full).status_code == 200
+    kept = admin.get(f"/v1/games/{game['id']}/dictionary").json()["MM_ANALYSIS"]
+    assert kept["canonical"] == definition["canonical"] and kept["description"] == "Main menu"
+
+    # a level event whose number sits in a parameter the dashboards would not guess
+    events = [
+        event(
+            name="StageBegin",
+            device_id="q1",
+            session_id="s-q1",
+            client_ts="2026-10-04T11:00:00Z",
+            params={"Stage": 7},
+        )
+    ]
+    assert send(ingest, game, events).status_code == 200
+    stage = {"action": "level_started", "number_param": "Stage"}
+    preview = admin.post(
+        f"/v1/games/{game['id']}/mappings/preview", json={"event": "StageBegin", "rule": stage}
+    ).json()
+    assert preview["events"] == 1 and preview["with_level_number"] == 1
+    assert preview["levels"] == {"count": 1, "min": 7, "max": 7}
+    blind = admin.post(
+        f"/v1/games/{game['id']}/mappings/preview",
+        json={"event": "StageBegin", "rule": {"action": "level_started"}},
+    ).json()
+    assert blind["events"] == 1 and blind["with_level_number"] == 0  # no "level" parameter
+    levels = lambda: {  # noqa: E731
+        row["level"]
+        for row in admin.get(
+            f"/v1/games/{game['id']}/insights/levels",
+            params={"start": "2026-10-04", "end": "2026-10-04"},
+        ).json()["levels"]
+    }
+    assert 7 not in levels()
+    admin.put(f"/v1/games/{game['id']}/dictionary/StageBegin/mappings", json={"canonical": [stage]})
+    assert 7 in levels()
+    # removing every rule leaves a plain definition behind
+    assert (
+        admin.put(
+            f"/v1/games/{game['id']}/dictionary/StageBegin/mappings", json={"canonical": []}
+        ).json()["canonical"]
+        == []
+    )
+    assert 7 not in levels()
+    assert admin.put(url, json={"canonical": [{"action": "bad action"}]}).status_code == 400

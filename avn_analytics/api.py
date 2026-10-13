@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import Field
 from starlette.background import BackgroundTask
 
-from . import device_specs, insights, journeys
+from . import device_specs, events, insights, journeys
 from .auth import AccessVerifier, Accounts, Principal
 from .config import Settings
 from .exports import build_export, period_bounds
@@ -26,6 +26,7 @@ from .models import (
     Batch,
     EnvironmentFix,
     EventDefinition,
+    EventMappings,
     Filters,
     FunnelQuery,
     GameCreate,
@@ -33,6 +34,7 @@ from .models import (
     JourneyPlayersQuery,
     JourneyQuery,
     KeyCreate,
+    MappingPreview,
     Name,
     NutBotChat,
     PlayerRules,
@@ -445,6 +447,22 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     def get_dictionary(game_id: UUID):
         return storage.get_dictionary(str(game_id))
 
+    @admin_api.put("/v1/games/{game_id}/dictionary/{name}/mappings")
+    def set_event_mappings(game_id: UUID, name: Name, body: EventMappings, principal: Current):
+        result = events.set_mappings(
+            storage, str(game_id), name, [item.model_dump() for item in body.canonical]
+        )
+        accounts.audit(principal, "dictionary.mapping", str(game_id), name)
+        return {"canonical": result}
+
+    @admin_api.get("/v1/games/{game_id}/mappings")
+    def get_mappings(game_id: UUID):
+        return events.mappings(storage, str(game_id))
+
+    @admin_api.post("/v1/games/{game_id}/mappings/preview")
+    def preview_mapping(game_id: UUID, body: MappingPreview):
+        return events.preview(storage, str(game_id), body.event, body.rule.model_dump())
+
     @admin_api.get("/v1/games/{game_id}/dictionary/discovery")
     def dictionary_discovery(game_id: UUID):
         return insights.discovery(storage, str(game_id))
@@ -631,6 +649,31 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         except device_specs.DeviceSpecsUnavailable as error:
             raise HTTPException(502, str(error)) from error
 
+    @admin_api.get("/v1/games/{game_id}/insights/events")
+    def insights_events(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        return events.overview(
+            storage, str(game_id), *day_range(start, end, tz_offset), chosen, tz_offset
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/events/detail")
+    def insights_event_detail(
+        game_id: UUID,
+        name: Name,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        return events.detail(
+            storage, str(game_id), name, *day_range(start, end, tz_offset), chosen, tz_offset
+        )
+
     @admin_api.get("/v1/games/{game_id}/insights/levels")
     def insights_levels(
         game_id: UUID,
@@ -643,6 +686,27 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             storage, str(game_id), *day_range(start, end, tz_offset), chosen
         )
 
+    @admin_api.get("/v1/games/{game_id}/insights/levels/funnel")
+    def insights_level_funnel(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        origin: Literal["level1", "session"] = "level1",
+        last_level: Annotated[int, Query(ge=1, le=1000)] = 20,
+        include_finishes: bool = False,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        return journeys.level_funnel(
+            storage,
+            str(game_id),
+            *day_range(start, end, tz_offset),
+            chosen,
+            origin=origin,
+            last_level=last_level,
+            include_finishes=include_finishes,
+        )
+
     @admin_api.get("/v1/games/{game_id}/insights/levels/players")
     def insights_level_players(
         game_id: UUID,
@@ -650,7 +714,17 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         end: DateParam,
         chosen: Filtered,
         level: Annotated[int, Query(ge=0, le=1_000_000)],
-        group: Literal["left", "finished_stopped", "kept_going", "stuck", "started"] = "left",
+        group: Literal[
+            "total_drop",
+            "left",
+            "finished_stopped",
+            "kept_going",
+            "unknown_progress",
+            "stuck",
+            "started",
+            "returning",
+            "missing_history",
+        ] = "total_drop",
         sort: Literal["exit_at", "tries", "fails"] = "exit_at",
         offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
         limit: Annotated[int, Query(ge=1, le=2000)] = 50,

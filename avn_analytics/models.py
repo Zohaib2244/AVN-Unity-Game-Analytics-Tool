@@ -167,10 +167,22 @@ class CanonicalMapping(StrictModel):
     param: Annotated[str, Field(max_length=80)] = ""
     op: CanonicalOp = "eq"
     value: Annotated[str, Field(max_length=200)] = ""
+    # For level actions: the parameter that holds the level number (blank = look for "level").
+    number_param: Annotated[str, Field(max_length=80)] = ""
+
+
+class EventMappings(StrictModel):
+    canonical: list[CanonicalMapping] = Field(default_factory=list, max_length=20)
+
+
+class MappingPreview(StrictModel):
+    event: Name
+    rule: CanonicalMapping
 
 
 class EventDefinition(StrictModel):
-    description: Annotated[str, Field(min_length=1, max_length=4000)]
+    # Blank while an event only has a mapping, a label rule or "hidden" and no description yet.
+    description: Annotated[str, Field(max_length=4000)] = ""
     params: dict[str, str] = Field(default_factory=dict, max_length=50)
     # How the event reads in stories, one rule per line: "Started => Started level {Started}".
     # A rule applies when the named parameter is present ("*" always); first match wins.

@@ -45,6 +45,46 @@ FRIENDLY_SDK = {
     "session_start": "Session started",
     "session_end": "Session ended",
 }
+# The shared moments the dashboards understand. A game's own events are mapped onto these in the
+# dictionary ("counts as"); the Mappings page is built from this list.
+CONCEPTS = [
+    {
+        "key": "session_start",
+        "label": "Session start",
+        "summary": "The player opens or returns to the game.",
+        "used_by": ["Retention"],
+        "needs": "",
+    },
+    {
+        "key": "level_started",
+        "label": "Level started",
+        "summary": "The player begins a level.",
+        "used_by": ["Levels", "Player stories", "Journeys"],
+        "needs": "level number",
+    },
+    {
+        "key": "level_completed",
+        "label": "Level completed",
+        "summary": "The player finishes a level.",
+        "used_by": ["Levels", "Player stories", "Journeys"],
+        "needs": "level number",
+    },
+    {
+        "key": "level_failed",
+        "label": "Level failed",
+        "summary": "The player loses or fails a level.",
+        "used_by": ["Levels", "Player stories", "Journeys"],
+        "needs": "level number",
+    },
+    {
+        "key": "level_restarted",
+        "label": "Level restarted",
+        "summary": "The player retries a level without leaving it.",
+        "used_by": ["Levels", "Player stories", "Journeys"],
+        "needs": "level number",
+    },
+]
+CONCEPT_KEYS = [concept["key"] for concept in CONCEPTS]
 DUPLICATE_SECONDS = 3
 BIG_GAP_SECONDS = 1800
 MAX_SEGMENT_EVENTS = 400
@@ -139,13 +179,17 @@ class Labeler:
     def hidden(self, name):
         return bool((self.definitions.get(name) or {}).get("hidden"))
 
-    def canonical(self, name, params):
-        """Shared analytics concepts matched by this raw event and its parameters."""
+    def canonical_rules(self, name, params):
+        """The mapping rules of this event's definition that its parameters satisfy."""
         return [
-            rule["action"]
+            rule
             for rule in (self.definitions.get(name) or {}).get("canonical", [])
             if _canonical_match(rule, params)
         ]
+
+    def canonical(self, name, params):
+        """Shared analytics concepts matched by this raw event and its parameters."""
+        return [rule["action"] for rule in self.canonical_rules(name, params)]
 
     def level_info(self, name, params):
         """(verb, level number) when the event is a level start/complete/fail/restart."""
@@ -155,25 +199,24 @@ class Labeler:
             "level_failed": "failed",
             "level_restarted": "restarted",
         }
-        mapped = next(
-            (
-                canonical_verbs[action]
-                for action in self.canonical(name, params)
-                if action in canonical_verbs
-            ),
-            None,
-        )
-        if mapped:
-            number = next(
-                (
-                    _int(value)
-                    for key, value in params.items()
-                    if LEVEL_KEY.match(key) and _int(value) is not None
-                ),
-                None,
-            )
+        for rule in self.canonical_rules(name, params):
+            mapped = canonical_verbs.get(rule["action"])
+            if not mapped:
+                continue
+            if rule.get("number_param"):
+                number = _int(_lookup(params, rule["number_param"]))
+            else:
+                number = next(
+                    (
+                        _int(value)
+                        for key, value in params.items()
+                        if LEVEL_KEY.match(key) and _int(value) is not None
+                    ),
+                    None,
+                )
             if number is not None:
                 return mapped, number
+            break
         for key, value in params.items():
             verb = LEVEL_VERBS.get(key.lower())
             number = _int(value)
