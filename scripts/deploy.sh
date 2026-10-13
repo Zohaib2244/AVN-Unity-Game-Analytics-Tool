@@ -12,6 +12,11 @@
 # This script is run from the dev clone but acts on the deploy checkout above.
 set -euo pipefail
 
+# --yes skips the y/N prompts (for scripted use); the T3 action stays interactive.
+YES=0; args=()
+for a in "$@"; do if [ "$a" = --yes ]; then YES=1; else args+=("$a"); fi; done
+set -- ${args[@]+"${args[@]}"}
+
 APP=avn-analytics
 IMAGE=avn-analytics:local
 ROLLBACK_IMAGE=avn-analytics:rollback
@@ -29,6 +34,7 @@ dc() {
 }
 git_src() { git -C "$SRC" "$@"; }
 confirm() { # confirm "question"
+  [ "$YES" = 1 ] && return 0
   [ -t 0 ] || die "needs a terminal to confirm"
   read -r -p "$1 [y/N] " answer
   [ "$answer" = y ] || [ "$answer" = Y ] || die "cancelled, nothing changed"
