@@ -107,8 +107,8 @@ function mountFilters(container, game, onChange) {
     options.innerHTML = `<label class="filter-switch"><input type="checkbox" id="hide-test" ${state.hideTest ? 'checked' : ''} ${state.environment.length ? 'disabled' : ''}><span>Hide editor & development data</span></label>` +
       Object.keys(FILTER_KEYS).map(dimension => {
         const values = [...new Set([...(facets[dimension] || []).map(item => item.value), ...state[dimension]])];
-        const counts = Object.fromEntries((facets[dimension] || []).map(item => [item.value, item.events]));
-        return `<fieldset data-dimension="${dimension}"><legend>${DIMENSION_LABELS[dimension]}</legend>${values.length ? values.map(value => `<label><input type="checkbox" value="${escapeHTML(value)}" ${state[dimension].includes(value) ? 'checked' : ''}><span>${escapeHTML(dimensionText(dimension, value))}</span><small>${number(counts[value] || 0)}</small></label>`).join('') : '<p class="help">None in these days</p>'}</fieldset>`;
+        const counts = Object.fromEntries((facets[dimension] || []).map(item => [item.value, item.players]));
+        return `<fieldset data-dimension="${dimension}"><legend>${DIMENSION_LABELS[dimension]}</legend>${values.length ? values.map(value => `<label><input type="checkbox" value="${escapeHTML(value)}" ${state[dimension].includes(value) ? 'checked' : ''}><span>${escapeHTML(dimensionText(dimension, value))}</span><small title="Players">${number(counts[value] || 0)}</small></label>`).join('') : '<p class="help">None in these days</p>'}</fieldset>`;
       }).join('');
     options.scrollTop = scroll;
     const active = activeFilters(state);
@@ -216,10 +216,17 @@ async function renderGameOverview() {
   const game = currentGame;
   const archived = game.archived_at ? `<div class="archived-banner">${icon('lock',18)}<div><strong>Archived.</strong> Collection is paused for this platform.</div><a class="button" href="${gamePath(game, 'settings')}">Game settings</a></div>` : '';
   shell('Overview', heading(game.name, `${platformLabel(game.platform)} · ${game.bundle_id}`, `<a class="button primary" href="${gamePath(game, 'exports')}">${icon('export',15)} Export data</a>`) + archived +
-    `<div id="filters"></div><div id="totals"></div><div id="anomalies"></div><div id="active"></div>
+    `<div id="mapping-notice"></div><div id="filters"></div><div id="totals"></div><div id="anomalies"></div><div id="active"></div>
     <section class="panel"><div class="panel-header"><h2>Activity per day</h2><div class="segmented" role="group" aria-label="Measure">${[['players','Players (DAU)'],['sessions','Sessions'],['events','Events']].map(([key, label]) => `<button type="button" data-measure="${key}" aria-pressed="${key === 'players'}">${label}</button>`).join('')}</div></div><div class="panel-body chart-wrap" id="daily"><p class="help">Loading…</p></div></section>
     <div class="section-grid overview-grid section-spacing"><section class="panel"><div class="panel-header"><h2>Who’s playing</h2><div class="segmented" aria-label="Break down by">${Object.entries(DIMENSION_LABELS).map(([key, label], index) => `<button type="button" data-dimension-tab="${key}" aria-pressed="${index === 0}">${label.replace('Device platform', 'Platform').replace('App version', 'Version')}</button>`).join('')}</div></div><div id="breakdowns"></div></section>
     <section class="panel"><div class="panel-header"><h2>Top events</h2><a class="text-link" href="${gamePath(game, 'dictionary')}">Dictionary ${icon('arrow',13)}</a></div><div id="top-events"></div></section></div>`);
+  // mappingNotice() lives in events.js, which is loaded after this file and ready by the time it runs.
+  const notice = document.querySelector('#mapping-notice');
+  api(`${gameURL(game)}/mappings/status`).then(status => { if (notice.isConnected) notice.innerHTML = mappingNotice(game, status); }).catch(() => { /* no notice is better than a wrong one */ });
+  notice.addEventListener('click', event => {
+    const dismiss = event.target.closest('[data-dismiss-mapping-notice]'); if (!dismiss) return;
+    storeSet(`avn-mapping-dismissed-${game.id}`, dismiss.dataset.dismissMappingNotice); notice.innerHTML = '';
+  });
   let summary = null; let measure = 'players'; let dimension = 'environment'; let latest = 0;
   const drawDaily = () => {
     const box = document.querySelector('#daily');

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import Field
 from starlette.background import BackgroundTask
 
-from . import device_specs, events, insights, journeys
+from . import device_specs, dictionary_import, events, insights, journeys
 from .auth import AccessVerifier, Accounts, Principal
 from .config import Settings
 from .exports import build_export, period_bounds
@@ -31,6 +31,8 @@ from .models import (
     FunnelQuery,
     GameCreate,
     GameUpdate,
+    ImportPrepare,
+    ImportRequest,
     JourneyPlayersQuery,
     JourneyQuery,
     KeyCreate,
@@ -459,9 +461,50 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     def get_mappings(game_id: UUID):
         return events.mappings(storage, str(game_id))
 
+    @admin_api.get("/v1/games/{game_id}/mappings/status")
+    def get_mapping_status(game_id: UUID):
+        return events.mapping_status(storage, str(game_id))
+
     @admin_api.post("/v1/games/{game_id}/mappings/preview")
     def preview_mapping(game_id: UUID, body: MappingPreview):
         return events.preview(storage, str(game_id), body.event, body.rule.model_dump())
+
+    @admin_api.post("/v1/games/{game_id}/dictionary/import/prepare")
+    def prepare_dictionary_import(game_id: UUID, body: ImportPrepare):
+        return dictionary_import.prepare(storage, str(game_id), body.options)
+
+    @admin_api.post("/v1/games/{game_id}/dictionary/import")
+    def dictionary_import_run(game_id: UUID, body: ImportRequest, principal: Current):
+        result = dictionary_import.run(storage, str(game_id), body, principal)
+        if result["applied"]:
+            accounts.audit(
+                principal,
+                "dictionary.import",
+                str(game_id),
+                f"{result['batch_id']}: {result['summary']['fields_changed']} fields",
+            )
+        return result
+
+    @admin_api.get("/v1/games/{game_id}/dictionary/imports")
+    def dictionary_imports(game_id: UUID):
+        return dictionary_import.history(storage, str(game_id))
+
+    @admin_api.post("/v1/games/{game_id}/dictionary/imports/{batch_id}/undo")
+    def dictionary_import_undo(game_id: UUID, batch_id: UUID, principal: Current):
+        result = dictionary_import.undo(storage, str(game_id), str(batch_id))
+        accounts.audit(principal, "dictionary.import_undo", str(game_id), str(batch_id))
+        return result
+
+    @admin_api.get("/v1/games/{game_id}/dictionary/drafts")
+    def dictionary_drafts(game_id: UUID):
+        return storage.get_drafts(str(game_id))
+
+    @admin_api.post("/v1/games/{game_id}/dictionary/{name}/confirm")
+    def confirm_definition(game_id: UUID, name: Name, principal: Current):
+        confirmed = storage.confirm_definition(str(game_id), name)
+        if confirmed:
+            accounts.audit(principal, "dictionary.confirm", str(game_id), name)
+        return {"confirmed": confirmed}
 
     @admin_api.get("/v1/games/{game_id}/dictionary/discovery")
     def dictionary_discovery(game_id: UUID):

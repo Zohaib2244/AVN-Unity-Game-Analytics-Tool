@@ -20,22 +20,52 @@ const sparkline = (values, label) => {
   return `<svg class="spark" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHTML(label)}"><polyline points="${points.map(point => point.map(n => n.toFixed(1)).join(',')).join(' ')}"/><circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="2"/></svg>`;
 };
 
+/* ─── Mapping health: the Mappings button on the Events page and the notice on the overview ─── */
+
+const mappingIssueText = issue => issue.kind === 'missing'
+  ? `${issue.label} is not mapped to any of your events, so ${issue.used_by.join(', ')} cannot read it.`
+  : `${issue.event} is mapped to ${issue.label}, but no event your game sent matches that rule.`;
+const mappingSignature = status => status.issues.map(issue => `${issue.kind}:${issue.concept}:${issue.event || ''}`).sort().join('|');
+function markMappingsButton(button, status) {
+  const badge = button?.querySelector('.button-badge');
+  if (!badge || !status.has_events) return;
+  const count = status.issues.length;
+  button.classList.toggle('attention', count > 0); button.classList.toggle('fine', count === 0);
+  badge.hidden = false;
+  badge.innerHTML = count ? String(count) : icon('check', 12);
+  button.title = count ? status.issues.map(mappingIssueText).join('\n') : 'Your mappings look good.';
+  button.setAttribute('aria-label', count ? `Mappings, ${count} to fix` : 'Mappings, all good');
+}
+// The overview's banner. Dismissing it is remembered per game until the problems change.
+function mappingNotice(game, status) {
+  const key = `avn-mapping-dismissed-${game.id}`;
+  if (!status.has_events || !status.issues.length || storeGet(key) === mappingSignature(status)) return '';
+  const first = mappingIssueText(status.issues[0]);
+  const more = status.issues.length > 1 ? ` And ${status.issues.length - 1} more.` : '';
+  return `<div class="notice-banner" role="status">${icon('pulse', 18)}<div><strong>Mappings need attention.</strong> ${escapeHTML(first)}${more} <span class="muted">If your game has no levels, you can dismiss this.</span></div><a class="button" href="${gamePath(game, 'mappings')}">Open mappings</a><button type="button" class="button" data-dismiss-mapping-notice="${escapeHTML(mappingSignature(status))}">Dismiss</button></div>`;
+}
+
 /* ─── Events ─── */
 
 async function renderDictionary() {
   const game = currentGame;
-  shell('Events', heading('Events', 'Everything your game sends: how often, who sends it, and what it means.', `<a class="button" href="${gamePath(game, 'mappings')}">${icon('link', 15)} Mappings</a>`) +
+  shell('Events', heading('Events', 'Everything your game sends: how often, who sends it, and what it means.', `<div class="heading-actions"><a class="button" id="events-mappings" href="${gamePath(game, 'mappings')}">${icon('link', 15)} Mappings<span class="button-badge" id="mappings-badge" hidden></span></a><button type="button" class="button" id="events-import">${icon('book', 15)} Fill with AI agent</button></div>`) +
     `<div id="filters"></div><div id="events-summary"></div>
+    <section class="panel section-spacing" id="dictionary-panel"><div class="panel-header"><div><h2>Dictionary status</h2><p>How much of your events is described, and what an AI agent wrote that nobody has confirmed yet.</p></div></div><div class="panel-body" id="dictionary-status"></div></section>
     <section class="panel section-spacing"><div class="panel-header"><div><h2>All events</h2><p id="events-note">Counts are for the selected days and filters.</p></div><div class="quiet-actions"><label class="inline-field">Sort<select id="events-sort"><option value="sent">Most sent</option><option value="players">Most players</option><option value="attention">Needs attention</option><option value="last">Last sent</option><option value="name">Name</option></select></label><button type="button" class="button" id="events-csv">${icon('export', 14)} CSV</button></div></div>
     <div class="toolbar events-toolbar"><div class="search">${icon('search', 16)}<input id="events-search" type="search" aria-label="Search events" placeholder="Search by event name or description…"></div><div class="range-modes" role="group" aria-label="Show" id="events-filter"></div></div>
     <div id="events-table"></div></section>`);
+  api(`${gameURL(game)}/mappings/status`).then(status => markMappingsButton(document.querySelector('#events-mappings'), status)).catch(() => { /* the button just stays plain */ });
+  // The dictionary's own progress lives in a panel of its own, folded away until someone opens it.
+  const dictionaryPanel = collapsible(document.querySelector('#dictionary-panel'), game, 'dictionary');
+  if (!('dictionary' in (storeGet(`avn-collapsed-${game.id}`) || {}))) dictionaryPanel.set(true, false);
   const saved = storeGet(`avn-events-view-${game.id}`) || {};
   const view = {filter: saved.filter || 'all', sort: saved.sort || 'sent', query: ''};
   const persist = () => storeSet(`avn-events-view-${game.id}`, {filter: view.filter, sort: view.sort});
   const open = new Set(); const detail = new Map(); const tabs = new Map();
   let data = null; let chosen = null; let latest = 0; let observer = null;
   const attention = item => (!item.described && !item.sdk && item.ever) || (item.defined && item.params_missing.length) || item.type_conflicts.length;
-  const FILTERS = [['all', 'All', () => true], ['attention', 'Needs attention', attention], ['undescribed', 'No description', item => !item.described && !item.sdk], ['described', 'Described', item => item.described], ['mapped', 'Mapped', item => item.definition.canonical.length], ['hidden', 'Hidden', item => item.definition.hidden], ['quiet', 'Quiet or never sent', item => item.status !== 'active']];
+  const FILTERS = [['all', 'All', () => true], ['attention', 'Needs attention', attention], ['undescribed', 'No description', item => !item.described && !item.sdk], ['described', 'Described', item => item.described], ['drafts', 'AI drafts', item => item.drafts.length], ['mapped', 'Mapped', item => item.definition.canonical.length], ['hidden', 'Hidden', item => item.definition.hidden], ['quiet', 'Quiet or never sent', item => item.status !== 'active']];
   const SORTS = {sent: (a, b) => b.range.events - a.range.events || a.name.localeCompare(b.name), players: (a, b) => b.range.players - a.range.players || a.name.localeCompare(b.name), attention: (a, b) => Number(Boolean(attention(b))) - Number(Boolean(attention(a))) || b.range.events - a.range.events, last: (a, b) => (b.ever?.last_seen || '').localeCompare(a.ever?.last_seen || ''), name: (a, b) => a.name.localeCompare(b.name)};
   const visible = () => {
     const query = view.query.toLowerCase(); const keep = FILTERS.find(([key]) => key === view.filter)[2];
@@ -43,8 +73,9 @@ async function renderDictionary() {
   };
   const statusPills = item => {
     const meaning = item.sdk && !item.described ? '<span class="pill">Built in</span>' : item.described ? '<span class="pill good">Described</span>' : '<span class="pill bad">Needs a description</span>';
+    const draft = item.drafts.length ? ` <span class="pill" title="Written by an AI agent from your code. Open the event to review and confirm it.">AI draft</span>` : '';
     const activity = item.status === 'never' ? '<span class="pill bad">Never received</span>' : item.status === 'stale' ? `<span class="pill bad" title="Last sent ${agoText(item.ever.last_seen)}">Quiet ${data.stale_days}+ days</span>` : '';
-    return `${meaning} ${activity}`;
+    return `${meaning}${draft} ${activity}`;
   };
   const rowHTML = item => {
     const mapped = item.definition.canonical.map(rule => `<span class="pill good" title="${escapeHTML(ruleText(rule))}">${escapeHTML(conceptName(rule.action))}</span>`).join(' ');
@@ -55,13 +86,21 @@ async function renderDictionary() {
 
   const drawSummary = () => {
     const s = data.summary;
+    const inRange = data.events.reduce((sum, item) => sum + item.range.events, 0);
     document.querySelector('#events-summary').innerHTML = stats([
-      ['Events', number(s.events), `${number(s.events - s.never_received)} seen · ${number(s.never_received)} only defined`],
-      ['Described', `${number(s.described)} of ${number(s.events)}`, s.events ? `${Math.round(100 * s.described / s.events)}% have a description` : ''],
-      ['Need a description', number(s.needs_description), s.with_missing_params ? `${number(s.with_missing_params)} more have undescribed parameters` : 'Built-in events are exempt'],
-      ['Mapped', number(s.mapped), 'stand for a shared moment'],
+      ['Events received', number(s.received_total), `${number(inRange)} in the selected days · ${number(s.event_types)} event type${s.event_types === 1 ? '' : 's'}`],
+      ['Database size', fileSize(s.database_bytes), 'all of this game’s events on disk'],
       ['Quiet or never sent', number(s.stale + s.never_received), `no event in ${data.stale_days}+ days, or never`],
     ]);
+    document.querySelector('#dictionary-status').innerHTML = stats([
+      ['Described', `${number(s.described)} of ${number(s.events)}`, s.events ? `${Math.round(100 * s.described / s.events)}% have a description` : ''],
+      ['Need a description', number(s.needs_description), s.with_missing_params ? `${number(s.with_missing_params)} more have undescribed parameters` : 'Built-in events are exempt'],
+      ['AI drafts', number(s.drafts), s.drafts ? 'written by an agent, waiting for a person to confirm' : 'nothing waiting for confirmation'],
+      ['Mapped', number(s.mapped), 'stand for a shared moment'],
+      ['Hidden', number(s.hidden), 'left out of stories and journeys'],
+    ]);
+    document.querySelector('#events-import')?.classList.toggle('primary', s.needs_description > 0 || s.with_missing_params > 0);
+    dictionaryPanel.setNote(`${number(s.described)} of ${number(s.events)} described${s.drafts ? ` · ${number(s.drafts)} AI draft${s.drafts === 1 ? '' : 's'}` : ''}`);
   };
   const drawFilterChips = () => {
     document.querySelector('#events-filter').innerHTML = FILTERS.map(([key, label, keep]) => `<button type="button" data-events-filter="${key}" aria-pressed="${view.filter === key}">${label} <span class="drill-count">${number(data.events.filter(keep).length)}</span></button>`).join('');
@@ -102,8 +141,9 @@ async function renderDictionary() {
       ${!info || info.loading ? '<p class="help">Reading its parameters…</p>' : info.error ? `<p class="error">${escapeHTML(info.error)}</p>` : rows.length ? `<div class="table-wrap"><table class="compact-table event-params"><thead><tr><th>Parameter</th><th>Seen</th><th>Values</th><th>What it means</th></tr></thead><tbody>${rows.map(row => `<tr><td><code>${escapeHTML(row.key)}</code>${row.types.length ? `<br><span class="small muted">${row.types.join(' / ')}${row.types.length > 1 ? ' · type changes' : ''}</span>` : ''}</td><td class="num small">${row.quiet ? '<span class="muted">not in these days</span>' : number(row.count)}</td><td class="small">${row.values.length ? `${row.values.slice(0, 4).map(value => `<span class="chip" title="${number(value.count)} times">${escapeHTML(value.value)}</span>`).join(' ')}${row.distinct > 4 ? ` <span class="muted">+${number(row.distinct - 4)} more</span>` : ''}` : '<span class="muted">—</span>'}</td><td><input name="param:${escapeHTML(row.key)}" value="${escapeHTML(row.text)}" maxlength="2000" aria-label="Meaning of ${escapeHTML(row.key)}" placeholder="${row.text ? '' : 'What does it hold?'}"></td></tr>`).join('')}</tbody></table></div>` : '<p class="help">This event has no parameters in these days.</p>'}
       <div class="field"><label for="labels-${escapeHTML(item.name)}">How it reads in player stories <span class="muted">(optional)</span></label><textarea id="labels-${escapeHTML(item.name)}" name="labels" rows="2" maxlength="2000" placeholder="Started => Started level {Started}">${escapeHTML(item.definition.labels)}</textarea><p class="help">One rule per line: <code>parameter => text</code>. Use <code>{Parameter}</code> to insert its value.</p></div>
       <label class="check-row"><input type="checkbox" name="hidden" value="1" ${item.definition.hidden ? 'checked' : ''}> Leave it out of player stories and journeys (noise)</label>
+      ${item.drafts.length ? `<p class="event-warning">${icon('pulse', 15)}<span>An AI agent wrote ${item.drafts.length === 1 ? 'one text' : `${item.drafts.length} texts`} here (${escapeHTML(item.drafts.map(field => field.replace('param:', '')).join(', '))}). Check them against what the game really does; editing a text confirms it.</span></p>` : ''}
       <div class="error" role="alert"></div>
-      <div class="modal-actions event-actions">${item.defined ? `<button type="button" class="button danger-text" data-event-delete="${escapeHTML(item.name)}">Delete definition</button>` : ''}<button type="submit" class="button primary">Save</button><button type="submit" class="button" data-save-next>Save and next event without a description →</button></div>
+      <div class="modal-actions event-actions">${item.drafts.length ? `<button type="button" class="button" data-event-confirm="${escapeHTML(item.name)}">Confirm as written</button>` : ''}${item.defined ? `<button type="button" class="button danger-text" data-event-delete="${escapeHTML(item.name)}">Delete definition</button>` : ''}<button type="submit" class="button primary">Save</button><button type="submit" class="button" data-save-next>Save and next event without a description →</button></div>
     </form>`;
   };
   const activityTab = info => {
@@ -156,6 +196,12 @@ async function renderDictionary() {
     }
     const tab = event.target.closest('[data-event-tab]');
     if (tab) { const name = tab.closest('[data-event-panel]').dataset.eventPanel; tabs.set(name, tab.dataset.eventTab); drawDetail(name); return; }
+    const confirm = event.target.closest('[data-event-confirm]');
+    if (confirm) {
+      const name = confirm.dataset.eventConfirm; confirm.disabled = true;
+      api(`${gameURL(game)}/dictionary/${encodeURIComponent(name)}/confirm`, {method: 'POST'}).then(() => reload(`${name} confirmed.`)).catch(error => { confirm.disabled = false; toast(error.message); });
+      return;
+    }
     const remove = event.target.closest('[data-event-delete]');
     if (remove) {
       const name = remove.dataset.eventDelete;
@@ -188,6 +234,7 @@ async function renderDictionary() {
       } else if (next) toast('Every event now has a description.');
     } catch (error) { form.querySelector('.error').textContent = error.message; buttons.forEach(button => { button.disabled = false; }); }
   });
+  document.querySelector('#events-import').addEventListener('click', () => openDictionaryImport(game, () => { if (chosen) reload(); }));
   document.querySelector('#events-search').addEventListener('input', event => { view.query = event.target.value; if (data) draw(); });
   document.querySelector('#events-sort').addEventListener('change', event => { view.sort = event.target.value; persist(); if (data) draw(); });
   document.querySelector('#events-filter').addEventListener('click', event => {

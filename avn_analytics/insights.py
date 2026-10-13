@@ -85,7 +85,10 @@ def where(start, end, filters=None, column="client_ts"):
 
 
 def facets(storage, game_id, start, end):
-    """Every value of each filterable dimension in the range, unfiltered, for the filter menus."""
+    """Every value of each filterable dimension in the range, unfiltered, for the filter menus.
+
+    Each value carries its distinct players (what the menu shows) and its event count.
+    """
     storage.get_game(game_id)
     condition, args = where(start, end)
     result = {}
@@ -94,8 +97,9 @@ def facets(storage, game_id, start, end):
             result[dimension] = [
                 dict(row)
                 for row in connection.execute(
-                    f"SELECT {expression} AS value, count(*) AS events FROM events "
-                    f"WHERE {condition} GROUP BY value ORDER BY events DESC LIMIT 100",
+                    f"SELECT {expression} AS value, count(DISTINCT {PLAYER}) AS players, "
+                    f"count(*) AS events FROM events WHERE {condition} GROUP BY value "
+                    "ORDER BY players DESC, events DESC LIMIT 100",
                     args,
                 )
             ]

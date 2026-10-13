@@ -139,8 +139,8 @@ The website is organized around games. The home page lists your games; Android a
 | **Levels** | The main metric follows the same players from this level’s start to the next numbered level’s start. Expand a row to split the total into no finish recorded, finished without a next start, and missing progress events. Returning entrants and unavailable earlier history are separate groups. Net gains/losses compare starter totals separately and have distinct arrows and labels. Player story, raw events and info open in a popup that preserves Levels filters, sorting, expanded rows and scroll position. |
 | **Players** | Everyone active in the chosen days, searchable and sortable (last active, first seen, events, sessions, average session length, app version). **Event rules** add your own columns from events (times they did something, highest/lowest/total of a parameter, first/last time), sort by them, and keep only players who did, or never did, an event. Countries show their full name on hover. Open a player for their **story**: sessions as chapters, with runs of levels folded into one line ("Played levels 1–10, completed all"). The raw event list and a **Player info** tab (latest version, build, platform, device and country, and an optional device specification lookup) are one click away. |
 | **Exports** | Download the raw events, using the same days and filters. |
-| **Events** | The event dictionary as a working page: every event your game has sent or defined, in the chosen days and filters, with how often it was sent, how many players sent it, a per-day trend, when it was last sent, and what it counts as. Open one to describe it and each of its parameters (with their observed types and most common values) in place, say how it reads in stories, hide it from stories, see its activity per day, by app version, environment and country, and its latest raw examples. Flags: events with no description, undescribed or type-changing parameters, events that went quiet or were never received, similar names (`LEVEL_START` / `level_start`), and an event the newest app version no longer sends. "Save and next" walks through the events that still need a description. CSV export. |
-| **Mappings** | Which of your events stand for the moments the dashboards understand: session start (session analytics) and a level being started, completed, failed or restarted (Levels, stories, journeys). Shows what is understood automatically and by which event, lets you point any event you have received (described or not) at a moment, optionally only when a parameter has a value and with the parameter that holds the level number, previews how many events and players a mapping catches before you save it, and flags mappings that match nothing. |
+| **Events** | The event dictionary as a working page: every event your game has sent or defined, in the chosen days and filters, with how often it was sent, how many players sent it, a per-day trend, when it was last sent, and what it counts as. Open one to describe it and each of its parameters (with their observed types and most common values) in place, say how it reads in stories, hide it from stories, see its activity per day, by app version, environment and country, and its latest raw examples. Flags: events with no description, undescribed or type-changing parameters, events that went quiet or were never received, similar names (`LEVEL_START` / `level_start`), and an event the newest app version no longer sends. "Save and next" walks through the events that still need a description. CSV export. The top shows how many events the game has received in total, the size of its event database and how many events are quiet or never sent; how much is described, how many are AI drafts and how many are mapped sit in a **Dictionary status** panel below it (folded by default). |
+| **Mappings** | Which of your events stand for the moments the dashboards understand: session start (session analytics) and a level being started, completed, failed or restarted (Levels, stories, journeys). Shows what is understood automatically and by which event, lets you point any event you have received (described or not) at a moment, optionally only when a parameter has a value and with the parameter that holds the level number, previews how many events and players a mapping catches before you save it, and flags mappings that match nothing. The Mappings button on the Events page shows how many mappings need attention (or a check when all is well), and the Overview shows a dismissible notice while a level moment the dashboards need (level started or completed) has no event behind it, or a mapping you set matches nothing the game sent. |
 | **API keys** | Create, copy and delete the game's collection keys. |
 | **Game settings** | Game icon, game details, the [environment](#fixing-a-build-that-shipped-in-the-wrong-mode) each build reported, [analysis confidence](#analysis-confidence) overrides, archive (pause collection) and delete. |
 
@@ -152,7 +152,7 @@ Everything is computed live from the game's event database, in game time (`clien
 
 ### Environments and filters
 
-Every game page has the same filter bar: a days menu (presets, a calendar for any range, and ‹ › to step through time) and a **Filters** menu for environment, app version, build, country and platform. Active filters show as chips you can click to remove, and they are remembered per game in your browser.
+Every game page has the same filter bar: a days menu (presets, a calendar for any range, and ‹ › to step through time) and a **Filters** menu for environment, app version, build, country and platform. Each value in the menu shows how many players have it in the chosen days. Active filters show as chips you can click to remove, and they are remembered per game in your browser.
 
 **Editor and development data is hidden by default** ("Hide editor & development data" in the Filters menu). An event's environment is, in order of precedence:
 
@@ -214,6 +214,29 @@ Small samples stay visible but are labelled, so a level with three players doesn
 ### Player information and device lookup
 
 A player's **Player info** tab shows what the latest events say about them: version, build, platform, environment, country, device model, OS and screen. **Fetch device info** is an explicit, opt-in lookup: the server sends only the device model name (for example `SM-A525F`) to Wikipedia's public API and shows the hardware specifications it finds. Nothing is sent until someone presses the button, and nothing is stored.
+
+
+## Fill the dictionary with an AI agent
+
+Describing every event by hand is slow, and the meaning of an event lives in the game's code. The Events page's **Fill with AI agent** button turns that into three steps:
+
+1. **Prepare.** Pick **Missing only** (events and parameters with no description yet) or **All events** (the agent may propose new text for ones already described); everything else is under **Advanced settings** with sensible defaults. Then download `avn-events.json` (the events and parameters that still need a meaning, with how often and as which types they were seen) and copy the generated prompt. Parameter values from real players are never put in the file.
+2. **Run the prompt** in your game's repository with any AI agent. It reads the code and fills only the `proposed` part of each event: a description, parameter descriptions, a `confidence` (`certain` / `inferred` / `unknown`) and a `source` (`path/File.cs:123`). It may add events found in the code that were never received, and lists names it cannot resolve.
+3. **Upload and review.** Every text the agent wrote is listed against the live dictionary, with what it would replace and what is flagged. **Approve all** imports them in one click, or tick single texts (or whole events) and **Approve selected**. Names that only differ from an existing event by case or punctuation start unticked. Nothing is written until you approve, and what is written is exactly what was shown: if the dictionary changed while you reviewed, nothing is saved and the review refreshes.
+
+What an import may do is set by the import rules, which travel inside the file and can be changed at upload time:
+
+| Rule | Options (default first) |
+|---|---|
+| Existing text | only fill blanks · also replace unconfirmed AI drafts · replace existing text |
+| Fields | descriptions, parameter descriptions |
+| Events covered | still need a description · all · only a list or prefixes; optionally only events sent in the last N days, never-received events found in code, hidden events |
+| Writing | language, length (one sentence / concise / detailed), longest description, a note about the game, list the values a parameter takes |
+| Code hints | folders to look in or skip, your own wrappers around `LogEvent` |
+| Quality | minimum confidence (inferred / certain), ignore text with no `source` |
+| Safety | land as drafts (default) or confirmed, refuse to replace more than N existing texts (25), warn or reject names that only differ from an existing event by case or punctuation, flag parameter types that disagree with the data |
+
+Always true, whatever the rules: an import never deletes an event or a parameter, never touches story rules, hidden state or mappings, and can be undone from the import history (texts someone edited since are kept). Imported text is an **AI draft** until a person confirms it (**Confirm as written** on the event, or by editing the text); drafts are marked on the Events page and in `events.md`, so downstream analysis agents know they are unconfirmed.
 
 ## NutBot
 
@@ -309,11 +332,13 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Delete key | `DELETE /v1/games/{id}/keys/{key_id}` |
 | Set / read / remove game icon | `PUT` (raw PNG body, 16–1024 px, up to 512 KB) / `GET` / `DELETE /v1/games/{id}/icon` |
 | Define / read event dictionary | `PUT /v1/games/{id}/dictionary/{event}`, `GET /v1/games/{id}/dictionary` |
+| Fill the dictionary with an AI agent | `POST /v1/games/{id}/dictionary/import/prepare` with `{"options": {...}}` returns the `avn-events.json` template and the agent prompt; `POST /v1/games/{id}/dictionary/import` with `{"file": {...}}` is a dry run, and the same body plus the returned `preview` applies exactly what was previewed (optional `options` override the file's, `exclude` lists events, or single texts as `event/description` and `event/param:name`, to leave out); `GET …/dictionary/imports`, `POST …/dictionary/imports/{batch}/undo`, `GET …/dictionary/drafts`, `POST …/dictionary/{event}/confirm`. See [Fill the dictionary with an AI agent](#fill-the-dictionary-with-an-ai-agent) |
 | Events with counts, one event's activity | `GET /v1/games/{id}/insights/events?start=…&end=…`, `GET /v1/games/{id}/insights/events/detail?name=…&start=…&end=…` (accept the filter parameters) |
+| Are the mappings in good shape | `GET /v1/games/{id}/mappings/status` returns `{ok, has_events, issues: [{kind: "missing"\|"silent", concept, label, used_by, event?}]}` |
 | Mappings: what is understood, set, preview | `GET /v1/games/{id}/mappings`, `PUT /v1/games/{id}/dictionary/{event}/mappings` with `{"canonical": [{"action": "level_started", "param": "mode", "op": "eq", "value": "normal", "number_param": "Stage"}]}` (replaces the event's mapping rules; the event needn't have a description), `POST /v1/games/{id}/mappings/preview` with `{"event": …, "rule": …}`. Actions: `session_start`, `level_started`, `level_completed`, `level_failed`, `level_restarted` |
 | Arrival counts | `GET /v1/games/{id}/health?date=2026-10-04&period=week` (accepts the filter parameters) |
 | Download export | `GET /v1/games/{id}/export?date=2026-10-04&period=day&basis=client_ts` |
-| Filter menu values | `GET /v1/games/{id}/insights/facets?start=2026-10-01&end=2026-10-31` |
+| Filter menu values (with players and events per value) | `GET /v1/games/{id}/insights/facets?start=2026-10-01&end=2026-10-31` |
 | Overview numbers | `GET /v1/games/{id}/insights/summary?start=…&end=…` (accepts the filter parameters) |
 | Event and parameter catalog | `GET /v1/games/{id}/insights/catalog?start=…&end=…` |
 | Run a funnel | `POST /v1/games/{id}/insights/funnel` (steps, `scope`, `window_hours`, `breakdown`, `filters`) |
@@ -374,7 +399,7 @@ Environment variables (see `.env.example`):
 ```text
 data/
   registry.sqlite3       games, API keys, rate-limit counters, workspaces, team, game access, activity log
-  games/<uuid>.sqlite3   raw events, dictionary, session environments, environment fixes and saved funnels for one game
+  games/<uuid>.sqlite3   raw events, dictionary (with unconfirmed AI drafts and import history), session environments, environment fixes and saved funnels for one game
   icons/<uuid>.png       game icons
   exports/               temporary downloads
   deleted/               games and icons you deleted (not erased)

@@ -798,6 +798,11 @@ def test_environment_filters(backend):
         "editor": 2,
         "production": 1,
     }
+    # the filter menu shows players, not events: the tester sent two events but is one player
+    assert {item["value"]: item["players"] for item in facets["environment"]} == {
+        "editor": 1,
+        "production": 1,
+    }
     real = admin.get(f"{base}/summary", headers=AUTH, params={**days, "not_env": "editor"}).json()
     assert real["events"] == 1 and real["players"] == 1
     everything = admin.get(f"{base}/summary", headers=AUTH, params=days).json()
@@ -2522,10 +2527,16 @@ def test_events_overview_lists_every_event_with_counts_and_meaning(backend):
     assert data["days"] == ["2026-10-04"] and rows["LEVEL_ANALYSIS"]["series"] == [16]
     assert data["summary"]["needs_description"] == 3  # level events, power-up, level_gate
     assert data["summary"]["never_received"] == 1
+    # totals are all time and not narrowed by the days: every event ever received, the stored size
+    assert data["summary"]["received_total"] == sum(
+        row["ever"]["events"] for row in rows.values() if row["ever"]
+    )
+    assert data["summary"]["event_types"] == 5 and data["summary"]["database_bytes"] > 0
     # outside the range the events keep their all-time numbers but show nothing in range
     empty = _insights(admin, game, "insights/events", start="2026-09-01", end="2026-09-02")
     level = next(row for row in empty["events"] if row["name"] == "LEVEL_ANALYSIS")
     assert level["range"]["events"] == 0 and level["ever"]["events"] == 16
+    assert empty["summary"]["received_total"] == data["summary"]["received_total"]
 
 
 def test_event_detail_shows_activity_parameters_and_examples(backend):
@@ -2651,3 +2662,52 @@ def test_mappings_show_what_is_understood_and_let_any_event_be_mapped(backend):
     )
     assert 7 not in levels()
     assert admin.put(url, json={"canonical": [{"action": "bad action"}]}).status_code == 400
+
+
+def test_mapping_status_flags_missing_level_moments_and_silent_rules(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    base = f"/v1/games/{game['id']}"
+    # nothing received yet: nothing to map, nothing to nag about
+    assert admin.get(f"{base}/mappings/status").json() == {
+        "ok": True,
+        "has_events": False,
+        "issues": [],
+    }
+    send(
+        ingest,
+        game,
+        [
+            event(name="StageBegin", params={"stage": 1}),
+            event(name="StageEnd", params={"stage": 1}),
+            event(name="session_start", params={"environment": "production"}),
+        ],
+    )
+    status = admin.get(f"{base}/mappings/status").json()
+    assert status["ok"] is False and status["has_events"] is True
+    missing = {item["concept"] for item in status["issues"] if item["kind"] == "missing"}
+    assert missing == {"level_started", "level_completed"}  # failed/restarted are optional
+    assert "Levels" in status["issues"][0]["used_by"]
+
+    def mapping(event_name, canonical):
+        response = admin.put(
+            f"{base}/dictionary/{event_name}/mappings", json={"canonical": canonical}
+        )
+        assert response.status_code == 200
+
+    mapping("StageBegin", [{"action": "level_started", "number_param": "stage"}])
+    mapping("StageEnd", [{"action": "level_completed", "number_param": "stage"}])
+    assert admin.get(f"{base}/mappings/status").json()["ok"] is True
+    # a rule that matches nothing the game sent is reported, with the event it sits on
+    mapping(
+        "StageEnd",
+        [
+            {"action": "level_completed", "number_param": "stage"},
+            {"action": "level_failed", "param": "stage", "op": "eq", "value": "999"},
+        ],
+    )
+    status = admin.get(f"{base}/mappings/status").json()
+    assert status["ok"] is False
+    assert [(i["kind"], i["concept"], i["event"]) for i in status["issues"]] == [
+        ("silent", "level_failed", "StageEnd")
+    ]

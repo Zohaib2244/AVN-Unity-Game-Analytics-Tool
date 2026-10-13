@@ -200,6 +200,123 @@ class EventDefinition(StrictModel):
         return params
 
 
+ImportMode = Literal["fill_blanks", "overwrite_ai_drafts", "overwrite_all"]
+ImportConfidence = Literal["certain", "inferred"]
+
+
+class ImportScope(StrictModel):
+    """Which events the agent is asked to cover (and the importer accepts)."""
+
+    events: Literal["undocumented", "all", "listed"] = "undocumented"
+    names: list[Name] = Field(default_factory=list, max_length=500)  # with events="listed"
+    prefixes: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
+        default_factory=list, max_length=50
+    )  # with events="listed": every event whose name starts with one of these
+    seen_within_days: Annotated[int, Field(ge=1, le=3650)] | None = None
+    include_not_yet_received: bool = True  # events found in code that were never received
+    include_hidden: bool = False  # events hidden from stories and journeys
+
+
+class ImportStyle(StrictModel):
+    language: Annotated[str, Field(min_length=1, max_length=40)] = "English"
+    tone: Literal["one_sentence", "concise", "detailed"] = "concise"
+    max_description_chars: Annotated[int, Field(ge=20, le=4000)] = 200
+    game_context: Annotated[str, Field(max_length=2000)] = ""
+    param_values: bool = False  # also list the values a parameter can take
+
+
+class ImportCode(StrictModel):
+    """Hints for the agent about where to look in the game's code."""
+
+    include_paths: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        default_factory=list, max_length=50
+    )
+    exclude_paths: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        default_factory=list, max_length=50
+    )
+    call_patterns: list[Annotated[str, Field(min_length=1, max_length=120)]] = Field(
+        default_factory=list, max_length=20
+    )  # extra wrappers around LogEvent, e.g. "Analytics.Track("
+
+
+class ImportOptions(StrictModel):
+    """The rules of one import. They travel inside the file so the prompt, the agent and the
+    importer all work from the same ones; the person uploading can still change them."""
+
+    mode: ImportMode = "fill_blanks"
+    fields: list[Literal["description", "params"]] = Field(
+        default_factory=lambda: ["description", "params"], min_length=1, max_length=2
+    )
+    scope: ImportScope = ImportScope()
+    style: ImportStyle = ImportStyle()
+    code: ImportCode = ImportCode()
+    min_confidence: ImportConfidence = "inferred"
+    require_source: bool = True
+    status: Literal["draft", "confirmed"] = "draft"
+    # An import that would replace more than this many existing texts is refused.
+    max_overwrites: Annotated[int, Field(ge=0, le=100_000)] = 25
+    near_duplicates: Literal["warn", "reject"] = "warn"
+    type_conflicts: Literal["flag", "ignore"] = "flag"
+
+
+class ImportProposal(StrictModel):
+    """What the agent fills in for one event. null means "no proposal"; it never blanks a field."""
+
+    description: Annotated[str, Field(max_length=4000)] | None = None
+    params: dict[Annotated[str, Field(min_length=1, max_length=80)], str | None] = Field(
+        default_factory=dict, max_length=50
+    )
+    param_types: dict[
+        Annotated[str, Field(min_length=1, max_length=80)], Literal["string", "number"]
+    ] = Field(default_factory=dict, max_length=50)
+    confidence: ImportConfidence | Literal["unknown"] | None = None
+    source: Annotated[str, Field(max_length=300)] | None = None
+
+
+class ImportEvent(StrictModel):
+    proposed: ImportProposal = ImportProposal()
+    # Context the template carries; the importer reads the live dictionary, not this.
+    current: dict | None = None
+    observed: dict | None = None
+    status: str | None = None
+
+
+class ImportUnresolved(StrictModel):
+    source: Annotated[str, Field(max_length=300)] = ""
+    note: Annotated[str, Field(max_length=500)] = ""
+
+
+class ImportFile(StrictModel):
+    format: Literal["avn-events/1"]
+    game: str | None = None
+    instructions: Annotated[str, Field(max_length=8000)] | None = None  # template text, ignored
+    options: ImportOptions = ImportOptions()
+    events: dict[Name, ImportEvent] = Field(default_factory=dict, max_length=2000)
+    unresolved: list[ImportUnresolved] = Field(default_factory=list, max_length=500)
+    not_found_in_code: list[Name] = Field(default_factory=list, max_length=2000)
+
+
+# A whole event ("level_start") or one text of it ("level_start/description",
+# "level_start/param:level").
+ImportExclude = Annotated[
+    str,
+    Field(max_length=170, pattern=r"^[A-Za-z][A-Za-z0-9_]*(/(description|param:.{1,80}))?$"),
+]
+
+
+class ImportRequest(StrictModel):
+    file: ImportFile
+    # Overrides for the options carried by the file; the reviewer has the last word.
+    options: ImportOptions | None = None
+    exclude: list[ImportExclude] = Field(default_factory=list, max_length=10000)
+    # Absent: a dry run. Present: apply, provided it still matches what the dry run showed.
+    preview: Annotated[str, Field(min_length=64, max_length=64)] | None = None
+
+
+class ImportPrepare(StrictModel):
+    options: ImportOptions = ImportOptions()
+
+
 FilterValues = Annotated[list[Annotated[str, Field(max_length=128)]], Field(max_length=100)]
 
 

@@ -119,6 +119,9 @@ class Storage:
         of a session can be filtered without the SDK repeating it. funnels: saved funnel steps.
         environment_fixes: "count what this build sent as development as production" rules for a
         build that shipped in the wrong mode; applied when events are read, never to the events.
+        dictionary_drafts: description texts written by an agent import that nobody has confirmed
+        yet (field is "description" or "param:<key>"). dictionary_imports: one row per import,
+        with every change it made, so it can be undone.
         """
         connection.executescript("""
             CREATE TABLE IF NOT EXISTS sessions (
@@ -130,6 +133,23 @@ class Storage:
                 name TEXT NOT NULL,
                 definition TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS dictionary_drafts (
+                name TEXT NOT NULL,
+                field TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                confidence TEXT,
+                source TEXT,
+                PRIMARY KEY (name, field)
+            );
+            CREATE TABLE IF NOT EXISTS dictionary_imports (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                options TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                changes TEXT NOT NULL,
+                undone_at TEXT
             );
             CREATE TABLE IF NOT EXISTS environment_fixes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -501,20 +521,63 @@ class Storage:
             )
         return {"accepted": accepted, "duplicates": len(rows) - accepted, "server_ts": server_ts}
 
+    @staticmethod
+    def write_definition(connection, name, definition: EventDefinition):
+        """Store a definition. Text that changes is no longer an unconfirmed agent draft."""
+        row = connection.execute(
+            "SELECT definition FROM dictionary WHERE name=?", (name,)
+        ).fetchone()
+        previous = json.loads(row["definition"]) if row else {}
+        connection.execute(
+            """INSERT INTO dictionary VALUES (?, ?) ON CONFLICT(name)
+               DO UPDATE SET definition=excluded.definition""",
+            (name, definition.model_dump_json()),
+        )
+        changed = []
+        if (previous.get("description") or "") != definition.description:
+            changed.append("description")
+        changed += [
+            f"param:{key}"
+            for key, text in previous.get("params", {}).items()
+            if definition.params.get(key) != text
+        ]
+        for field in changed:
+            connection.execute(
+                "DELETE FROM dictionary_drafts WHERE name=? AND field=?", (name, field)
+            )
+
     def set_definition(self, game_id, name, definition: EventDefinition):
         self.get_game(game_id)
         with self.connect(self.game_path(game_id)) as connection:
-            connection.execute(
-                """INSERT INTO dictionary VALUES (?, ?) ON CONFLICT(name)
-                   DO UPDATE SET definition=excluded.definition""",
-                (name, definition.model_dump_json()),
-            )
+            self.write_definition(connection, name, definition)
 
     def delete_definition(self, game_id, name):
         self.get_game(game_id)
         with self.connect(self.game_path(game_id)) as connection:
             if connection.execute("DELETE FROM dictionary WHERE name=?", (name,)).rowcount == 0:
                 raise HTTPException(404, "Definition not found")
+            connection.execute("DELETE FROM dictionary_drafts WHERE name=?", (name,))
+
+    def get_drafts(self, game_id):
+        """name -> field -> where the unconfirmed text came from."""
+        self.get_game(game_id)
+        drafts = {}
+        with self.connect(self.game_path(game_id)) as connection:
+            for row in connection.execute("SELECT * FROM dictionary_drafts ORDER BY name, field"):
+                drafts.setdefault(row["name"], {})[row["field"]] = {
+                    "batch_id": row["batch_id"],
+                    "confidence": row["confidence"],
+                    "source": row["source"],
+                }
+        return drafts
+
+    def confirm_definition(self, game_id, name):
+        """A person has read the event's agent-written text and accepts it as it is."""
+        self.get_game(game_id)
+        with self.connect(self.game_path(game_id)) as connection:
+            return connection.execute(
+                "DELETE FROM dictionary_drafts WHERE name=?", (name,)
+            ).rowcount
 
     def get_dictionary(self, game_id):
         self.get_game(game_id)

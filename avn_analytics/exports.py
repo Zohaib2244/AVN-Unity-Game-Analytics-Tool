@@ -172,6 +172,9 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None, 
                 row["name"]: json.loads(row["definition"])
                 for row in connection.execute("SELECT * FROM dictionary ORDER BY name")
             }
+            drafts = {}
+            for row in connection.execute("SELECT name, field FROM dictionary_drafts"):
+                drafts.setdefault(row["name"], []).append(row["field"])
             with zipfile.ZipFile(
                 output, "w", compression=zipfile.ZIP_STORED, allowZip64=True
             ) as archive:
@@ -286,6 +289,9 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None, 
                     "",
                     "Definitions below are JSON records to preserve descriptions literally.",
                     "Missing meanings require documentation from the game developer.",
+                    "Fields listed in unconfirmed_ai_draft were written by an AI agent from the",
+                    "game's code and no person has confirmed them yet; treat them as likely, not",
+                    "certain.",
                     "",
                 ]
                 for name in sorted(observed.keys() | definitions.keys()):
@@ -298,6 +304,9 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None, 
                             key: sorted(types) for key, types in observed.get(name, {}).items()
                         },
                     }
+                    if drafts.get(name):
+                        # written by an AI agent from the code and not yet confirmed by a person
+                        record["unconfirmed_ai_draft"] = sorted(drafts[name])
                     lines.append("    " + json.dumps(record, ensure_ascii=True))
                     lines.append("")
                 if dictionary_truncated:

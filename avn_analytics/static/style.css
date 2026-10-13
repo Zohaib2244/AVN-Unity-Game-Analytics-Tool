@@ -1158,3 +1158,50 @@ body:has(dialog.player-dialog[open]){overflow:hidden}
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
 }
+
+/* ─── Dictionary import dialog ─── */
+dialog.import-dialog{width:min(980px,calc(100vw - 32px));max-width:980px;max-height:92dvh;padding:24px;overscroll-behavior:contain;overflow:auto}
+.import-dialog .segmented{margin-bottom:16px}
+.import-form fieldset{border:1.5px solid var(--border);border-radius:10px;padding:14px 16px 4px;margin:0 0 14px}
+.import-form legend{padding:0 8px;font-family:var(--font-label);font-size:var(--fs-label);color:var(--text-muted-dim)}
+.import-form select{width:100%}
+.import-steps{margin:0 0 14px 20px;color:var(--text-muted)}
+.import-prepared{margin-top:18px;border-top:1.5px solid var(--border);padding-top:12px}
+.import-prompt summary{cursor:pointer;color:var(--text-muted)}
+.import-prompt textarea{margin-top:10px;font-size:var(--fs-label)}
+.import-rules{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+.import-rules select{width:auto}
+.import-rules input[type="number"]{width:90px}
+.import-summary{margin:0 0 12px}
+.import-list{list-style:none;margin:0;padding:0}
+.import-list li{margin-bottom:6px;overflow-wrap:anywhere}
+.import-table del{color:var(--text-muted-dim)}
+.import-table ins{text-decoration:none;color:var(--text-primary)}
+.import-table td{vertical-align:top}
+.import-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 16px}
+.import-choice{display:flex;gap:12px;align-items:flex-start;border:1.5px solid var(--border);border-radius:10px;padding:14px 16px;cursor:pointer;text-transform:none;letter-spacing:0;font-family:var(--font-body)}
+.import-choice input{width:auto;margin-top:4px;accent-color:var(--accent-orange)}
+.import-choice strong{display:block;color:var(--text-primary);margin-bottom:4px}
+.import-choice small{display:block;color:var(--text-muted);font-size:var(--fs-label);line-height:1.5}
+.import-choice:has(input:checked){border-color:var(--accent-orange);box-shadow:3px 3px 0 var(--shadow)}
+.import-choice:has(input:focus-visible){outline:2px solid var(--accent-orange);outline-offset:2px}
+.import-advanced{margin:0 0 14px}
+.import-advanced>summary{cursor:pointer;color:var(--text-muted);padding:8px 0;margin-bottom:8px}
+.import-approve{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 12px}
+.import-approve .check-row{margin:0}
+.import-approve .spacer{flex:1}
+.import-count{color:var(--text-muted)}
+.import-text{display:flex;gap:8px;align-items:flex-start;margin:0;text-transform:none;letter-spacing:0;font-family:var(--font-body);cursor:pointer}
+.import-text input{width:auto;margin-top:5px;accent-color:var(--accent-orange)}
+@media(max-width:640px){.import-choices{grid-template-columns:1fr}}
+.import-table td:first-child{min-width:250px}
+.import-text code{white-space:nowrap}
+
+/* ─── Mapping health ─── */
+.button .button-badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;margin-left:8px;border:1.5px solid currentColor;border-radius:999px;font-family:var(--font-label);font-size:var(--fs-micro);line-height:1}
+.button.attention{border-color:var(--status-down);color:var(--status-down)}
+.button.fine .button-badge{color:var(--status-up)}
+.notice-banner{display:flex;align-items:center;gap:16px;padding:14px 18px;margin-bottom:22px;border:1px solid var(--line);border-left:3px solid var(--accent-orange);border-radius:12px;background:var(--bg-card);font-size:var(--fs-label);color:var(--text-muted)}
+.notice-banner>div{flex:1}
+.notice-banner strong{color:var(--text-primary);font-weight:500}
+@media(max-width:700px){.notice-banner{flex-direction:column;align-items:flex-start}}

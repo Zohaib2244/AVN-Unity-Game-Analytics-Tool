@@ -70,6 +70,7 @@ def overview(storage, game_id, start, end, filters, timezone_offset_minutes=0):
     """Every event the game has sent or defined, with how often, by whom, and what it means."""
     storage.get_game(game_id)
     definitions = storage.get_dictionary(game_id)
+    drafts = storage.get_drafts(game_id)
     condition, args = where(start, end, filters)
     day = day_expression(timezone_offset_minutes)
     with storage.connect(storage.game_path(game_id)) as connection:
@@ -125,6 +126,8 @@ def overview(storage, game_id, start, end, filters, timezone_offset_minutes=0):
                     "hidden": bool(definition.get("hidden")),
                     "canonical": definition.get("canonical", []),
                 },
+                # fields an agent import wrote that nobody has confirmed yet
+                "drafts": sorted(drafts.get(name, {})),
                 "status": "never" if not total else "stale" if stale else "active",
                 "ever": total
                 and {key: total[key] for key in ("events", "players", "first_seen", "last_seen")},
@@ -161,6 +164,13 @@ def overview(storage, game_id, start, end, filters, timezone_offset_minutes=0):
             "stale": sum(1 for item in events if item["status"] == "stale"),
             "mapped": sum(1 for item in events if item["definition"]["canonical"]),
             "hidden": sum(1 for item in events if item["definition"]["hidden"]),
+            "drafts": sum(1 for item in events if item["drafts"]),
+            # all time, whatever the days and filters: what the game has sent in total
+            "received_total": sum(item["events"] for item in ever.values()),
+            "event_types": len(ever),
+            "database_bytes": sum(
+                path.stat().st_size for path in storage.game_files(game_id) if path.exists()
+            ),
         },
     }
 
@@ -170,6 +180,7 @@ def detail(storage, game_id, name, start, end, filters, timezone_offset_minutes=
     parameters with their values, and the latest raw examples."""
     storage.get_game(game_id)
     definition = storage.get_dictionary(game_id).get(name) or {}
+    drafts = storage.get_drafts(game_id).get(name, {})
     condition, args = where(start, end, filters)
     day = day_expression(timezone_offset_minutes)
     scope = f"name=? AND {condition}"
@@ -272,6 +283,7 @@ def detail(storage, game_id, name, start, end, filters, timezone_offset_minutes=
     days = _days(start, end, timezone_offset_minutes)
     return {
         "name": name,
+        "drafts": sorted(drafts),
         "days": [
             {
                 "day": item,
@@ -431,6 +443,35 @@ def mappings(storage, game_id):
             )
         ],
     }
+
+
+# Without these the Levels dashboard, player stories and journeys cannot read a game's levels.
+# Failed and restarted are optional: plenty of games have no such moment.
+REQUIRED_CONCEPTS = ("level_started", "level_completed")
+
+
+def mapping_status(storage, game_id):
+    """A short verdict on the mappings, for the Mappings button and the overview notice.
+
+    Something needs attention when a level moment the dashboards depend on has no event behind
+    it, or when a mapping rule the team set matches nothing the game has sent.
+    """
+    result = mappings(storage, game_id)
+    issues = []
+    if result["scanned"]:
+        for concept in result["concepts"]:
+            base = {
+                "concept": concept["key"],
+                "label": concept["label"],
+                "used_by": concept["used_by"],
+            }
+            if concept["key"] in REQUIRED_CONCEPTS and concept["status"] == "missing":
+                issues.append({"kind": "missing", **base})
+            issues += [
+                {"kind": "silent", **base, "event": item["event"]}
+                for item in concept["silent_rules"]
+            ]
+    return {"ok": not issues, "has_events": bool(result["scanned"]), "issues": issues}
 
 
 def preview(storage, game_id, event, rule):
