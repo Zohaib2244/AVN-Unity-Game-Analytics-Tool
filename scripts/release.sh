@@ -16,6 +16,12 @@ die() { echo "release: $*" >&2; exit 1; }
 git fetch --quiet --tags origin
 [ -z "$(git rev-list HEAD..origin/main)" ] || die "origin/main has commits you don't have; pull first"
 
+last=$(git tag -l 'v*' --sort=-v:refname | head -1)
+if [ -n "$last" ] && [ "$(git rev-parse HEAD)" = "$(git rev-list -n1 "$last")" ]; then
+  echo "release: HEAD is already $last, nothing new to tag"
+  exit 0
+fi
+
 scripts/check.sh
 
 last=$(git tag -l 'v*' --sort=-v:refname | head -1)
