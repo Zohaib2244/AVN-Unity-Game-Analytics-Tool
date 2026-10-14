@@ -35,7 +35,7 @@ VERB_TEXT = {
     "failed": "Failed",
     "restarted": "Restarted",
 }
-LEVEL_KEY = re.compile(r"^level(_?(number|num|id|index))?$", re.I)
+LEVEL_KEY = re.compile(r"^(level(_?(number|num|id|index))?|number)$", re.I)
 LEVELISH_KEY = re.compile(r"level", re.I)
 NOISE_KEY = re.compile(r"(time|duration|second|score|timestamp|_ts$|^ts$|id$)", re.I)
 HIDDEN_PARAMS = {"seq"}
@@ -144,7 +144,9 @@ def parse_rules(text):
     return rules
 
 
-def _canonical_match(rule, params):
+def _canonical_match(rule, params, app_version=None):
+    if rule.get("app_version") and rule["app_version"] != app_version:
+        return False
     param = rule.get("param") or ""
     if not param:
         return True
@@ -170,6 +172,17 @@ def _canonical_match(rule, params):
     }.get(op, False)
 
 
+def active_mappings(definition, app_version=None):
+    """A version's rules replace the shared rules for this event; other events still inherit."""
+    rules = list(enumerate((definition or {}).get("canonical", [])))
+    scoped = [
+        (index, rule)
+        for index, rule in rules
+        if app_version and rule.get("app_version") == app_version
+    ]
+    return scoped or [(index, rule) for index, rule in rules if not rule.get("app_version")]
+
+
 class Labeler:
     """Names events for people. definitions is the game's event dictionary."""
 
@@ -179,19 +192,19 @@ class Labeler:
     def hidden(self, name):
         return bool((self.definitions.get(name) or {}).get("hidden"))
 
-    def canonical_rules(self, name, params):
+    def canonical_rules(self, name, params, app_version=None):
         """The mapping rules of this event's definition that its parameters satisfy."""
         return [
             rule
-            for rule in (self.definitions.get(name) or {}).get("canonical", [])
-            if _canonical_match(rule, params)
+            for _, rule in active_mappings(self.definitions.get(name), app_version)
+            if _canonical_match(rule, params, app_version)
         ]
 
-    def canonical(self, name, params):
+    def canonical(self, name, params, app_version=None):
         """Shared analytics concepts matched by this raw event and its parameters."""
-        return [rule["action"] for rule in self.canonical_rules(name, params)]
+        return [rule["action"] for rule in self.canonical_rules(name, params, app_version)]
 
-    def level_info(self, name, params):
+    def level_info(self, name, params, app_version=None):
         """(verb, level number) when the event is a level start/complete/fail/restart."""
         canonical_verbs = {
             "level_started": "started",
@@ -199,7 +212,7 @@ class Labeler:
             "level_failed": "failed",
             "level_restarted": "restarted",
         }
-        for rule in self.canonical_rules(name, params):
+        for rule in self.canonical_rules(name, params, app_version):
             mapped = canonical_verbs.get(rule["action"])
             if not mapped:
                 continue
@@ -231,6 +244,17 @@ class Labeler:
                 token.lower() for token in re.split(r"[_\W]+|(?<=[a-z])(?=[A-Z])", name) if token
             ]
             verb = next((LEVEL_VERBS[token] for token in tokens if token in LEVEL_VERBS), None)
+            if verb is None:
+                # One standard event can carry its lifecycle action as a value.
+                verb = next(
+                    (
+                        LEVEL_VERBS.get(str(value).lower())
+                        for key, value in params.items()
+                        if key.lower() in ("action", "status", "state")
+                        and str(value).lower() in LEVEL_VERBS
+                    ),
+                    None,
+                )
             number = next(
                 (
                     _int(value)
@@ -243,7 +267,7 @@ class Labeler:
                 return verb, number
         return None
 
-    def label(self, name, params):
+    def label(self, name, params, app_version=None):
         """Short human text for one event."""
         params = {key: value for key, value in params.items() if key not in HIDDEN_PARAMS}
         for when, body in parse_rules((self.definitions.get(name) or {}).get("labels", "")):
@@ -251,7 +275,7 @@ class Labeler:
                 return re.sub(
                     r"\{([^{}]+)\}", lambda m: str(_lookup(params, m.group(1).strip()) or ""), body
                 ).strip()
-        info = self.level_info(name, params)
+        info = self.level_info(name, params, app_version)
         if info:
             return f"{VERB_TEXT[info[0]]} level {info[1]}"
         if name in FRIENDLY_SDK:
@@ -275,12 +299,12 @@ class Labeler:
 ENUM_VALUE = re.compile(r"^[A-Za-z_]{1,14}$")
 
 
-def shape_label(self, name, params):
+def shape_label(self, name, params, app_version=None):
     """A steadier name for grouping players: drops one-off values like device models."""
     params = {key: value for key, value in params.items() if key not in HIDDEN_PARAMS}
     definition = self.definitions.get(name) or {}
-    if parse_rules(definition.get("labels", "")) or self.level_info(name, params):
-        return self.label(name, params)
+    if parse_rules(definition.get("labels", "")) or self.level_info(name, params, app_version):
+        return self.label(name, params, app_version)
     if name in FRIENDLY_SDK:
         return FRIENDLY_SDK[name]
     parts = []
@@ -321,7 +345,8 @@ def clean_events(events, labeler, include_hidden=False):
         name, params = event["name"], event.get("params") or {}
         if not include_hidden and (labeler.hidden(name) or name in BOUNDARY_EVENTS):
             continue
-        text = labeler.label(name, params)
+        version = event.get("app_version")
+        text = labeler.label(name, params, version)
         previous = cleaned[-1] if cleaned else None
         if (
             previous
@@ -340,8 +365,8 @@ def clean_events(events, labeler, include_hidden=False):
                 "last_ts": event["client_ts"],
                 "session_id": event.get("session_id"),
                 "params": params,
-                "level": labeler.level_info(name, params),
-                "shape": labeler.shape(name, params),
+                "level": labeler.level_info(name, params, version),
+                "shape": labeler.shape(name, params, version),
                 "count": 1,
             }
         )

@@ -1,6 +1,6 @@
 // Fill the event dictionary from the game's code with an AI agent: prepare a file and a prompt,
 // upload the filled file, review what it would change, apply it, and undo it later if needed.
-// Loaded after events.js (which opens it from the Events page) and before app.js.
+// Loaded after events.js (which opens it from Mappings) and before app.js.
 
 const IMPORT_DEFAULTS = {
   mode: 'fill_blanks', fields: ['description', 'params'],

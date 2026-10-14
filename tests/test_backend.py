@@ -2664,6 +2664,171 @@ def test_mappings_show_what_is_understood_and_let_any_event_be_mapped(backend):
     assert admin.put(url, json={"canonical": [{"action": "bad action"}]}).status_code == 400
 
 
+def test_version_mappings_are_shared_by_dashboards_and_previewed_in_scope(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    base = f"/v1/games/{game['id']}"
+    records = [
+        event(
+            name="STAGE_FLOW",
+            params={"Stage": 7},
+            app_version=version,
+            device_id=version,
+            session_id=version,
+        )
+        for version in ("0.1.1", "0.1.2")
+    ]
+    assert send(ingest, game, records).status_code == 200
+    rules = [
+        {"action": "level_started", "number_param": "Stage", "app_version": "0.1.1"},
+        {"action": "level_completed", "number_param": "Stage", "app_version": "0.1.2"},
+    ]
+    assert admin.put(f"{base}/dictionary/STAGE_FLOW/mappings", json={"canonical": rules}).is_success
+    preview = admin.post(
+        f"{base}/mappings/preview", json={"event": "STAGE_FLOW", "rule": rules[0]}
+    ).json()
+    assert preview["scanned"] == preview["events"] == preview["with_level_number"] == 1
+    scoped = admin.get(f"{base}/mappings", params={"version": "0.1.1"}).json()
+    concepts = {item["key"]: item for item in scoped["concepts"]}
+    assert scoped["versions"] == ["0.1.2", "0.1.1"]
+    assert scoped["events"][0]["events"] == 1
+    assert concepts["level_started"]["sources"][0]["events"] == 1
+    assert concepts["level_completed"]["rules"] == []
+    assert len(scoped["definitions"]["STAGE_FLOW"]) == 2  # preserves the other release on edits
+    date_range = {"start": "2026-10-04", "end": "2026-10-04"}
+    levels = admin.get(f"{base}/insights/levels", params=date_range).json()["levels"]
+    assert levels[0]["started"] == levels[0]["observed_completed"] == 1
+    for version, verb in (("0.1.1", "started"), ("0.1.2", "completed")):
+        story = admin.get(f"{base}/insights/story", params={**date_range, "player": version}).json()
+        assert story["highest_level"] == 7
+        assert story["chapters"][0]["segments"][0]["levels"][0][verb] == 1
+
+
+@pytest.mark.parametrize(
+    ("params", "action", "condition", "number_param"),
+    [
+        ({"Started": 3}, "level_started", {"param": "Started", "op": "exists"}, "Started"),
+        (
+            {"Completed": "3"},
+            "level_completed",
+            {"param": "Completed", "op": "exists"},
+            "Completed",
+        ),
+        (
+            {"action": "failed", "level": 3},
+            "level_failed",
+            {"param": "action", "value": "failed"},
+            "level",
+        ),
+        (
+            {"STATE": "Started", "NUMBER": 3},
+            "level_started",
+            {"param": "STATE", "value": "Started"},
+            "NUMBER",
+        ),
+    ],
+)
+def test_level_analysis_suggestions_separate_parameter_actions(
+    backend, params, action, condition, number_param
+):
+    admin, ingest, _ = backend
+    game = register(admin)
+    assert send(ingest, game, [event(name="LEVEL_ANALYSIS", params=params)]).is_success
+    base = f"/v1/games/{game['id']}"
+    mappings = admin.get(f"{base}/mappings", params={"version": "1.0"}).json()
+    concept = next(item for item in mappings["concepts"] if item["key"] == action)
+    assert concept["status"] == "auto"
+    assert concept["sources"][0]["levels"] == {"count": 1, "min": 3, "max": 3}
+    suggestion = next(
+        item for item in mappings["events"][0]["suggestions"] if item["action"] == action
+    )
+    assert suggestion["app_version"] == "1.0" and suggestion["number_param"] == number_param
+    assert all(suggestion[key] == value for key, value in condition.items())
+    preview = admin.post(
+        f"{base}/mappings/preview", json={"event": "LEVEL_ANALYSIS", "rule": suggestion}
+    ).json()
+    assert preview["events"] == preview["with_level_number"] == 1
+
+
+def test_version_rules_override_broad_shared_rules_for_level_analysis(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    base = f"/v1/games/{game['id']}"
+    records = [
+        event(
+            name="LEVEL_ANALYSIS",
+            app_version="0.1.1",
+            params={"STATE": state, "NUMBER": 3},
+            client_ts=f"2026-10-04T09:0{index}:00Z",
+        )
+        for index, state in enumerate(("Started", "Failed", "Completed"))
+    ]
+    assert send(ingest, game, records).is_success
+    broad = [
+        {"action": action, "number_param": "NUMBER"}
+        for action in ("level_completed", "level_failed")
+    ]
+    url = f"{base}/dictionary/LEVEL_ANALYSIS/mappings"
+    assert admin.put(url, json={"canonical": broad}).is_success
+    before = admin.get(f"{base}/mappings", params={"version": "0.1.1"}).json()
+    assert before["conflicts"] == [{"event": "LEVEL_ANALYSIS", "events": 3}]
+    scoped = [
+        {
+            "action": f"level_{action}",
+            "param": "STATE",
+            "value": state,
+            "number_param": "NUMBER",
+            "app_version": "0.1.1",
+        }
+        for action, state in (
+            ("started", "Started"),
+            ("completed", "Completed"),
+            ("failed", "Failed"),
+        )
+    ]
+    preview = admin.post(
+        f"{base}/mappings/preview", json={"event": "LEVEL_ANALYSIS", "rule": scoped[0]}
+    ).json()
+    assert preview["events"] == 1 and preview["conflicting_events"] == 0
+    assert admin.put(url, json={"canonical": [*broad, *scoped]}).is_success
+    after = admin.get(f"{base}/mappings", params={"version": "0.1.1"}).json()
+    assert after["conflicts"] == []
+    for concept in after["concepts"]:
+        if concept["key"] in ("level_started", "level_completed", "level_failed"):
+            assert len(concept["rules"]) == 1
+            assert concept["sources"][0]["events"] == 1
+    date_range = {"start": "2026-10-04", "end": "2026-10-04"}
+    level = admin.get(f"{base}/insights/levels", params=date_range).json()["levels"][0]
+    assert level["attempts"] == level["fails"] == level["completed"] == 1
+    story = admin.get(
+        f"{base}/insights/story", params={**date_range, "player": "anonymous-install-id"}
+    ).json()
+    row = story["chapters"][0]["segments"][0]["levels"][0]
+    assert row["started"] == row["completed"] == row["failed"] == 1
+
+
+def test_retention_respects_mapping_version(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    base = f"/v1/games/{game['id']}"
+    assert send(
+        ingest,
+        game,
+        [
+            event(name="OPEN", params={}, device_id=version, app_version=version)
+            for version in ("1.0", "2.0")
+        ],
+    ).is_success
+    assert admin.put(
+        f"{base}/dictionary/OPEN/mappings",
+        json={"canonical": [{"action": "session_start", "app_version": "1.0"}]},
+    ).is_success
+    result = admin.get(
+        f"{base}/insights/retention", params={"start": "2026-10-04", "end": "2026-10-04"}
+    ).json()
+    assert result["cohorts"][0]["players"] == 1
+
+
 def test_mapping_status_flags_missing_level_moments_and_silent_rules(backend):
     admin, ingest, _ = backend
     game = register(admin)

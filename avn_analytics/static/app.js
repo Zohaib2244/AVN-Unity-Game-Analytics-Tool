@@ -231,7 +231,7 @@ function metric(title, value, footer, symbol) {
 // sections and an Android/iOS switch between its registered variants.
 let currentGame = null;
 let currentSection = 'overview';
-const GAME_SECTIONS = [['overview','grid','Overview'],['funnels','funnel','Funnels'],['levels','game','Levels'],['players','users','Players'],['exports','export','Exports'],['dictionary','book','Events'],['mappings','link','Mappings'],['keys','key','API keys'],['settings','settings','Game settings']];
+const GAME_SECTIONS = [['overview','grid','Overview'],['funnels','funnel','Funnels'],['levels','game','Levels'],['players','users','Players'],['exports','export','Exports'],['dictionary','book','Event dictionary'],['keys','key','API keys'],['settings','settings','Game settings']];
 const gamePath = (game, section = 'overview') => `/games/${encodeURIComponent(game.id)}${section === 'overview' ? '' : `/${section}`}`;
 const sameGame = (a, b) => a.name.trim().toLowerCase() === b.name.trim().toLowerCase();
 const PLATFORM_ORDER = ['android', 'ios'];
@@ -292,7 +292,7 @@ function shell(title, content) {
   const link = ([url, symbol, label], active) => `<a href="${url}" aria-label="${label}" class="${active ? 'active' : ''}" ${active ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span></a>`;
   const game = currentGame;
   const main = game
-    ? `<a class="back-to-games" href="/">← All games</a><div class="sidebar-game">${avatar(game.name, variantsOf(game))}<div><strong>${escapeHTML(game.name)}</strong><span>${escapeHTML(game.bundle_id)}</span></div></div>${variantSwitch(game, currentSection)}<p class="nav-label eyebrow">Game</p><nav class="nav" aria-label="Game">${GAME_SECTIONS.map(([section, symbol, label]) => link([gamePath(game, section), symbol, label], section === currentSection)).join('')}</nav>`
+    ? `<a class="back-to-games" href="/">← All games</a><div class="sidebar-game">${avatar(game.name, variantsOf(game))}<div><strong>${escapeHTML(game.name)}</strong><span>${escapeHTML(game.bundle_id)}</span></div></div>${variantSwitch(game, currentSection)}<p class="nav-label eyebrow">Game</p><nav class="nav" aria-label="Game">${GAME_SECTIONS.map(([section, symbol, label]) => link([gamePath(game, section), symbol, label], section === currentSection || section === 'dictionary' && currentSection === 'mappings')).join('')}</nav>`
     : `<p class="nav-label eyebrow">Menu</p><nav class="nav" aria-label="Menu">${link(['/', 'grid', 'Games'], ['/', '/games', '/games/new'].includes(location.pathname))}</nav>`;
   const crumbs = game ? `<a href="/">Games</a> <span>/</span> <a href="${gamePath(game)}">${escapeHTML(game.name)} · ${platformLabel(game.platform)}</a> <span>/</span> <strong>${escapeHTML(title)}</strong>` : `Workspace <span>/</span> <strong>${escapeHTML(title)}</strong>`;
   const switcher = me.workspaces.length > 1 || me.is_admin ? `<div class="ws-switch"><label for="ws-select">Workspace</label><select id="ws-select" aria-label="Workspace">${me.workspaces.map(item => `<option value="${item.id}" ${item.id === currentWorkspace ? 'selected' : ''}>${escapeHTML(item.name)}</option>`).join('')}</select></div>` : '';

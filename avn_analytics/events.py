@@ -36,13 +36,15 @@ def _kind(sql_type):
     return PARAM_TYPES.get(sql_type)
 
 
-def _observed_params(connection):
+def _observed_params(connection, app_version=""):
     """name -> key -> {types, count} for every parameter ever sent."""
     seen = defaultdict(dict)
     for row in connection.execute(
         """SELECT name, p.key AS key, p.type AS type, count(*) AS count
            FROM events, json_each(events.payload, '$.params') AS p
-           GROUP BY name, p.key, p.type"""
+           WHERE (? = '' OR json_extract(payload, '$.app_version') = ?)
+           GROUP BY name, p.key, p.type""",
+        (app_version, app_version),
     ):
         kind = _kind(row["type"])
         if row["key"] in HIDDEN_PARAMS or kind is None:
@@ -310,7 +312,40 @@ def _bump(table, key, player, number=None):
         item["levels"].add(number)
 
 
-def mappings(storage, game_id):
+def _suggestions(name, params, examples, app_version):
+    """Reviewable mappings for known shapes; never infer game-specific status codes."""
+    rules = []
+    if not stories.LEVELISH_KEY.search(name):
+        return rules
+    number_param = next((key for key in params if stories.LEVEL_KEY.match(key)), "")
+    for key in params:
+        verb = stories.LEVEL_VERBS.get(key.lower())
+        if verb and any(stories._int(value) is not None for value in examples.get(key, [])):
+            rules.append(
+                CanonicalMapping(
+                    action=f"level_{verb}",
+                    param=key,
+                    op="exists",
+                    number_param=key,
+                    app_version=app_version,
+                ).model_dump()
+            )
+        if number_param and key.lower() in ("action", "status", "state"):
+            for value in examples.get(key, []):
+                if verb := stories.LEVEL_VERBS.get(value.lower()):
+                    rules.append(
+                        CanonicalMapping(
+                            action=f"level_{verb}",
+                            param=key,
+                            value=value,
+                            number_param=number_param,
+                            app_version=app_version,
+                        ).model_dump()
+                    )
+    return rules
+
+
+def mappings(storage, game_id, app_version=""):
     """Which of the dashboards' shared moments each event of the game stands for: the mappings
     the team set, and what is understood on its own (session_start, level events with a level
     parameter such as `Started: 3`)."""
@@ -318,43 +353,60 @@ def mappings(storage, game_id):
     definitions = storage.get_dictionary(game_id)
     labeler = stories.Labeler(definitions)
     table = {}
+    conflicts = defaultdict(int)
     scanned = 0
+    scope = "(? = '' OR json_extract(payload, '$.app_version') = ?)"
+    scope_args = (app_version, app_version)
     with storage.connect(storage.game_path(game_id)) as connection:
+        versions = [
+            row[0]
+            for row in connection.execute(
+                "SELECT DISTINCT json_extract(payload, '$.app_version') FROM events "
+                "WHERE json_extract(payload, '$.app_version') IS NOT NULL"
+            )
+        ]
         observed = {
             row["name"]: dict(row)
             for row in connection.execute(
                 "SELECT name, count(*) AS events, max(client_ts) AS last_seen "
-                "FROM events GROUP BY name"
+                f"FROM events WHERE {scope} GROUP BY name",
+                scope_args,
             )
         }
-        params = _observed_params(connection)
+        params = _observed_params(connection, app_version)
         examples = defaultdict(lambda: defaultdict(list))
         for row in connection.execute(
-            """SELECT name, p.key AS key, p.value AS value, count(*) AS count
+            f"""SELECT name, p.key AS key, p.value AS value, count(*) AS count
                FROM events, json_each(events.payload, '$.params') AS p
-               WHERE p.type IN ('text', 'integer', 'real')
-               GROUP BY name, p.key, p.value ORDER BY count DESC LIMIT 4000"""
+               WHERE {scope} AND p.type IN ('text', 'integer', 'real')
+               GROUP BY name, p.key, p.value ORDER BY count DESC LIMIT 4000""",
+            scope_args,
         ):
             if row["key"] not in HIDDEN_PARAMS and len(examples[row["name"]][row["key"]]) < 6:
                 examples[row["name"]][row["key"]].append(str(row["value"])[:60])
         rows = connection.execute(
-            f"""SELECT name, json_extract(payload, '$.params') AS params, {PLAYER} AS player
-                FROM events ORDER BY client_ts DESC, event_id LIMIT {MAPPING_SCAN}"""
+            f"""SELECT name, json_extract(payload, '$.params') AS params, {PLAYER} AS player,
+                       json_extract(payload, '$.app_version') AS app_version
+                FROM events WHERE {scope}
+                ORDER BY client_ts DESC, event_id LIMIT {MAPPING_SCAN}""",
+            scope_args,
         )
         for row in rows:
             scanned += 1
             values = json.loads(row["params"] or "{}")
             name, player = row["name"], row["player"]
-            info = labeler.level_info(name, values)
+            info = labeler.level_info(name, values, row["app_version"])
             explicit = set()
-            for index, rule in enumerate((definitions.get(name) or {}).get("canonical", [])):
-                if not stories._canonical_match(rule, values):
+            for index, rule in stories.active_mappings(definitions.get(name), row["app_version"]):
+                if not stories._canonical_match(rule, values, row["app_version"]):
                     continue
                 explicit.add(rule["action"])
                 number = None
                 if info and f"level_{info[0]}" == rule["action"]:
                     number = info[1]
                 _bump(table, (rule["action"], name, "mapped", index), player, number)
+            if len({action for action in explicit if action.startswith("level_")}) > 1:
+                conflicts[name] += 1
             if name == "session_start" and "session_start" not in explicit:
                 _bump(table, ("session_start", name, "auto", None), player)
             if info and f"level_{info[0]}" not in explicit:
@@ -383,7 +435,11 @@ def mappings(storage, game_id):
         rules = [
             {"event": name, "index": index, "rule": rule}
             for name, definition in sorted(definitions.items())
-            for index, rule in enumerate(definition.get("canonical", []))
+            for index, rule in (
+                stories.active_mappings(definition, app_version)
+                if app_version
+                else enumerate(definition.get("canonical", []))
+            )
             if rule["action"] == concept["key"]
         ]
         silent = [
@@ -417,6 +473,13 @@ def mappings(storage, game_id):
         if rule["action"] not in known
     ]
     return {
+        "app_version": app_version,
+        "versions": sorted(versions, key=version_key, reverse=True),
+        # Include every rule, so editing one version preserves rules for other versions.
+        "definitions": {name: item.get("canonical", []) for name, item in definitions.items()},
+        "conflicts": [
+            {"event": name, "events": count} for name, count in sorted(conflicts.items())
+        ],
         "concepts": concepts,
         "other": other,
         "scanned": scanned,
@@ -426,6 +489,9 @@ def mappings(storage, game_id):
                 "name": name,
                 "events": item["events"],
                 "defined": name in definitions,
+                "suggestions": _suggestions(
+                    name, params.get(name, {}), examples[name], app_version
+                ),
                 "params": [
                     {
                         "key": key,
@@ -479,25 +545,39 @@ def preview(storage, game_id, event, rule):
     storage.get_game(game_id)
     rule = CanonicalMapping.model_validate(rule).model_dump()
     labeler = stories.Labeler({event: {"canonical": [rule]}})
+    existing = storage.get_dictionary(game_id).get(event) or {}
+    combined = {"canonical": [*existing.get("canonical", []), rule]}
+    conflicting = 0
     matched, players, levels, numbered = 0, set(), set(), 0
     sample = None
     scanned = 0
     with storage.connect(storage.game_path(game_id)) as connection:
         for row in connection.execute(
-            f"""SELECT json_extract(payload, '$.params') AS params, {PLAYER} AS player
-                FROM events WHERE name=? ORDER BY client_ts DESC, event_id LIMIT {PREVIEW_SCAN}""",
-            (event,),
+            f"""SELECT json_extract(payload, '$.params') AS params, {PLAYER} AS player,
+                       json_extract(payload, '$.app_version') AS app_version
+                FROM events WHERE name=?
+                  AND (? = '' OR json_extract(payload, '$.app_version') = ?)
+                ORDER BY client_ts DESC, event_id LIMIT {PREVIEW_SCAN}""",
+            (event, rule["app_version"], rule["app_version"]),
         ):
             scanned += 1
             values = json.loads(row["params"] or "{}")
-            if not stories._canonical_match(rule, values):
+            if not stories._canonical_match(rule, values, row["app_version"]):
                 continue
             matched += 1
+            actions = {
+                item["action"]
+                for _, item in stories.active_mappings(combined, row["app_version"])
+                if item["action"].startswith("level_")
+                and stories._canonical_match(item, values, row["app_version"])
+            }
+            if len(actions) > 1:
+                conflicting += 1
             if len(players) < 20000:
                 players.add(row["player"])
             sample = sample or values
             if rule["action"].startswith("level_"):
-                info = labeler.level_info(event, values)
+                info = labeler.level_info(event, values, row["app_version"])
                 if info and f"level_{info[0]}" == rule["action"]:
                     numbered += 1
                     levels.add(info[1])
@@ -507,6 +587,7 @@ def preview(storage, game_id, event, rule):
         "events": matched,
         "players": len(players),
         "with_level_number": numbered,
+        "conflicting_events": conflicting,
         "levels": {"count": len(ordered), "min": ordered[0], "max": ordered[-1]}
         if ordered
         else None,

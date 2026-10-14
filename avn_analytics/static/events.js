@@ -6,7 +6,7 @@ const CONCEPT_NAMES = {session_start: 'Session start', level_started: 'Level sta
 const conceptName = key => CONCEPT_NAMES[key] || String(key).replace(/_/g, ' ');
 const MAPPING_OPERATORS = [['eq', '='], ['ne', '≠'], ['gt', '>'], ['gte', '≥'], ['lt', '<'], ['lte', '≤'], ['contains', 'contains'], ['exists', 'exists']];
 const operatorText = op => (MAPPING_OPERATORS.find(([key]) => key === op) || [op, op])[1];
-const ruleText = rule => `${rule.param ? `when ${rule.param} ${operatorText(rule.op)}${rule.op === 'exists' ? '' : ` ${rule.value}`}` : 'every time'}${rule.number_param ? ` · level in ${rule.number_param}` : ''}`;
+const ruleText = rule => `${rule.app_version ? `version ${rule.app_version} · ` : 'all versions · '}${rule.param ? `when ${rule.param} ${operatorText(rule.op)}${rule.op === 'exists' ? '' : ` ${rule.value}`}` : 'every time'}${rule.number_param ? ` · level in ${rule.number_param}` : ''}`;
 const agoText = value => {
   if (!value) return 'never';
   const seconds = (Date.now() - Date.parse(value)) / 1000;
@@ -47,11 +47,15 @@ function mappingNotice(game, status) {
 
 /* ─── Events ─── */
 
+function eventDictionaryNav(game, active) {
+  return `<nav class="event-dictionary-nav section-spacing" aria-label="Event dictionary"><a class="button ${active === 'dictionary' ? 'primary' : ''}" ${active === 'dictionary' ? 'aria-current="page"' : ''} href="${gamePath(game, 'dictionary')}">${icon('book', 15)} Dictionary</a><a class="button ${active === 'mappings' ? 'primary' : ''}" ${active === 'mappings' ? 'aria-current="page"' : ''} id="events-mappings" href="${gamePath(game, 'mappings')}">${icon('link', 15)} Mappings<span class="button-badge" hidden></span></a></nav>`;
+}
+
 async function renderDictionary() {
   const game = currentGame;
-  shell('Events', heading('Events', 'Everything your game sends: how often, who sends it, and what it means.', `<div class="heading-actions"><a class="button" id="events-mappings" href="${gamePath(game, 'mappings')}">${icon('link', 15)} Mappings<span class="button-badge" id="mappings-badge" hidden></span></a><button type="button" class="button" id="events-import">${icon('book', 15)} Fill with AI agent</button></div>`) +
+  shell('Event dictionary', heading('Event dictionary', 'Describe your events and map them to the moments your dashboards use.') + eventDictionaryNav(game, 'dictionary') +
     `<div id="filters"></div><div id="events-summary"></div>
-    <section class="panel section-spacing" id="dictionary-panel"><div class="panel-header"><div><h2>Dictionary status</h2><p>How much of your events is described, and what an AI agent wrote that nobody has confirmed yet.</p></div></div><div class="panel-body" id="dictionary-status"></div></section>
+    <section class="panel section-spacing" id="dictionary-panel"><div class="panel-header"><div><h2>Dictionary status</h2><p>How much of your events is described and mapped.</p></div></div><div class="panel-body" id="dictionary-status"></div></section>
     <section class="panel section-spacing"><div class="panel-header"><div><h2>All events</h2><p id="events-note">Counts are for the selected days and filters.</p></div><div class="quiet-actions"><label class="inline-field">Sort<select id="events-sort"><option value="sent">Most sent</option><option value="players">Most players</option><option value="attention">Needs attention</option><option value="last">Last sent</option><option value="name">Name</option></select></label><button type="button" class="button" id="events-csv">${icon('export', 14)} CSV</button></div></div>
     <div class="toolbar events-toolbar"><div class="search">${icon('search', 16)}<input id="events-search" type="search" aria-label="Search events" placeholder="Search by event name or description…"></div><div class="range-modes" role="group" aria-label="Show" id="events-filter"></div></div>
     <div id="events-table"></div></section>`);
@@ -60,12 +64,12 @@ async function renderDictionary() {
   const dictionaryPanel = collapsible(document.querySelector('#dictionary-panel'), game, 'dictionary');
   if (!('dictionary' in (storeGet(`avn-collapsed-${game.id}`) || {}))) dictionaryPanel.set(true, false);
   const saved = storeGet(`avn-events-view-${game.id}`) || {};
-  const view = {filter: saved.filter || 'all', sort: saved.sort || 'sent', query: ''};
+  const view = {filter: saved.filter === 'drafts' ? 'all' : saved.filter || 'all', sort: saved.sort || 'sent', query: ''};
   const persist = () => storeSet(`avn-events-view-${game.id}`, {filter: view.filter, sort: view.sort});
   const open = new Set(); const detail = new Map(); const tabs = new Map();
   let data = null; let chosen = null; let latest = 0; let observer = null;
   const attention = item => (!item.described && !item.sdk && item.ever) || (item.defined && item.params_missing.length) || item.type_conflicts.length;
-  const FILTERS = [['all', 'All', () => true], ['attention', 'Needs attention', attention], ['undescribed', 'No description', item => !item.described && !item.sdk], ['described', 'Described', item => item.described], ['drafts', 'AI drafts', item => item.drafts.length], ['mapped', 'Mapped', item => item.definition.canonical.length], ['hidden', 'Hidden', item => item.definition.hidden], ['quiet', 'Quiet or never sent', item => item.status !== 'active']];
+  const FILTERS = [['all', 'All', () => true], ['attention', 'Needs attention', attention], ['undescribed', 'No description', item => !item.described && !item.sdk], ['described', 'Described', item => item.described], ['mapped', 'Mapped', item => item.definition.canonical.length], ['hidden', 'Hidden', item => item.definition.hidden], ['quiet', 'Quiet or never sent', item => item.status !== 'active']];
   const SORTS = {sent: (a, b) => b.range.events - a.range.events || a.name.localeCompare(b.name), players: (a, b) => b.range.players - a.range.players || a.name.localeCompare(b.name), attention: (a, b) => Number(Boolean(attention(b))) - Number(Boolean(attention(a))) || b.range.events - a.range.events, last: (a, b) => (b.ever?.last_seen || '').localeCompare(a.ever?.last_seen || ''), name: (a, b) => a.name.localeCompare(b.name)};
   const visible = () => {
     const query = view.query.toLowerCase(); const keep = FILTERS.find(([key]) => key === view.filter)[2];
@@ -73,9 +77,8 @@ async function renderDictionary() {
   };
   const statusPills = item => {
     const meaning = item.sdk && !item.described ? '<span class="pill">Built in</span>' : item.described ? '<span class="pill good">Described</span>' : '<span class="pill bad">Needs a description</span>';
-    const draft = item.drafts.length ? ` <span class="pill" title="Written by an AI agent from your code. Open the event to review and confirm it.">AI draft</span>` : '';
     const activity = item.status === 'never' ? '<span class="pill bad">Never received</span>' : item.status === 'stale' ? `<span class="pill bad" title="Last sent ${agoText(item.ever.last_seen)}">Quiet ${data.stale_days}+ days</span>` : '';
-    return `${meaning}${draft} ${activity}`;
+    return `${meaning} ${activity}`;
   };
   const rowHTML = item => {
     const mapped = item.definition.canonical.map(rule => `<span class="pill good" title="${escapeHTML(ruleText(rule))}">${escapeHTML(conceptName(rule.action))}</span>`).join(' ');
@@ -95,12 +98,10 @@ async function renderDictionary() {
     document.querySelector('#dictionary-status').innerHTML = stats([
       ['Described', `${number(s.described)} of ${number(s.events)}`, s.events ? `${Math.round(100 * s.described / s.events)}% have a description` : ''],
       ['Need a description', number(s.needs_description), s.with_missing_params ? `${number(s.with_missing_params)} more have undescribed parameters` : 'Built-in events are exempt'],
-      ['AI drafts', number(s.drafts), s.drafts ? 'written by an agent, waiting for a person to confirm' : 'nothing waiting for confirmation'],
       ['Mapped', number(s.mapped), 'stand for a shared moment'],
       ['Hidden', number(s.hidden), 'left out of stories and journeys'],
     ]);
-    document.querySelector('#events-import')?.classList.toggle('primary', s.needs_description > 0 || s.with_missing_params > 0);
-    dictionaryPanel.setNote(`${number(s.described)} of ${number(s.events)} described${s.drafts ? ` · ${number(s.drafts)} AI draft${s.drafts === 1 ? '' : 's'}` : ''}`);
+    dictionaryPanel.setNote(`${number(s.described)} of ${number(s.events)} described`);
   };
   const drawFilterChips = () => {
     document.querySelector('#events-filter').innerHTML = FILTERS.map(([key, label, keep]) => `<button type="button" data-events-filter="${key}" aria-pressed="${view.filter === key}">${label} <span class="drill-count">${number(data.events.filter(keep).length)}</span></button>`).join('');
@@ -141,9 +142,8 @@ async function renderDictionary() {
       ${!info || info.loading ? '<p class="help">Reading its parameters…</p>' : info.error ? `<p class="error">${escapeHTML(info.error)}</p>` : rows.length ? `<div class="table-wrap"><table class="compact-table event-params"><thead><tr><th>Parameter</th><th>Seen</th><th>Values</th><th>What it means</th></tr></thead><tbody>${rows.map(row => `<tr><td><code>${escapeHTML(row.key)}</code>${row.types.length ? `<br><span class="small muted">${row.types.join(' / ')}${row.types.length > 1 ? ' · type changes' : ''}</span>` : ''}</td><td class="num small">${row.quiet ? '<span class="muted">not in these days</span>' : number(row.count)}</td><td class="small">${row.values.length ? `${row.values.slice(0, 4).map(value => `<span class="chip" title="${number(value.count)} times">${escapeHTML(value.value)}</span>`).join(' ')}${row.distinct > 4 ? ` <span class="muted">+${number(row.distinct - 4)} more</span>` : ''}` : '<span class="muted">—</span>'}</td><td><input name="param:${escapeHTML(row.key)}" value="${escapeHTML(row.text)}" maxlength="2000" aria-label="Meaning of ${escapeHTML(row.key)}" placeholder="${row.text ? '' : 'What does it hold?'}"></td></tr>`).join('')}</tbody></table></div>` : '<p class="help">This event has no parameters in these days.</p>'}
       <div class="field"><label for="labels-${escapeHTML(item.name)}">How it reads in player stories <span class="muted">(optional)</span></label><textarea id="labels-${escapeHTML(item.name)}" name="labels" rows="2" maxlength="2000" placeholder="Started => Started level {Started}">${escapeHTML(item.definition.labels)}</textarea><p class="help">One rule per line: <code>parameter => text</code>. Use <code>{Parameter}</code> to insert its value.</p></div>
       <label class="check-row"><input type="checkbox" name="hidden" value="1" ${item.definition.hidden ? 'checked' : ''}> Leave it out of player stories and journeys (noise)</label>
-      ${item.drafts.length ? `<p class="event-warning">${icon('pulse', 15)}<span>An AI agent wrote ${item.drafts.length === 1 ? 'one text' : `${item.drafts.length} texts`} here (${escapeHTML(item.drafts.map(field => field.replace('param:', '')).join(', '))}). Check them against what the game really does; editing a text confirms it.</span></p>` : ''}
       <div class="error" role="alert"></div>
-      <div class="modal-actions event-actions">${item.drafts.length ? `<button type="button" class="button" data-event-confirm="${escapeHTML(item.name)}">Confirm as written</button>` : ''}${item.defined ? `<button type="button" class="button danger-text" data-event-delete="${escapeHTML(item.name)}">Delete definition</button>` : ''}<button type="submit" class="button primary">Save</button><button type="submit" class="button" data-save-next>Save and next event without a description →</button></div>
+      <div class="modal-actions event-actions">${item.defined ? `<button type="button" class="button danger-text" data-event-delete="${escapeHTML(item.name)}">Delete definition</button>` : ''}<button type="submit" class="button primary">Save</button><button type="submit" class="button" data-save-next>Save and next event without a description →</button></div>
     </form>`;
   };
   const activityTab = info => {
@@ -180,7 +180,10 @@ async function renderDictionary() {
     try {
       const result = await api(`${gameURL(game)}/insights/events?${filterQuery(state)}`);
       if (ticket !== latest) return;
-      data = result; detail.clear(); draw(); open.forEach(fetchDetail);
+      data = result; detail.clear();
+      const requestedEvent = new URLSearchParams(location.search).get('event');
+      if (requestedEvent && data.events.some(item => item.name === requestedEvent)) open.add(requestedEvent);
+      draw(); open.forEach(fetchDetail);
     } catch (error) { if (ticket === latest) document.querySelector('#events-table').innerHTML = `<p class="error panel-body">${escapeHTML(error.message)}</p>`; }
   };
   const reload = async message => { cache.clear(); detail.clear(); const result = await api(`${gameURL(game)}/insights/events?${filterQuery(chosen)}`); data = result; draw(); open.forEach(fetchDetail); if (message) toast(message); };
@@ -196,12 +199,6 @@ async function renderDictionary() {
     }
     const tab = event.target.closest('[data-event-tab]');
     if (tab) { const name = tab.closest('[data-event-panel]').dataset.eventPanel; tabs.set(name, tab.dataset.eventTab); drawDetail(name); return; }
-    const confirm = event.target.closest('[data-event-confirm]');
-    if (confirm) {
-      const name = confirm.dataset.eventConfirm; confirm.disabled = true;
-      api(`${gameURL(game)}/dictionary/${encodeURIComponent(name)}/confirm`, {method: 'POST'}).then(() => reload(`${name} confirmed.`)).catch(error => { confirm.disabled = false; toast(error.message); });
-      return;
-    }
     const remove = event.target.closest('[data-event-delete]');
     if (remove) {
       const name = remove.dataset.eventDelete;
@@ -234,7 +231,6 @@ async function renderDictionary() {
       } else if (next) toast('Every event now has a description.');
     } catch (error) { form.querySelector('.error').textContent = error.message; buttons.forEach(button => { button.disabled = false; }); }
   });
-  document.querySelector('#events-import').addEventListener('click', () => openDictionaryImport(game, () => { if (chosen) reload(); }));
   document.querySelector('#events-search').addEventListener('input', event => { view.query = event.target.value; if (data) draw(); });
   document.querySelector('#events-sort').addEventListener('change', event => { view.sort = event.target.value; persist(); if (data) draw(); });
   document.querySelector('#events-filter').addEventListener('click', event => {
@@ -252,15 +248,17 @@ async function renderDictionary() {
 
 async function renderMappings() {
   const game = currentGame;
-  shell('Mappings', heading('Mappings', 'Tell the dashboards which of your events mean what.', `<a class="button" href="${gamePath(game, 'dictionary')}">${icon('book', 15)} Events</a>`) + '<div id="mappings-body"><p class="help">Reading your events…</p></div>');
+  shell('Event dictionary', heading('Event dictionary', 'Map your events once for Levels, Retention, player stories and journeys.', `<button type="button" class="button" id="mappings-import">${icon('book', 15)} Fill with AI agent</button>`) + eventDictionaryNav(game, 'mappings') + '<div id="mappings-body"><p class="help">Reading your events…</p></div>');
   const wanted = new URLSearchParams(location.search);
+  let version = wanted.get('version') || '';
   let data = null; let forms = new Map();
+  document.querySelector('#mappings-import').addEventListener('click', () => openDictionaryImport(game, load));
   const body = document.querySelector('#mappings-body');
-  const rulesOf = name => [...data.concepts.flatMap(concept => concept.rules), ...data.other].filter(item => item.event === name).sort((a, b) => a.index - b.index).map(item => item.rule);
+  const rulesOf = name => data.definitions[name] || [];
   const save = async (name, rules) => { await api(`${gameURL(game)}/dictionary/${encodeURIComponent(name)}/mappings`, {method: 'PUT', body: JSON.stringify({canonical: rules})}); cache.clear(); await load(); };
   const how = source => source.via === 'mapped' ? `<span class="pill good">You mapped it</span> <span class="small muted">${escapeHTML(ruleText(source.rule))}</span>` : '<span class="pill">Understood automatically</span>';
   const levelsText = levels => levels ? `levels ${number(levels.min)}–${number(levels.max)} <span class="muted small">(${number(levels.count)} different)</span>` : '';
-  const sourceRow = (concept, source) => `<tr><td><a class="row-title" href="${gamePath(game, 'dictionary')}"><code>${escapeHTML(source.event)}</code></a></td><td>${how(source)}</td><td class="num">${number(source.events)}</td><td class="num">${number(source.players)}</td><td class="small">${concept.needs ? levelsText(source.levels) || '<span class="pill bad">no level number found</span>' : ''}</td><td class="num">${source.via === 'mapped' ? `<button type="button" class="button" data-remove-rule="${escapeHTML(source.event)}" data-rule="${escapeHTML(JSON.stringify(source.rule))}">Remove</button>` : ''}</td></tr>`;
+  const sourceRow = (concept, source) => `<tr><td><a class="row-title" href="${gamePath(game, 'dictionary')}?${new URLSearchParams({event: source.event})}"><code>${escapeHTML(source.event)}</code></a></td><td>${how(source)}</td><td class="num">${number(source.events)}</td><td class="num">${number(source.players)}</td><td class="small">${concept.needs ? levelsText(source.levels) || '<span class="pill bad">no level number found</span>' : ''}</td><td class="num">${source.via === 'mapped' ? `<button type="button" class="button" data-remove-rule="${escapeHTML(source.event)}" data-rule="${escapeHTML(JSON.stringify(source.rule))}">Remove</button>` : ''}</td></tr>`;
   const card = concept => {
     const status = concept.status === 'mapped' ? '<span class="pill good">Mapped</span>' : concept.status === 'auto' ? '<span class="pill good">Understood automatically</span>' : '<span class="pill bad">Not found</span>';
     return `<section class="panel mapping-card section-spacing" data-concept="${concept.key}"><div class="panel-header"><div><h2>${escapeHTML(concept.label)} ${status}</h2><p>${escapeHTML(concept.summary)} Used by ${concept.used_by.join(', ')}.</p></div><button type="button" class="button" data-add-mapping="${concept.key}">${icon('link', 14)} Add a mapping…</button></div>
@@ -273,30 +271,41 @@ async function renderMappings() {
     const mapped = concepts.filter(concept => concept.status === 'mapped').length; const auto = concepts.filter(concept => concept.status === 'auto').length; const missing = concepts.filter(concept => concept.status === 'missing').length;
     const chosenEvent = data.events.find(item => item.name === wanted.get('event'));
     const asking = chosenEvent ? `<section class="panel section-spacing mapping-ask"><div class="panel-body"><p>What does <code>${escapeHTML(chosenEvent.name)}</code> stand for?${rulesOf(chosenEvent.name).length ? ` <span class="muted small">Already: ${rulesOf(chosenEvent.name).map(rule => escapeHTML(conceptName(rule.action))).join(', ')}.</span>` : ''}</p><div class="quiet-actions">${concepts.map(concept => `<button type="button" class="button" data-add-mapping="${concept.key}">${escapeHTML(concept.label)}</button>`).join('')}</div></div></section>` : '';
-    body.innerHTML = `${asking}<section class="panel ${asking ? 'section-spacing' : ''}"><div class="panel-body"><p>Retention, Levels, player stories and journeys need to know which of your events are a session start, or a level being started, completed, failed or restarted. AVN Analytics recognises the common shapes by itself (a <code>session_start</code> event, or level events that carry a <code>level</code> parameter). For anything else, point the right event at the right moment below. Any event your game has sent works, described yet or not.</p><p class="help">A mapping lives with the event in the dictionary. It changes how the dashboards read your events, never the stored events themselves. ${data.capped ? `Counts come from the latest ${number(data.scanned)} events.` : `Counts cover all ${number(data.scanned)} events.`}</p></div></section>
+    const versions = [...new Set([...data.versions, version].filter(Boolean))];
+    const suggestions = data.events.flatMap(item => item.suggestions.filter(rule => !rulesOf(item.name).some(existing => JSON.stringify(existing) === JSON.stringify(rule))).map(rule => ({event: item.name, rule})));
+    body.innerHTML = `<section class="panel section-spacing"><div class="panel-body"><div class="field"><label for="mapping-version">App version</label><select id="mapping-version"><option value="">All versions</option>${versions.map(item => `<option value="${escapeHTML(item)}" ${item === version ? 'selected' : ''}>${escapeHTML(item)}</option>`).join('')}</select><p class="help">${version ? `New mappings apply only to ${escapeHTML(version)}. For an event with version-specific rules, those replace its shared rules.` : 'New mappings apply to every app version. Pick a version to map a release separately.'} All analytics pages use these same mappings.</p></div></div></section>${asking}<section class="panel ${asking ? 'section-spacing' : ''}"><div class="panel-body"><p>Retention, Levels, player stories and journeys need to know which of your events are a session start, or a level being started, completed, failed or restarted. AVN Analytics recognises the common shapes by itself (a <code>session_start</code> event, or level events that carry a <code>level</code> parameter). For anything else, point the right event at the right moment below. Any event your game has sent works, described yet or not.</p><p class="help">A mapping lives with the event in the dictionary. It changes how the dashboards read your events, never the stored events themselves. ${data.capped ? `Counts come from the latest ${number(data.scanned)} events.` : `Counts cover all ${number(data.scanned)} events.`}</p></div></section>
+      ${data.conflicts.length ? `<div class="notice-banner section-spacing" role="alert">${icon('pulse', 18)}<div><strong>Some mappings overlap.</strong> ${data.conflicts.map(item => `${escapeHTML(item.event)}: ${number(item.events)} events count as more than one level action`).join('; ')}. Add a condition such as <code>STATE = Completed</code>, or remove the broad rule.</div></div>` : ''}
       <div id="mappings-summary" class="section-spacing">${stats([['Moments understood', `${number(mapped + auto)} of ${number(concepts.length)}`, `${number(mapped)} mapped by you · ${number(auto)} automatically`], ['Not found', number(missing), missing ? 'Their dashboards will be empty or partial' : 'Everything is covered']])}</div>
+      ${suggestions.length ? `<section class="panel section-spacing"><div class="panel-header"><div><h2>Suggested mappings</h2><p>Known event shapes, ready to preview. Review each before saving.</p></div></div><div class="panel-body mapping-suggestions">${suggestions.map(item => `<div><code>${escapeHTML(item.event)}</code><span>${escapeHTML(conceptName(item.rule.action))} · ${escapeHTML(ruleText(item.rule))}</span><button type="button" class="button" data-suggest-event="${escapeHTML(item.event)}" data-suggest-rule="${escapeHTML(JSON.stringify(item.rule))}">Review mapping</button></div>`).join('')}</div></section>` : ''}
+      <details class="panel section-spacing"><summary class="panel-body">Standard event format</summary><div class="panel-body"><p>For new integrations, send one event per moment: <code>level_started</code>, <code>level_completed</code>, <code>level_failed</code> or <code>level_restarted</code>, with <code>{"level": 3}</code> in parameters. Keep <code>app_version</code> in the event envelope.</p><p class="help">Existing formats work too: <code>LEVEL_ANALYSIS</code> with <code>{"Started": 3}</code>, or <code>level_analysis</code> with <code>{"action": "started", "level": 3}</code>. Also recognised: <code>{"STATE": "Started", "NUMBER": 3}</code>. When the parameter name is the action, choose “exists” and use that same parameter for the level number.</p></div></details>
       ${concepts.map(card).join('')}
       ${data.other.length ? `<section class="panel section-spacing"><div class="panel-header"><div><h2>Other mappings</h2><p>These name something the dashboards don’t use. They are kept in the dictionary and exports.</p></div></div><div class="panel-body"><table class="compact-table"><tbody>${data.other.map(item => `<tr><td><code>${escapeHTML(item.event)}</code></td><td><code>${escapeHTML(item.rule.action)}</code> <span class="small muted">${escapeHTML(ruleText(item.rule))}</span></td><td class="num"><button type="button" class="button" data-remove-rule="${escapeHTML(item.event)}" data-rule="${escapeHTML(JSON.stringify(item.rule))}">Remove</button></td></tr>`).join('')}</tbody></table></div></section>` : ''}`;
     forms.forEach((_, key) => openForm(key, true));
   };
 
   // ---- the add form of a card
-  const openForm = (key, again = false) => {
+  const openForm = (key, again = false, suggested = null) => {
     const slot = body.querySelector(`[data-form-slot="${key}"]`); const concept = data.concepts.find(item => item.key === key); if (!slot) return;
     const previous = forms.get(key) || {};
-    const state = again ? previous : {event: previous.event || wanted.get('event') || data.events[0]?.name || '', param: '', op: 'eq', value: '', number_param: ''};
+    const candidate = data.events.find(item => item.suggestions.some(rule => rule.action === key));
+    const state = again ? previous : {event: previous.event || wanted.get('event') || candidate?.name || data.events[0]?.name || '', param: '', op: 'eq', value: '', number_param: '', app_version: version};
+    if (suggested) Object.assign(state, suggested.rule, {event: suggested.event});
+    if (!again && !suggested) {
+      const guess = data.events.find(item => item.name === state.event)?.suggestions.find(rule => rule.action === key);
+      if (guess) Object.assign(state, guess);
+    }
     forms.set(key, state);
     const info = () => data.events.find(item => item.name === state.event) || {params: []};
     const render = () => {
       const params = info().params; const examples = (params.find(param => param.key === state.param)?.examples || []);
       slot.innerHTML = `<form class="mapping-form" data-mapping-form="${key}"><h3 class="event-sub">Add a mapping for “${escapeHTML(concept.label)}”</h3>
-        <div class="mapping-fields"><div class="field"><label>Which event?</label><select name="event">${data.events.map(item => `<option value="${escapeHTML(item.name)}" ${item.name === state.event ? 'selected' : ''}>${escapeHTML(item.name)} · ${number(item.events)} sent${item.defined ? '' : ' · not described'}</option>`).join('')}</select></div>
-        <div class="field"><label>Only when… <span class="muted">(optional)</span></label><div class="mapping-condition"><select name="param" aria-label="Parameter"><option value="">Every time it is sent</option>${params.map(param => `<option value="${escapeHTML(param.key)}" ${param.key === state.param ? 'selected' : ''}>${escapeHTML(param.key)}</option>`).join('')}</select>${state.param ? `<select name="op" aria-label="Comparison">${MAPPING_OPERATORS.map(([op, text]) => `<option value="${op}" ${op === state.op ? 'selected' : ''}>${text}</option>`).join('')}</select>${state.op === 'exists' ? '' : `<input name="value" value="${escapeHTML(state.value)}" list="mapping-values-${key}" placeholder="value" autocomplete="off"><datalist id="mapping-values-${key}">${examples.map(value => `<option value="${escapeHTML(value)}">`).join('')}</datalist>`}` : ''}</div></div>
-        ${concept.needs ? `<div class="field"><label>The level number is in</label><select name="number_param"><option value="">Find it automatically (a parameter called “level”)</option>${params.map(param => `<option value="${escapeHTML(param.key)}" ${param.key === state.number_param ? 'selected' : ''}>${escapeHTML(param.key)}${param.examples.length ? ` · e.g. ${escapeHTML(param.examples.slice(0, 3).join(', '))}` : ''}</option>`).join('')}</select></div>` : ''}</div>
-        <p class="mapping-preview help" aria-live="polite">Checking…</p><div class="error" role="alert"></div>
+        <p class="help">Applies to ${state.app_version ? escapeHTML(state.app_version) : 'all versions'} across all analytics pages.</p><div class="mapping-fields"><div class="field"><label>Which event?</label><select name="event" aria-label="Which event?">${data.events.map(item => `<option value="${escapeHTML(item.name)}" ${item.name === state.event ? 'selected' : ''}>${escapeHTML(item.name)} · ${number(item.events)} sent${item.defined ? '' : ' · not described'}</option>`).join('')}</select></div>
+        <div class="field"><label>Only when… <span class="muted">(optional)</span></label><div class="mapping-condition"><select name="param" aria-label="Parameter"><option value="">Every time it is sent</option>${params.map(param => `<option value="${escapeHTML(param.key)}" ${param.key === state.param ? 'selected' : ''}>${escapeHTML(param.key)}</option>`).join('')}</select>${state.param ? `<select name="op" aria-label="Comparison">${MAPPING_OPERATORS.map(([op, text]) => `<option value="${op}" ${op === state.op ? 'selected' : ''}>${text}</option>`).join('')}</select>${state.op === 'exists' ? '' : `<input name="value" aria-label="Comparison value" value="${escapeHTML(state.value)}" list="mapping-values-${key}" placeholder="value" autocomplete="off"><datalist id="mapping-values-${key}">${examples.map(value => `<option value="${escapeHTML(value)}">`).join('')}</datalist>`}` : ''}</div></div>
+        ${concept.needs ? `<div class="field"><label>The level number is in</label><select name="number_param" aria-label="Level number parameter"><option value="">Find it automatically (a parameter called “level”)</option>${params.map(param => `<option value="${escapeHTML(param.key)}" ${param.key === state.number_param ? 'selected' : ''}>${escapeHTML(param.key)}${param.examples.length ? ` · e.g. ${escapeHTML(param.examples.slice(0, 3).join(', '))}` : ''}</option>`).join('')}</select></div>` : ''}</div>
+        <p class="mapping-preview help" aria-live="polite">Checking…</p><details class="mapping-sample" hidden><summary>Example matching parameters</summary><pre></pre></details><div class="error" role="alert"></div>
         <div class="modal-actions"><button type="button" class="button" data-cancel-mapping>Cancel</button><button type="submit" class="button primary">Add mapping</button></div></form>`;
     };
-    const ruleOf = () => ({action: key, param: state.param, op: state.param ? state.op : 'eq', value: state.param && state.op !== 'exists' ? state.value.trim() : '', number_param: concept.needs ? state.number_param : ''});
+    const ruleOf = () => ({action: key, param: state.param, op: state.param ? state.op : 'eq', value: state.param && state.op !== 'exists' ? state.value.trim() : '', number_param: concept.needs ? state.number_param : '', app_version: state.app_version});
     let timer = null;
     const preview = () => {
       clearTimeout(timer);
@@ -307,11 +316,14 @@ async function renderMappings() {
         if (rule.param && rule.op !== 'exists' && !rule.value) { line.textContent = 'Add a value to compare with.'; return; }
         try {
           const result = await request(`${gameURL(game)}/mappings/preview`, {method: 'POST', body: JSON.stringify({event: state.event, rule})});
-          if (!slot.querySelector('.mapping-preview')) return;
+          if (!line.isConnected) return;
           const bits = [`Matches ${number(result.events)} of its latest ${number(result.scanned)} events from ${number(result.players)} players`];
           if (concept.needs && result.events) bits.push(result.with_level_number ? `level numbers found in ${number(result.with_level_number)} of them (levels ${number(result.levels.min)}–${number(result.levels.max)})` : '<strong>no level number found — choose the parameter that holds it</strong>');
+          if (result.conflicting_events) bits.push(`<strong>${number(result.conflicting_events)} also match another level action. Remove or narrow the overlapping rule.</strong>`);
+          const sample = slot.querySelector('.mapping-sample');
+          if (sample) { sample.hidden = !result.sample; sample.querySelector('pre').textContent = JSON.stringify(result.sample, null, 2); }
           line.innerHTML = `${bits.join(' · ')}.${result.events ? '' : ' <strong>Nothing matches yet.</strong>'}`;
-        } catch (error) { line.textContent = error.message; }
+        } catch (error) { if (line.isConnected) line.textContent = error.message; }
       }, 250);
     };
     render(); preview();
@@ -319,8 +331,11 @@ async function renderMappings() {
     slot.onchange = event => {
       const field = event.target; if (!field.name) return;
       state[field.name] = field.value;
-      if (field.name === 'event') Object.assign(state, {param: '', op: 'eq', value: '', number_param: ''});
-      if (field.name === 'param') Object.assign(state, {op: 'eq', value: ''});
+      if (field.name === 'event') Object.assign(state, {param: '', op: 'eq', value: '', number_param: ''}, info().suggestions.find(rule => rule.action === key) || {});
+      if (field.name === 'param') {
+        const suggestion = info().suggestions.find(rule => rule.action === key && rule.param === state.param);
+        Object.assign(state, {op: suggestion?.op || 'eq', value: suggestion?.value || '', number_param: suggestion?.number_param || state.number_param});
+      }
       render(); preview();
     };
     slot.oninput = event => { if (event.target.name === 'value') { state.value = event.target.value; preview(); } };
@@ -336,6 +351,8 @@ async function renderMappings() {
     };
   };
   body.addEventListener('click', event => {
+    const suggestion = event.target.closest('[data-suggest-rule]');
+    if (suggestion) { const rule = JSON.parse(suggestion.dataset.suggestRule); openForm(rule.action, false, {event: suggestion.dataset.suggestEvent, rule}); return; }
     const add = event.target.closest('[data-add-mapping]');
     if (add) { openForm(add.dataset.addMapping); return; }
     const remove = event.target.closest('[data-remove-rule]');
@@ -345,8 +362,18 @@ async function renderMappings() {
       confirmDialog(`Stop treating ${name} as ${conceptName(rule.action).toLowerCase()}?`, 'Only the mapping is removed. The event, its description and the stored data stay as they are.', 'Remove mapping', async () => { await save(name, rest); toast('Mapping removed.'); });
     }
   });
+  body.addEventListener('change', event => {
+    if (event.target.id !== 'mapping-version') return;
+    version = event.target.value; forms.clear();
+    const query = new URLSearchParams(location.search);
+    if (version) query.set('version', version); else query.delete('version');
+    history.replaceState(null, '', `${location.pathname}${query.size ? `?${query}` : ''}`);
+    load();
+  });
+  let loading = 0;
   const load = async () => {
-    try { data = await api(`${gameURL(game)}/mappings`); draw(); }
+    const revision = ++loading;
+    try { const result = await api(`${gameURL(game)}/mappings?${new URLSearchParams({version})}`); if (revision !== loading || !body.isConnected) return; data = result; draw(); }
     catch (error) { body.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
   };
   await load();

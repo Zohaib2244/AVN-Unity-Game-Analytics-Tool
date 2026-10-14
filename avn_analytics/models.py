@@ -169,6 +169,8 @@ class CanonicalMapping(StrictModel):
     value: Annotated[str, Field(max_length=200)] = ""
     # For level actions: the parameter that holds the level number (blank = look for "level").
     number_param: Annotated[str, Field(max_length=80)] = ""
+    # Blank applies to every version; otherwise match the event envelope exactly.
+    app_version: Annotated[str, Field(max_length=80)] = ""
 
 
 class EventMappings(StrictModel):

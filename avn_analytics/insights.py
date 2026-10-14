@@ -307,7 +307,8 @@ def retention(storage, game_id, start, end, filters, timezone_offset_minutes=0):
             raise HTTPException(400, "Too many session starts to analyze. Pick narrower filters.")
         rows = connection.execute(
             f"""SELECT {PLAYER} AS player, name, client_ts,
-                       json_extract(payload, '$.params') AS params
+                       json_extract(payload, '$.params') AS params,
+                       json_extract(payload, '$.app_version') AS app_version
                 FROM events WHERE {all_condition} AND {IDENTIFIED} AND name IN ({marks})
                 ORDER BY player, client_ts, event_id""",
             (*all_args, *candidate_names),
@@ -315,7 +316,7 @@ def retention(storage, game_id, start, end, filters, timezone_offset_minutes=0):
         for row in rows:
             params = json.loads(row["params"] or "{}")
             if row["name"] != "session_start" and "session_start" not in labeler.canonical(
-                row["name"], params
+                row["name"], params, row["app_version"]
             ):
                 continue
             player = starts.setdefault(row["player"], [])

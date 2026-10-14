@@ -1058,12 +1058,17 @@ th.metric,td.metric{width:140px;min-width:110px}
 .event-breakdowns table{width:100%}
 .event-examples td{vertical-align:top}
 .mapping-card .panel-header .button{flex:none}
+.event-dictionary-nav{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}
+.mapping-suggestions{display:grid;gap:12px}
+.mapping-suggestions>div{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.mapping-suggestions>div>span{flex:1 1 240px;color:var(--text-muted);font-size:var(--fs-label)}
 .mapping-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px 18px;align-items:start}
 .mapping-fields .field{margin:0}
 .mapping-condition{display:flex;flex-wrap:wrap;gap:8px}
 .mapping-condition select,.mapping-condition input{flex:1 1 120px;min-width:0}
 .mapping-form{margin-top:16px;padding-top:12px;border-top:1px dashed var(--border);display:grid;gap:12px}
 .mapping-preview{margin:0}
+.mapping-sample pre{white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--font-body);font-size:var(--fs-label);color:var(--text-muted)}
 .mapping-silent{margin-top:12px}
 .mapping-ask .quiet-actions{margin-top:10px}
 dialog.player-dialog{width:min(1180px,calc(100vw - 32px));max-width:1180px;max-height:92dvh;padding:24px;overscroll-behavior:contain}

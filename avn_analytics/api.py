@@ -458,8 +458,8 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         return {"canonical": result}
 
     @admin_api.get("/v1/games/{game_id}/mappings")
-    def get_mappings(game_id: UUID):
-        return events.mappings(storage, str(game_id))
+    def get_mappings(game_id: UUID, version: str = ""):
+        return events.mappings(storage, str(game_id), version)
 
     @admin_api.get("/v1/games/{game_id}/mappings/status")
     def get_mapping_status(game_id: UUID):

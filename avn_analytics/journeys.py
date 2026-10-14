@@ -95,6 +95,7 @@ def player_story(storage, game_id, player, start, end, show_hidden=False, level=
             "client_ts": row["client_ts"],
             "session_id": row["session_id"],
             "params": json.loads(row["params"] or "{}"),
+            "app_version": row["app_version"],
         }
         for row in rows
     ]
@@ -103,7 +104,8 @@ def player_story(storage, game_id, player, start, end, show_hidden=False, level=
         played = [
             index
             for index, event in enumerate(events)
-            if (info := labeler.level_info(event["name"], event["params"])) and info[1] == level
+            if (info := labeler.level_info(event["name"], event["params"], event["app_version"]))
+            and info[1] == level
         ]
         if played:
             shown = events[: played[-1] + 1] if cut == "until" else events[played[0] :]
@@ -175,7 +177,8 @@ def _player_flows(storage, game_id, start, end, query):
         rows = connection.execute(
             f"""SELECT {PLAYER} AS player, {SESSION} AS session, name, client_ts,
                        unixepoch(client_ts, 'subsec') AS ts,
-                       json_extract(payload, '$.params') AS params
+                       json_extract(payload, '$.params') AS params,
+                       json_extract(payload, '$.app_version') AS app_version
                 FROM events WHERE {condition} AND {IDENTIFIED}
                 ORDER BY player, client_ts, event_id""",
             args,
@@ -196,6 +199,7 @@ def _player_flows(storage, game_id, start, end, query):
                 "client_ts": row["client_ts"],
                 "session_id": row["session"],
                 "params": parsed,
+                "app_version": row["app_version"],
             }
             if current is None:
                 if matches(origin, row["name"], parsed):
@@ -352,7 +356,8 @@ def level_progress(storage, game_id, start, end, filters=None):
         rows = connection.execute(
             f"""SELECT {PLAYER} AS player, {SESSION} AS session, name,
                        unixepoch(client_ts, 'subsec') AS ts,
-                       json_extract(payload, '$.params') AS params
+                       json_extract(payload, '$.params') AS params,
+                       json_extract(payload, '$.app_version') AS app_version
                 FROM events WHERE {condition} AND {IDENTIFIED}
                 ORDER BY player, client_ts, event_id""",
             args,
@@ -368,13 +373,15 @@ def level_progress(storage, game_id, start, end, filters=None):
                 close_player()
                 player, opened, last_level = row["player"], {}, None
             params = json.loads(row["params"]) if row["params"] else {}
-            info = labeler.level_info(row["name"], params)
+            info = labeler.level_info(row["name"], params, row["app_version"])
             if info is None:
                 for key, value in params.items():
                     number = stories._int(value) if stories.LEVELISH_KEY.search(key) else None
                     if number is not None:
                         bucket = "powerups" if POWERUP_NAME.search(row["name"]) else "other"
-                        entry(number)[bucket][labeler.label(row["name"], params)] += 1
+                        entry(number)[bucket][
+                            labeler.label(row["name"], params, row["app_version"])
+                        ] += 1
                         break
                 continue
             verb, number = info
@@ -510,6 +517,7 @@ def level_funnel(
                 )
                 SELECT {PLAYER} AS player, name, client_ts,
                        json_extract(payload, '$.params') AS params,
+                       json_extract(payload, '$.app_version') AS app_version,
                        event_id IN (SELECT event_id FROM selected) AS selected
                 FROM events WHERE {follow_condition} AND {IDENTIFIED}
                     AND {PLAYER} IN (SELECT player FROM selected)
@@ -524,7 +532,7 @@ def level_funnel(
                 finish(events)
                 player, events = row["player"], []
             params = json.loads(row["params"]) if row["params"] else {}
-            info = labeler.level_info(row["name"], params)
+            info = labeler.level_info(row["name"], params, row["app_version"])
             keys = []
             if info:
                 verb, number = info
@@ -532,7 +540,7 @@ def level_funnel(
                     verb = "started"
                 keys.append((verb, number))
             if row["name"] == "session_start" or "session_start" in labeler.canonical(
-                row["name"], params
+                row["name"], params, row["app_version"]
             ):
                 keys.append(("session", None))
             events.append((row, keys))
@@ -696,7 +704,7 @@ def _level_transitions(storage, game_id, start, end, filters):
                 finish(player, events)
                 player, events = row["player"], []
             params = json.loads(row["params"]) if row["params"] else {}
-            events.append((row, labeler.level_info(row["name"], params)))
+            events.append((row, labeler.level_info(row["name"], params, row["app_version"])))
         finish(player, events)
     result = {}
     for number, groups in levels.items():
