@@ -21,6 +21,7 @@ from .insights import (
     MAX_FUNNEL_EVENTS,
     PLAYER,
     SESSION,
+    _AverageSessionLength,
     matches,
     where,
 )
@@ -597,6 +598,10 @@ def _level_transitions(storage, game_id, start, end, filters):
     def finish(player, events):
         if not events:
             return
+        session_lengths = {}
+        for row, _ in events:
+            length = session_lengths.setdefault(row["session_id"], _AverageSessionLength())
+            length.step(row["session_id"], row["name"], row["duration_seconds"], row["client_ts"])
         selected_starts = {}
         first_starts = {}
         for index, (row, info) in enumerate(events):
@@ -629,6 +634,7 @@ def _level_transitions(storage, game_id, start, end, filters):
                 "fails": fails,
                 "completed": completed,
                 "exit_at": own[-1][0]["client_ts"],
+                "session_seconds": round(session_lengths[own[-1][0]["session_id"]].finalize(), 1),
                 "last_seen": latest["client_ts"],
                 "came_back": latest["client_ts"][:10] > own[-1][0]["client_ts"][:10],
                 "app_version": latest["app_version"],
@@ -684,8 +690,9 @@ def _level_transitions(storage, game_id, start, end, filters):
                     SELECT event_id, {PLAYER} AS player FROM events
                     WHERE {condition} AND {IDENTIFIED}
                 )
-                SELECT {PLAYER} AS player, name, client_ts,
+                SELECT {PLAYER} AS player, {SESSION} AS session_id, name, client_ts,
                        json_extract(payload, '$.params') AS params,
+                       json_extract(payload, '$.params.duration_seconds') AS duration_seconds,
                        json_extract(payload, '$.app_version') AS app_version,
                        json_extract(payload, '$.country') AS country,
                        event_id IN (SELECT event_id FROM selected) AS selected

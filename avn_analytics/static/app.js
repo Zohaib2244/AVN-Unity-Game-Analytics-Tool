@@ -160,9 +160,9 @@ function mountActivity(container, game, basis = 'server_ts') {
   const result = container.querySelector('.range-result');
   let latest = 0;
   bindRange(container, async range => {
-    const request = ++latest; result.innerHTML = '<p class="help">Counting…</p>';
+    const request = ++latest; result.innerHTML = skeleton('chart');
     try { const health = await fetchRange(game, range, basis); if (request === latest) result.innerHTML = rangeResult(health, range); }
-    catch (error) { if (request === latest) result.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
+    catch (error) { if (request === latest) result.innerHTML = loadError(error); }
   });
 }
 const platformLabel = platform => ({android:'Android', ios:'iOS'}[platform] || escapeHTML(platform));
@@ -188,13 +188,42 @@ let overviewStale = true;
 const cacheable = path => !path.includes('/health') && !path.includes('/export');
 
 async function request(path, options = {}) {
-  const response = await fetch(path, {credentials:'same-origin', ...options,
-    headers: {...(options.body ? {'Content-Type':'application/json'} : {}), ...options.headers}});
+  const canRetry = (options.method || 'GET').toUpperCase() === 'GET';
+  let response;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      response = await fetch(path, {credentials:'same-origin', ...options,
+        headers: {...(options.body ? {'Content-Type':'application/json'} : {}), ...options.headers}});
+    } catch (error) {
+      if (error.name === 'AbortError') throw error;
+      throw Object.assign(new Error('Couldn’t connect. Check your connection and try again.'), {status: 0});
+    }
+    if (!canRetry || attempt || ![502, 503, 504].includes(response.status)) break;
+    const wait = Math.min(5, Math.max(1, Number(response.headers.get('Retry-After')) || 1));
+    await new Promise(resolve => setTimeout(resolve, wait * 1000));
+  }
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw Object.assign(new Error(typeof error.detail === 'string' ? error.detail : 'Please check your details and try again.'), {status: response.status});
   }
   return response.status === 204 ? null : response.json();
+}
+
+function skeleton(kind = 'table', rows = 5, columns = 5) {
+  const line = '<span class="skeleton-line"></span>';
+  const content = kind === 'stats'
+    ? `<div class="skeleton-stats">${Array.from({length: 3}, () => `<div>${line}${line}${line}</div>`).join('')}</div>`
+    : kind === 'chart'
+      ? `<div class="skeleton-chart">${Array.from({length: 12}, () => line).join('')}</div>`
+      : `<div class="skeleton-rows">${Array.from({length: rows}, () => `<div class="skeleton-row">${Array.from({length: columns}, () => line).join('')}</div>`).join('')}</div>`;
+  return `<div class="loading-placeholder" role="status" aria-label="Loading data" aria-busy="true"><div aria-hidden="true">${content}</div></div>`;
+}
+
+function loadError(error, action = 'data-action="refresh"') {
+  const message = [502, 503, 504].includes(error.status)
+    ? 'Data is temporarily unavailable. Try again in a moment.'
+    : error.message || 'Couldn’t load this data. Please try again.';
+  return `<div class="load-error" role="alert"><div>${icon('pulse', 18)}<p>${escapeHTML(message)}</p></div><button type="button" class="button" ${action}>${icon('refresh', 14)} Try again</button></div>`;
 }
 
 function api(path, options = {}) {
@@ -386,7 +415,7 @@ async function renderGameSettings() {
     (archived ? `<div class="archived-banner">${icon('lock',18)}<div><strong>Archived ${displayDate(game.archived_at)}.</strong> Collection is paused: the server refuses new events, and the Unity SDK keeps them queued on players’ devices until you restore the game.</div>${manage ? '<button class="button" data-game-action="unarchive">Restore game</button>' : ''}</div>` : '') +
     `<section class="metrics">${metric('Events collected',number(game.events),`${number(game.event_names)} distinct event names`,'pulse')}${metric('Events today',number(game.today),'Received today · UTC','export')}${metric('API keys',`${game.keys_active} active`,`${game.keys_total} created in total`,'key')}${metric('Storage',fileSize(game.storage_bytes),'Event database on disk','disk')}</section>
     ${manage ? `<section class="panel section-spacing"><div class="panel-header"><div><h2>Game icon</h2><p>Shown next to the game in the sidebar and on the games page${variantsOf(game).length > 1 ? ' · applies to both platforms' : ''}</p></div></div><div class="panel-body icon-settings">${avatar(game.name, variantsOf(game)).replace('game-avatar', 'game-avatar icon-large')}<div class="icon-actions"><label class="button" for="icon-file">${icon('export',14)} ${game.icon_updated_at ? 'Change icon' : 'Upload icon'}</label><input id="icon-file" type="file" accept="image/*" hidden>${variantsOf(game).some(item => item.icon_updated_at) ? '<button type="button" class="button danger-text" id="icon-remove">Remove</button>' : ''}<p class="small muted">Any image works; it is cropped to a square.</p></div></div></section>` : ''}
-    ${manage ? '<section class="panel section-spacing" id="access-panel"><div class="panel-header"><div><h2>Who can see this game</h2><p>Admins and team leads always see every game. Choose which members can open this one.</p></div></div><div class="panel-body" id="access-list"><p class="help">Loading…</p></div></section>' : ''}
+    ${manage ? '<section class="panel section-spacing" id="access-panel"><div class="panel-header"><div><h2>Who can see this game</h2><p>Admins and team leads always see every game. Choose which members can open this one.</p></div></div><div class="panel-body" id="access-list">' + skeleton('table', 3, 2) + '</div></section>' : ''}
     <div class="section-grid section-spacing"><section class="panel"><div class="panel-header"><h2>Game information</h2>${manage ? `<button class="button ghost" data-game-action="edit">Edit ${icon('arrow',12)}</button>` : ''}</div><div class="panel-body"><ul class="status-list">
       <li><span>Name</span><strong>${escapeHTML(game.name)}</strong></li>
       <li><span>Bundle ID</span><code>${escapeHTML(game.bundle_id)}</code></li>
@@ -404,7 +433,7 @@ async function renderGameSettings() {
       <div class="field"><label for="game-levels-min">Level minimum players</label><input id="game-levels-min" name="levels_min_players" type="number" min="1" max="1000000" value="${game.analytics_thresholds.levels_override ?? ''}" placeholder="${game.analytics_thresholds.levels_min_players}"><p>Effective: ${number(game.analytics_thresholds.levels_min_players)}</p></div>
       <div class="field"><label for="game-funnels-min">Funnel minimum players</label><input id="game-funnels-min" name="funnels_min_players" type="number" min="1" max="1000000" value="${game.analytics_thresholds.funnels_override ?? ''}" placeholder="${game.analytics_thresholds.funnels_min_players}"><p>Effective: ${number(game.analytics_thresholds.funnels_min_players)}</p></div>
     </div><div class="error" role="alert"></div>${manage ? '<button class="button primary" type="submit">Save game overrides</button>' : '<p class="help">Only an admin or team lead can change these values.</p>'}</form></section>
-    <section class="panel section-spacing" id="environment-panel"><div class="panel-header"><div><h2>Environment</h2><p>Each build reports whether it is production, development or editor. A published build that was left in development mode is hidden by “Hide editor &amp; development data”. Re-count it here: the stored events are never changed, and you can undo it.</p></div></div><div class="panel-body" id="environment-list"><p class="help">Loading…</p></div></section>
+    <section class="panel section-spacing" id="environment-panel"><div class="panel-header"><div><h2>Environment</h2><p>Each build reports whether it is production, development or editor. A published build that was left in development mode is hidden by “Hide editor &amp; development data”. Re-count it here: the stored events are never changed, and you can undo it.</p></div></div><div class="panel-body" id="environment-list">${skeleton('table', 3, 3)}</div></section>
     <section class="panel section-spacing"><div class="panel-header"><div><h2>Event activity</h2><p>Pick any days on the calendar · received by the server · UTC</p></div></div><div class="panel-body" id="activity"></div></section>
     ${me.is_admin && me.workspaces.length > 1 ? `<section class="panel section-spacing"><div class="panel-header"><div><h2>Workspace</h2><p>This game is in <strong>${escapeHTML(workspaceName())}</strong>${variantsOf(game).length > 1 ? '; moving it also moves its other platform version' : ''}. Members’ per-game access is cleared when it moves.</p></div></div><div class="panel-body icon-actions"><select id="move-target" aria-label="Move to workspace">${me.workspaces.filter(item => item.id !== currentWorkspace).map(item => `<option value="${item.id}">${escapeHTML(item.name)}</option>`).join('')}</select><button class="button" type="button" id="move-game">Move game…</button></div></section>` : ''}
     ${manage ? `<section class="panel section-spacing danger-zone"><div class="panel-header"><div><h2>Danger zone</h2><p>Changes here affect live data collection.</p></div></div><div class="panel-body">
@@ -470,7 +499,7 @@ function mountEnvironment(box, game, manage) {
   let data = null;
   const draw = async () => {
     try { data = await api(`${gameURL(game)}/environment-fixes`); }
-    catch (error) { box.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; return; }
+    catch (error) { box.innerHTML = loadError(error); return; }
     if (!data.seen.length) { box.innerHTML = '<p class="help">No events yet. Builds appear here once they send data.</p>'; return; }
     const fixes = new Map(data.fixes.map(fix => [fix.id, fix]));
     box.innerHTML = `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Reported as</th><th>Version</th><th>Build</th><th class="num">Players</th><th class="num">Events</th><th>Counted as</th>${manage ? '<th></th>' : ''}</tr></thead><tbody>${data.seen.map((row, index) => {
@@ -547,7 +576,7 @@ function renderExports() {
   const filterParams = () => { const query = filterQuery(chosen); query.delete('start'); query.delete('end'); return query; };
   const refreshCount = async () => {
     if (!chosen) return;
-    const request = ++exportRequest; exportCount.textContent = 'Counting events…';
+    const request = ++exportRequest; exportCount.innerHTML = '<span class="skeleton-line" role="status" aria-label="Counting events"></span>';
     try { const health = await fetchRange(game, chosen.range, exportForm.elements.basis.value, filterParams().toString()); if (request === exportRequest) exportCount.textContent = `${number(health.total)} event${health.total === 1 ? '' : 's'} will be exported`; }
     catch (error) { if (request === exportRequest) exportCount.textContent = error.message; }
   };
@@ -747,7 +776,7 @@ async function renderRoute() {
     if (typeof mountNutBot === 'function') mountNutBot();
   } catch (error) {
     const denied = error.status === 401 || error.status === 403;
-    root.innerHTML = `<main id="main"><div class="boot"><span class="brand-mark">avn.</span><h1>${denied ? 'You don’t have access yet.' : 'Couldn’t open your workspace.'}</h1><p class="muted">${escapeHTML(error.message)}</p><button class="button" data-action="refresh">Try again</button></div></main>`;
+    root.innerHTML = `<main id="main"><div class="boot"><span class="brand-mark">avn.</span><h1>${denied ? 'You don’t have access yet.' : 'Couldn’t open your workspace.'}</h1>${loadError(error)}</div></main>`;
   }
   window.scrollTo(0, 0);
 }
@@ -799,4 +828,5 @@ for (const type of ['pointerover', 'focusin', 'touchstart']) {
   }, {passive: true});
 }
 window.addEventListener('popstate', () => go(location.href, false));
+root.innerHTML = `<main id="main" class="boot-loading">${skeleton('stats')}${skeleton('table', 8, 5)}</main>`;
 renderRoute();

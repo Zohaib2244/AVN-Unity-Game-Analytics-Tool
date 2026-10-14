@@ -244,7 +244,7 @@ def test_rate_limit_shared_across_instances_and_restart(backend, monkeypatch):
         assert send(second, game, [event()]).status_code == 200
 
 
-def test_storage_failure_never_acknowledges(backend, monkeypatch):
+def test_storage_failure_never_acknowledges(backend, monkeypatch, caplog):
     admin, ingest, _ = backend
     game = register(admin)
 
@@ -256,6 +256,7 @@ def test_storage_failure_never_acknowledges(backend, monkeypatch):
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "5"
     assert "locked" not in response.text
+    assert "database is locked" in caplog.text
 
 
 def test_failed_transaction_rolls_back_entire_batch(backend):
@@ -1824,6 +1825,43 @@ def test_level_players_group_who_left_who_finished_and_who_kept_going(backend):
     assert admin.get(url, params={**base, "sort": "bogus"}).status_code == 400
     nobody = _level_players(admin, game, 99, "left")
     assert nobody["total"] == 0 and nobody["counts"]["started"] == 0
+
+
+@pytest.mark.parametrize(("reported", "expected"), [(375.5, 375.5), (None, 360.0), (-10, 360.0)])
+def test_level_players_show_the_last_level_session_duration(backend, reported, expected):
+    admin, ingest, _ = backend
+    game = register(admin)
+
+    def record(name, moment, params=None, session="level-session", player="player"):
+        return event(
+            name=name,
+            device_id=player,
+            session_id=session,
+            client_ts=moment,
+            params=params or {},
+        )
+
+    records = [
+        record("session_start", "2026-10-03T23:59:00Z"),
+        record("level_started", "2026-10-04T00:01:00Z", {"level": 1}),
+        record("level_failed", "2026-10-04T00:02:00Z", {"level": 1}),
+        record("menu_opened", "2026-10-04T00:05:00Z"),
+        # A later session, another player reusing the ID, and out-of-range events must not leak in.
+        record("session_start", "2026-10-05T10:00:00Z", session="return-session"),
+        record("menu_opened", "2026-10-05T11:00:00Z", session="return-session"),
+        record("session_start", "2026-10-04T00:00:00Z", player="other-player"),
+        record("menu_opened", "2026-10-04T12:00:00Z", player="other-player"),
+        record("menu_opened", "2026-10-06T12:00:00Z"),
+    ]
+    if reported is not None:
+        records.append(
+            record("session_end", "2026-10-04T00:05:00Z", {"duration_seconds": reported})
+        )
+    assert send(ingest, game, records).is_success
+    data = _level_players(admin, game, 1, "left")
+    assert data["total"] == 1
+    assert data["players"][0]["session_seconds"] == expected
+    assert data["players"][0]["came_back"] is True
 
 
 def test_story_can_stop_at_or_start_from_a_level(backend):

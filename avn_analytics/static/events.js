@@ -139,7 +139,7 @@ async function renderDictionary() {
       <div class="field"><label for="desc-${escapeHTML(item.name)}">What does this event mean?</label><textarea id="desc-${escapeHTML(item.name)}" name="description" rows="2" maxlength="4000" placeholder="The player finished a level successfully.">${escapeHTML(item.definition.description)}</textarea></div>
       <div class="event-counts-as"><span class="small muted">Counts as</span><div>${mapped}</div><a class="button" href="${gamePath(game, 'mappings')}?${new URLSearchParams({event: item.name})}">${icon('link', 14)} ${item.definition.canonical.length ? 'Change mapping' : 'Map this event'}…</a></div>
       <h3 class="event-sub">Parameters</h3>
-      ${!info || info.loading ? '<p class="help">Reading its parameters…</p>' : info.error ? `<p class="error">${escapeHTML(info.error)}</p>` : rows.length ? `<div class="table-wrap"><table class="compact-table event-params"><thead><tr><th>Parameter</th><th>Seen</th><th>Values</th><th>What it means</th></tr></thead><tbody>${rows.map(row => `<tr><td><code>${escapeHTML(row.key)}</code>${row.types.length ? `<br><span class="small muted">${row.types.join(' / ')}${row.types.length > 1 ? ' · type changes' : ''}</span>` : ''}</td><td class="num small">${row.quiet ? '<span class="muted">not in these days</span>' : number(row.count)}</td><td class="small">${row.values.length ? `${row.values.slice(0, 4).map(value => `<span class="chip" title="${number(value.count)} times">${escapeHTML(value.value)}</span>`).join(' ')}${row.distinct > 4 ? ` <span class="muted">+${number(row.distinct - 4)} more</span>` : ''}` : '<span class="muted">—</span>'}</td><td><input name="param:${escapeHTML(row.key)}" value="${escapeHTML(row.text)}" maxlength="2000" aria-label="Meaning of ${escapeHTML(row.key)}" placeholder="${row.text ? '' : 'What does it hold?'}"></td></tr>`).join('')}</tbody></table></div>` : '<p class="help">This event has no parameters in these days.</p>'}
+      ${!info || info.loading ? skeleton('table', 4, 4) : info.error ? `<p class="error">${escapeHTML(info.error)}</p>` : rows.length ? `<div class="table-wrap"><table class="compact-table event-params"><thead><tr><th>Parameter</th><th>Seen</th><th>Values</th><th>What it means</th></tr></thead><tbody>${rows.map(row => `<tr><td><code>${escapeHTML(row.key)}</code>${row.types.length ? `<br><span class="small muted">${row.types.join(' / ')}${row.types.length > 1 ? ' · type changes' : ''}</span>` : ''}</td><td class="num small">${row.quiet ? '<span class="muted">not in these days</span>' : number(row.count)}</td><td class="small">${row.values.length ? `${row.values.slice(0, 4).map(value => `<span class="chip" title="${number(value.count)} times">${escapeHTML(value.value)}</span>`).join(' ')}${row.distinct > 4 ? ` <span class="muted">+${number(row.distinct - 4)} more</span>` : ''}` : '<span class="muted">—</span>'}</td><td><input name="param:${escapeHTML(row.key)}" value="${escapeHTML(row.text)}" maxlength="2000" aria-label="Meaning of ${escapeHTML(row.key)}" placeholder="${row.text ? '' : 'What does it hold?'}"></td></tr>`).join('')}</tbody></table></div>` : '<p class="help">This event has no parameters in these days.</p>'}
       <div class="field"><label for="labels-${escapeHTML(item.name)}">How it reads in player stories <span class="muted">(optional)</span></label><textarea id="labels-${escapeHTML(item.name)}" name="labels" rows="2" maxlength="2000" placeholder="Started => Started level {Started}">${escapeHTML(item.definition.labels)}</textarea><p class="help">One rule per line: <code>parameter => text</code>. Use <code>{Parameter}</code> to insert its value.</p></div>
       <label class="check-row"><input type="checkbox" name="hidden" value="1" ${item.definition.hidden ? 'checked' : ''}> Leave it out of player stories and journeys (noise)</label>
       <div class="error" role="alert"></div>
@@ -147,7 +147,7 @@ async function renderDictionary() {
     </form>`;
   };
   const activityTab = info => {
-    if (!info || info.loading) return '<p class="help">Reading its activity…</p>';
+    if (!info || info.loading) return skeleton('chart');
     if (info.error) return `<p class="error">${escapeHTML(info.error)}</p>`;
     const d = info.data;
     const table = (title, rows, cells) => rows.length ? `<div><h3 class="event-sub">${title}</h3><table class="compact-table"><tbody>${rows.map(cells).join('')}</tbody></table></div>` : '';
@@ -158,7 +158,7 @@ async function renderDictionary() {
       ${table('Countries', d.countries, row => `<tr><td>${row.value === 'unknown' ? 'unknown' : countryTag(row.value)} <span class="muted small">${row.value === 'unknown' ? '' : escapeHTML(countryName(row.value))}</span></td><td class="num">${number(row.events)}</td><td class="num muted small">${number(row.players)} players</td></tr>`)}</div>`;
   };
   const examplesTab = info => {
-    if (!info || info.loading) return '<p class="help">Reading examples…</p>';
+    if (!info || info.loading) return skeleton('table', 4, 3);
     if (info.error) return `<p class="error">${escapeHTML(info.error)}</p>`;
     return info.data.samples.length ? `<table class="compact-table event-examples"><thead><tr><th>When</th><th>Version</th><th>Environment</th><th>Parameters</th></tr></thead><tbody>${info.data.samples.map(sample => `<tr><td class="small muted">${analysisDate(sample.client_ts, chosen.timezone)}</td><td class="small">${escapeHTML(sample.version || '—')}</td><td class="small">${escapeHTML(sample.environment || '—')}</td><td>${paramChips(sample.params)}</td></tr>`).join('')}</tbody></table>` : '<p class="help">No examples in these days and filters.</p>';
   };
@@ -176,15 +176,17 @@ async function renderDictionary() {
   // ---- loading
   const load = async state => {
     chosen = state; const ticket = ++latest;
-    document.querySelector('#events-table').innerHTML = '<p class="help panel-body">Counting…</p>';
+    document.querySelector('#events-summary').innerHTML = skeleton('stats');
+    document.querySelector('#dictionary-status').innerHTML = skeleton('stats');
+    document.querySelector('#events-table').innerHTML = skeleton('table', 8, 6);
     try {
       const result = await api(`${gameURL(game)}/insights/events?${filterQuery(state)}`);
-      if (ticket !== latest) return;
+      if (ticket !== latest || !table.isConnected) return;
       data = result; detail.clear();
       const requestedEvent = new URLSearchParams(location.search).get('event');
       if (requestedEvent && data.events.some(item => item.name === requestedEvent)) open.add(requestedEvent);
       draw(); open.forEach(fetchDetail);
-    } catch (error) { if (ticket === latest) document.querySelector('#events-table').innerHTML = `<p class="error panel-body">${escapeHTML(error.message)}</p>`; }
+    } catch (error) { if (ticket === latest && table.isConnected) { document.querySelector('#events-summary').innerHTML = ''; document.querySelector('#dictionary-status').innerHTML = ''; document.querySelector('#events-table').innerHTML = loadError(error); } }
   };
   const reload = async message => { cache.clear(); detail.clear(); const result = await api(`${gameURL(game)}/insights/events?${filterQuery(chosen)}`); data = result; draw(); open.forEach(fetchDetail); if (message) toast(message); };
 
@@ -248,7 +250,7 @@ async function renderDictionary() {
 
 async function renderMappings() {
   const game = currentGame;
-  shell('Event dictionary', heading('Event dictionary', 'Map your events once for Levels, Retention, player stories and journeys.', `<button type="button" class="button" id="mappings-import">${icon('book', 15)} Fill with AI agent</button>`) + eventDictionaryNav(game, 'mappings') + '<div id="mappings-body"><p class="help">Reading your events…</p></div>');
+  shell('Event dictionary', heading('Event dictionary', 'Map your events once for Levels, Retention, player stories and journeys.', `<button type="button" class="button" id="mappings-import">${icon('book', 15)} Fill with AI agent</button>`) + eventDictionaryNav(game, 'mappings') + `<div id="mappings-body">${skeleton('stats')}${skeleton('table')}</div>`);
   const wanted = new URLSearchParams(location.search);
   let version = wanted.get('version') || '';
   let data = null; let forms = new Map();
@@ -302,7 +304,7 @@ async function renderMappings() {
         <p class="help">Applies to ${state.app_version ? escapeHTML(state.app_version) : 'all versions'} across all analytics pages.</p><div class="mapping-fields"><div class="field"><label>Which event?</label><select name="event" aria-label="Which event?">${data.events.map(item => `<option value="${escapeHTML(item.name)}" ${item.name === state.event ? 'selected' : ''}>${escapeHTML(item.name)} · ${number(item.events)} sent${item.defined ? '' : ' · not described'}</option>`).join('')}</select></div>
         <div class="field"><label>Only when… <span class="muted">(optional)</span></label><div class="mapping-condition"><select name="param" aria-label="Parameter"><option value="">Every time it is sent</option>${params.map(param => `<option value="${escapeHTML(param.key)}" ${param.key === state.param ? 'selected' : ''}>${escapeHTML(param.key)}</option>`).join('')}</select>${state.param ? `<select name="op" aria-label="Comparison">${MAPPING_OPERATORS.map(([op, text]) => `<option value="${op}" ${op === state.op ? 'selected' : ''}>${text}</option>`).join('')}</select>${state.op === 'exists' ? '' : `<input name="value" aria-label="Comparison value" value="${escapeHTML(state.value)}" list="mapping-values-${key}" placeholder="value" autocomplete="off"><datalist id="mapping-values-${key}">${examples.map(value => `<option value="${escapeHTML(value)}">`).join('')}</datalist>`}` : ''}</div></div>
         ${concept.needs ? `<div class="field"><label>The level number is in</label><select name="number_param" aria-label="Level number parameter"><option value="">Find it automatically (a parameter called “level”)</option>${params.map(param => `<option value="${escapeHTML(param.key)}" ${param.key === state.number_param ? 'selected' : ''}>${escapeHTML(param.key)}${param.examples.length ? ` · e.g. ${escapeHTML(param.examples.slice(0, 3).join(', '))}` : ''}</option>`).join('')}</select></div>` : ''}</div>
-        <p class="mapping-preview help" aria-live="polite">Checking…</p><details class="mapping-sample" hidden><summary>Example matching parameters</summary><pre></pre></details><div class="error" role="alert"></div>
+        <p class="mapping-preview help" aria-live="polite"><span class="skeleton-line" role="status" aria-label="Checking mapping"></span></p><details class="mapping-sample" hidden><summary>Example matching parameters</summary><pre></pre></details><div class="error" role="alert"></div>
         <div class="modal-actions"><button type="button" class="button" data-cancel-mapping>Cancel</button><button type="submit" class="button primary">Add mapping</button></div></form>`;
     };
     const ruleOf = () => ({action: key, param: state.param, op: state.param ? state.op : 'eq', value: state.param && state.op !== 'exists' ? state.value.trim() : '', number_param: concept.needs ? state.number_param : '', app_version: state.app_version});
@@ -373,8 +375,9 @@ async function renderMappings() {
   let loading = 0;
   const load = async () => {
     const revision = ++loading;
+    body.innerHTML = skeleton('stats') + skeleton('table');
     try { const result = await api(`${gameURL(game)}/mappings?${new URLSearchParams({version})}`); if (revision !== loading || !body.isConnected) return; data = result; draw(); }
-    catch (error) { body.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
+    catch (error) { if (revision === loading && body.isConnected) body.innerHTML = loadError(error); }
   };
   await load();
   if (data && wanted.get('concept') && data.concepts.some(item => item.key === wanted.get('concept'))) openForm(wanted.get('concept'));

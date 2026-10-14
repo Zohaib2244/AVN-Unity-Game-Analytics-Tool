@@ -49,7 +49,7 @@ function openDictionaryImport(game, done) {
     modal.innerHTML = `<div class="player-dialog-head"><h2 id="dialog-title">Fill the dictionary with an AI agent</h2><button type="button" class="button" data-action="close" aria-label="Close">Close ×</button></div>
       <div class="segmented" role="group" aria-label="Import step">${[['prepare', '1 · Prepare'], ['upload', '2 · Upload and review'], ['history', 'History']].map(([key, label]) => `<button type="button" data-import-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join('')}</div>
       <div class="import-body" id="import-body"></div>`;
-    modal.querySelector('#import-body').innerHTML = tab === 'prepare' ? prepareHTML() : tab === 'upload' ? uploadHTML() : '<p class="help">Reading history…</p>';
+    modal.querySelector('#import-body').innerHTML = tab === 'prepare' ? prepareHTML() : tab === 'upload' ? uploadHTML() : skeleton('table', 4, 4);
     if (tab === 'history') drawHistory();
     if (tab === 'prepare') bindPrepare();
     if (tab === 'upload') bindUpload();

@@ -217,7 +217,7 @@ async function renderGameOverview() {
   const archived = game.archived_at ? `<div class="archived-banner">${icon('lock',18)}<div><strong>Archived.</strong> Collection is paused for this platform.</div><a class="button" href="${gamePath(game, 'settings')}">Game settings</a></div>` : '';
   shell('Overview', heading(game.name, `${platformLabel(game.platform)} · ${game.bundle_id}`, `<a class="button primary" href="${gamePath(game, 'exports')}">${icon('export',15)} Export data</a>`) + archived +
     `<div id="mapping-notice"></div><div id="filters"></div><div id="totals"></div><div id="anomalies"></div><div id="active"></div>
-    <section class="panel"><div class="panel-header"><h2>Activity per day</h2><div class="segmented" role="group" aria-label="Measure">${[['players','Players (DAU)'],['sessions','Sessions'],['events','Events']].map(([key, label]) => `<button type="button" data-measure="${key}" aria-pressed="${key === 'players'}">${label}</button>`).join('')}</div></div><div class="panel-body chart-wrap" id="daily"><p class="help">Loading…</p></div></section>
+    <section class="panel"><div class="panel-header"><h2>Activity per day</h2><div class="segmented" role="group" aria-label="Measure">${[['players','Players (DAU)'],['sessions','Sessions'],['events','Events']].map(([key, label]) => `<button type="button" data-measure="${key}" aria-pressed="${key === 'players'}">${label}</button>`).join('')}</div></div><div class="panel-body chart-wrap" id="daily">${skeleton('chart')}</div></section>
     <div class="section-grid overview-grid section-spacing"><section class="panel"><div class="panel-header"><h2>Who’s playing</h2><div class="segmented" aria-label="Break down by">${Object.entries(DIMENSION_LABELS).map(([key, label], index) => `<button type="button" data-dimension-tab="${key}" aria-pressed="${index === 0}">${label.replace('Device platform', 'Platform').replace('App version', 'Version')}</button>`).join('')}</div></div><div id="breakdowns"></div></section>
     <section class="panel"><div class="panel-header"><h2>Top events</h2><a class="text-link" href="${gamePath(game, 'dictionary')}">Dictionary ${icon('arrow',13)}</a></div><div id="top-events"></div></section></div>`);
   // mappingNotice() lives in events.js, which is loaded after this file and ready by the time it runs.
@@ -254,9 +254,16 @@ async function renderGameOverview() {
   });
   const filters = mountFilters(document.querySelector('#filters'), game, async state => {
     const ticket = ++latest;
+    summary = null;
+    document.querySelector('#totals').innerHTML = skeleton('stats');
+    document.querySelector('#daily').innerHTML = skeleton('chart');
+    document.querySelector('#breakdowns').innerHTML = skeleton('table', 5, 3);
+    document.querySelector('#top-events').innerHTML = skeleton('table', 5, 3);
+    document.querySelector('#anomalies').innerHTML = '';
+    document.querySelector('#active').innerHTML = '';
     try {
       const data = await api(`${gameURL(game)}/insights/summary?${filterQuery(state)}`);
-      if (ticket !== latest) return;
+      if (ticket !== latest || !notice.isConnected) return;
       summary = data;
       filters.setContext({...data.context, players: data.players});
       document.querySelector('#totals').innerHTML = stats([['Players', number(data.players), `${number(data.new_players)} new · unique player IDs`], ['Sessions', number(data.sessions), data.players ? `${(data.sessions / data.players).toFixed(1)} per player` : 'with a player ID'], ['Events', number(data.events), `${number(data.context.identified_events)} player-linked · ${number(data.context.anonymous_events)} without an ID`]]);
@@ -264,7 +271,10 @@ async function renderGameOverview() {
       document.querySelector('#active').innerHTML = data.events ? activeUsers(data.active) : '';
       drawDaily(); drawBreakdown();
       document.querySelector('#top-events').innerHTML = data.top_events.length ? `<table class="compact-table"><thead><tr><th>Event</th><th class="num">Events</th><th class="num">Players</th></tr></thead><tbody>${data.top_events.slice(0, 10).map(row => `<tr><td class="mono">${escapeHTML(row.name)}</td><td class="num">${number(row.events)}</td><td class="num">${number(row.players)}</td></tr>`).join('')}</tbody></table>` : '<p class="help panel-body">No events.</p>';
-    } catch (error) { if (ticket === latest) document.querySelector('#daily').innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
+    } catch (error) { if (ticket === latest && notice.isConnected) {
+      for (const id of ['totals', 'breakdowns', 'top-events']) document.querySelector(`#${id}`).innerHTML = '';
+      document.querySelector('#daily').innerHTML = loadError(error);
+    } }
   });
 }
 
@@ -434,7 +444,7 @@ async function renderFunnels() {
     document.querySelector('#breakdown-panel').hidden = true;
     if (body.steps.length < 2) { result.innerHTML = '<p class="help">Add at least two steps.</p>'; document.querySelector('#funnel-summary').innerHTML = ''; document.querySelector('#funnel-csv').hidden = true; return; }
     const ticket = ++latest;
-    result.innerHTML = '<p class="help">Counting players…</p>';
+    result.innerHTML = skeleton('table', 5, 4);
     const breakdown = document.querySelector('#funnel-breakdown').value;
     try {
       const data = await api(`${gameURL(game)}/insights/funnel`, {method:'POST', body: JSON.stringify({...filterBody(filters.state), steps: body.steps, scope: body.scope, ...(body.window_hours ? {window_hours: body.window_hours} : {}), ...(breakdown ? {breakdown} : {})})});
@@ -442,8 +452,9 @@ async function renderFunnels() {
         lastResult = data; filters.setContext({...data.context, players: data.steps[0]?.players || 0}); drawResult(data);
         if (storeGet(`avn-pending-journeys-${game.id}`)) { storeSet(`avn-pending-journeys-${game.id}`, null); journeys.run(); } else journeys.refresh();
       }
-    } catch (error) { if (ticket === latest) result.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
+    } catch (error) { if (ticket === latest) result.innerHTML = loadError(error, 'data-retry-funnel'); }
   }
+  result.addEventListener('click', event => { if (event.target.closest('[data-retry-funnel]')) run(); });
   const timing = times => times ? `<span title="${number(times.count)} players · average ${duration(times.average)} · fastest ${duration(times.min)} · slowest ${duration(times.max)}">median ${duration(times.median)} · 90% within ${duration(times.p90)}</span>` : '';
   const drawResult = data => {
     const rows = data.steps; const first = rows[0].players; const last = rows[rows.length - 1];
@@ -579,14 +590,14 @@ function mountJourneys(container, game, hooks) {
 
   async function showPlayers(target, title) {
     const wrap = $('#journeys-players-wrap'); wrap.hidden = false;
-    $('#journeys-players-title').textContent = title; $('#journeys-players-note').textContent = ''; $('#journeys-players').innerHTML = '<p class="help">Loading players…</p>';
+    $('#journeys-players-title').textContent = title; $('#journeys-players-note').textContent = ''; $('#journeys-players').innerHTML = skeleton('table', 5, 4);
     wrap.scrollIntoView({behavior: 'smooth', block: 'nearest'});
     try {
       const data = await api(`${gameURL(game)}/insights/journeys/players`, {method: 'POST', body: JSON.stringify({...lastBody, target})});
       $('#journeys-players-note').textContent = `${number(data.total)} player${data.total === 1 ? '' : 's'}${data.total > data.players.length ? ` · showing the latest ${number(data.players.length)}` : ''} · open one to read their story`;
       $('#journeys-players').innerHTML = data.players.length ? `<div class="table-wrap"><table><thead><tr><th>Player</th><th>Outcome</th><th>What they did</th><th>Last event</th></tr></thead><tbody>${data.players.map(item => `<tr><td><a class="mono" href="${gamePath(game, 'players')}?${new URLSearchParams({player: item.player})}">${escapeHTML(shortId(item.player))}</a></td><td>${outcome(item.status)}</td><td class="route-cell">${escapeHTML(item.line || '—')}</td><td class="small muted">${displayDate(item.last_seen)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="help">Nobody.</p>';
       $('#journeys-players-csv').onclick = () => downloadCSV(`${game.name}-journey-players.csv`, [['player', 'outcome', 'what_they_did', 'last_event'], ...data.players.map(item => [item.player, item.status, item.line, item.last_seen])]);
-    } catch (error) { $('#journeys-players').innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
+    } catch (error) { $('#journeys-players').innerHTML = loadError(error); }
   }
 
   async function run() {
@@ -595,7 +606,7 @@ function mountJourneys(container, game, hooks) {
     const steps = hooks.steps();
     const intro = $('#journeys-intro');
     if (steps.length < 2) { $('#journeys-views').hidden = true; intro.hidden = false; intro.textContent = 'Add at least two steps to your funnel first.'; return; }
-    intro.hidden = false; intro.textContent = 'Following players…'; $('#journeys-players-wrap').hidden = true;
+    intro.hidden = false; intro.innerHTML = skeleton('table', 5, 3); $('#journeys-players-wrap').hidden = true;
     try {
       lastBody = {...hooks.query(), route_from: state.from, route_to: state.to, ignore: state.ignore, span: state.span};
       const data = await api(`${gameURL(game)}/insights/journeys`, {method: 'POST', body: JSON.stringify(lastBody)});
@@ -604,9 +615,10 @@ function mountJourneys(container, game, hooks) {
       if (!data.started) { $('#journeys-views').hidden = true; intro.hidden = false; intro.textContent = 'Nobody did the start step with these days and filters.'; return; }
       lastData = data; outcomeFilter = 'all'; shown = 12;
       intro.hidden = true; $('#journeys-views').hidden = false; drawViews();
-    } catch (error) { if (ticket === latest) { $('#journeys-views').hidden = true; intro.hidden = false; intro.innerHTML = `<span class="error">${escapeHTML(error.message)}</span>`; } }
+    } catch (error) { if (ticket === latest) { $('#journeys-views').hidden = true; intro.hidden = false; intro.innerHTML = loadError(error, 'data-retry-journeys'); } }
   }
   $('#journeys-run').addEventListener('click', run);
+  $('#journeys-intro').addEventListener('click', event => { if (event.target.closest('[data-retry-journeys]')) run(); });
   drawControls();
   return {run, redraw: drawControls, refresh() { drawControls(); if (active) run(); }};
 }
@@ -687,7 +699,7 @@ async function renderPlayers() {
         <div class="player-rules" id="player-rules" hidden>
           <section class="rule-section" id="conditions-section"><button type="button" class="rule-section-toggle" aria-expanded="true"><span class="rule-chevron">${icon('chevron', 15)}</span><span class="rule-section-title">Only show players who…</span><span class="count" id="conditions-count" hidden></span><span class="rule-section-note small muted" id="conditions-note"></span></button><div class="rule-section-body"><p class="help">Every rule here must be true. For example: <em>Did</em> <code>POWERUP_CONSUMED</code> at least 3 times, or <em>Never did</em> <code>SETTINGS_OPENED</code>.</p><div id="condition-list"></div></div></section>
           <section class="rule-section" id="metrics-section"><button type="button" class="rule-section-toggle" aria-expanded="true"><span class="rule-chevron">${icon('chevron', 15)}</span><span class="rule-section-title">Add a column (and sort by it)</span><span class="count" id="metrics-count" hidden></span><span class="rule-section-note small muted" id="metrics-note"></span></button><div class="rule-section-body"><p class="help">Pick what to work out for each player, from an event: how many times, the highest, lowest or total of one of its parameters, or when it first or last happened.</p><div id="metric-list"></div></div></section></div></div>
-      <div id="player-list"><p class="help panel-body">Loading…</p></div></section>`);
+      <div id="player-list">${skeleton('table', 8, 7)}</div></section>`);
   const list = document.querySelector('#player-list');
   let offset = 0; let search = ''; let latest = 0; let chosen = null; let lastMetrics = [];
   const persist = () => storeSet(viewKey, view);
@@ -747,6 +759,7 @@ async function renderPlayers() {
     const body = rulesBody();
     lastMetrics = body.metrics;
     drawControls();
+    list.innerHTML = skeleton('table', 8, 7);
     try {
       const query = `${filterQuery(chosen)}&${new URLSearchParams({search, offset, sort: view.sort, order: view.order, ...(body.conditions.length || body.metrics.length ? {rules: JSON.stringify(body)} : {})})}`;
       const data = await api(`${gameURL(game)}/insights/players?${query}`);
@@ -758,7 +771,7 @@ async function renderPlayers() {
       const head = (key, label, extra = '') => `<th class="${extra} sortable ${view.sort === key ? 'sorted' : ''}" data-sort="${key}" aria-sort="${view.sort === key ? (view.order === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button">${escapeHTML(label)}<span class="sort-arrow">${view.sort === key ? (view.order === 'asc' ? '▲' : '▼') : ''}</span></button></th>`;
       list.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Player</th>${head('events', 'Events', 'num')}${head('sessions', 'Sessions', 'num')}${head('session_length', 'Avg session', 'num')}${head('first_seen', 'First seen')}${head('last_seen', 'Last active')}${body.metrics.map((metric, position) => head(`metric${position}`, metricLabel(metric), 'num metric')).join('')}${head('version', 'Version')}<th>Env</th><th>Country</th></tr></thead><tbody>${data.players.map(row => `<tr><td><a class="row-title" href="${link(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a><p class="small muted">${row.has_user_id ? 'User ID' : 'Install ID'} · ${platformLabel(row.platform || '—')}</p></td><td class="num">${number(row.events)}</td><td class="num">${number(row.sessions)}</td><td class="num">${duration(row.avg_session_seconds)}</td><td class="small muted">${analysisDate(row.first_seen, chosen.timezone)}</td><td class="small muted">${analysisDate(row.last_seen, chosen.timezone)}</td>${body.metrics.map((metric, position) => `<td class="num metric">${metricValue(metric, row.metrics[position], chosen.timezone)}</td>`).join('')}<td class="small">${escapeHTML(row.app_version || '—')}</td><td><span class="pill ${TEST_ENVIRONMENTS.includes(row.environment) ? '' : 'good'}">${escapeHTML(row.environment || '—')}</span></td><td class="small">${countryTag(row.country)}</td></tr>`).join('')}</tbody></table></div>
         <div class="pager"><span class="small muted">${number(offset + 1)}–${number(offset + data.players.length)} of ${number(data.total)}</span><span><button class="button" data-page="-1" ${offset ? '' : 'disabled'}>Previous</button> <button class="button" data-page="1" ${offset + data.players.length < data.total ? '' : 'disabled'}>Next</button></span></div>`;
-    } catch (error) { if (ticket === latest) list.innerHTML = `<p class="error panel-body">${escapeHTML(error.message)}</p>`; }
+    } catch (error) { if (ticket === latest) list.innerHTML = loadError(error); }
   };
   list.addEventListener('click', event => {
     const page = event.target.closest('[data-page]'); if (page) { offset = Math.max(0, offset + 50 * Number(page.dataset.page)); load(); return; }
@@ -938,12 +951,14 @@ async function renderJourney(game, player, options = {}) {
   container.querySelector('[data-player-next]')?.addEventListener('click', () => changePlayer(1));
   syncBrowse();
   const tabs = () => container.querySelectorAll('[data-story-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.storyView === view)));
+  body.addEventListener('click', event => { if (event.target.closest('[data-retry-story]')) { cache.clear(); draw(); } });
   const draw = async () => {
     const ticket = ++latest;
     tabs();
     container.querySelectorAll('[data-story-timezone]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.storyTimezone === timezone)));
     container.querySelector('#story-context').textContent = `${timezone === 'utc' ? 'UTC' : 'Local time'} · player ID = user_id, otherwise device_id`;
-    body.innerHTML = '<p class="help">Reading their story…</p>';
+    container.querySelector('#story-metrics').innerHTML = skeleton('stats');
+    body.innerHTML = skeleton('table', 5, 2);
     try {
       const data = await api(`${gameURL(game)}/insights/story?${new URLSearchParams({start: range.from, end: range.to, player, hidden: String(showHidden), tz_offset: timezone === 'utc' ? 0 : localTimezoneOffset(), ...(focusCut ? {level: focusLevel, cut: focusCut} : {})})}`);
       if (ticket !== latest || !body.isConnected) return;
@@ -981,7 +996,7 @@ async function renderJourney(game, player, options = {}) {
         draw();
       });
       body.querySelector('#story-hidden')?.addEventListener('change', event => { showHidden = event.target.checked; draw(); });
-    } catch (error) { if (ticket === latest && body.isConnected) body.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
+    } catch (error) { if (ticket === latest && body.isConnected) { container.querySelector('#story-metrics').innerHTML = ''; body.innerHTML = loadError(error, 'data-retry-story'); } }
   };
   container.querySelector('[aria-label="View"]').addEventListener('click', event => {
     const tab = event.target.closest('[data-story-view]');
@@ -1000,7 +1015,7 @@ async function renderJourney(game, player, options = {}) {
 }
 
 async function renderRawEvents(game, player, range, timezone, container = document) {
-  container.querySelector('#story-body').innerHTML = `<section class="panel"><div class="panel-header"><div><h2>Timeline</h2><p>Every event, grouped by session · times in ${timezone === 'utc' ? 'UTC' : 'your local time'} · the gap is the time since the previous event</p></div><div class="search">${icon('search',16)}<input id="journey-filter" type="search" aria-label="Filter events" placeholder="Filter by event or parameter…"></div></div><div class="panel-body" id="journey"><p class="help">Loading…</p></div></section>`;
+  container.querySelector('#story-body').innerHTML = `<section class="panel"><div class="panel-header"><div><h2>Timeline</h2><p>Every event, grouped by session · times in ${timezone === 'utc' ? 'UTC' : 'your local time'} · the gap is the time since the previous event</p></div><div class="search">${icon('search',16)}<input id="journey-filter" type="search" aria-label="Filter events" placeholder="Filter by event or parameter…"></div></div><div class="panel-body" id="journey">${skeleton('table', 6, 3)}</div></section>`;
   let events = [];
   const box = container.querySelector('#journey');
   const search = container.querySelector('#journey-filter');
@@ -1029,7 +1044,7 @@ async function renderRawEvents(game, player, range, timezone, container = docume
     const data = await api(`${gameURL(game)}/insights/journey?${new URLSearchParams({start: range.from, end: range.to, player, tz_offset: timezone === 'utc' ? 0 : localTimezoneOffset()})}`);
     events = data.events;
     draw();
-  } catch (error) { box.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
+  } catch (error) { if (box.isConnected) box.innerHTML = loadError(error, 'data-retry-story'); }
 }
 
 /* ─── Levels: how every level is going ─── */
@@ -1052,7 +1067,7 @@ function levelBreakdown(row) {
     <div><strong>${number(value.finished_stopped)} <small>${share(value.finished_stopped)}</small></strong><span>After finish · no next start</span></div>
     <div><strong>${number(value.unknown_progress)}</strong><span>Missing next start · higher progress recorded</span></div>
     <div><strong>+ ${number(value.entrants)}</strong><span>Entered level ${value.next_level} outside this cohort</span></div>
-  </div><p class="help level-drill-note">Total drop = no finish recorded + finished without a next start + missing next-start events. All percentages use this level’s starters. This is progress observed by the end of the selected dates, not proof someone quit. Later progress follows the same ID across versions, builds and countries; environment and platform restrictions still apply. Entrants: ${number(value.returning)} with earlier recorded activity; ${number(value.missing_history)} with unavailable earlier history. This level’s starters include ${number(value.starters_returning || 0)} returning entrants and ${number(value.starters_missing_history || 0)} with earlier history unavailable. Missing history cannot tell us whether someone is a new install or an upgrade.${value.available ? '' : ' Next-level comparison is unavailable because no start for the next numbered level is recorded, or this level has no starters.'}</p>`;
+  </div>`;
 }
 
 async function renderLevels() {
@@ -1077,17 +1092,6 @@ async function renderLevels() {
     renderLevels();
   });
   const drillGroups = [['total_drop', 'Total drop'], ['left', 'During level'], ['finished_stopped', 'After finish'], ['unknown_progress', 'Missing progress'], ['kept_going', 'Reached next level'], ['returning', 'Returning entrants'], ['missing_history', 'History unavailable'], ['stuck', 'Stuck'], ['started', 'Everyone who started']];
-  const drillNotes = {
-    total_drop: 'Started this level but have no later start of the next numbered level by the end of these dates. Some may still be playing; missing progress is shown separately.',
-    left: 'Started this level, with no recorded finish or later higher-level progress by the end of these dates.',
-    finished_stopped: 'Started and finished this level, with no later next-level start or higher progress by the end of these dates.',
-    unknown_progress: 'Higher-level activity is recorded, but the next level’s start is missing. Treat this as incomplete logging, not a confirmed quit.',
-    kept_going: 'Started this level and later started the next numbered level, including after a version update.',
-    returning: 'Started the next level outside this level’s selected start cohort; earlier activity exists in the recorded history.',
-    missing_history: 'Started the next level outside this cohort, with no earlier progression history available. This could be an existing player upgrading from an untracked version.',
-    stuck: 'Three or more tries or fails, with no finish or higher-level progress recorded.',
-    started: 'Everyone with a start or restart for this level matching the selected dates and filters.',
-  };
   const storyLink = (row, level, cut) => `${gamePath(game, 'players')}?${new URLSearchParams({player: row.player, ...(cut ? {level, cut} : {})})}`;
   const drillQuery = (level, state, extra = {}) => { const query = filterQuery(chosen); query.set('level', level); query.set('group', state.group); query.set('sort', state.sort); for (const [key, value] of Object.entries(extra)) query.set(key, value); return query; };
   // The panel is as wide as the visible part of the table and stays in view when the table scrolls sideways.
@@ -1100,10 +1104,10 @@ async function renderLevels() {
     fitDrill(level);
     const counts = state.counts;
     const summary = data.levels.find(row => row.level === level);
-    const table = state.error ? `<p class="error">${escapeHTML(state.error)}</p>` : state.loading && !state.players.length ? '<p class="help">Reading players…</p>' : !state.players.length ? '<p class="help">Nobody is in this group in the selected days and filters.</p>' : `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Player</th><th class="num">Tries</th><th class="num">Fails</th><th>Last on this level</th><th>Opened the game later</th><th>Version</th><th>Country</th><th>History</th><th>Their story</th></tr></thead><tbody>${state.players.map(row => `<tr><td><a class="row-title" href="${storyLink(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a></td><td class="num">${number(row.tries)}</td><td class="num">${number(row.fails)}</td><td class="small muted">${analysisDate(row.exit_at, chosen.timezone)}</td><td>${row.came_back ? '<span class="pill good">came back</span>' : '<span class="small muted">—</span>'}</td><td class="small">${escapeHTML(row.app_version || '—')}</td><td class="small">${countryTag(row.country)}</td><td class="small muted">${escapeHTML(row.history || '')}</td><td class="small level-story-links"><a class="text-link" href="${storyLink(row, level, 'until')}">Up to level ${level}</a> <a class="text-link" href="${storyLink(row, level, 'from')}">From level ${level}</a></td></tr>`).join('')}</tbody></table></div><div class="pager"><span class="small muted">${number(state.players.length)} of ${number(state.total)}</span>${state.players.length < state.total ? `<button type="button" class="button" data-drill-more>${state.loading ? 'Loading…' : 'Show more'}</button>` : ''}</div>`;
+    const table = state.error ? loadError(state.error, 'data-retry-drill') : state.loading && !state.players.length ? skeleton('table', 5, 8) : !state.players.length ? '<p class="help">Nobody is in this group in the selected days and filters.</p>' : `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Player</th><th class="num">Tries</th><th class="num">Fails</th><th>Last on this level</th><th>Opened the game later</th><th>Version</th><th class="num">Session duration</th><th>Their story</th></tr></thead><tbody>${state.players.map(row => `<tr><td><a class="row-title" href="${storyLink(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a></td><td class="num">${number(row.tries)}</td><td class="num">${number(row.fails)}</td><td class="small muted">${analysisDate(row.exit_at, chosen.timezone)}</td><td>${row.came_back ? '<span class="pill good">came back</span>' : '<span class="small muted">—</span>'}</td><td class="small">${escapeHTML(row.app_version || '—')}</td><td class="num">${duration(row.session_seconds)}</td><td class="small level-story-links"><a class="text-link" href="${storyLink(row, level, 'until')}">Up to level ${level}</a> <a class="text-link" href="${storyLink(row, level, 'from')}">From level ${level}</a></td></tr>`).join('')}</tbody></table></div><div class="pager"><span class="small muted">${number(state.players.length)} of ${number(state.total)}</span>${state.players.length < state.total ? `<button type="button" class="button" data-drill-more>${state.loading ? 'Loading…' : 'Show more'}</button>` : ''}</div>`;
     box.innerHTML = `${levelBreakdown(summary)}<div class="level-drill-head"><div class="segmented" role="group" aria-label="Players on level ${level}">${drillGroups.map(([key, label]) => `<button type="button" data-drill-group="${key}" aria-pressed="${state.group === key}">${label}${counts ? ` <span class="drill-count">${number(counts[key])}</span>` : ''}</button>`).join('')}</div>
       <div class="quiet-actions"><label class="inline-field">Sort<select data-drill-sort><option value="exit_at">Latest on this level</option><option value="tries">Most tries</option><option value="fails">Most fails</option></select></label><button type="button" class="button" data-drill-csv>${icon('export', 14)} CSV</button></div></div>
-      <p class="help level-drill-note">${drillNotes[state.group]}</p>${table}`;
+      ${table}`;
     box.querySelector('[data-drill-sort]').value = state.sort;
   };
   const fetchDrill = async (level, more = false) => {
@@ -1115,7 +1119,7 @@ async function renderLevels() {
       const result = await api(`${gameURL(game)}/insights/levels/players?${drillQuery(level, state, {offset: more ? state.players.length : 0, limit: 50})}`);
       if (ticket !== state.ticket || !tableBox.isConnected) return;
       state.players = more ? [...state.players, ...result.players] : result.players; state.total = result.total; state.counts = result.counts;
-    } catch (error) { if (ticket === state.ticket) state.error = error.message; }
+    } catch (error) { if (ticket === state.ticket) state.error = error; }
     if (ticket === state.ticket) { state.loading = false; drawDrill(level); }
   };
   const ensureDrill = level => {
@@ -1159,11 +1163,12 @@ async function renderLevels() {
     const level = Number(panel.dataset.levelDrill); const state = drill.get(level); if (!state) return;
     const tab = event.target.closest('[data-drill-group]');
     if (tab) { state.group = tab.dataset.drillGroup; fetchDrill(level); return; }
+    if (event.target.closest('[data-retry-drill]')) { fetchDrill(level); return; }
     if (event.target.closest('[data-drill-more]')) { fetchDrill(level, true); return; }
     if (event.target.closest('[data-drill-csv]')) {
       try {
         const all = await api(`${gameURL(game)}/insights/levels/players?${drillQuery(level, state, {offset: 0, limit: 2000})}`);
-        downloadCSV(`${game.name}-${platformLabel(game.platform)}-level-${level}-${state.group}-${chosen.range.from}_${chosen.range.to}.csv`, [['player', 'tries', 'fails', 'finished_level', 'last_on_level_utc', 'last_seen_utc', 'opened_game_later', 'app_version', 'country', 'history'], ...all.players.map(row => [row.player, row.tries, row.fails, row.completed, row.exit_at, row.last_seen, row.came_back, row.app_version, row.country, row.history])]);
+        downloadCSV(`${game.name}-${platformLabel(game.platform)}-level-${level}-${state.group}-${chosen.range.from}_${chosen.range.to}.csv`, [['player', 'tries', 'fails', 'finished_level', 'last_on_level_utc', 'last_seen_utc', 'opened_game_later', 'app_version', 'session_seconds'], ...all.players.map(row => [row.player, row.tries, row.fails, row.completed, row.exit_at, row.last_seen, row.came_back, row.app_version, row.session_seconds])]);
       } catch (error) { toast(error.message); }
     }
   });
@@ -1198,7 +1203,7 @@ async function renderLevels() {
     document.querySelector('#levels-previous-page').disabled = page === 0;
     document.querySelector('#levels-next-page').disabled = (page + 1) * size >= sorted.length;
     box.innerHTML = `<div class="table-wrap level-scroll levels-scroll" tabindex="0" role="region" aria-label="Level results"><table class="levels-grid"><thead><tr><th>Level</th><th class="num">Start</th><th class="num">Finish</th><th class="num" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">Drop · start → start</th><th class="num">Tries / player</th><th class="num">Fails</th><th class="num">Median time</th></tr></thead><tbody>${visible.map(row => `<tr data-level-row="${row.level}" class="${highlighted === row.level ? 'level-highlight ' : ''}${row.completion != null && !row.low_sample && row.completion < 60 ? 'level-hard' : ''}"><td class="level-number-cell"><button type="button" class="level-toggle" data-level-toggle="${row.level}" aria-expanded="${open.has(row.level)}" aria-label="Show the players behind level ${row.level}">${icon('chevron', 14)}</button><strong>${row.level}</strong>${row.low_sample ? ` <span class="level-sample-marker" role="img" aria-label="Small sample: ${number(row.started)} of ${number(minimum)} players" title="Small sample: ${number(row.started)} players started; threshold is ${number(minimum)}">·</span>` : ''}</td><td class="num">${number(row.started)}</td><td class="num">${number(row.completed)}</td><td class="num">${levelTransitionCell(row)}</td><td class="num">${row.tries_per_player ?? '—'}</td><td class="num">${number(row.fails)}${row.restarts ? ` <span class="muted small">· ${row.restarts} restart${row.restarts === 1 ? '' : 's'}</span>` : ''}</td><td class="num">${duration(row.median_seconds)}</td></tr><tr class="level-detail" data-level-detail="${row.level}" ${open.has(row.level) ? '' : 'hidden'}><td colspan="7"><div class="level-drill" data-level-drill="${row.level}"></div></td></tr>`).join('')}</tbody></table></div>
-      <p class="help panel-body"><strong>Total drop</strong> follows the same players from this level’s start to the next numbered level’s start. Open the percentage or arrow for the during-level / after-finish breakdown and player lists. <strong>Net gain / loss</strong> separately compares filtered starter totals, including returning players and those whose earlier history is unavailable. Missing next-level data is shown as —. Player stories and information open in a popup. Completion below 60% is highlighted only when at least ${number(minimum)} players started; smaller samples remain visible and are labelled.</p>`;
+      `;
     open.forEach(level => { document.querySelectorAll(`[data-level-toggle="${level}"]`).forEach(button => button.setAttribute('aria-expanded', 'true')); drawDrill(level); });
     fitObserver?.disconnect();
     const wrap = box.querySelector('.table-wrap');
@@ -1212,9 +1217,10 @@ async function renderLevels() {
     document.querySelector('#levels-page-info').textContent = '';
     document.querySelector('#levels-previous-page').disabled = true;
     document.querySelector('#levels-next-page').disabled = true;
-    tableBox.innerHTML = '<p class="help panel-body">Counting…</p>';
+    document.querySelector('#levels-summary').innerHTML = skeleton('stats');
+    tableBox.innerHTML = skeleton('table', 8, 7);
     try { const result = await api(`${gameURL(game)}/insights/levels?${filterQuery(state)}`); if (ticket === latest && tableBox.isConnected) { data = result; levelsFilters.setContext({anonymous_events: result.context.anonymous_events}); drill.clear(); draw(); open.forEach(ensureDrill); } }
-    catch (error) { if (ticket === latest && tableBox.isConnected) tableBox.innerHTML = `<p class="error panel-body">${escapeHTML(error.message)}</p>`; }
+    catch (error) { if (ticket === latest && tableBox.isConnected) { document.querySelector('#levels-summary').innerHTML = ''; tableBox.innerHTML = loadError(error); } }
   };
   const jumpTo = level => {
     if (!data) return;

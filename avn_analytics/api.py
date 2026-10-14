@@ -197,7 +197,12 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
 
     @app.exception_handler(sqlite3.Error)
     async def database_unavailable(request, exception):
-        logger.error("Database operation failed: %s", type(exception).__name__)
+        logger.error(
+            "Database operation failed: %s (%s): %s",
+            type(exception).__name__,
+            getattr(exception, "sqlite_errorname", "unknown"),
+            exception,
+        )
         return JSONResponse(
             {"detail": "Storage temporarily unavailable"},
             status_code=503,

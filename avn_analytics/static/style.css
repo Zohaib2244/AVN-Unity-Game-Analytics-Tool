@@ -252,6 +252,29 @@ option{background:var(--bg-card);color:var(--text-primary)}
 .form-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:26px;padding-top:20px;border-top:1.5px dashed var(--border)}
 .error{font-size:var(--fs-label);color:var(--status-down);padding:11px 12px;border:1.5px solid var(--status-down);border-radius:8px;background:var(--bg-nested);margin:14px 0;line-height:1.6}
 .error:empty{display:none}
+.loading-placeholder{padding:18px;min-width:0}
+.boot-loading{max-width:1200px;margin:40px auto;padding:20px}
+.skeleton-line{display:block;height:12px;border-radius:5px;background:var(--border);animation:skeleton-pulse 1.4s ease-in-out infinite alternate}
+.skeleton-row{display:flex;gap:18px;align-items:center;min-height:46px;border-bottom:1px solid var(--border)}
+.skeleton-row .skeleton-line{flex:1;min-width:0}
+.skeleton-row .skeleton-line:first-child{flex:2}
+.skeleton-row:nth-child(even) .skeleton-line{opacity:.55}
+.skeleton-row:last-child{border-bottom:0}
+.skeleton-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.skeleton-stats>div{display:grid;gap:16px;padding:18px;border:1.5px solid var(--border);border-radius:12px}
+.skeleton-stats .skeleton-line:nth-child(2){height:28px;width:55%}
+.skeleton-stats .skeleton-line:last-child{width:75%}
+.skeleton-chart{height:210px;display:flex;align-items:flex-end;gap:12px;border-bottom:1.5px solid var(--border)}
+.skeleton-chart .skeleton-line{flex:1;height:55%;border-radius:5px 5px 0 0}
+.skeleton-chart .skeleton-line:nth-child(3n){height:85%}
+.skeleton-chart .skeleton-line:nth-child(3n+1){height:35%}
+.load-error{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;padding:18px;margin:12px;border:1.5px solid var(--status-down);border-radius:12px;background:var(--bg-nested)}
+.load-error>div{display:flex;align-items:center;gap:10px;flex:1 1 200px}
+.load-error>div>svg{flex:none;color:var(--status-down)}
+.load-error p{margin:0;color:var(--text-muted);font-size:var(--fs-label)}
+@keyframes skeleton-pulse{from{opacity:.35}to{opacity:.85}}
+@media(prefers-reduced-motion:reduce){.skeleton-line{animation:none;opacity:.6}}
+@media(max-width:600px){.skeleton-stats{grid-template-columns:1fr}.skeleton-row{gap:10px}.skeleton-chart{gap:6px}}
 
 /* ─── tables ─── */
 .table-wrap{overflow-x:auto}
