@@ -9,6 +9,7 @@ x-service: &service
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
   tmpfs:
+    # Small general-purpose temp space. SQLite query spills use the data disk instead.
     - /tmp:size=32m,mode=1777
   volumes:
     - type: bind
@@ -27,6 +28,7 @@ services:
     <<: *service
     environment:
       AVN_DATA_DIR: /data
+      SQLITE_TMPDIR: ${SQLITE_TMPDIR:-/data/sqlite-tmp}
       AVN_REQUESTS_PER_MINUTE: ${AVN_REQUESTS_PER_MINUTE:-120}
     ports:
       - "${AVN_BIND_HOST:-127.0.0.1}:${AVN_INGEST_PORT:-8100}:8000"
@@ -42,6 +44,7 @@ services:
     <<: *service
     environment:
       AVN_DATA_DIR: /data
+      SQLITE_TMPDIR: ${SQLITE_TMPDIR:-/data/sqlite-tmp}
       AVN_ADMIN_TOKEN: ${AVN_ADMIN_TOKEN:?Set AVN_ADMIN_TOKEN in .env}
       AVN_MAX_EXPORT_BYTES: ${AVN_MAX_EXPORT_BYTES:-268435456}
       AVN_PUBLIC_INGEST_URL: ${AVN_PUBLIC_INGEST_URL:-}

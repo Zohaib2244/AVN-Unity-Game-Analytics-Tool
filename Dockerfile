@@ -21,4 +21,5 @@ RUN pip install --no-cache-dir -r requirements.lock
 COPY avn_analytics ./avn_analytics
 USER 1000:1000
 EXPOSE 8000
+ENTRYPOINT ["python", "-m", "avn_analytics.container"]
 CMD ["uvicorn", "avn_analytics.api:create_ingest_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--limit-concurrency", "100", "--no-proxy-headers"]

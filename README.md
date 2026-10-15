@@ -433,6 +433,7 @@ Environment variables (see `.env.example`):
 | `AVN_MAX_BODY_BYTES` | `1048576` | Largest accepted request body |
 | `AVN_HOST_DATA_DIR` | `./data` | Host folder holding all data |
 | `AVN_UID` / `AVN_GID` | `1000` | User that owns the data folder |
+| `SQLITE_TMPDIR` | `/data/sqlite-tmp` in Compose; otherwise `<AVN_DATA_DIR>/sqlite-tmp` through the container entrypoint | Disk-backed SQLite query scratch directory inside the container; created and write-checked before startup. A custom location needs a writable disk mount. Outside Docker, create the directory and set this standard SQLite variable before launching Python. |
 | `AVN_BIND_HOST` | `127.0.0.1` | Address the ports bind to (`0.0.0.0` = all interfaces) |
 | `AVN_INGEST_PORT` / `AVN_ADMIN_PORT` | `8100` / `8101` | Host ports |
 | `AVN_MAX_EXPORT_BYTES` | `268435456` | Largest raw export |
@@ -450,11 +451,18 @@ data/
   games/<uuid>.sqlite3   raw events, dictionary (with unconfirmed AI drafts and import history), session environments, environment fixes and saved funnels for one game
   icons/<uuid>.png       game icons
   exports/               temporary downloads
+  sqlite-tmp/            SQLite query scratch files (container startup creates this directory)
   deleted/               games and icons you deleted (not erased)
   nutbot/                NutBot's agent CLI sign-in and chat sessions (only if NutBot is used)
 ```
 
 Raw events are kept indefinitely; there is no retention job or deletion endpoint yet, so watch your disk space. To move or back up the data, stop both services and copy the **whole** directory (SQLite may hold committed data in `-wal` sidecar files). Keep the data on a local filesystem, not SMB or NFS. Clients simply queue events during the downtime.
+
+SQLite sorting, grouping and distinct counts can spill to temporary files. The container entrypoint
+sets `SQLITE_TMPDIR` on the writable data mount, so these queries use disk capacity instead of the
+small `/tmp` RAM disk. Both services use this startup path, including after container recreation.
+SQLite manages its query scratch files automatically; no scheduled cleanup or dashboard clean
+button is needed. Keep free space on the data disk. Do not delete live SQLite files or WAL sidecars.
 
 ## Public exposure (Cloudflare Tunnel example)
 

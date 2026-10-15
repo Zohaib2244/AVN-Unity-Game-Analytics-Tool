@@ -37,6 +37,7 @@ Edit `.env`:
 | `AVN_ADMIN_TOKEN` | The random token you just generated (32+ characters). The admin service refuses to start without it. |
 | `AVN_UID` / `AVN_GID` | The numbers from `id -u` / `id -g`, so the containers can write `data/`. |
 | `AVN_HOST_DATA_DIR` | Where data lives. `./data` is fine; an absolute path also works if you create it first and the UID can write to it. |
+| `SQLITE_TMPDIR` | SQLite query scratch directory **inside** the containers. Defaults to `/data/sqlite-tmp` on the disk-backed data mount; startup creates and write-checks it. If changed, mount a writable local disk at that location too. |
 | `AVN_REQUESTS_PER_MINUTE` | Per-API-key rate limit. Default 120; raise it if many players share one key. |
 | `AVN_BIND_HOST` | Address the ports bind to. Default `127.0.0.1` (this machine only); use `0.0.0.0` to listen on all interfaces, for example when a proxy on another host forwards to it. |
 | `AVN_INGEST_PORT` / `AVN_ADMIN_PORT` | Host ports. Defaults 8100 and 8101. |
@@ -223,6 +224,7 @@ docker compose up -d --wait                # start
 - **Boot:** services use `restart: unless-stopped`; enable the Docker service at boot (`systemctl enable docker`).
 - **Rotating the admin token:** edit `AVN_ADMIN_TOKEN` in `.env`, then `docker compose up -d --force-recreate`.
 - **Disk:** check free space occasionally. There is no automatic retention or deletion, and a full disk makes the server return 503 (clients keep their events and retry), so plan capacity or export and archive.
+- **SQLite temporary space:** both services send query scratch files to `/data/sqlite-tmp`, using the data disk's free space. `/tmp` remains a small RAM disk for other tools. Increasing `/tmp` is only a workaround for older images: tmpfs consumes container memory and can fill again as queries grow. The image entrypoint creates the scratch directory as the runtime UID and refuses startup if it cannot create and write a file there. SQLite removes query scratch files itself; do not clean active files manually.
 - **Failures are safe:** if the server is down, games queue events on the device and catch up later.
 
 ## 8. Backups and moving to another disk
@@ -237,6 +239,7 @@ data/
   deleted/               deleted games and icons (moved here, not erased)
   nutbot/                NutBot's agent CLI sign-in and chat sessions (if used)
   exports/               temporary download files (safe to delete when stopped)
+  sqlite-tmp/            SQLite query scratch space (normally empty between queries)
 ```
 
 SQLite runs in WAL mode, so a live `.sqlite3` file can be missing committed data that is still in its `-wal` sidecar. **Stop both services** before copying, and copy the whole directory:
@@ -271,7 +274,8 @@ To move to a new disk: stop, `rsync -a ./data/ /new/disk/avn-data/`, set `AVN_HO
 | Game gets **404/405** | Proxy only allows `POST /v1/events`; check the URL path and method. |
 | Game gets **415** | A `Content-Encoding` other than gzip (for example a proxy re-encoding the body). An SDK talking to a server that predates gzip support falls back to plain JSON by itself. |
 | Game gets **429** | Per-key rate limit; the SDK backs off. Raise `AVN_REQUESTS_PER_MINUTE` if many players share a key. |
-| **503** responses | Database or disk problem (a full disk is the usual cause); check `docker compose logs` and `df -h`. |
+| **503** responses | Database or disk problem; check the SQLite error in container logs. `SQLITE_FULL` can mean a full query-temp filesystem even when the main disk has space. Current images set `SQLITE_TMPDIR=/data/sqlite-tmp`; check the effective container environment and free space on that mount. Older images may still spill to the small `/tmp` tmpfs. |
+| Container exits with "SQLite temporary storage is unavailable" | The configured `SQLITE_TMPDIR` cannot be created or written by the container UID, or its disk is full. Correct the mount, ownership or capacity before restarting. |
 | Events never show up, SDK says "offline" | Device has no connectivity, or the endpoint URL in `AvnConfig` is wrong (check `LastStatus` in the demo). |
 | `country` is always `null` | Not behind Cloudflare, or a proxy drops the `CF-IPCountry` header. |
 
