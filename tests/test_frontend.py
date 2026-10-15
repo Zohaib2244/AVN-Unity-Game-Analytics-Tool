@@ -60,3 +60,157 @@ await assert.rejects(request('/games'), error => error.name === 'AbortError');
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_disclosures_survive_redraw_and_replace_old_listeners():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/insights.js").read_text()
+    disclosure = script[
+        script.index("const disclosureBindings =") : script.index("function downloadCSV(")
+    ]
+    checks = """
+import assert from 'node:assert/strict';
+const storage = new Map([['player', {'setup':false, 'session':false}]]);
+function storeGet(key) { return structuredClone(storage.get(key)); }
+function storeSet(key, value) { storage.set(key, structuredClone(value)); }
+const section = (key, open = true) => ({
+  dataset:{disclosure:key}, open, matches: selector => selector === 'details[data-disclosure]',
+});
+let sections = [section('setup'), section('session')];
+const listeners = [];
+const container = {
+  querySelectorAll: () => sections,
+  addEventListener: (type, callback, options) => listeners.push({type, callback, options}),
+};
+const toggle = target => listeners.filter(item => !item.options.signal.aborted)
+  .forEach(item => item.callback({target}));
+const disclosures = mountDisclosures(container, 'player');
+assert.deepEqual(sections.map(item => item.open), [false, false]);
+sections[0].open = true;
+toggle(sections[0]);
+assert.equal(storeGet('player').setup, true);
+assert.equal(storeGet('player').session, false);
+// Capture a user toggle even if rendering happens before the native toggle event is dispatched.
+sections[0].open = false;
+disclosures.remember();
+sections = [section('setup'), section('session'), section('new-highlight')];
+disclosures.refresh();
+assert.deepEqual(sections.map(item => item.open), [false, false, true]);
+// Match navigation opens a folded session; subsequent redraws keep it open.
+sections[1].open = true;
+disclosures.remember();
+sections = [section('setup'), section('session')];
+disclosures.refresh();
+assert.deepEqual(sections.map(item => item.open), [false, true]);
+// Remounting an event panel must not keep handlers for a previous storage scope.
+mountDisclosures(container, 'another-event');
+assert.equal(listeners[0].options.signal.aborted, true);
+sections[1].open = false;
+toggle(sections[1]);
+assert.equal(storeGet('another-event').session, false);
+assert.equal(storeGet('player').session, true);
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=disclosure + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_raw_timeline_navigation_visibility_and_session_gaps():
+    assets = Path(__file__).parents[1] / "avn_analytics/static"
+    script = (assets / "insights.js").read_text()
+    raw_events = script[
+        script.index("async function renderRawEvents(") : script.index("/* ─── Levels:")
+    ]
+    checks = """
+import assert from 'node:assert/strict';
+const escapeHTML = value => String(value ?? '');
+const icon = () => '';
+const skeleton = () => '';
+const number = String;
+const analysisDate = value => value;
+const clock = value => value;
+const duration = seconds => `${seconds}s`;
+const gameURL = game => `/v1/games/${game.id}`;
+const storeGet = () => null;
+const storeSet = () => {};
+const mountDisclosures = () => ({remember() {}, refresh() {}});
+const nodes = new Map();
+function node(key) {
+  if (!nodes.has(key)) nodes.set(key, {
+    isConnected:true, hidden:false, disabled:false, value:'', textContent:'', dataset:{},
+    classList:{toggle() {}}, handlers:{},
+    addEventListener(type, callback) {this.handlers[type] = callback;},
+    contains() {return false;},
+    querySelector() {return null;},
+    querySelectorAll() {return [];},
+    set innerHTML(value) {
+      this.html = value;
+      this.options = [...value.matchAll(/<option value="([^"]*)"/g)]
+        .map(match => ({value:match[1]}));
+    },
+    get innerHTML() {return this.html || '';},
+  });
+  return nodes.get(key);
+}
+const root = node('root');
+root.querySelector = node;
+root.querySelectorAll = () => [];
+const container = {querySelector: () => root};
+globalThis.document = {activeElement:null};
+const rows = [
+  {name:'AD_ANALYSIS',session_id:'one',client_ts:'2026-10-04T09:00:00Z',params:{}},
+  {name:'AD_ANALYSIS',session_id:'one',client_ts:'2026-10-04T09:01:00Z',params:{}},
+  {name:'OTHER_EVENT',session_id:'two',client_ts:'2026-10-04T09:11:00Z',params:{}},
+  {name:'LAST_EVENT',session_id:'three',client_ts:'2026-10-04T09:11:00Z',params:{}},
+];
+const api = async () => ({events:rows,truncated:false,snapshot:rows.length});
+await renderRawEvents({id:'test'},'player',{from:'2026-10-04',to:'2026-10-04'},'utc',container);
+assert.equal(node('.highlight-navigation').hidden, true, 'No highlights means no navigation');
+assert.equal((node('#journey').innerHTML.match(/role="separator"/g) || []).length, 2);
+assert.match(node('#journey').innerHTML, /600s after previous session/);
+assert.match(node('#journey').innerHTML, /0s after previous session/);
+assert.equal((node('#journey').innerHTML.match(/after previous session/g) || []).length, 2,
+  'The first session must not claim a gap from an unknown previous session');
+const click = targets => root.handlers.click({target:{
+  closest:selector => targets[selector] || null,
+}});
+click({'#highlight-add':{}});
+assert.equal(node('.highlight-navigation').hidden, false);
+assert.equal(node('#highlight-next').disabled, false);
+const changeEnabled = enabled => node('#highlight-rules').handlers.change({target:{
+  dataset:{highlightField:'enabled'}, checked:enabled,
+  closest:() => ({dataset:{highlight:'0'}}),
+}});
+changeEnabled(false);
+assert.equal(node('.highlight-navigation').hidden, true, 'Disabled highlights cannot navigate');
+changeEnabled(true);
+assert.equal(node('.highlight-navigation').hidden, false);
+click({'[data-timeline-mode]':{dataset:{timelineMode:'filter'}}});
+assert.equal(node('.highlight-navigation').hidden, true,
+  'Filtering never shows highlight navigation');
+node('#journey-filter').value = 'OTHER_EVENT';
+node('#journey-filter').handlers.input();
+assert.equal((node('#journey').innerHTML.match(/role="separator"/g) || []).length, 0,
+  'No orphan divider before the first visible session');
+assert.match(node('#journey').innerHTML, /600s after previous session/,
+  'Gaps come from the original timeline, even when the prior session is filtered out');
+click({'[data-timeline-mode]':{dataset:{timelineMode:'highlight'}}});
+assert.equal(node('.highlight-navigation').hidden, false);
+click({'[data-highlight-remove]':{},'[data-highlight]':{dataset:{highlight:'0'}}});
+assert.equal(node('.highlight-navigation').hidden, true,
+  'Removing the last highlight hides navigation');
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=(assets / "conditions.js").read_text() + raw_events + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr

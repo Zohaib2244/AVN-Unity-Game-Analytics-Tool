@@ -137,7 +137,7 @@ The website is organized around games. The home page lists your games; Android a
 | **Overview** | Players, new players, sessions and events; daily active users (DAU on the last day, average and peak DAU, WAU, MAU, stickiness); activity per day (players per day is the DAU); a tabbed breakdown by environment, app version, build, country and platform (click a row to filter by it); top events. |
 | **Funnels** | Steps you define, in order (up to 100): how many players reach each one, who stops where, and how long it takes. Below it, **Journeys** shows what players did between two steps in plain words, grouped into the most common journeys, plus where players stop. |
 | **Levels** | The main metric follows the same players from this level’s start to the next numbered level’s start. Expand a row to split the total into no finish recorded, finished without a next start, and missing progress events. The player list shows the duration of the session containing each player’s latest activity on that level: the reported session-end duration, or the first-to-last observed event span when no valid duration is reported. Returning entrants and unavailable earlier history are separate groups. Net gains/losses compare starter totals separately and have distinct arrows and labels. Player story, raw events and info open in a popup that preserves Levels filters, sorting, expanded rows and scroll position. |
-| **Players** | Everyone active in the chosen days, searchable and sortable (last active, first seen, events, sessions, average session length, app version). **Event rules** add your own columns from events (times they did something, highest/lowest/total of a parameter, first/last time), sort by them, and keep only players who did, or never did, an event. Countries show their full name on hover. Open a player for their **story**: sessions as chapters, with runs of levels folded into one line ("Played levels 1–10, completed all"). The raw event list and a **Player info** tab (latest version, build, platform, device and country, and an optional device specification lookup) are one click away. |
+| **Players** | Everyone active in the chosen days, searchable and sortable (last active, first seen, events, sessions, average session length, total playtime, app version). **Event rules** add your own columns from events (times they did something, highest/lowest/total of a parameter, first/last time), sort by them, and keep only players who did, or never did, an event. Total playtime sums session durations in the selected days and filters. Countries show their full name on hover. Open a player for their **story**: sessions as chapters, with runs of levels folded into one line ("Played levels 1–10, completed all"). The raw event list and a **Player info** tab (latest version, build, platform, device and country, and an optional device specification lookup) are one click away. |
 | **Exports** | Download the raw events, using the same days and filters. |
 | **Event dictionary → Dictionary** | Every event your game has sent or defined, with counts, players, trends, descriptions, parameter types and values, activity by version/environment/country, and raw examples. Describe events in place, set story labels or hidden state, and open an event directly in Mappings. Flags identify missing descriptions, changing parameter types, quiet events and similar names. Dictionary progress is folded below the totals. |
 | **Event dictionary → Mappings** | Shared meanings for Retention, Levels, player stories and journeys. Pick **All versions** for shared rules or an app version for release-specific rules. A version's rules replace the shared rules for that event; other events still inherit theirs. Parameter choices and counts follow the selected version. Review suggested mappings for known event shapes, preview counts and matching parameters before saving, and see warnings for overlapping rules. **Fill with AI agent** lives here. |
@@ -149,6 +149,34 @@ The website is organized around games. The home page lists your games; Android a
 To register the other platform of a game, use the **+ iOS** / **+ Android** link on the game card or in the sidebar: it pre-fills the name and bundle ID. Use exactly the same game name so the two versions are grouped.
 
 Everything is computed live from the game's event database, in game time (`client_ts`, UTC). A player is identified by `user_id` when the game sets one, otherwise by the per-install `device_id`. Results are reused for 30 seconds in the browser; the ↻ button in the top bar refetches everything.
+
+### Timeline highlights and conditional activity
+
+In a player's **Raw events**, choose **Highlight timeline** and add named, colored highlights.
+Each highlight combines event-name and parameter conditions in nested **all (AND)** or
+**any (OR)** groups, for example `AD_ANALYSIS AND STAGE = Shown AND (LEVEL >= 5 OR PLACEMENT = Rewarded)`.
+Comparisons include equals, not equals, contains, numeric comparisons, exists and is missing.
+Names and values are case-sensitive for equality; contains ignores ASCII case. Numeric comparisons
+accept numbers and valid JSON numeric strings. A missing parameter does not satisfy not-equals;
+use **is missing** for that case.
+
+The timeline stays complete in highlight mode. Each highlight shows its count, matching parameter
+chips are marked, and overlapping highlights show separate labels. Use **Next / Previous** to wrap
+through one highlight or all matching events, including across sessions. All counts cover the
+selected date range; the browser loads additional pages automatically and labels incomplete
+counts while loading. **Filter timeline** retains the simple text filter. Up to 20 highlights
+are remembered per game in the current browser.
+
+In **Event dictionary → an event → Activity**, use the same condition editor and **Apply conditions**
+to get matching events, matching players, a daily chart and two averages: events per matching player,
+and events per active player across all events in the selected days and filters (including zero-match
+players). Events without a player identity count toward the event total only, never either average.
+Conditions are remembered per event in the current browser. Groups support up to six levels and
+100 conditions/groups overall.
+
+Highlight setup, individual highlights, timeline sessions and conditional activity can be folded
+using their section headings. Folded state is remembered in the browser; navigating to a matching
+event automatically opens its session.
 
 ### Environments and filters
 
@@ -353,6 +381,7 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Define / read event dictionary | `PUT /v1/games/{id}/dictionary/{event}`, `GET /v1/games/{id}/dictionary` |
 | Fill the dictionary with an AI agent | `POST /v1/games/{id}/dictionary/import/prepare` with `{"options": {...}}` returns the `avn-events.json` template and the agent prompt; `POST /v1/games/{id}/dictionary/import` with `{"file": {...}}` is a dry run, and the same body plus the returned `preview` applies exactly what was previewed (optional `options` override the file's, `exclude` lists events, or single texts as `event/description` and `event/param:name`, to leave out); `GET …/dictionary/imports`, `POST …/dictionary/imports/{batch}/undo`, `GET …/dictionary/drafts`, `POST …/dictionary/{event}/confirm`. See [Fill the dictionary with an AI agent](#fill-the-dictionary-with-an-ai-agent) |
 | Events with counts, one event's activity | `GET /v1/games/{id}/insights/events?start=…&end=…`, `GET /v1/games/{id}/insights/events/detail?name=…&start=…&end=…` (accept the filter parameters) |
+| Conditional event counts and per-player averages | `POST /v1/games/{id}/insights/events/activity` with `{name, start, end, filters?, timezone_offset_minutes?, conditions?}`. A group is `{match: "all"\|"any", conditions: [...]}` containing groups or tests `{field: "event"\|"param", param?, op, value}`. Operators: `eq`, `ne`, `contains`, `gt`, `gte`, `lt`, `lte`, `exists`, `missing` (event names support the first three). Omit conditions to count all occurrences of the named event. Returns `events`, `players`, `identified_events`, `anonymous_events`, `active_players`, `per_matching_player`, `per_active_player`, `days`. |
 | Are the mappings in good shape | `GET /v1/games/{id}/mappings/status` returns `{ok, has_events, issues: [{kind: "missing"\|"silent", concept, label, used_by, event?}]}` |
 | Mappings: what is understood, set, preview | `GET /v1/games/{id}/mappings?version=1.0`, `PUT /v1/games/{id}/dictionary/{event}/mappings` with `{"canonical": [{"action": "level_started", "param": "mode", "op": "eq", "value": "normal", "number_param": "Stage", "app_version": "1.0"}]}` (replaces the event's mapping rules; the event needn't have a description), `POST /v1/games/{id}/mappings/preview` with `{"event": …, "rule": …}`. Actions: `session_start`, `level_started`, `level_completed`, `level_failed`, `level_restarted` |
 | Arrival counts | `GET /v1/games/{id}/health?date=2026-10-04&period=week` (accepts the filter parameters) |
@@ -361,7 +390,7 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Overview numbers | `GET /v1/games/{id}/insights/summary?start=…&end=…` (accepts the filter parameters) |
 | Event and parameter catalog | `GET /v1/games/{id}/insights/catalog?start=…&end=…` |
 | Run a funnel | `POST /v1/games/{id}/insights/funnel` (steps, `scope`, `window_hours`, `breakdown`, `filters`) |
-| Players / one player's events | `GET /v1/games/{id}/insights/players?start=…&end=…`, `GET /v1/games/{id}/insights/journey?player=…&start=…&end=…` |
+| Players / one player's events | `GET /v1/games/{id}/insights/players?start=…&end=…`, `GET /v1/games/{id}/insights/journey?player=…&start=…&end=…&offset=0` (up to 5,000 events per page; when `truncated` is true, advance `offset` by the number returned and pass the response's `snapshot` on subsequent pages so incoming events cannot shift the results) |
 | Saved funnels | `GET` / `POST /v1/games/{id}/insights/funnels`, `PUT` / `DELETE /v1/games/{id}/insights/funnels/{funnel_id}` |
 | Retention cohorts | `GET /v1/games/{id}/insights/retention?start=…&end=…` (accepts the filter parameters) |
 | Level progress | `GET /v1/games/{id}/insights/levels?start=…&end=…` (accepts the filter parameters) |

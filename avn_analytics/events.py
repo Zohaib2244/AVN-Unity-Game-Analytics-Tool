@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 
-from . import stories
+from . import conditions, stories
 from .insights import (
     ENVIRONMENT,
     HIDDEN_PARAMS,
@@ -174,6 +174,53 @@ def overview(storage, game_id, start, end, filters, timezone_offset_minutes=0):
                 path.stat().st_size for path in storage.game_files(game_id) if path.exists()
             ),
         },
+    }
+
+
+def activity(storage, game_id, name, start, end, filters, tree=None, timezone_offset_minutes=0):
+    """Exact conditional counts; anonymous events never enter a per-player numerator."""
+    storage.get_game(game_id)
+    scope, args = where(start, end, filters)
+    predicate, values = conditions.condition_sql(tree) if tree else ("1", [])
+    day = day_expression(timezone_offset_minutes)
+    with storage.connect(storage.game_path(game_id)) as connection:
+        active_players = connection.execute(
+            f"SELECT count(DISTINCT {PLAYER}) FROM events WHERE {scope}", args
+        ).fetchone()[0]
+        matching = f"{scope} AND name=? AND ({predicate})"
+        bound = [*args, name, *values]
+        totals = dict(
+            connection.execute(
+                f"""SELECT count(*) AS events, count(DISTINCT {PLAYER}) AS players,
+                           count({PLAYER}) AS identified_events
+                    FROM events WHERE {matching}""",
+                bound,
+            ).fetchone()
+        )
+        days = {
+            row["day"]: dict(row)
+            for row in connection.execute(
+                f"""SELECT {day} AS day, count(*) AS events, count(DISTINCT {PLAYER}) AS players
+                    FROM events WHERE {matching} GROUP BY day""",
+                bound,
+            )
+        }
+    return {
+        **totals,
+        "active_players": active_players,
+        "anonymous_events": totals["events"] - totals["identified_events"],
+        "per_matching_player": totals["identified_events"] / totals["players"]
+        if totals["players"]
+        else 0,
+        "per_active_player": totals["identified_events"] / active_players if active_players else 0,
+        "days": [
+            {
+                "day": item,
+                "events": days.get(item, {}).get("events", 0),
+                "players": days.get(item, {}).get("players", 0),
+            }
+            for item in _days(start, end, timezone_offset_minutes)
+        ],
     }
 
 

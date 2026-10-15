@@ -25,6 +25,7 @@ from .models import (
     AnalyticsThresholds,
     Batch,
     EnvironmentFix,
+    EventActivityQuery,
     EventDefinition,
     EventMappings,
     Filters,
@@ -709,6 +710,18 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             storage, str(game_id), *day_range(start, end, tz_offset), chosen, tz_offset
         )
 
+    @admin_api.post("/v1/games/{game_id}/insights/events/activity")
+    def insights_event_activity(game_id: UUID, query: EventActivityQuery):
+        return events.activity(
+            storage,
+            str(game_id),
+            query.name,
+            *day_range(query.start, query.end, query.timezone_offset_minutes),
+            query.filters.model_dump(),
+            query.conditions.model_dump() if query.conditions else None,
+            query.timezone_offset_minutes,
+        )
+
     @admin_api.get("/v1/games/{game_id}/insights/events/detail")
     def insights_event_detail(
         game_id: UUID,
@@ -827,8 +840,17 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         start: DateParam,
         end: DateParam,
         tz_offset: TimezoneOffset = 0,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        snapshot: Annotated[int, Query(ge=0, le=2**63 - 1)] | None = None,
     ):
-        return insights.journey(storage, str(game_id), player, *day_range(start, end, tz_offset))
+        return insights.journey(
+            storage,
+            str(game_id),
+            player,
+            *day_range(start, end, tz_offset),
+            offset=offset,
+            snapshot=snapshot,
+        )
 
     @admin_api.get("/v1/games/{game_id}/insights/funnels")
     def list_funnels(game_id: UUID):

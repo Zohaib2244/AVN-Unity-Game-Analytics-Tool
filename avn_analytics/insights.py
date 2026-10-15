@@ -673,6 +673,7 @@ PLAYER_SORTS = {
     "events": "events",
     "sessions": "sessions",
     "session_length": "avg_session_seconds",
+    "playtime": "total_play_seconds",
     "version": "version_key(app_version)",
 }
 
@@ -750,7 +751,8 @@ def players(
     """Players active in the range.
 
     sort: last_seen, first_seen, events, sessions, session_length (average duration per session,
-    using its final event when no end duration was reported), version (the newest app version a
+    using its final event when no end duration was reported), playtime (total session duration),
+    version (the newest app version a
     player has used, ordered by number), or metric0..metric2 (one of `metrics`).
     conditions keep only players who did (or never did) an event; metrics add a column per player.
     See rules.py for what a condition and a metric are.
@@ -801,13 +803,15 @@ def players(
             f"GROUP BY player {having})",
             (*args, *having_args),
         ).fetchone()[0]
+        session_length = (
+            f"average_session_length({SESSION}, name, "
+            "json_extract(payload, '$.params.duration_seconds'), client_ts)"
+        )
         rows = connection.execute(
             f"""SELECT {PLAYER} AS player, count(*) AS events,
                        count(DISTINCT {SESSION}) AS sessions,
-                       average_session_length(
-                           {SESSION}, name,
-                           json_extract(payload, '$.params.duration_seconds'), client_ts)
-                           AS avg_session_seconds,
+                       {session_length} AS avg_session_seconds,
+                       {session_length} * count(DISTINCT {SESSION}) AS total_play_seconds,
                        min(client_ts) AS first_seen, max(client_ts) AS last_seen,
                        max(json_extract(payload, '$.platform')) AS platform,
                        newest_version(json_extract(payload, '$.app_version')) AS app_version,
@@ -823,8 +827,9 @@ def players(
         result = []
         for row in rows:
             item = dict(row)
-            if item["avg_session_seconds"] is not None:
-                item["avg_session_seconds"] = round(item["avg_session_seconds"], 1)
+            for key in ("avg_session_seconds", "total_play_seconds"):
+                if item[key] is not None:
+                    item[key] = round(item[key], 1)
             item["metrics"] = [
                 round(item.pop(f"m{n}"), 2)
                 if isinstance(item.get(f"m{n}"), float)
@@ -839,16 +844,20 @@ def players(
         }
 
 
-def journey(storage, game_id, player, start, end):
+def journey(storage, game_id, player, start, end, offset=0, snapshot=None):
     """Every event of one player in the range, in game-time order (filters don't apply)."""
     storage.get_game(game_id)
     condition, args = where(start, end)
     with storage.connect(storage.game_path(game_id)) as connection:
+        if snapshot is None:
+            snapshot = connection.execute("SELECT coalesce(max(rowid), 0) FROM events").fetchone()[
+                0
+            ]
         rows = connection.execute(
             f"""SELECT name, client_ts, server_ts, payload, {ENVIRONMENT} AS environment
-                FROM events WHERE {condition} AND {PLAYER}=?
-                ORDER BY client_ts, event_id LIMIT ?""",
-            (*args, player, MAX_JOURNEY_EVENTS + 1),
+                FROM events WHERE {condition} AND {PLAYER}=? AND rowid<=?
+                ORDER BY client_ts, event_id LIMIT ? OFFSET ?""",
+            (*args, player, snapshot, MAX_JOURNEY_EVENTS + 1, offset),
         ).fetchall()
     events = []
     for row in rows[:MAX_JOURNEY_EVENTS]:
@@ -872,7 +881,12 @@ def journey(storage, game_id, player, start, end):
                 "environment": row["environment"],
             }
         )
-    return {"player": player, "events": events, "truncated": len(rows) > MAX_JOURNEY_EVENTS}
+    return {
+        "player": player,
+        "events": events,
+        "truncated": len(rows) > MAX_JOURNEY_EVENTS,
+        "snapshot": snapshot,
+    }
 
 
 MAX_ENVIRONMENT_FIXES = 30

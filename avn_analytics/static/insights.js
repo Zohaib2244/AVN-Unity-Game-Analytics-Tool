@@ -42,6 +42,31 @@ const shortId = id => id.length > 18 ? `${id.slice(0, 8)}…${id.slice(-6)}` : i
 const setWidths = container => container.querySelectorAll('[data-width]').forEach(bar => { bar.style.width = `${bar.dataset.width}%`; }); // CSP: no inline style attributes
 function storeGet(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
 function storeSet(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ } }
+const disclosureBindings = new WeakMap();
+function mountDisclosures(container, storageKey) {
+  disclosureBindings.get(container)?.abort();
+  const controller = new AbortController();
+  disclosureBindings.set(container, controller);
+  const remember = () => {
+    const saved = storeGet(storageKey) || {};
+    container.querySelectorAll('details[data-disclosure]').forEach(section => {saved[section.dataset.disclosure] = section.open;});
+    storeSet(storageKey, saved);
+  };
+  const refresh = () => {
+    const saved = storeGet(storageKey) || {};
+    container.querySelectorAll('details[data-disclosure]').forEach(section => {
+      if (Object.hasOwn(saved, section.dataset.disclosure)) section.open = saved[section.dataset.disclosure];
+    });
+  };
+  container.addEventListener('toggle', event => {
+    const section = event.target;
+    if (!section.matches('details[data-disclosure]')) return;
+    const saved = storeGet(storageKey) || {};
+    if (saved[section.dataset.disclosure] !== section.open) storeSet(storageKey, {...saved, [section.dataset.disclosure]: section.open});
+  }, {capture: true, signal: controller.signal});
+  refresh();
+  return {remember, refresh};
+}
 function downloadCSV(name, rows) {
   const csv = rows.map(row => row.map(cell => /[",\n]/.test(String(cell ?? '')) ? `"${String(cell).replace(/"/g, '""')}"` : String(cell ?? '')).join(',')).join('\n');
   const url = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
@@ -682,7 +707,7 @@ function metricLabel(metric) {
 }
 const metricValue = (metric, value, timezone = 'local') => value == null ? '—' : ['first', 'last'].includes(metric.agg) ? analysisDate(value, timezone) : number(value);
 const usableRules = list => list.filter(rule => rule.event).map(({event, param, op, value, ...rest}) => ({event, param: param || '', op: param ? (op || 'eq') : 'eq', value: param && op !== 'exists' ? (value || '') : '', ...Object.fromEntries(Object.entries(rest).filter(([key]) => !key.startsWith('_')))}));
-const BASE_SORTS = [['last_seen', 'Last active'], ['first_seen', 'First seen'], ['events', 'Events'], ['sessions', 'Sessions'], ['session_length', 'Session length'], ['version', 'App version']];
+const BASE_SORTS = [['last_seen', 'Last active'], ['first_seen', 'First seen'], ['events', 'Events'], ['sessions', 'Sessions'], ['session_length', 'Session length'], ['playtime', 'Total playtime'], ['version', 'App version']];
 
 async function renderPlayers() {
   const game = currentGame;
@@ -723,7 +748,7 @@ async function renderPlayers() {
     if (!options.some(([key]) => key === view.sort)) view.sort = 'last_seen';
     document.querySelector('#player-sort').innerHTML = options.map(([key, label]) => `<option value="${key}" ${key === view.sort ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('');
     const timeSort = ['last_seen', 'first_seen', 'version'].includes(view.sort) || metrics[Number(view.sort.replace('metric', ''))]?.agg?.match(/first|last/);
-    const orderLabel = view.sort === 'session_length'
+    const orderLabel = ['session_length', 'playtime'].includes(view.sort)
       ? (view.order === 'desc' ? 'Longest first' : 'Shortest first')
       : (view.order === 'desc' ? (timeSort ? 'Newest first' : 'Highest first') : (timeSort ? 'Oldest first' : 'Lowest first'));
     document.querySelector('#player-order').innerHTML = `${view.order === 'desc' ? '↓' : '↑'} ${orderLabel}`;
@@ -769,7 +794,7 @@ async function renderPlayers() {
       if (!data.players.length) { list.innerHTML = empty(search || body.conditions.length ? 'No matching players' : 'No players', search || body.conditions.length ? 'Try another ID, or loosen the event rules.' : 'Pick other days or filters, or check that your game is sending events.', '', 'users'); return; }
       const link = row => `${gamePath(game, 'players')}?${new URLSearchParams({player: row.player})}`;
       const head = (key, label, extra = '') => `<th class="${extra} sortable ${view.sort === key ? 'sorted' : ''}" data-sort="${key}" aria-sort="${view.sort === key ? (view.order === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button">${escapeHTML(label)}<span class="sort-arrow">${view.sort === key ? (view.order === 'asc' ? '▲' : '▼') : ''}</span></button></th>`;
-      list.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Player</th>${head('events', 'Events', 'num')}${head('sessions', 'Sessions', 'num')}${head('session_length', 'Avg session', 'num')}${head('first_seen', 'First seen')}${head('last_seen', 'Last active')}${body.metrics.map((metric, position) => head(`metric${position}`, metricLabel(metric), 'num metric')).join('')}${head('version', 'Version')}<th>Env</th><th>Country</th></tr></thead><tbody>${data.players.map(row => `<tr><td><a class="row-title" href="${link(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a><p class="small muted">${row.has_user_id ? 'User ID' : 'Install ID'} · ${platformLabel(row.platform || '—')}</p></td><td class="num">${number(row.events)}</td><td class="num">${number(row.sessions)}</td><td class="num">${duration(row.avg_session_seconds)}</td><td class="small muted">${analysisDate(row.first_seen, chosen.timezone)}</td><td class="small muted">${analysisDate(row.last_seen, chosen.timezone)}</td>${body.metrics.map((metric, position) => `<td class="num metric">${metricValue(metric, row.metrics[position], chosen.timezone)}</td>`).join('')}<td class="small">${escapeHTML(row.app_version || '—')}</td><td><span class="pill ${TEST_ENVIRONMENTS.includes(row.environment) ? '' : 'good'}">${escapeHTML(row.environment || '—')}</span></td><td class="small">${countryTag(row.country)}</td></tr>`).join('')}</tbody></table></div>
+      list.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Player</th>${head('events', 'Events', 'num')}${head('sessions', 'Sessions', 'num')}${head('session_length', 'Avg session', 'num')}${head('playtime', 'Total playtime', 'num')}${head('last_seen', 'Last active')}${body.metrics.map((metric, position) => head(`metric${position}`, metricLabel(metric), 'num metric')).join('')}${head('version', 'Version')}<th>Env</th><th>Country</th></tr></thead><tbody>${data.players.map(row => `<tr><td><a class="row-title" href="${link(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a><p class="small muted">${row.has_user_id ? 'User ID' : 'Install ID'} · ${platformLabel(row.platform || '—')}</p></td><td class="num">${number(row.events)}</td><td class="num">${number(row.sessions)}</td><td class="num">${duration(row.avg_session_seconds)}</td><td class="num">${duration(row.total_play_seconds)}</td><td class="small muted">${analysisDate(row.last_seen, chosen.timezone)}</td>${body.metrics.map((metric, position) => `<td class="num metric">${metricValue(metric, row.metrics[position], chosen.timezone)}</td>`).join('')}<td class="small">${escapeHTML(row.app_version || '—')}</td><td><span class="pill ${TEST_ENVIRONMENTS.includes(row.environment) ? '' : 'good'}">${escapeHTML(row.environment || '—')}</span></td><td class="small">${countryTag(row.country)}</td></tr>`).join('')}</tbody></table></div>
         <div class="pager"><span class="small muted">${number(offset + 1)}–${number(offset + data.players.length)} of ${number(data.total)}</span><span><button class="button" data-page="-1" ${offset ? '' : 'disabled'}>Previous</button> <button class="button" data-page="1" ${offset + data.players.length < data.total ? '' : 'disabled'}>Next</button></span></div>`;
     } catch (error) { if (ticket === latest) list.innerHTML = loadError(error); }
   };
@@ -1015,36 +1040,133 @@ async function renderJourney(game, player, options = {}) {
 }
 
 async function renderRawEvents(game, player, range, timezone, container = document) {
-  container.querySelector('#story-body').innerHTML = `<section class="panel"><div class="panel-header"><div><h2>Timeline</h2><p>Every event, grouped by session · times in ${timezone === 'utc' ? 'UTC' : 'your local time'} · the gap is the time since the previous event</p></div><div class="search">${icon('search',16)}<input id="journey-filter" type="search" aria-label="Filter events" placeholder="Filter by event or parameter…"></div></div><div class="panel-body" id="journey">${skeleton('table', 6, 3)}</div></section>`;
-  let events = [];
-  const box = container.querySelector('#journey');
-  const search = container.querySelector('#journey-filter');
+  const saved = storeGet(`avn-highlights-${game.id}`) || {};
+  const highlights = saved.rules || [];
+  let mode = saved.mode || 'highlight';
+  let events = []; let current = -1; let complete = false; let loadFailure = '';
+  const persist = () => storeSet(`avn-highlights-${game.id}`, {rules: highlights, mode});
+  container.querySelector('#story-body').innerHTML = `<section class="panel raw-timeline"><div class="panel-header"><div><h2>Timeline</h2><p>Every event, grouped by session · times in ${timezone === 'utc' ? 'UTC' : 'your local time'} · the gap is the time since the previous event</p></div>
+    <div class="segmented" role="group" aria-label="Timeline mode"><button type="button" data-timeline-mode="highlight">Highlight timeline</button><button type="button" data-timeline-mode="filter">Filter timeline</button></div></div>
+    <details class="panel-body highlight-setup" id="timeline-highlights" data-disclosure="highlight-setup" open><summary>Highlight rules <span class="small muted" id="highlight-rule-summary"></span></summary><div class="highlight-setup-body"><p class="help">Keep the full timeline. Give each highlight a color and combine conditions with AND / OR groups. Rules are remembered for this game in this browser.</p><div id="highlight-rules"></div><button type="button" class="button small-button" id="highlight-add">+ Highlight</button></div></details>
+    <div class="highlight-navigation" hidden><label for="highlight-selection">Navigate</label><div class="highlight-navigation-controls"><select id="highlight-selection"><option value="all">All highlights</option></select><div class="highlight-navigation-buttons" role="group" aria-label="Navigate matching events"><button type="button" class="button" id="highlight-previous">← Previous</button><button type="button" class="button" id="highlight-next">Next →</button></div><span id="highlight-position" role="status" aria-live="polite"></span></div></div>
+    <div class="toolbar" id="timeline-search"><div class="search">${icon('search',16)}<input id="journey-filter" type="search" aria-label="Filter events" placeholder="Filter by event or parameter…"></div></div>
+    <p class="help panel-body" id="timeline-load" role="status"></p><div class="panel-body" id="journey">${skeleton('table', 6, 3)}</div></section>`;
+  const root = container.querySelector('#story-body');
+  const disclosures = mountDisclosures(root, `avn-raw-disclosures-${game.id}-${player}`);
+  const box = root.querySelector('#journey'); const search = root.querySelector('#journey-filter');
+  const rulesBox = root.querySelector('#highlight-rules'); const selection = root.querySelector('#highlight-selection');
+  let catalog = {events: []};
+  const matches = highlightMatches;
+  const selectedMatches = () => highlightMatchIndices(events, highlights, selection.value);
+  const updateNavigation = () => {
+    const indices = selectedMatches(); const position = indices.indexOf(current);
+    root.querySelector('#highlight-position').textContent = `${position < 0 ? '0' : number(position + 1)} / ${number(indices.length)} matching events${complete ? '' : ' · loading timeline…'}`;
+    root.querySelector('#highlight-previous').disabled = !indices.length || mode !== 'highlight';
+    root.querySelector('#highlight-next').disabled = !indices.length || mode !== 'highlight';
+  };
   const draw = () => {
     if (!box.isConnected) return;
-    const query = search.value.trim().toLowerCase();
-    if (!events.length) { box.innerHTML = '<p class="help">No events from this player in these days.</p>'; return; }
+    disclosures.remember();
+    root.querySelector('#timeline-highlights').hidden = mode !== 'highlight';
+    root.querySelector('.highlight-navigation').hidden = mode !== 'highlight' || !highlights.some(rule => rule.enabled !== false && !conditionError(rule.conditions));
+    root.querySelector('#timeline-search').hidden = mode !== 'filter';
+    root.querySelectorAll('[data-timeline-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.timelineMode === mode)));
+    root.querySelector('#timeline-load').textContent = loadFailure || `${number(events.length)} events ${complete ? 'in the full selected date range' : 'loaded · loading the rest of the timeline…'}`;
+    root.querySelector('#timeline-load').classList.toggle('error', Boolean(loadFailure));
+    highlights.forEach((rule, index) => {
+      const count = rulesBox.querySelector(`[data-highlight-count="${index}"]`);
+      if (count) count.textContent = `${number(events.filter(event => matches(event, rule)).length)} matches${complete ? '' : ' so far'}`;
+      const error = rulesBox.querySelector(`[data-highlight-error="${index}"]`);
+      if (error) error.textContent = conditionError(rule.conditions);
+    });
+    const query = mode === 'filter' ? search.value.trim().toLowerCase() : '';
     const sessions = [];
     events.forEach((event, index) => {
       const previous = events[index - 1];
       const gap = previous ? (Date.parse(event.client_ts) - Date.parse(previous.client_ts)) / 1000 : null;
       if (!sessions.length || sessions[sessions.length - 1].id !== event.session_id) sessions.push({id: event.session_id, items: []});
-      sessions[sessions.length - 1].items.push({...event, gap});
+      sessions[sessions.length - 1].items.push({...event, gap, index});
     });
-    const matches = item => !query || `${item.name} ${Object.entries(item.params).map(([key, value]) => `${key} ${value}`).join(' ')}`.toLowerCase().includes(query);
+    let shownSessions = 0;
     box.innerHTML = sessions.map((session, index) => {
-      const items = session.items.filter(matches);
+      const items = session.items.filter(item => !query || `${item.name} ${JSON.stringify(item.params)}`.toLowerCase().includes(query));
       if (!items.length) return '';
       const start = session.items[0].client_ts; const end = session.items[session.items.length - 1].client_ts;
-      return `<div class="journey-session"><div class="journey-session-head"><strong>Session ${index + 1}</strong><span>${analysisDate(start, timezone)} · ${duration((Date.parse(end) - Date.parse(start)) / 1000)} · ${session.items.length} event${session.items.length === 1 ? '' : 's'}</span></div>
-        <ol class="journey-events">${items.map(item => `<li><time datetime="${escapeHTML(item.client_ts)}">${clock(item.client_ts, timezone)}</time><span class="journey-gap ${item.gap > 60 ? 'long' : ''}">${item.gap == null ? '' : `+${duration(item.gap)}`}</span><span class="journey-name">${escapeHTML(item.name)}</span><span class="journey-params">${paramChips(item.params)}</span></li>`).join('')}</ol></div>`;
-    }).join('') || '<p class="help">No events match the filter.</p>';
+      const gap = session.items[0].gap;
+      const divider = shownSessions++ ? `<div class="session-break" role="separator" aria-label="Session break before session ${index + 1}"><span aria-hidden="true">Session break</span></div>` : '';
+      const sessionGap = gap == null ? '' : `<span class="session-gap">${duration(gap)} after previous session</span>`;
+      return `${divider}<details class="journey-session" data-disclosure="session-${escapeHTML(session.id)}-${index}" open><summary class="journey-session-head"><strong>Session ${index + 1}</strong><span>${analysisDate(start, timezone)} · ${duration((Date.parse(end) - Date.parse(start)) / 1000)} · ${number(session.items.length)} events</span>${sessionGap}</summary>
+        <ol class="journey-events">${items.map(item => {
+          const hits = mode === 'highlight' ? highlights.flatMap((rule, index) => matches(item, rule) ? [{...rule, index}] : []) : [];
+          const chips = Object.entries(item.params).map(([key, value]) => {
+            const hit = hits.find(rule => matchingConditionParams(item, rule.conditions).includes(key));
+            return `<span class="chip ${hit ? `highlight-ink highlight-${hit.color}` : ''}"><b>${escapeHTML(key)}</b> ${escapeHTML(typeof value === 'object' ? JSON.stringify(value) : value)}</span>`;
+          }).join('');
+          return `<li data-timeline-index="${item.index}" tabindex="-1" class="${hits.length ? `timeline-match highlight-${hits[0].color}` : ''} ${current === item.index && mode === 'highlight' ? 'timeline-current' : ''}"><time datetime="${escapeHTML(item.client_ts)}">${clock(item.client_ts, timezone)}</time><span class="journey-gap ${item.gap > 60 ? 'long' : ''}">${item.gap == null ? '' : `+${duration(item.gap)}`}</span><span class="journey-name">${escapeHTML(item.name)}${hits.map(rule => `<span class="highlight-tag highlight-${rule.color}">${escapeHTML(rule.label || `Highlight ${rule.index + 1}`)}</span>`).join('')}</span><span class="journey-params">${chips}</span></li>`;
+        }).join('')}</ol></details>`;
+    }).join('') || `<p class="help">${events.length ? 'No events match the filter.' : complete ? 'No events from this player in these days.' : 'Loading events…'}</p>`;
+    disclosures.refresh(); updateNavigation();
   };
-  container.querySelector('#journey-filter').addEventListener('input', draw);
+  const drawRules = () => {
+    disclosures.remember();
+    const selected = selection.value;
+    selection.innerHTML = '<option value="all">All highlights</option>' + highlights.map((rule, index) => `<option value="${index}">${escapeHTML(rule.label || `Highlight ${index + 1}`)}</option>`).join('');
+    selection.value = [...selection.options].some(option => option.value === selected) ? selected : 'all';
+    rulesBox.innerHTML = highlights.map((rule, index) => `<details class="highlight-rule highlight-${rule.color}" data-highlight="${index}" data-disclosure="highlight-${index}" open><summary><span class="highlight-dot" aria-hidden="true"></span> ${escapeHTML(rule.label || `Highlight ${index + 1}`)} <span class="small muted" data-highlight-count="${index}"></span></summary><div class="highlight-settings"><label>Name<input data-highlight-field="label" value="${escapeHTML(rule.label)}" maxlength="80"></label><label>Color<select data-highlight-field="color">${HIGHLIGHT_COLORS.map(([key, label]) => `<option value="${key}" ${key === rule.color ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label class="check-row"><input type="checkbox" data-highlight-field="enabled" ${rule.enabled !== false ? 'checked' : ''}> Enabled</label><button type="button" class="button small-button" data-highlight-remove>Remove highlight</button></div><div data-highlight-editor></div><p class="error" data-highlight-error="${index}" role="alert"></p></details>`).join('');
+    rulesBox.querySelectorAll('[data-highlight-editor]').forEach((editor, index) => mountConditionEditor({container: editor, tree: highlights[index].conditions, catalog: () => catalog, onChange: () => {current = -1; persist(); draw();}}));
+    root.querySelector('#highlight-add').disabled = highlights.length >= 20;
+    root.querySelector('#highlight-rule-summary').textContent = `${number(highlights.length)} highlights`;
+    disclosures.refresh();
+  };
+  root.addEventListener('click', event => {
+    const toggle = event.target.closest('[data-timeline-mode]');
+    if (toggle) {mode = toggle.dataset.timelineMode; persist(); draw();}
+    if (event.target.closest('#highlight-add')) {
+      highlights.push({label: `Highlight ${highlights.length + 1}`, color: HIGHLIGHT_COLORS[highlights.length % HIGHLIGHT_COLORS.length][0], enabled: true, conditions: conditionGroup([eventCondition(catalog.events[0]?.name)])});
+      current = -1; persist(); drawRules(); draw();
+    }
+    if (event.target.closest('[data-highlight-remove]')) {highlights.splice(Number(event.target.closest('[data-highlight]').dataset.highlight), 1); current = -1; persist(); drawRules(); draw();}
+    const nav = event.target.closest('#highlight-next, #highlight-previous');
+    if (nav) {
+      const indices = selectedMatches(); if (!indices.length) return;
+      const next = nav.id === 'highlight-next';
+      current = highlightNavigationIndex(indices, current, next);
+      box.querySelector('.timeline-current')?.classList.remove('timeline-current');
+      const target = box.querySelector(`[data-timeline-index="${current}"]`);
+      if (target) target.closest('.journey-session').open = true;
+      disclosures.remember();
+      target?.classList.add('timeline-current'); target?.focus({preventScroll: true}); target?.scrollIntoView({block: 'center', behavior: 'instant'}); updateNavigation();
+    }
+  });
+  rulesBox.addEventListener('change', event => {
+    const field = event.target.dataset.highlightField; if (!field) return;
+    const rule = highlights[Number(event.target.closest('[data-highlight]').dataset.highlight)];
+    rule[field] = field === 'enabled' ? event.target.checked : event.target.value;
+    current = -1; persist(); drawRules(); draw();
+  });
+  selection.addEventListener('change', () => {current = -1; updateNavigation();});
+  search.addEventListener('input', draw);
+  drawRules(); draw();
   try {
-    const data = await api(`${gameURL(game)}/insights/journey?${new URLSearchParams({start: range.from, end: range.to, player, tz_offset: timezone === 'utc' ? 0 : localTimezoneOffset()})}`);
-    events = data.events;
-    draw();
-  } catch (error) { if (box.isConnected) box.innerHTML = loadError(error, 'data-retry-story'); }
+    let more = true; let snapshot = null;
+    while (more && box.isConnected) {
+      const data = await api(`${gameURL(game)}/insights/journey?${new URLSearchParams({start: range.from, end: range.to, player, offset: events.length, ...(snapshot == null ? {} : {snapshot}), tz_offset: timezone === 'utc' ? 0 : localTimezoneOffset()})}`);
+      if (!box.isConnected) return;
+      snapshot = data.snapshot;
+      events.push(...data.events); more = data.truncated && data.events.length > 0; complete = !more;
+      if (events.length === data.events.length || complete) {
+        const byName = new Map();
+        events.forEach(event => {
+          if (!byName.has(event.name)) byName.set(event.name, {name: event.name, params: new Map()});
+          const entry = byName.get(event.name);
+          Object.entries(event.params).forEach(([key, value]) => {if (!entry.params.has(key)) entry.params.set(key, new Set()); if (entry.params.get(key).size < 100) entry.params.get(key).add(String(value));});
+        });
+        catalog = {events: [...byName.values()].map(event => ({name: event.name, params: [...event.params].map(([key, values]) => ({key, values: [...values]}))}))};
+        if (!rulesBox.contains(document.activeElement)) drawRules();
+      }
+      draw();
+    }
+  } catch (error) {if (box.isConnected) {loadFailure = `${error.message} · ${number(events.length)} events loaded; counts are incomplete. Reopen Raw events to retry.`; draw();}}
 }
 
 /* ─── Levels: how every level is going ─── */

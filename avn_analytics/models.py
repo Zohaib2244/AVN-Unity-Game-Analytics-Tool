@@ -15,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from .conditions import numeric_value
+
 Name = Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")]
 Context = Annotated[str, Field(min_length=1, max_length=128)]
 
@@ -428,6 +430,54 @@ class JourneyPlayersQuery(JourneyQuery):
 
 ParamName = Annotated[str, Field(max_length=80, pattern=r'^[^"\\]*$')]
 RuleOp = Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"]
+
+
+class EventTest(StrictModel):
+    field: Literal["event", "param"] = "param"
+    param: Annotated[str, Field(max_length=80)] = ""
+    op: Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists", "missing"] = "eq"
+    value: Annotated[str, Field(max_length=200)] = ""
+
+    @model_validator(mode="after")
+    def valid_test(self):
+        if self.field == "param" and not self.param:
+            raise ValueError("Choose a parameter")
+        if self.field == "event" and self.op not in ("eq", "ne", "contains"):
+            raise ValueError("Event names support equals, not equals and contains")
+        if self.field == "event" and not self.value:
+            raise ValueError("Choose an event name")
+        if self.op in ("gt", "gte", "lt", "lte"):
+            if numeric_value(self.value) is None:
+                raise ValueError("Compare with a finite number")
+        return self
+
+
+class EventConditionGroup(StrictModel):
+    match: Literal["all", "any"] = "all"
+    conditions: list["EventTest | EventConditionGroup"] = Field(min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def bounded_tree(self):
+        def size(node, depth=1):
+            if depth > 6:
+                raise ValueError("Use at most 6 levels of condition groups")
+            return 1 + sum(
+                size(child, depth + 1) if isinstance(child, EventConditionGroup) else 1
+                for child in node.conditions
+            )
+
+        if size(self) > 100:
+            raise ValueError("Use at most 100 conditions and groups")
+        return self
+
+
+class EventActivityQuery(StrictModel):
+    name: Name
+    start: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    end: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    filters: Filters = Filters()
+    timezone_offset_minutes: Annotated[int, Field(ge=-840, le=840)] = 0
+    conditions: EventConditionGroup | None = None
 
 
 class PlayerCondition(StrictModel):

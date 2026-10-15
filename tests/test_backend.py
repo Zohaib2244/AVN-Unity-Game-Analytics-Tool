@@ -2279,9 +2279,70 @@ def test_players_sort_by_average_session_length_using_last_event_as_end(backend)
     longest = _players(admin, game, sort="session_length", order="desc")["players"]
     assert [player["player"] for player in longest] == ["long", "inferred", "short", "single"]
     assert [player["avg_session_seconds"] for player in longest] == [200.0, 90.0, 45.0, 0.0]
+    assert [player["total_play_seconds"] for player in longest] == [400.0, 90.0, 90.0, 0.0]
 
     shortest = _players(admin, game, sort="session_length", order="asc")["players"]
     assert [player["player"] for player in shortest] == ["single", "short", "inferred", "long"]
+
+
+def test_players_total_playtime_sums_sessions_before_rounding_and_respects_filters(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    events = [
+        event(
+            device_id="many-short",
+            session_id=f"short-{index}",
+            name="session_end",
+            params={"duration_seconds": 10.04},
+        )
+        for index in range(3)
+    ]
+    events += [
+        event(device_id="one-long", session_id="one", name="session_start", params={}),
+        event(
+            device_id="one-long",
+            session_id="one",
+            name="session_end",
+            params={"duration_seconds": 20},
+            client_ts="2026-10-04T09:05:00Z",
+        ),
+        event(
+            device_id="one-long",
+            session_id="one",
+            name="session_end",
+            params={"duration_seconds": 15},
+            client_ts="2026-10-04T09:06:00Z",
+        ),
+        event(
+            device_id="many-short",
+            session_id="outside-range",
+            name="session_end",
+            params={"duration_seconds": 1000},
+            client_ts="2026-10-05T09:00:00Z",
+        ),
+    ]
+    assert send(ingest, game, events).status_code == 200
+    _send_as(
+        ingest,
+        game,
+        "editor",
+        [
+            event(
+                device_id="many-short",
+                session_id="editor",
+                name="session_end",
+                params={"duration_seconds": 500},
+            )
+        ],
+    )
+    query = {"sort": "playtime", "not_env": "editor"}
+    longest = _players(admin, game, **query, order="desc")["players"]
+    assert [player["player"] for player in longest] == ["many-short", "one-long"]
+    assert [player["total_play_seconds"] for player in longest] == [30.1, 20.0]
+    assert [player["avg_session_seconds"] for player in longest] == [10.0, 20.0]
+    shortest = _players(admin, game, **query, order="asc")["players"]
+    assert [player["player"] for player in shortest] == ["one-long", "many-short"]
+    assert _players(admin, game, **query, offset=1)["players"][0]["player"] == "one-long"
 
 
 def test_players_sorting_and_event_rules(backend):
@@ -2913,4 +2974,185 @@ def test_mapping_status_flags_missing_level_moments_and_silent_rules(backend):
     assert status["ok"] is False
     assert [(i["kind"], i["concept"], i["event"]) for i in status["issues"]] == [
         ("silent", "level_failed", "StageEnd")
+    ]
+
+
+def _conditional_activity(admin, game, conditions=None, **overrides):
+    return admin.post(
+        f"/v1/games/{game['id']}/insights/events/activity",
+        headers=AUTH,
+        json={
+            "name": "AD_ANALYSIS",
+            "start": "2026-10-04",
+            "end": "2026-10-04",
+            "conditions": conditions,
+            **overrides,
+        },
+    )
+
+
+def test_conditional_activity_counts_nested_groups_and_labels_average_denominators(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    shown = {"STAGE": "Shown", "PLACEMENT": "Rewarded", "LEVEL": 5}
+    legacy = event(name="AD_ANALYSIS", device_id="legacy", params=shown)
+    assert (
+        send(
+            ingest,
+            game,
+            [
+                event(name="AD_ANALYSIS", device_id="p1", user_id="account", params=shown),
+                event(name="AD_ANALYSIS", device_id="p2", user_id="account", params=shown),
+                event(
+                    name="AD_ANALYSIS",
+                    device_id="p3",
+                    params={**shown, "PLACEMENT": "Interstitial"},
+                ),
+                legacy,
+                event(name="AD_ANALYSIS", device_id="p4", params={**shown, "STAGE": "Clicked"}),
+                event(name="other_event", device_id="p5", params=shown),
+                event(name="AD_ANALYSIS", device_id="p6", params=shown, app_version="2.0"),
+            ],
+        ).status_code
+        == 200
+    )
+    # Older databases may contain events with no player identity.
+    storage = admin.app.state.storage
+    with storage.connect(storage.game_path(game["id"])) as connection:
+        connection.execute(
+            "UPDATE events SET payload=json_remove(payload, '$.device_id') WHERE event_id=?",
+            (legacy["event_id"],),
+        )
+    tree = {
+        "match": "all",
+        "conditions": [
+            {"field": "event", "value": "AD_ANALYSIS"},
+            {"param": "STAGE", "value": "Shown"},
+            {"param": "LEVEL", "op": "gte", "value": "5"},
+            {
+                "match": "any",
+                "conditions": [
+                    {"param": "PLACEMENT", "value": "Rewarded"},
+                    {"param": "PLACEMENT", "value": "Interstitial"},
+                ],
+            },
+        ],
+    }
+    response = _conditional_activity(admin, game, tree, filters={"app_versions": ["1.0"]})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert (result["events"], result["players"], result["active_players"]) == (4, 2, 4)
+    assert result["identified_events"] == 3 and result["anonymous_events"] == 1
+    assert result["per_matching_player"] == 1.5
+    assert result["per_active_player"] == 0.75
+    assert result["days"] == [{"day": "2026-10-04", "events": 4, "players": 2}]
+    assert _conditional_activity(admin, game).json()["events"] == 6
+    empty = _conditional_activity(admin, game, tree, filters={"app_versions": ["missing"]}).json()
+    assert empty["per_matching_player"] == empty["per_active_player"] == 0
+    assert empty["days"] == [{"day": "2026-10-04", "events": 0, "players": 0}]
+
+
+def test_conditional_activity_respects_timezone_days_and_environment_fixes(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    _send_as(
+        ingest,
+        game,
+        "test",
+        [event(name="AD_ANALYSIS", client_ts="2026-10-03T23:30:00Z", params={"STAGE": "Shown"})],
+    )
+    assert (
+        admin.post(
+            f"/v1/games/{game['id']}/environment-fixes",
+            headers=AUTH,
+            json={"from_environment": "test", "to_environment": "production"},
+        ).status_code
+        == 201
+    )
+    result = _conditional_activity(
+        admin,
+        game,
+        {"conditions": [{"param": "STAGE", "value": "Shown"}]},
+        timezone_offset_minutes=60,
+        filters={"environments": ["production"]},
+    ).json()
+    assert result["events"] == 1
+    assert result["days"] == [{"day": "2026-10-04", "events": 1, "players": 1}]
+    assert _conditional_activity(admin, game).json()["events"] == 0
+
+
+@pytest.mark.parametrize(
+    "tree",
+    [
+        {"conditions": []},
+        {"conditions": [{"param": "", "value": "x"}]},
+        {"conditions": [{"param": "STAGE", "op": "unknown"}]},
+        {"conditions": [{"param": "LEVEL", "op": "gte", "value": "NaN"}]},
+        {"conditions": [{"param": "LEVEL", "op": "gte", "value": "1e999"}]},
+        {"conditions": [{"param": "LEVEL", "op": "gte", "value": "no"}]},
+        {"conditions": [{"field": "event", "op": "exists"}]},
+        {"conditions": [{"param": "STAGE", "value": "x"}] * 51},
+    ],
+)
+def test_conditional_activity_rejects_invalid_conditions(backend, tree):
+    admin, _, _ = backend
+    game = register(admin)
+    assert _conditional_activity(admin, game, tree).status_code == 400
+
+
+def test_conditional_activity_bounds_nested_complexity(backend):
+    admin, _, _ = backend
+    game = register(admin)
+    tree = {"conditions": [{"param": "STAGE", "value": "Shown"}]}
+    for _ in range(6):
+        tree = {"conditions": [tree]}
+    assert _conditional_activity(admin, game, tree).status_code == 400
+    broad = {"conditions": [{"conditions": [{"param": "STAGE", "value": "Shown"}] * 25}] * 4}
+    assert _conditional_activity(admin, game, broad).status_code == 400
+
+
+def test_raw_event_paging_covers_entire_timeline_with_stable_ties(backend, monkeypatch):
+    from avn_analytics import insights
+
+    monkeypatch.setattr(insights, "MAX_JOURNEY_EVENTS", 2)
+    admin, ingest, _ = backend
+    game = register(admin)
+    rows = [event(name="AD_ANALYSIS", params={"index": index}) for index in range(5)]
+    assert send(ingest, game, rows).status_code == 200
+    received = []
+    snapshot = None
+    for offset in (0, 2, 4):
+        response = admin.get(
+            f"/v1/games/{game['id']}/insights/journey",
+            params={
+                "player": "anonymous-install-id",
+                "start": "2026-10-04",
+                "end": "2026-10-04",
+                "offset": offset,
+                **({"snapshot": snapshot} if snapshot is not None else {}),
+            },
+        )
+        assert response.status_code == 200, response.text
+        page = response.json()
+        snapshot = page["snapshot"]
+        assert page["truncated"] is (offset < 4)
+        received.extend(item["params"]["index"] for item in page["events"])
+        if offset == 0:
+            # A late offline event must not shift the already-started timeline's pages.
+            assert (
+                send(
+                    ingest,
+                    game,
+                    [
+                        event(
+                            name="AD_ANALYSIS",
+                            client_ts="2026-10-04T08:00:00Z",
+                            params={"index": 99},
+                        )
+                    ],
+                ).status_code
+                == 200
+            )
+    assert received == [
+        row["params"]["index"] for row in sorted(rows, key=lambda row: row["event_id"])
     ]

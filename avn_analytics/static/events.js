@@ -67,6 +67,7 @@ async function renderDictionary() {
   const view = {filter: saved.filter === 'drafts' ? 'all' : saved.filter || 'all', sort: saved.sort || 'sent', query: ''};
   const persist = () => storeSet(`avn-events-view-${game.id}`, {filter: view.filter, sort: view.sort});
   const open = new Set(); const detail = new Map(); const tabs = new Map();
+  const activityStates = new Map();
   let data = null; let chosen = null; let latest = 0; let observer = null;
   const attention = item => (!item.described && !item.sdk && item.ever) || (item.defined && item.params_missing.length) || item.type_conflicts.length;
   const FILTERS = [['all', 'All', () => true], ['attention', 'Needs attention', attention], ['undescribed', 'No description', item => !item.described && !item.sdk], ['described', 'Described', item => item.described], ['mapped', 'Mapped', item => item.definition.canonical.length], ['hidden', 'Hidden', item => item.definition.hidden], ['quiet', 'Quiet or never sent', item => item.status !== 'active']];
@@ -151,7 +152,8 @@ async function renderDictionary() {
     if (info.error) return `<p class="error">${escapeHTML(info.error)}</p>`;
     const d = info.data;
     const table = (title, rows, cells) => rows.length ? `<div><h3 class="event-sub">${title}</h3><table class="compact-table"><tbody>${rows.map(cells).join('')}</tbody></table></div>` : '';
-    return `<div class="chart-wrap event-chart">${d.days.some(day => day.events) ? dailyChart(d.days, chosen.range, 'events') : '<p class="help">Not sent in these days.</p>'}</div>
+    return `<details class="conditional-activity" data-disclosure="conditional-activity" open><summary>Conditional activity</summary><div class="conditional-activity-body"><p class="help">Count this event when its parameters match. Combine conditions with AND / OR groups. Leave conditions empty to count every occurrence.</p><div data-activity-editor></div><div class="condition-actions"><button type="button" class="button primary" data-activity-apply>Apply conditions</button><button type="button" class="button" data-activity-clear>Clear conditions</button></div><div data-activity-result role="status" aria-live="polite"></div></div></details>
+      <h3 class="event-sub">All activity for this event</h3><div class="chart-wrap event-chart">${d.days.some(day => day.events) ? dailyChart(d.days, chosen.range, 'events') : '<p class="help">Not sent in these days.</p>'}</div>
       ${d.missing_in_newest ? `<p class="event-warning">${icon('pulse', 15)}<span>The newest version in your data (<strong>${escapeHTML(d.newest_version)}</strong>) has not sent this event. If you expected it, check that build.</span></p>` : ''}
       <div class="event-breakdowns">${table('App versions (all time)', d.versions, row => `<tr><td>${escapeHTML(row.version)}${row.version === d.newest_version ? ' <span class="pill">newest</span>' : ''}</td><td class="num">${number(row.events)}</td><td class="num muted small">${number(row.players)} players</td><td class="muted small">last ${agoText(row.last_seen)}</td></tr>`)}
       ${table('Environments', d.environments, row => `<tr><td>${escapeHTML(row.value)}</td><td class="num">${number(row.events)}</td><td class="num muted small">${number(row.players)} players</td></tr>`)}
@@ -162,6 +164,46 @@ async function renderDictionary() {
     if (info.error) return `<p class="error">${escapeHTML(info.error)}</p>`;
     return info.data.samples.length ? `<table class="compact-table event-examples"><thead><tr><th>When</th><th>Version</th><th>Environment</th><th>Parameters</th></tr></thead><tbody>${info.data.samples.map(sample => `<tr><td class="small muted">${analysisDate(sample.client_ts, chosen.timezone)}</td><td class="small">${escapeHTML(sample.version || '—')}</td><td class="small">${escapeHTML(sample.environment || '—')}</td><td>${paramChips(sample.params)}</td></tr>`).join('')}</tbody></table>` : '<p class="help">No examples in these days and filters.</p>';
   };
+  const mountActivity = (box, name, info) => {
+    const editorBox = box.querySelector('[data-activity-editor]');
+    if (!editorBox) return;
+    if (!activityStates.has(name)) activityStates.set(name, {tree: storeGet(`avn-event-conditions-${game.id}-${name}`) || conditionGroup(), revision: 0});
+    const state = activityStates.get(name);
+    const resultBox = box.querySelector('[data-activity-result]');
+    const button = box.querySelector('[data-activity-apply]');
+    const persistTree = () => storeSet(`avn-event-conditions-${game.id}-${name}`, state.tree);
+    const changed = () => {
+      state.revision++; persistTree(); button.disabled = false;
+      const error = state.tree.conditions.length ? conditionError(state.tree) : '';
+      resultBox.innerHTML = error ? `<p class="error" role="alert">${escapeHTML(error)}</p>` : '<p class="help">Conditions changed. Apply to update counts.</p>';
+    };
+    const editor = mountConditionEditor({container: editorBox, tree: state.tree,
+      catalog: () => ({events: [{name, params: (info.data.params || []).map(param => ({key: param.key, values: param.values.map(value => value.value)}))}]}), onChange: changed});
+    const run = async (force = false) => {
+      const error = state.tree.conditions.length ? conditionError(state.tree) : '';
+      if (error) {resultBox.innerHTML = `<p class="error" role="alert">${escapeHTML(error)}</p>`; return;}
+      const body = {...filterBody(chosen), name, conditions: state.tree.conditions.length ? state.tree : null};
+      const key = JSON.stringify(body); const ticket = ++state.revision;
+      const renderResult = result => {
+        const decimal = value => Number(value).toLocaleString(undefined, {maximumFractionDigits: 2});
+        resultBox.innerHTML = `<dl class="activity-stats"><div><dt>Matching events</dt><dd>${number(result.events)}</dd></div><div><dt>Matching players</dt><dd>${number(result.players)}</dd></div><div><dt>Events / matching player</dt><dd>${decimal(result.per_matching_player)}</dd></div><div><dt>Events / active player</dt><dd>${decimal(result.per_active_player)}</dd></div></dl>
+          <p class="help">Averages use ${number(result.identified_events)} matching events with a player ID. Matching-player average divides by ${number(result.players)} matching players; active-player average divides by all ${number(result.active_players)} active players across all events in the selected days and filters, including players with zero matches.${result.anonymous_events ? ` ${number(result.anonymous_events)} events without a player ID are included in the event count only.` : ''}</p>
+          <div class="chart-wrap event-chart">${result.days.some(day => day.events) ? dailyChart(result.days, chosen.range, 'events') : '<p class="help">No events match these conditions in the selected days and filters.</p>'}</div>`;
+      };
+      if (!force && state.resultKey === key && Date.now() - state.resultTime < 30000) {renderResult(state.result); return;}
+      button.disabled = true; resultBox.innerHTML = '<p class="help">Counting matching events…</p>';
+      try {
+        const result = await api(`${gameURL(game)}/insights/events/activity`, {method: 'POST', body: key});
+        if (state.revision !== ticket || !resultBox.isConnected) return;
+        state.resultKey = key; state.result = result; state.resultTime = Date.now(); renderResult(result);
+      } catch (error) {
+        if (state.revision === ticket && resultBox.isConnected) resultBox.innerHTML = `<p class="error" role="alert">${escapeHTML(error.message)}</p>`;
+      } finally {if (state.revision === ticket) button.disabled = false;}
+    };
+    button.addEventListener('click', () => run(true));
+    box.querySelector('[data-activity-clear]').addEventListener('click', () => {state.tree.conditions.splice(0); editor.redraw(); changed(); run();});
+    run();
+  };
   function drawDetail(name) {
     const box = document.querySelector(`[data-event-panel="${CSS.escape(name)}"]`); const item = data.events.find(entry => entry.name === name);
     if (!box || !item) return;
@@ -170,6 +212,8 @@ async function renderDictionary() {
     const body = tab === 'activity' ? activityTab(info) : tab === 'examples' ? examplesTab(info) : meaningTab(item, info);
     const typing = box.querySelector(':focus')?.name;
     box.innerHTML = `<div class="level-drill-head"><div class="segmented" role="group" aria-label="${escapeHTML(name)}">${[['meaning', 'Meaning'], ['activity', 'Activity'], ['examples', 'Examples']].map(([key, label]) => `<button type="button" data-event-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join('')}</div><span class="small muted">${item.ever ? `${number(item.ever.events)} events from ${number(item.ever.players)} players since ${analysisDate(item.ever.first_seen, chosen.timezone)}` : 'Never received'}</span></div><div class="event-body">${body}</div>`;
+    mountDisclosures(box, `avn-event-disclosures-${game.id}-${name}`);
+    if (tab === 'activity' && info?.data) mountActivity(box, name, info);
     if (typing) box.querySelector(`[name="${CSS.escape(typing)}"]`)?.focus();
   }
 
