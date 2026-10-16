@@ -19,6 +19,7 @@ full picture; `DEPLOYMENT.md` for self-hosting.
 - `avn_analytics/exports.py` — export ZIPs (Parquet, JSONL, `events.md`, `ANALYSIS.md`)
 - `avn_analytics/nutbot.py` — NutBot assistant (shells out to agent CLIs)
 - `avn_analytics/skill/` — the analysis skill shipped inside exports
+- `avn_analytics/standard.py` + `avn_analytics/events_standard/` — the AVN events standard (spec, guide, setup prompt) served by the website
 - `unity/AVNAnalytics/` — Unity SDK (C#)
 - `tests/` — pytest suite
 

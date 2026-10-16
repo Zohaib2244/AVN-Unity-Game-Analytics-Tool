@@ -1276,7 +1276,9 @@ dialog.import-dialog{width:min(980px,calc(100vw - 32px));max-width:980px;max-hei
 .import-count{color:var(--text-muted)}
 .import-text{display:flex;gap:8px;align-items:flex-start;margin:0;text-transform:none;letter-spacing:0;font-family:var(--font-body);cursor:pointer}
 .import-text input{width:auto;margin-top:5px;accent-color:var(--accent-orange)}
-@media(max-width:640px){.import-choices{grid-template-columns:1fr}}
+.import-choices.standard-tiers{grid-template-columns:repeat(3,minmax(0,1fr))}
+.import-choice:has(input:disabled){cursor:default}
+@media(max-width:640px){.import-choices,.import-choices.standard-tiers{grid-template-columns:1fr}}
 .import-table td:first-child{min-width:250px}
 .import-text code{white-space:nowrap}
 

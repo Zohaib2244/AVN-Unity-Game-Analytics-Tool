@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import Field
 from starlette.background import BackgroundTask
 
-from . import device_specs, dictionary_import, events, insights, journeys
+from . import device_specs, dictionary_import, events, insights, journeys, standard
 from .auth import AccessVerifier, Accounts, Principal
 from .config import Settings
 from .exports import build_export, period_bounds
@@ -500,6 +500,23 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         result = dictionary_import.undo(storage, str(game_id), str(batch_id))
         accounts.audit(principal, "dictionary.import_undo", str(game_id), str(batch_id))
         return result
+
+    Tiers = Annotated[list[Literal["core", "standard", "extended"]], Query(max_length=3)]
+
+    @admin_api.get("/v1/events-standard")
+    def events_standard(tiers: Tiers = ["core", "standard"]):  # noqa: B006
+        return standard.summary(tiers)
+
+    @admin_api.get("/v1/events-standard/download")
+    def events_standard_download(tiers: Tiers = ["core", "standard"]):  # noqa: B006
+        return Response(
+            standard.bundle(tiers),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": 'attachment; filename="avn-events-setup.zip"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     @admin_api.get("/v1/games/{game_id}/dictionary/drafts")
     def dictionary_drafts(game_id: UUID):

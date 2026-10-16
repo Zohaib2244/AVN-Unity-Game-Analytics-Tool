@@ -140,7 +140,7 @@ The website is organized around games. The home page lists your games; Android a
 | **Players** | Everyone active in the chosen days, searchable and sortable (last active, first seen, events, sessions, average session length, total playtime, app version). **Event rules** add your own columns from events (times they did something, highest/lowest/total of a parameter, first/last time), sort by them, and keep only players who did, or never did, an event. Total playtime sums session durations in the selected days and filters. Countries show their full name on hover. Open a player for their **story**: sessions as chapters, with runs of levels folded into one line ("Played levels 1–10, completed all"). The raw event list and a **Player info** tab (latest version, build, platform, device and country, and an optional device specification lookup) are one click away. |
 | **Exports** | Download the raw events, using the same days and filters. |
 | **Event dictionary → Dictionary** | Every event your game has sent or defined, with counts, players, trends, descriptions, parameter types and values, activity by version/environment/country, and raw examples. Describe events in place, set story labels or hidden state, and open an event directly in Mappings. Flags identify missing descriptions, changing parameter types, quiet events and similar names. Dictionary progress is folded below the totals. |
-| **Event dictionary → Mappings** | Shared meanings for Retention, Levels, player stories and journeys. Pick **All versions** for shared rules or an app version for release-specific rules. A version's rules replace the shared rules for that event; other events still inherit theirs. Parameter choices and counts follow the selected version. Review suggested mappings for known event shapes, preview counts and matching parameters before saving, and see warnings for overlapping rules. **Fill with AI agent** lives here. |
+| **Event dictionary → Mappings** | Shared meanings for Retention, Levels, player stories and journeys. Pick **All versions** for shared rules or an app version for release-specific rules. A version's rules replace the shared rules for that event; other events still inherit theirs. Parameter choices and counts follow the selected version. Review suggested mappings for known event shapes, preview counts and matching parameters before saving, and see warnings for overlapping rules. **Set up events with AI agent** and **Fill with AI agent** live here. |
 | **API keys** | Create, copy and delete the game's collection keys. |
 | **Game settings** | Game icon, game details, the [environment](#fixing-a-build-that-shipped-in-the-wrong-mode) each build reported, [analysis confidence](#analysis-confidence) overrides, archive (pause collection) and delete. |
 
@@ -262,6 +262,26 @@ In Mappings, select a release to inspect only its parameters and counts and save
 version. Those rules replace the shared rules **for that event and release**. Other releases and
 other events retain their rules. Removing all of an event's rules for a release restores its
 shared rules. Mappings apply consistently across all analytics pages and never rewrite raw events.
+
+## Set up events with an AI agent
+
+New games, or games whose events should be cleaned up, can use the **AVN events standard**: a
+fixed set of event names, states and parameters (`LEVEL`, `AD`, `ECONOMY`, `APP`, `TUTORIAL`,
+`FTUE`, `POWERUP`, `SCREEN`, `IAP`, `PLAYER`, `DEVICE`), so every game sends the same shapes and
+the dashboards map them on their own. The standard lives in
+[`avn_analytics/events_standard/`](avn_analytics/events_standard/): `STANDARD.md` to read,
+`standard.spec.json` for agents and tools, and `AGENT_PROMPT.md`, the prompt that adds it to a
+Unity game.
+
+**Event dictionary → Mappings → Set up events with AI agent** picks the tiers (core is always
+included; standard and extended are optional), lists the events they bring, and downloads
+`avn-events-setup.zip` with the prompt and the standard, or copies the prompt. Unzip it in the
+game project's root and run the prompt with any coding agent. The agent adds one sender
+(`Assets/AVNEvents/`), keeps existing analytics untouched, and writes
+`avn-events-profile.json` with the game's vocabulary and anything it could not implement. Once a
+test build sends events, the Mappings page suggests Level started, completed, failed and
+restarted from `LEVEL` by itself. Over the API: `GET /v1/events-standard?tiers=standard` and
+`GET /v1/events-standard/download?tiers=standard`.
 
 ## Fill the dictionary with an AI agent
 

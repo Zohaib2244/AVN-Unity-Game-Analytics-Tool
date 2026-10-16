@@ -294,11 +294,12 @@ async function renderDictionary() {
 
 async function renderMappings() {
   const game = currentGame;
-  shell('Event dictionary', heading('Event dictionary', 'Map your events once for Levels, Retention, player stories and journeys.', `<button type="button" class="button" id="mappings-import">${icon('book', 15)} Fill with AI agent</button>`) + eventDictionaryNav(game, 'mappings') + `<div id="mappings-body">${skeleton('stats')}${skeleton('table')}</div>`);
+  shell('Event dictionary', heading('Event dictionary', 'Map your events once for Levels, Retention, player stories and journeys.', `<div class="heading-actions"><button type="button" class="button" id="mappings-setup">${icon('game', 15)} Set up events with AI agent</button><button type="button" class="button" id="mappings-import">${icon('book', 15)} Fill with AI agent</button></div>`) + eventDictionaryNav(game, 'mappings') + `<div id="mappings-body">${skeleton('stats')}${skeleton('table')}</div>`);
   const wanted = new URLSearchParams(location.search);
   let version = wanted.get('version') || '';
   let data = null; let forms = new Map();
   document.querySelector('#mappings-import').addEventListener('click', () => openDictionaryImport(game, load));
+  document.querySelector('#mappings-setup').addEventListener('click', () => openEventsSetup());
   const body = document.querySelector('#mappings-body');
   const rulesOf = name => data.definitions[name] || [];
   const save = async (name, rules) => { await api(`${gameURL(game)}/dictionary/${encodeURIComponent(name)}/mappings`, {method: 'PUT', body: JSON.stringify({canonical: rules})}); cache.clear(); await load(); };

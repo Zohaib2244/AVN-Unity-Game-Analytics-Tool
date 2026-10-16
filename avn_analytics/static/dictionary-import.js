@@ -302,3 +302,67 @@ function openDictionaryImport(game, done) {
   draw();
   modal.showModal();
 }
+
+// Set up the AVN events standard in a game: pick tiers, then download the prompt with the spec
+// (or copy the prompt) for the AI agent the developer runs in the game's code.
+const STANDARD_TIERS = [
+  ['core', 'Core', 'Levels, ads, coins and app lifecycle. Always included.'],
+  ['standard', 'Standard', 'Tutorials, first run, powerups, menus, purchases and player state.'],
+  ['extended', 'Extended', 'Device hardware.'],
+];
+
+function openEventsSetup() {
+  const storeKey = 'avn-standard-tiers';
+  const saved = storeGet(storeKey);
+  let tiers = Array.isArray(saved) ? STANDARD_TIERS.map(([key]) => key).filter(key => key === 'core' || saved.includes(key)) : ['core', 'standard'];
+  let summary = null; let loading = 0;
+  const query = () => new URLSearchParams(tiers.map(tier => ['tiers', tier])).toString();
+
+  const draw = () => {
+    modal.className = 'import-dialog';
+    modal.innerHTML = `<div class="player-dialog-head"><h2 id="dialog-title">Set up events with an AI agent</h2><button type="button" class="button" data-action="close" aria-label="Close">Close ×</button></div>
+      <p class="help">The AI agent you use in your game's code adds the AVN standard events, with the same names and parameters in every game. Levels, Retention and stories then map themselves.</p>
+      <div class="import-choices standard-tiers" role="group" aria-label="Which events">
+        ${STANDARD_TIERS.map(([key, title, text]) => `<label class="import-choice"><input type="checkbox" name="tier" value="${key}" ${tiers.includes(key) ? 'checked' : ''} ${key === 'core' ? 'checked disabled' : ''}><span><strong>${title}</strong><small>${text}</small></span></label>`).join('')}
+      </div>
+      <div id="standard-summary">${skeleton('table', 3, 3)}</div>
+      <ol class="import-steps"><li>Unzip the download in the root of your game project.</li><li>Run <code>AGENT_PROMPT.md</code> in your AI agent from that folder.</li><li>Send a test build, then check the events under Dictionary and Mappings.</li></ol>
+      <div class="error" role="alert"></div>
+      <div class="modal-actions import-actions"><button type="button" class="button" data-standard-copy>${icon('copy', 14)} Copy the prompt</button><button type="button" class="button primary" data-standard-download>${icon('export', 14)} Download setup files</button></div>
+      <details class="import-prompt"><summary>Show the prompt</summary><textarea readonly rows="12" aria-label="Agent prompt" id="standard-prompt"></textarea></details>`;
+    modal.querySelectorAll('[name="tier"]').forEach(box => box.addEventListener('change', () => {
+      tiers = [...modal.querySelectorAll('[name="tier"]:checked')].map(item => item.value);
+      storeSet(storeKey, tiers); load();
+    }));
+    modal.querySelector('[data-standard-copy]').addEventListener('click', async () => {
+      if (!summary) return;
+      try { await navigator.clipboard.writeText(summary.prompt); toast('Prompt copied.'); } catch { toast('Open "Show the prompt" and copy it by hand.'); }
+    });
+    modal.querySelector('[data-standard-download]').addEventListener('click', async event => {
+      const button = event.currentTarget; const error = modal.querySelector('.error');
+      error.textContent = ''; button.disabled = true;
+      try {
+        const response = await fetch(`/v1/events-standard/download?${query()}`, {credentials: 'same-origin'});
+        if (!response.ok) { const problem = await response.json().catch(() => ({})); throw new Error(typeof problem.detail === 'string' ? problem.detail : 'Download failed. Please try again.'); }
+        const href = URL.createObjectURL(await response.blob());
+        const anchor = Object.assign(document.createElement('a'), {href, download: 'avn-events-setup.zip'});
+        document.body.append(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(href), 60000);
+      } catch (problem) { error.textContent = problem.message; }
+      finally { button.disabled = false; }
+    });
+  };
+  const load = async () => {
+    const current = ++loading; const box = modal.querySelector('#standard-summary');
+    try {
+      const result = await request(`/v1/events-standard?${query()}`);
+      if (current !== loading) return;
+      summary = result;
+      box.innerHTML = `<div class="table-wrap"><table class="import-table"><thead><tr><th>Event</th><th>Tier</th><th>States</th></tr></thead><tbody>${result.events.map(item => `<tr><td><code>${escapeHTML(item.name)}</code></td><td>${escapeHTML(item.tier)}</td><td>${item.states.map(state => `<code>${escapeHTML(state)}</code>`).join(' ')}</td></tr>`).join('')}</tbody></table></div>`;
+      modal.querySelector('#standard-prompt').value = result.prompt;
+    } catch (problem) { if (current === loading) box.innerHTML = `<p class="error">${escapeHTML(problem.message)}</p>`; }
+  };
+
+  modal.addEventListener('close', () => modal.classList.remove('import-dialog'), {once: true});
+  draw(); load();
+  modal.showModal();
+}

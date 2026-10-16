@@ -6,3 +6,5 @@
 !avn_analytics/static/*
 !avn_analytics/skill/
 !avn_analytics/skill/*
+!avn_analytics/events_standard/
+!avn_analytics/events_standard/*
