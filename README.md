@@ -302,7 +302,7 @@ out) under **Sent, not in the standard**. For each one you can:
 - **Ignore**: hide it for this game only. It is listed under **Ignored** with a **Restore**
   button; the events themselves stay in the data.
 
-Only events named in `UPPER_SNAKE` and ending in `_ANALYSIS` can be added, because the standard's names are exact (an event
+Only events named in `UPPER_SNAKE` can be added, because the standard's names are exact (an event
 like `daily_gift_claimed` can only be ignored). Lowercase or otherwise invalid parameter keys and
 states are left out of the starting point. The event table under **Show the events** has a *Sent
 by this game* column, and each custom event shows whether this game has sent it. Over the API:
@@ -311,7 +311,7 @@ by this game* column, and each custom event shows whether this game has sent it.
 ### Custom events
 
 Events the standard doesn't cover can be added from **Event setup → Add AVN Events → Custom events →
-Add event**: a name (`UPPER_SNAKE`, always ending in `_ANALYSIS`), what it tracks, one or more states (`PascalCase`, with when
+Add event**: a name (`UPPER_SNAKE`), what it tracks, one or more states (`PascalCase`, with when
 each is sent) and their parameters (`UPPER_SNAKE` key, `int`, `float` or `string`, required or not,
 optional list of allowed values). The page checks the same naming rules as the standard and the
 server refuses names that clash with a built-in event. Custom events are stored with the
