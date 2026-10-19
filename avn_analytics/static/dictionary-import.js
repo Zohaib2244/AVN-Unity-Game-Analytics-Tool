@@ -25,6 +25,8 @@ const IMPORT_FLAGS = {
   type_mismatch: flag => `${flag.field.replace('param:', '')}: code says ${flag.code}, data says ${flag.observed.join('/')}`,
   changed_since_template: () => 'Changed since this file was prepared',
 };
+// A short left-to-right row of what to do, each with an icon.
+const flow = items => `<ol class="setup-flow">${items.map(([symbol, text]) => `<li>${icon(symbol, 16)}<span>${text}</span></li>`).join('')}</ol>`;
 const importList = value => String(value || '').split(/[\n,]/).map(item => item.trim()).filter(Boolean);
 const importField = field => field === 'description' ? 'description' : field.replace('param:', 'parameter ');
 const importMerge = (base, saved) => {
@@ -47,7 +49,7 @@ function mountDictionaryFill(root, game, done) {
   const url = `${gameURL(game)}/dictionary`;
 
   const draw = () => {
-    root.innerHTML = `<div class="segmented" role="group" aria-label="Import step">${[['prepare', '1 · Prepare'], ['upload', '2 · Upload and review'], ['history', 'History']].map(([key, label]) => `<button type="button" data-import-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join('')}</div>
+    root.innerHTML = `<div class="segmented" role="group" aria-label="Import step">${[['prepare', 'Prepare', 'file'], ['upload', 'Upload and review', 'export'], ['history', 'History', 'refresh']].map(([key, label, symbol]) => `<button type="button" data-import-tab="${key}" aria-pressed="${tab === key}">${icon(symbol, 15)} ${label}</button>`).join('')}</div>
       <div class="import-body" id="import-body"></div>`;
     root.querySelector('#import-body').innerHTML = tab === 'prepare' ? prepareHTML() : tab === 'upload' ? uploadHTML() : skeleton('table', 4, 4);
     if (tab === 'history') drawHistory();
@@ -68,13 +70,12 @@ function mountDictionaryFill(root, game, done) {
     const listed = [...o.scope.names, ...o.scope.prefixes.map(prefix => `${prefix}*`)].join('\n');
     const choice = o.scope.events === 'undocumented' && o.mode === 'fill_blanks' ? 'missing' : o.scope.events === 'all' && o.mode === 'overwrite_all' ? 'all' : '';
     const card = (value, title, text) => `<label class="import-choice"><input type="radio" name="coverage" value="${value}" ${choice === value ? 'checked' : ''}><span><strong>${title}</strong><small>${text}</small></span></label>`;
-    return `<p class="help">Give the prompt to the AI agent you use inside your game's code, then upload the file it fills in. You review every text before anything is written.</p>
-      <form id="import-prepare" class="import-form">
+    return `<form id="import-prepare" class="import-form">
         <div class="import-choices" role="radiogroup" aria-label="What should the agent cover?">
-          ${card('missing', 'Missing only', 'Events and parameters with no description yet. Nothing already written is touched.')}
-          ${card('all', 'All events', 'The agent re-checks everything and may propose new text for events already described. You still approve each change.')}
+          ${card('missing', 'Missing only', 'Only what has no description yet')}
+          ${card('all', 'All events', 'Re-check everything, you approve each change')}
         </div>
-        ${choice ? '' : '<p class="help">Custom coverage is set under Advanced settings. Pick one above to go back to a preset.</p>'}
+        ${choice ? '' : '<p class="help">Custom coverage is set under Advanced settings.</p>'}
         <details class="import-advanced"><summary>Advanced settings</summary>
         <fieldset><legend>What may change</legend>
           <div class="field"><label>When a field already has text</label>${select('mode', o.mode, [['fill_blanks', 'Only fill blanks (keep all existing text)'], ['overwrite_ai_drafts', 'Also replace earlier AI drafts nobody confirmed'], ['overwrite_all', 'Replace existing text']])}</div>
@@ -107,15 +108,15 @@ function mountDictionaryFill(root, game, done) {
         </fieldset>
         </details>
         <div class="error" role="alert"></div>
-        <div class="modal-actions"><button type="submit" class="button primary">Prepare the file and prompt</button></div>
+        <div class="modal-actions"><button type="submit" class="button primary">${icon('sparkle', 15)} Prepare file and prompt</button></div>
       </form>
       <div id="import-prepared">${prepared ? preparedHTML() : ''}</div>`;
   }
   function preparedHTML() {
     const count = Object.keys(prepared.file.events).length;
     return `<section class="import-prepared"><h3 class="event-sub">${number(count)} event${count === 1 ? '' : 's'} in the file</h3>
-      <ol class="import-steps"><li>Save <code>avn-events.json</code> in the root of your game project.</li><li>Run the prompt in your AI agent from that folder.</li><li>Come back and upload the filled file.</li></ol>
-      <div class="modal-actions import-actions"><button type="button" class="button" data-import-download>${icon('export', 14)} Download avn-events.json</button><button type="button" class="button" data-import-copy>${icon('copy', 14)} Copy the prompt</button><button type="button" class="button primary" data-import-tab="upload">Upload the filled file →</button></div>
+      ${flow([['export', 'Save <code>avn-events.json</code> in your game'], ['sparkle', 'Run the prompt in your AI agent'], ['file', 'Upload the filled file']])}
+      <div class="modal-actions import-actions"><button type="button" class="button" data-import-download>${icon('export', 14)} Download avn-events.json</button><button type="button" class="button" data-import-copy>${icon('copy', 14)} Copy the prompt</button><button type="button" class="button primary" data-import-tab="upload">Upload the filled file ${icon('arrow', 14)}</button></div>
       <details class="import-prompt"><summary>Show the prompt</summary><textarea readonly rows="10" aria-label="Agent prompt">${escapeHTML(prepared.prompt)}</textarea></details></section>`;
   }
   const readOptions = form => {
@@ -180,8 +181,7 @@ function mountDictionaryFill(root, game, done) {
   const allChanges = () => preview ? preview.events.flatMap(entry => entry.changes) : [];
   const selected = new Set();
   function uploadHTML() {
-    return `<p class="help">Choose the <code>avn-events.json</code> your agent filled in. You will see every text it wrote before anything is saved.</p>
-      <div class="field"><label for="import-file">Filled file</label><input id="import-file" type="file" accept=".json,application/json"></div>
+    return `<div class="field"><label for="import-file">Filled <code>avn-events.json</code></label><input id="import-file" type="file" accept=".json,application/json"></div>
       <div class="error" role="alert" id="import-error"></div>
       <div id="import-review">${preview ? reviewHTML() : ''}</div>`;
   }
@@ -286,7 +286,7 @@ function mountDictionaryFill(root, game, done) {
     const box = root.querySelector('#import-body');
     try {
       const list = await request(`${url}/imports`);
-      box.innerHTML = list.length ? `<div class="table-wrap"><table class="compact-table"><thead><tr><th>When</th><th>Who</th><th>Texts</th><th>Rules</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${list.map(item => `<tr><td class="small">${escapeHTML(displayDate(item.created_at))}</td><td class="small">${escapeHTML(item.actor)}</td><td class="num">${number(item.summary.fields_changed)}</td><td class="small muted">${escapeHTML(item.options.mode.replace(/_/g, ' '))} · ${escapeHTML(item.options.status)}</td><td>${item.undone_at ? '<span class="pill">Undone</span>' : `<button type="button" class="button danger-text" data-import-undo="${escapeHTML(item.id)}">Undo</button>`}</td></tr>`).join('')}</tbody></table></div><p class="help">Undo puts back what an import wrote, except texts someone has edited since.</p>` : '<p class="help">No imports yet.</p>';
+      box.innerHTML = list.length ? `<div class="table-wrap"><table class="compact-table"><thead><tr><th>When</th><th>Who</th><th>Texts</th><th>Rules</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${list.map(item => `<tr><td class="small">${escapeHTML(displayDate(item.created_at))}</td><td class="small">${escapeHTML(item.actor)}</td><td class="num">${number(item.summary.fields_changed)}</td><td class="small muted">${escapeHTML(item.options.mode.replace(/_/g, ' '))} · ${escapeHTML(item.options.status)}</td><td>${item.undone_at ? '<span class="pill">Undone</span>' : `<button type="button" class="button danger-text" data-import-undo="${escapeHTML(item.id)}">Undo</button>`}</td></tr>`).join('')}</tbody></table></div>` : '<p class="help">No imports yet.</p>';
       box.querySelectorAll('[data-import-undo]').forEach(button => button.addEventListener('click', async () => {
         button.disabled = true;
         try {
@@ -304,8 +304,8 @@ function mountDictionaryFill(root, game, done) {
 // Set up the AVN events standard in a game: pick tiers, then download the prompt with the spec
 // (or copy the prompt) for the AI agent the developer runs in the game's code.
 const STANDARD_TIERS = [
-  ['core', 'Core', 'Levels, ads, coins and app lifecycle. Always included.'],
-  ['standard', 'Standard', 'Tutorials, first run, powerups, menus, purchases and player state.'],
+  ['core', 'Core', 'Levels, ads, coins, app. Always on.'],
+  ['standard', 'Standard', 'Tutorials, powerups, menus, purchases, player.'],
   ['extended', 'Extended', 'Device hardware.'],
 ];
 
@@ -317,14 +317,13 @@ function mountStandardInstall(root) {
   const query = () => new URLSearchParams(tiers.map(tier => ['tiers', tier])).toString();
 
   const draw = () => {
-    root.innerHTML = `<p class="help">Pick the events to add. Levels, Retention and stories then map themselves.</p>
-      <div class="import-choices standard-tiers" role="group" aria-label="Which events">
+    root.innerHTML = `<div class="import-choices standard-tiers" role="group" aria-label="Which events">
         ${STANDARD_TIERS.map(([key, title, text]) => `<label class="import-choice"><input type="checkbox" name="tier" value="${key}" ${tiers.includes(key) ? 'checked' : ''} ${key === 'core' ? 'checked disabled' : ''}><span><strong>${title}</strong><small>${text}</small></span></label>`).join('')}
       </div>
-      <div id="standard-summary">${skeleton('table', 3, 3)}</div>
-      <ol class="import-steps"><li>Unzip the download in the root of your game project.</li><li>Run <code>AGENT_PROMPT.md</code> in your AI agent from that folder.</li><li>Send a test build, then check the events under Event dictionary, then use the “Map your events” tab.</li></ol>
       <div class="error" role="alert"></div>
-      <div class="modal-actions import-actions"><button type="button" class="button" data-standard-copy>${icon('copy', 14)} Copy the prompt</button><button type="button" class="button primary" data-standard-download>${icon('export', 14)} Download setup files</button></div>
+      <div class="import-actions setup-actions"><button type="button" class="button primary" data-standard-download>${icon('export', 15)} Download setup files</button><button type="button" class="button" data-standard-copy>${icon('copy', 15)} Copy prompt</button></div>
+      ${flow([['export', 'Unzip in your game'], ['sparkle', 'Run <code>AGENT_PROMPT.md</code> in your AI agent'], ['pulse', 'Send a test build']])}
+      <div id="standard-summary">${skeleton('table', 3, 3)}</div>
       <details class="import-prompt"><summary>Show the prompt</summary><textarea readonly rows="12" aria-label="Agent prompt" id="standard-prompt"></textarea></details>`;
     root.querySelectorAll('[name="tier"]').forEach(box => box.addEventListener('change', () => {
       tiers = [...root.querySelectorAll('[name="tier"]:checked')].map(item => item.value);
