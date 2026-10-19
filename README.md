@@ -73,6 +73,11 @@ AvnAnalytics.LogEvent("level_complete",
 
 See the [SDK README](unity/AVNAnalytics/README.md) for the persistence design, test harness and configuration.
 
+The built package, `AVNAnalytics.unitypackage`, is kept in [`avn_analytics/sdk/`](avn_analytics/sdk/) and
+shipped with the app. Everyone who can open the website downloads it under **Settings → Unity SDK**
+or **Event setup → Add AVN Events**, or over the API with `GET /v1/sdk/download`. To release a new
+build, replace that file in the repository.
+
 ### Events collected automatically
 
 | Event | When | Notable params |
@@ -266,8 +271,9 @@ shared rules. Mappings apply consistently across all analytics pages and never r
 ## Add AVN events with an AI agent
 
 New games, or games whose events should be cleaned up, can use the **AVN events standard**: a
-fixed set of event names, states and parameters (`LEVEL`, `AD`, `ECONOMY`, `APP`, `TUTORIAL`,
-`FTUE`, `POWERUP`, `SCREEN`, `IAP`, `PLAYER`, `DEVICE`), so every game sends the same shapes and
+fixed set of event names, states and parameters (`LEVEL_ANALYSIS`, `AD_ANALYSIS`, `ECONOMY_ANALYSIS`, `APP_ANALYSIS`, `TUTORIAL_ANALYSIS`,
+`FTUE_ANALYSIS`, `POWERUP_ANALYSIS`, `SCREEN_ANALYSIS`, `IAP_ANALYSIS`, `PLAYER_ANALYSIS`,
+`DEVICE_ANALYSIS`), so every game sends the same shapes and
 the dashboards map them on their own. The standard lives in
 [`avn_analytics/events_standard/`](avn_analytics/events_standard/): `STANDARD.md` to read,
 `standard.spec.json` for agents and tools, and `AGENT_PROMPT.md`, the prompt that adds it to a
@@ -280,7 +286,7 @@ game project's root and run the prompt with any coding agent. The agent adds one
 (`Assets/AVNEvents/`), keeps existing analytics untouched, and writes
 `avn-events-profile.json` with the game's vocabulary and anything it could not implement. Once a
 test build sends events, the Event setup page suggests Level started, completed, failed and
-restarted from `LEVEL` by itself. Over the API: `GET /v1/events-standard?tiers=standard` and
+restarted from `LEVEL_ANALYSIS` by itself. Over the API: `GET /v1/events-standard?tiers=standard` and
 `GET /v1/events-standard/download?tiers=standard`.
 
 ### Events your game sends that the standard doesn't have
@@ -296,7 +302,7 @@ out) under **Sent, not in the standard**. For each one you can:
 - **Ignore**: hide it for this game only. It is listed under **Ignored** with a **Restore**
   button; the events themselves stay in the data.
 
-Only events named in `UPPER_SNAKE` can be added, because the standard's names are exact (an event
+Only events named in `UPPER_SNAKE` and ending in `_ANALYSIS` can be added, because the standard's names are exact (an event
 like `daily_gift_claimed` can only be ignored). Lowercase or otherwise invalid parameter keys and
 states are left out of the starting point. The event table under **Show the events** has a *Sent
 by this game* column, and each custom event shows whether this game has sent it. Over the API:
@@ -305,7 +311,7 @@ by this game* column, and each custom event shows whether this game has sent it.
 ### Custom events
 
 Events the standard doesn't cover can be added from **Event setup → Add AVN Events → Custom events →
-Add event**: a name (`UPPER_SNAKE`), what it tracks, one or more states (`PascalCase`, with when
+Add event**: a name (`UPPER_SNAKE`, always ending in `_ANALYSIS`), what it tracks, one or more states (`PascalCase`, with when
 each is sent) and their parameters (`UPPER_SNAKE` key, `int`, `float` or `string`, required or not,
 optional list of allowed values). The page checks the same naming rules as the standard and the
 server refuses names that clash with a built-in event. Custom events are stored with the

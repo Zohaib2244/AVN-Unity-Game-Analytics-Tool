@@ -324,7 +324,7 @@ function mountStandardInstall(root, game) {
       <div id="unlisted-events" class="custom-events unlisted-events" hidden></div>
       <div id="custom-events" class="custom-events"></div>
       <div class="error" role="alert"></div>
-      <div class="import-actions setup-actions"><button type="button" class="button primary" data-standard-download>${icon('export', 15)} Download setup files</button><button type="button" class="button" data-standard-copy>${icon('copy', 15)} Copy prompt</button></div>
+      <div class="import-actions setup-actions"><button type="button" class="button primary" data-standard-download>${icon('export', 15)} Download setup files</button><button type="button" class="button" data-standard-copy>${icon('copy', 15)} Copy prompt</button>${sdkDownloadButton()}</div>
       ${flow([['export', 'Unzip in your game'], ['sparkle', 'Run <code>AGENT_PROMPT.md</code> in your AI agent'], ['pulse', 'Send a test build']])}
       <div id="standard-summary">${skeleton('table', 3, 3)}</div>
       <details class="import-prompt"><summary>Show the prompt</summary><textarea readonly rows="12" aria-label="Agent prompt" id="standard-prompt"></textarea></details>`;

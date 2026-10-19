@@ -32,6 +32,7 @@ from . import (
     events,
     insights,
     journeys,
+    sdk_package,
     standard,
     standard_status,
 )
@@ -548,6 +549,19 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             raise HTTPException(404, "No such custom event")
         accounts.audit(principal, "standard.custom_event_delete", name)
         return {"deleted": name}
+
+    @admin_api.get("/v1/sdk")
+    def sdk_info():
+        return sdk_package.info()
+
+    @admin_api.get("/v1/sdk/download")
+    def sdk_download():
+        return FileResponse(
+            sdk_package.PACKAGE,
+            media_type="application/octet-stream",
+            filename=sdk_package.FILENAME,
+            headers={"Cache-Control": "no-store"},
+        )
 
     @admin_api.get("/v1/games/{game_id}/standard")
     def game_standard(game_id: UUID):

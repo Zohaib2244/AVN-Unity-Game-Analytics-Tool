@@ -1,4 +1,4 @@
-# AVN events standard (version 3)
+# AVN events standard (version 4)
 
 The exact events, states and parameters AVN Analytics expects from a game. The machine-readable
 copy is [`standard.spec.json`](standard.spec.json); in it, `"$ref"` inside `params` pulls in a
@@ -25,7 +25,7 @@ thing the same way.
 | Durations | Raw seconds. Never buckets such as `<=60`. |
 | Lists | Never several values in one parameter. |
 | Personal data | Never player names, emails or typed text. |
-| Amounts | Only in `ECONOMY`. |
+| Amounts | Only in `ECONOMY_ANALYSIS`. |
 
 On every event: `STATE` (string) and `LEVEL_NUMBER` (int, 1-based, player-facing) whenever the
 game has a current level.
@@ -37,15 +37,15 @@ The game never sends what the SDK or the website already has: `session_start`, `
 
 | Tier | Events |
 | --- | --- |
-| core | `LEVEL`, `AD`, `ECONOMY`, `APP` |
-| standard | `TUTORIAL`, `FTUE`, `POWERUP`, `SCREEN`, `IAP`, `PLAYER` |
-| extended | `DEVICE` |
+| core | `LEVEL_ANALYSIS`, `AD_ANALYSIS`, `ECONOMY_ANALYSIS`, `APP_ANALYSIS` |
+| standard | `TUTORIAL_ANALYSIS`, `FTUE_ANALYSIS`, `POWERUP_ANALYSIS`, `SCREEN_ANALYSIS`, `IAP_ANALYSIS`, `PLAYER_ANALYSIS` |
+| extended | `DEVICE_ANALYSIS` |
 
 ## Events
 
 Key: **req** required, *opt* optional.
 
-### LEVEL (core)
+### LEVEL_ANALYSIS (core)
 
 One attempt, joined by `ATTEMPT_ID`.
 
@@ -66,7 +66,7 @@ Each result is sent once; a `Revive` continues the attempt and may produce anoth
 Backgrounding is not `Left`. `Abandoned` means the app closed or died before a choice. An offer
 shown on every result screen is a flag on the result (`SKIP_OFFERED`), never its own event.
 
-### AD (core)
+### AD_ANALYSIS (core)
 
 One ad attempt, joined by `AD_ID`. Every state carries the ad set: **AD_ID** string, **FORMAT**
 `Interstitial` `Rewarded` `AppOpen`, **PLACEMENT** string, *FALLBACK* int.
@@ -79,7 +79,7 @@ One ad attempt, joined by `AD_ID`. Every state carries the ad set: **AD_ID** str
 
 No `Requested` state, no banners. Revenue and impressions come from the ad plugin.
 
-### ECONOMY (core)
+### ECONOMY_ANALYSIS (core)
 
 | STATE | Parameters |
 | --- | --- |
@@ -89,7 +89,7 @@ No `Requested` state, no banners. Revenue and impressions come from the ad plugi
 `gift` `refund` `powerup` `revive` `skip_level` `unlock` `other`. `gift` covers daily gifts, spin
 wheels and chests. `DETAIL` names the specific thing (`extra_slot`, a product ID).
 
-### APP (core)
+### APP_ANALYSIS (core)
 
 | STATE | Parameters |
 | --- | --- |
@@ -97,14 +97,14 @@ wheels and chests. `DETAIL` names the specific thing (`extra_slot`, a product ID
 | `Background` | **CAUSE** `Ad` `Purchase` `Player`, **IN_LEVEL** int, *SCREEN* string |
 | `Foreground` | **CAUSE** `Ad` `Purchase` `Player`, **AWAY_SECONDS** float |
 
-### TUTORIAL (standard)
+### TUTORIAL_ANALYSIS (standard)
 
 | STATE | Parameters |
 | --- | --- |
 | `Shown` | **TUTORIAL** string, *STEP* int |
 | `Completed`, `Interrupted` | **TUTORIAL** string, *STEP* int, **SECONDS** float (wall time since Shown) |
 
-### FTUE (standard)
+### FTUE_ANALYSIS (standard)
 
 | STATE | Parameters |
 | --- | --- |
@@ -112,14 +112,14 @@ wheels and chests. `DETAIL` names the specific thing (`extra_slot`, a product ID
 
 Once per install. Skip steps the game lacks; never renumber.
 
-### POWERUP (standard)
+### POWERUP_ANALYSIS (standard)
 
 | STATE | Parameters |
 | --- | --- |
 | `Obtained` | **POWERUP** string, **AMOUNT** int, **SOURCE** `Coins` `RewardedAd` `Purchase` `Subscription` `Gift` `Other` |
 | `Used` | **POWERUP** string, **TRIGGER** `Player` `Tutorial`, *SECONDS_INTO_LEVEL* float |
 
-### SCREEN (standard)
+### SCREEN_ANALYSIS (standard)
 
 | STATE | Parameters |
 | --- | --- |
@@ -128,9 +128,9 @@ Once per install. Skip steps the game lacks; never renumber.
 | `Closed` | **SCREEN** string, **SECONDS_OPEN** float, *CLOSED_BY* `Purchased` `WatchedAd` `Dismissed` `SentToShop` `System` |
 
 `Closed` is required for the shop and offer popups, optional elsewhere. Gameplay and result
-screens are `LEVEL`, never `SCREEN`.
+screens are `LEVEL_ANALYSIS`, never `SCREEN_ANALYSIS`.
 
-### IAP (standard)
+### IAP_ANALYSIS (standard)
 
 All states carry **PRODUCT** (store ID) and *SCREEN*.
 
@@ -143,7 +143,7 @@ All states carry **PRODUCT** (store ID) and *SCREEN*.
 
 Restores, renewals and refunds are not sent.
 
-### PLAYER (standard)
+### PLAYER_ANALYSIS (standard)
 
 | STATE | Parameters |
 | --- | --- |
@@ -151,7 +151,7 @@ Restores, renewals and refunds are not sent.
 
 Once per SDK session, after the save loads.
 
-### DEVICE (extended)
+### DEVICE_ANALYSIS (extended)
 
 | STATE | Parameters |
 | --- | --- |
@@ -178,10 +178,10 @@ Once per install and when the app version or quality tier changes.
 | Dashboard concept | Event and condition | Level number |
 | --- | --- | --- |
 | Session start | `session_start` (SDK) | — |
-| Level started | `LEVEL` with `STATE=Started` | `LEVEL_NUMBER` |
-| Level completed | `LEVEL` with `STATE=Completed` | `LEVEL_NUMBER` |
-| Level failed | `LEVEL` with `STATE=Failed` | `LEVEL_NUMBER` |
-| Level restarted | `LEVEL` with `STATE=Restarted`, or `ACTION=Restart` | `LEVEL_NUMBER` |
+| Level started | `LEVEL_ANALYSIS` with `STATE=Started` | `LEVEL_NUMBER` |
+| Level completed | `LEVEL_ANALYSIS` with `STATE=Completed` | `LEVEL_NUMBER` |
+| Level failed | `LEVEL_ANALYSIS` with `STATE=Failed` | `LEVEL_NUMBER` |
+| Level restarted | `LEVEL_ANALYSIS` with `STATE=Restarted`, or `ACTION=Restart` | `LEVEL_NUMBER` |
 
 The Event setup page suggests all of these automatically from the `STATE` and `ACTION` values.
 

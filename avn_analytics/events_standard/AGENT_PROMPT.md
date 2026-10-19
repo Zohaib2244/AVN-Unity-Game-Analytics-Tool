@@ -19,12 +19,12 @@ Tiers to implement: **core, standard** (change this line to choose).
 1. Send only event names from the spec. Never invent one, even if the game has a feature the spec
    does not cover. List such features in the report instead.
 2. For each state, send only the keys the spec lists for it, with the listed types. Booleans are
-   int 0/1. The only extra keys allowed are up to 5 game extras on `LEVEL Started`.
+   int 0/1. The only extra keys allowed are up to 5 game extras on `LEVEL_ANALYSIS Started`.
 3. Closed enums are sent exactly as written in the spec. Game vocabulary (screens, placements,
-   tutorials, powerups, currencies, ECONOMY `DETAIL`, SCREEN `ACTION`) is built with the spec's
+   tutorials, powerups, currencies, ECONOMY_ANALYSIS `DETAIL`, SCREEN_ANALYSIS `ACTION`) is built with the spec's
    `naming_rules`; prefer the spec's listed names whenever one fits.
 4. Unknown values are omitted, never sent as `None`, `null`, `unknown` or `""`.
-5. Never send player names, emails or typed text. Never send amounts outside `ECONOMY`.
+5. Never send player names, emails or typed text. Never send amounts outside `ECONOMY_ANALYSIS`.
 6. Do not change gameplay, rewards, prices, ad timing or existing analytics (Firebase, ByteBrew,
    plugin events). Add calls beside them. Do not remove or rename existing events.
 7. Do not send `session_start`, `session_end` or `first_open`; the AVN SDK does. Do not initialize
@@ -93,7 +93,7 @@ Do these steps in order and do not skip any.
        public struct EconomyFlow
        {
            public string Currency; public int Amount; public int Balance;
-           public string Source; public string Detail;   // Source: spec ECONOMY SOURCE value
+           public string Source; public string Detail;   // Source: spec ECONOMY_ANALYSIS SOURCE value
        }
 
        public static class AvnEvents
@@ -101,7 +101,7 @@ Do these steps in order and do not skip any.
            // Set by the game whenever the current level changes; null when there is none.
            public static int? CurrentLevel;
 
-           public static void LevelCompleted(LevelResult r) => Send("LEVEL", "Completed", Result(r));
+           public static void LevelCompleted(LevelResult r) => Send("LEVEL_ANALYSIS", "Completed", Result(r));
 
            public static void LevelChoice(string attemptId, int level, ChoiceAction action,
                PayMethod? method = null)
@@ -109,10 +109,10 @@ Do these steps in order and do not skip any.
                var p = new Dictionary<string, object> {
                    ["ATTEMPT_ID"] = attemptId, ["LEVEL_NUMBER"] = level, ["ACTION"] = action.ToString() };
                if (method.HasValue) p["METHOD"] = method.Value.ToString();
-               Send("LEVEL", "Choice", p);
+               Send("LEVEL_ANALYSIS", "Choice", p);
            }
 
-           public static void AdShow(AdInfo ad) => Send("AD", "Show", Ad(ad));
+           public static void AdShow(AdInfo ad) => Send("AD_ANALYSIS", "Show", Ad(ad));
 
            static Dictionary<string, object> Progress(LevelProgress x) => new Dictionary<string, object> {
                ["ATTEMPT_ID"] = x.AttemptId, ["ATTEMPT"] = x.Attempt, ["LEVEL_NUMBER"] = x.LevelNumber,
@@ -150,18 +150,18 @@ Do these steps in order and do not skip any.
    ```
 5. **Call the sender** from the locations in step 2. Keep each call a single line where possible.
    Guard against duplicates: one result per attempt (until a revive), one `Choice` per result,
-   one `Closed` or `Failed` per `AD_ID`, one terminal state per tutorial run, FTUE steps once per
+   one `Closed` or `Failed` per `AD_ID`, one terminal state per tutorial run, FTUE_ANALYSIS steps once per
    install.
 6. **Handle the hard cases:**
    - Revive keeps the same `ATTEMPT_ID` and may produce another result.
-   - On launch, if the previous run died inside an attempt, send `LEVEL Left` with
+   - On launch, if the previous run died inside an attempt, send `LEVEL_ANALYSIS Left` with
      `REASON=Killed`, `RECOVERED=1` and the saved attempt values. If it died with a result but no
-     choice, send `LEVEL Choice` with `ACTION=Abandoned`.
+     choice, send `LEVEL_ANALYSIS Choice` with `ACTION=Abandoned`.
    - `SECONDS` (level) excludes time in background and in fullscreen ads.
    - Ad callbacks may arrive out of order or not at all; keep the ad state per `AD_ID`, and close
      it as `Failed` with `REASON=Timeout` after 180 seconds without `Closed`.
-   - A rewarded button pressed with no ad loaded is `AD Failed` with `REASON=NotReady`.
-   - `APP Background` caused by an ad or a purchase dialog has `CAUSE=Ad` or `CAUSE=Purchase`.
+   - A rewarded button pressed with no ad loaded is `AD_ANALYSIS Failed` with `REASON=NotReady`.
+   - `APP_ANALYSIS Background` caused by an ad or a purchase dialog has `CAUSE=Ad` or `CAUSE=Purchase`.
 7. **Write the profile** `Assets/AVNEvents/avn-events-profile.json`, exactly in this shape:
 
    ```json
@@ -179,16 +179,16 @@ Do these steps in order and do not skip any.
        "level_extras": {}
      },
      "events": {
-       "LEVEL": { "Started": { "status": "done", "where": "LevelManager.StartLevel" } }
+       "LEVEL_ANALYSIS": { "Started": { "status": "done", "where": "LevelManager.StartLevel" } }
      },
      "not_implemented": [
-       { "event": "IAP", "state": "Purchased", "reason": "the game has no store" }
+       { "event": "IAP_ANALYSIS", "state": "Purchased", "reason": "the game has no store" }
      ],
      "omitted_params": [
-       { "event": "LEVEL", "param": "PROGRESS_PCT", "reason": "..." }
+       { "event": "LEVEL_ANALYSIS", "param": "PROGRESS_PCT", "reason": "..." }
      ],
      "uncovered_features": [
-       { "feature": "spin wheel", "covered_by": "ECONOMY SOURCE=gift and SCREEN spin_wheel" }
+       { "feature": "spin wheel", "covered_by": "ECONOMY_ANALYSIS SOURCE=gift and SCREEN_ANALYSIS spin_wheel" }
      ]
    }
    ```

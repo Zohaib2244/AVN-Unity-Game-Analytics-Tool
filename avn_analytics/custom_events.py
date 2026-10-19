@@ -10,7 +10,8 @@ import re
 
 from .models import timestamp
 
-NAME = re.compile(r"[A-Z][A-Z0-9_]*")
+SUFFIX = "_ANALYSIS"
+NAME = re.compile(r"[A-Z][A-Z0-9_]*" + SUFFIX)
 STATE = re.compile(r"[A-Z][A-Za-z0-9]*")
 KEY = re.compile(r"[A-Z][A-Z0-9_]*")
 RESERVED_KEYS = {"STATE", "LEVEL_NUMBER"}
@@ -36,8 +37,8 @@ def validate(name, body, taken):
     """Check `name` and the editor-shaped `body` (a dict); return the body to store."""
     if not NAME.fullmatch(name) or len(name) > 40:
         raise CustomEventError(
-            f"Event name {name!r} must be UPPER_SNAKE: capital letters, digits and _, "
-            "starting with a letter (at most 40 characters)."
+            f"Event name {name!r} must be UPPER_SNAKE and end in {SUFFIX}: capital letters, "
+            "digits and _, starting with a letter (at most 40 characters)."
         )
     if name in taken:
         raise CustomEventError(f"{name} already exists in the standard.")
