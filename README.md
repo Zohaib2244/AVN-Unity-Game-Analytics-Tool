@@ -462,7 +462,7 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 
 The filter parameters are `env`, `not_env`, `version`, `build`, `country` and `platform`; each may be repeated. The `insights` endpoints also take `tz_offset` (minutes east of UTC, default 0), which moves day boundaries to that zone; the website sends the browser's offset when "Local" is chosen.
 
-A batch may carry a shared `context` (`user_id`, `device_id`, `session_id`, `app_version`, `build`, `platform`, `environment`) that the server merges into each event; an event's own value wins. Stored rows always have the full envelope. Requests may be gzipped (`Content-Encoding: gzip`); the body limit applies both before and after inflating.
+A batch may carry a shared `context` (`user_id`, `device_id`, `session_id`, `app_version`, `build`, `platform`, `environment`) that the server merges into each event; an event's own value wins. The context may also carry `standard` (string) and `standard_version` (integer): the events standard the batch follows, stored with each event and absent on older SDKs. A context field the server doesn't know is ignored, never a 400, so a newer SDK can't lose data to an older server; the events themselves are strict. Stored rows always have the full envelope. Requests may be gzipped (`Content-Encoding: gzip`); the body limit applies both before and after inflating.
 
 Event names start with a letter and contain letters, digits or underscores (80 max). Parameters allow at most 50 string or number values; no nesting, null, boolean, NaN or infinity. Strings are limited to 1,024 characters and integers to signed 64 bits. Unknown envelope fields are rejected so typos do not silently lose data.
 

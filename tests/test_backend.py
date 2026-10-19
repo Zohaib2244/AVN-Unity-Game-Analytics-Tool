@@ -672,8 +672,44 @@ def test_context_cannot_fill_gaps_it_does_not_cover(backend):
         assert ingest.post("/v1/events", headers=key, json=body).status_code == 400
     ok = {"context": {"device_id": "d", "session_id": "s"}, "events": [bare]}
     assert ingest.post("/v1/events", headers=key, json=ok).status_code == 200
-    unknown = {"context": {"device_id": "d", "country": "ZZ"}, "events": [bare]}
-    assert ingest.post("/v1/events", headers=key, json=unknown).status_code == 400
+    # an event itself stays strict: an unknown field there is still refused
+    stray = {
+        "context": {"device_id": "d", "session_id": "s"},
+        "events": [{**bare, "country": "ZZ"}],
+    }
+    assert ingest.post("/v1/events", headers=key, json=stray).status_code == 400
+
+
+def test_new_context_fields_are_accepted_and_the_standard_stamp_is_stored(backend):
+    admin, ingest, settings = backend
+    game = register(admin)
+    key = {"X-API-Key": game["key"]["api_key"]}
+    bare = {k: v for k, v in event().items() if k not in ("session_id", "device_id", "user_id")}
+    base = {"device_id": "d", "session_id": "s"}
+
+    def post(context, name="level_complete"):
+        body = {
+            "context": {**base, **context},
+            "events": [{**bare, "event_id": str(uuid4()), "name": name}],
+        }
+        return ingest.post("/v1/events", headers=key, json=body)
+
+    assert post({"standard": "avn-events", "standard_version": 3}, "LEVEL").status_code == 200
+    assert post({}, "OLD").status_code == 200  # older SDKs send neither field
+    # a field this server has never heard of is ignored, and a client cannot set the country
+    assert post({"future_field": "x", "country": "ZZ"}, "FUTURE").status_code == 200
+    # a malformed stamp only describes the batch, so it is dropped, not a 400
+    assert post({"standard": "avn-events", "standard_version": "three"}, "ODD").status_code == 200
+
+    with sqlite3.connect(settings.data_dir / "games" / f"{game['id']}.sqlite3") as db:
+        rows = {
+            name: json.loads(payload)
+            for name, payload in db.execute("SELECT name, payload FROM events")
+        }
+    assert (rows["LEVEL"]["standard"], rows["LEVEL"]["standard_version"]) == ("avn-events", 3)
+    assert (rows["OLD"]["standard"], rows["OLD"]["standard_version"]) == (None, None)
+    assert rows["FUTURE"]["country"] is None and "future_field" not in rows["FUTURE"]
+    assert (rows["ODD"]["standard"], rows["ODD"]["standard_version"]) == ("avn-events", None)
 
 
 def test_insights_funnel_players_and_journey(backend):
