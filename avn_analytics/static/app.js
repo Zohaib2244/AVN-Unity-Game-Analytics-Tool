@@ -177,10 +177,17 @@ function diagram() {
   return `<div class="welcome-art" aria-hidden="true"><svg viewBox="0 0 340 230" fill="none"><circle cx="185" cy="115" r="82" stroke="currentColor"/><circle cx="185" cy="115" r="57" stroke="currentColor" opacity=".6"/><path d="M52 70h48l48 44m-96 59h50l46-48m77-11h68" stroke="var(--accent-cyan)" stroke-width="1.4" stroke-dasharray="4 5"/><rect x="26" y="43" width="59" height="54" rx="13" fill="var(--bg-nested)" stroke="var(--border)"/><rect x="26" y="146" width="59" height="54" rx="13" fill="var(--bg-nested)" stroke="var(--border)"/><rect x="139" y="75" width="87" height="81" rx="20" fill="var(--accent-orange)" stroke="var(--border)"/><rect x="266" y="87" width="49" height="54" rx="12" fill="var(--bg-nested)" stroke="var(--border)"/><path d="M169 99h28v12h-28Zm0 18h28v12h-28Z" stroke="var(--badge-text)" stroke-width="2"/><circle cx="175" cy="105" r="1.5" fill="var(--badge-text)"/><circle cx="175" cy="123" r="1.5" fill="var(--badge-text)"/><path d="M45 65h19l3 14-8-3h-9l-8 3 3-14Zm2 5h7m-3-3v6m9-2h.1M45 167h21v14H45Zm3 17h15m-11-3v3m6-3v3M279 101h15m-15 6h15m-15 6h9m-9 6h12" stroke="var(--accent-orange)" stroke-width="1.5" stroke-linecap="round"/><circle cx="241" cy="65" r="12" fill="var(--bg-nested)" stroke="var(--accent-cyan)"/><path d="m236 65 3 3 6-6" stroke="var(--accent-cyan)" stroke-width="1.5"/><circle cx="116" cy="181" r="4" fill="var(--accent-cyan)"/><circle cx="288" cy="167" r="3" fill="var(--accent-cyan)"/></svg></div>`;
 }
 
-function toast(message) {
-  document.querySelector('#notice').textContent = message;
+function toast(message, action = null) {
+  const notice = document.querySelector('#notice');
+  notice.textContent = message;
+  if (action) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'button small-button'; button.textContent = action.label;
+    button.addEventListener('click', () => { notice.textContent = ''; action.run(); }, {once: true});
+    notice.append(' ', button);
+  }
   clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => { document.querySelector('#notice').textContent = ''; }, 4500);
+  noticeTimer = setTimeout(() => { notice.textContent = ''; }, action ? 8000 : 4500);
 }
 
 // Short-lived cache for read requests, so revisiting a page (or hovering a link first) skips the network.

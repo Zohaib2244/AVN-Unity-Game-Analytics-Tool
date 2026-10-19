@@ -37,6 +37,15 @@ const analysisDate = (value, timezone = 'local') => value ? new Date(value).toLo
 const percent = value => `${Number(value).toLocaleString(undefined, {maximumFractionDigits: 1})}%`;
 const operatorLabel = op => OPERATORS.find(([key]) => key === op)?.[1] || '=';
 const stepLabel = step => step.label ? escapeHTML(step.label) : `${escapeHTML(step.event)}${step.param ? ` · ${escapeHTML(step.param)}${step.op === 'exists' || (step.value ?? '') === '' ? '' : ` ${operatorLabel(step.op)} ${escapeHTML(step.value)}`}` : ''}`;
+// Quick highlights for the things studied most: [key, label, event-name pattern, fallback keyword, color].
+const HIGHLIGHT_PRESETS = [['levels', 'Levels', /^level/i, 'level', 'cyan'], ['screens', 'Screens', /^screen/i, 'screen', 'violet'], ['ads', 'Ads', /^ads?(_|$)/i, 'ad_', 'gold']];
+// Long decimals (6.9673786) read as 2 decimals; the exact value stays in the tooltip. Strings, IDs and integers are untouched.
+const chipValue = value => typeof value === 'number' && !Number.isInteger(value) ? String(Number(value.toFixed(2))) : typeof value === 'object' ? JSON.stringify(value) : value;
+const sessionStartSummary = params => {
+  const pick = key => params[Object.keys(params).find(name => name.toLowerCase() === key)];
+  const system = String(pick('os_version') ?? '').split(' / ')[0].split(' (')[0];
+  return [pick('session_number') != null ? `Session ${pick('session_number')}` : '', pick('device_model'), system, pick('environment')].filter(Boolean).join(' · ') || 'Session details';
+};
 const paramChips = params => Object.entries(params).map(([key, value]) => `<span class="chip"><b>${escapeHTML(key)}</b> ${escapeHTML(typeof value === 'object' ? JSON.stringify(value) : value)}</span>`).join('');
 const shortId = id => id.length > 18 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id;
 const setWidths = container => container.querySelectorAll('[data-width]').forEach(bar => { bar.style.width = `${bar.dataset.width}%`; }); // CSP: no inline style attributes
@@ -548,9 +557,9 @@ function mountJourneys(container, game, hooks) {
       <label class="inline-field">Hide<select id="journeys-ignore-add"></select></label><span id="journeys-ignore" class="chip-row"></span>
     </div>
     <div id="journeys-summary"></div>
-    <p class="help" id="journeys-intro">Pick where to start and end, then “Show journeys”. The steps come from your funnel above. Events are named from your event dictionary; fill in “How it reads in player stories” there to rename them.</p>
+    <p class="help" id="journeys-intro">Pick where to start and end, then “Show journeys”. The steps come from your funnel above. Events are named from your event dictionary; fill in “How it reads in player stories” there to rename them in journeys.</p>
     <div id="journeys-views" hidden>
-      <div class="range-modes route-tabs" role="tablist" aria-label="How to view journeys"><button type="button" role="tab" data-view="journeys">Journeys</button><button type="button" role="tab" data-view="exits">Where players stop</button></div>
+      <div class="range-modes route-tabs" role="group" aria-label="How to view journeys"><button type="button" data-view="journeys">Journeys</button><button type="button" data-view="exits">Where players stop</button></div>
       <div id="journeys-view-journeys"></div><div id="journeys-view-exits" hidden></div>
     </div></div>
     <div id="journeys-players-wrap" hidden><div class="panel-header"><div><h2 id="journeys-players-title">Players</h2><p id="journeys-players-note"></p></div><button class="button small-button" type="button" id="journeys-players-csv">${icon('export',14)} CSV</button></div><div id="journeys-players" class="panel-body"></div></div>`;
@@ -619,7 +628,7 @@ function mountJourneys(container, game, hooks) {
     wrap.scrollIntoView({behavior: 'smooth', block: 'nearest'});
     try {
       const data = await api(`${gameURL(game)}/insights/journeys/players`, {method: 'POST', body: JSON.stringify({...lastBody, target})});
-      $('#journeys-players-note').textContent = `${number(data.total)} player${data.total === 1 ? '' : 's'}${data.total > data.players.length ? ` · showing the latest ${number(data.players.length)}` : ''} · open one to read their story`;
+      $('#journeys-players-note').textContent = `${number(data.total)} player${data.total === 1 ? '' : 's'}${data.total > data.players.length ? ` · showing the latest ${number(data.players.length)}` : ''} · open one to read their events`;
       $('#journeys-players').innerHTML = data.players.length ? `<div class="table-wrap"><table><thead><tr><th>Player</th><th>Outcome</th><th>What they did</th><th>Last event</th></tr></thead><tbody>${data.players.map(item => `<tr><td><a class="mono" href="${gamePath(game, 'players')}?${new URLSearchParams({player: item.player})}">${escapeHTML(shortId(item.player))}</a></td><td>${outcome(item.status)}</td><td class="route-cell">${escapeHTML(item.line || '—')}</td><td class="small muted">${displayDate(item.last_seen)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="help">Nobody.</p>';
       $('#journeys-players-csv').onclick = () => downloadCSV(`${game.name}-journey-players.csv`, [['player', 'outcome', 'what_they_did', 'last_event'], ...data.players.map(item => [item.player, item.status, item.line, item.last_seen])]);
     } catch (error) { $('#journeys-players').innerHTML = loadError(error); }
@@ -716,7 +725,7 @@ async function renderPlayers() {
   const viewKey = `avn-players-view-${game.id}`;
   const view = {sort: 'last_seen', order: 'desc', conditions: [], metrics: [], ...(storeGet(viewKey) || {})};
   let catalog = {events: []};
-  shell('Players', heading('Players', 'A player uses user_id when available, otherwise device_id. Open one to read their story, sort the list, or add event-based columns.') +
+  shell('Players', heading('Players', 'A player uses user_id when available, otherwise device_id. Open one to read their events, sort the list, or add event-based columns.') +
     `<div id="filters"></div>
     <section class="panel section-spacing"><div class="panel-header"><h2>Players <span class="count" id="player-count">0</span></h2><div class="search">${icon('search',16)}<input id="player-search" type="search" aria-label="Search players" placeholder="Search by user or install ID…"></div></div>
       <div class="players-toolbar"><label class="inline-field">Sort by<select id="player-sort"></select></label><button type="button" class="button small-button" id="player-order"></button>
@@ -815,21 +824,7 @@ async function renderPlayers() {
   });
 }
 
-/* ─── One player: their story in plain words (default) or every raw event ─── */
-
-const levelTable = rows => `<table class="level-mini"><thead><tr><th>Level</th><th>Result</th><th class="num">Time</th></tr></thead><tbody>${rows.map(row => `<tr><td>${row.level}</td><td>${row.completed ? 'Completed' : row.failed ? 'Failed' : 'Started'}${row.failed ? ` · failed ${row.failed}×` : ''}${row.restarted ? ` · restarted ${row.restarted}×` : ''}${row.completed && row.started > 1 ? ` · ${row.started} tries` : ''}</td><td class="num">${row.seconds != null ? duration(row.seconds) : '—'}</td></tr>`).join('')}</tbody></table>`;
-
-function storyChapter(chapter, timezone, focusLevel = null) {
-  const came = chapter.gap == null ? '' : chapter.gap >= 1800 ? ` · came back ${duration(chapter.gap)} after the last session` : ` · ${duration(chapter.gap)} after the last session`;
-  return `<section class="story-chapter"><div class="story-head"><strong>Session ${chapter.number}</strong><span>${analysisDate(chapter.start, timezone)} · ${duration(chapter.seconds)} played${came}</span></div>
-    <ol class="story-lines">${chapter.segments.map(segment => {
-      const slow = segment.slowest ? `<span class="story-flag">Level ${segment.slowest.level} took ${duration(segment.slowest.seconds)}</span>` : '';
-      const extras = segment.extras?.length ? `<span class="story-extras">${segment.extras.map(extra => `<span class="chip">${escapeHTML(extra.text)}${extra.count > 1 ? ` ×${extra.count}` : ''}</span>`).join('')}</span>` : '';
-      const focus = focusLevel != null && segment.type === 'levels' && segment.levels.some(row => row.level === focusLevel);
-      const details = segment.type === 'levels' ? `<details class="story-details" ${focus ? 'open' : ''}><summary>Level by level</summary>${levelTable(segment.levels)}</details>` : Object.keys(segment.params || {}).filter(key => key !== 'seq').length ? `<details class="story-details"><summary>Details</summary><span class="story-params">${paramChips(Object.fromEntries(Object.entries(segment.params).filter(([key]) => key !== 'seq')))}</span></details>` : '';
-      return `<li class="story-line ${segment.type} ${focus ? 'focus' : ''}"><time datetime="${escapeHTML(segment.t)}">${clock(segment.t, timezone)}</time><div><span class="story-text">${escapeHTML(segment.text)}</span>${slow}${extras}${details}</div></li>`;
-    }).join('') || '<li class="help">Nothing but session start and end.</li>'}</ol></section>`;
-}
+/* ─── One player: every raw event (default) or their device info ─── */
 
 function playerOperatingSystem(raw, platform) {
   const value = String(raw || '').trim();
@@ -900,9 +895,9 @@ function playerInformation(data, timezone, fetchedDevice = null) {
 async function renderJourney(game, player, options = {}) {
   const container = options.overlay ? modal : document;
   const returnScroll = {left: window.scrollX, top: window.scrollY, behavior: 'instant'};
-  const content = `<a class="back-link" href="${gamePath(game, 'players')}">← Back to players</a>` + heading('Player story', player) +
+  const content = `<a class="back-link" href="${gamePath(game, 'players')}">← Back to players</a>` + heading('Player', player) +
     `<div class="filter-bar"><div id="story-range"></div><div class="segmented timezone-toggle" role="group" aria-label="Player event time zone"><button type="button" data-story-timezone="local">Local</button><button type="button" data-story-timezone="utc">UTC</button></div></div><div class="analysis-context" id="story-context"></div><div id="story-metrics"></div>
-    <div class="range-modes route-tabs" role="tablist" aria-label="View"><button type="button" role="tab" data-story-view="story">Story</button><button type="button" role="tab" data-story-view="raw">Raw events</button><button type="button" role="tab" data-story-view="info">Player info</button></div>
+    <div class="range-modes route-tabs" role="group" aria-label="View"><button type="button" data-story-view="raw">Raw events</button><button type="button" data-story-view="info">Player info</button></div>
     <div id="story-body"></div>`;
   if (options.overlay) {
     modal.classList.add('player-dialog');
@@ -935,16 +930,12 @@ async function renderJourney(game, player, options = {}) {
     }, {once: true});
     modal.showModal();
   } else {
-    shell('Player story', content);
+    shell('Player', content);
   }
-  let view = options.cut ? 'story' : storeGet(`avn-story-view-${game.id}`) || 'story';
+  let view = (options.overlay ? storeGet(`avn-story-view-${game.id}`) : new URLSearchParams(location.search).get('view') || storeGet(`avn-story-view-${game.id}`)) === 'info' ? 'info' : 'raw';
   const saved = options.filters || filterState(game);
   let latest = 0;
-  let range = null; let showHidden = false; let timezone = saved.timezone; let fetchedDevice = null;
-  // Opened from the Levels page: only up to (or from) the level they were looking at.
-  const asked = options.overlay ? new URLSearchParams({level: options.level ?? '', cut: options.cut || ''}) : new URLSearchParams(location.search);
-  const focusLevel = /^\d{1,7}$/.test(asked.get('level') || '') ? Number(asked.get('level')) : null;
-  let focusCut = focusLevel != null && ['until', 'from'].includes(asked.get('cut')) ? asked.get('cut') : null;
+  let range = null; let timezone = saved.timezone; let fetchedDevice = null;
   const body = container.querySelector('#story-body');
   let playerIndex = options.browse?.index ?? 0;
   let browsing = false;
@@ -985,7 +976,7 @@ async function renderJourney(game, player, options = {}) {
     container.querySelector('#story-metrics').innerHTML = skeleton('stats');
     body.innerHTML = skeleton('table', 5, 2);
     try {
-      const data = await api(`${gameURL(game)}/insights/story?${new URLSearchParams({start: range.from, end: range.to, player, hidden: String(showHidden), tz_offset: timezone === 'utc' ? 0 : localTimezoneOffset(), ...(focusCut ? {level: focusLevel, cut: focusCut} : {})})}`);
+      const data = await api(`${gameURL(game)}/insights/story?${new URLSearchParams({start: range.from, end: range.to, player, tz_offset: timezone === 'utc' ? 0 : localTimezoneOffset()})}`);
       if (ticket !== latest || !body.isConnected) return;
       container.querySelector('#story-metrics').innerHTML = stats([['Sessions', number(data.sessions), data.first_seen ? `${analysisDate(data.first_seen, timezone)} → ${analysisDate(data.last_seen, timezone)}` : ''], ['Events', number(data.events), ''], ['Play time', duration(data.total_play_seconds), data.average_session_seconds != null ? `${duration(data.average_session_seconds)} average session` : ''], ['Highest level', data.highest_level != null ? number(data.highest_level) : '—', '']]);
       if (view === 'info') {
@@ -1010,22 +1001,17 @@ async function renderJourney(game, player, options = {}) {
         });
         return;
       }
-      if (view === 'raw') { await renderRawEvents(game, player, range, timezone, container); return; }
-      const focusBar = focusLevel == null ? '' : `<div class="story-focus"><div class="segmented" role="group" aria-label="How much of the story">${[['until', `Up to level ${focusLevel}`], ['from', `From level ${focusLevel}`], [null, 'Everything']].map(([key, label]) => `<button type="button" data-story-cut="${key ?? ''}" aria-pressed="${focusCut === key}">${label}</button>`).join('')}</div><span class="small muted">${!focusCut ? `Level ${focusLevel} is highlighted.` : !data.cut?.found ? `This player has no level ${focusLevel} events in these days, so everything is shown.` : focusCut === 'until' ? `Up to the last time they played level ${focusLevel}${data.cut.hidden ? ` · ${number(data.cut.hidden)} later event${data.cut.hidden === 1 ? '' : 's'} hidden` : ''}.` : `From the first time they started level ${focusLevel}${data.cut.hidden ? ` · ${number(data.cut.hidden)} earlier event${data.cut.hidden === 1 ? '' : 's'} hidden` : ''}.`}</span></div>`;
-      body.innerHTML = focusBar + (data.chapters.length ? `<label class="check-row story-toggle"><input type="checkbox" id="story-hidden" ${showHidden ? 'checked' : ''}> Also show events hidden in the dictionary</label>${data.chapters.map(chapter => storyChapter(chapter, timezone, focusLevel)).join('')}` : '<p class="help">No events from this player in these days.</p>');
-      body.querySelector('[aria-label="How much of the story"]')?.addEventListener('click', event => {
-        const button = event.target.closest('[data-story-cut]'); if (!button) return;
-        focusCut = button.dataset.storyCut || null;
-        const url = new URL(location.href); focusCut ? url.searchParams.set('cut', focusCut) : url.searchParams.delete('cut');
-        if (!options.overlay) history.replaceState(null, '', url);
-        draw();
-      });
-      body.querySelector('#story-hidden')?.addEventListener('change', event => { showHidden = event.target.checked; draw(); });
+      await renderRawEvents(game, player, range, timezone, container);
     } catch (error) { if (ticket === latest && body.isConnected) { container.querySelector('#story-metrics').innerHTML = ''; body.innerHTML = loadError(error, 'data-retry-story'); } }
   };
   container.querySelector('[aria-label="View"]').addEventListener('click', event => {
     const tab = event.target.closest('[data-story-view]');
-    if (tab && range) { view = tab.dataset.storyView; storeSet(`avn-story-view-${game.id}`, view); draw(); }
+    if (tab && range) {
+      view = tab.dataset.storyView; storeSet(`avn-story-view-${game.id}`, view);
+      if (!options.overlay) { const url = new URL(location.href); view === 'info' ? url.searchParams.set('view', 'info') : url.searchParams.delete('view'); history.replaceState(null, '', url); }
+      // Cross-fade between the two views where the browser can.
+      document.startViewTransition ? document.startViewTransition(() => draw()) : draw();
+    }
   });
   container.querySelector('[aria-label="Player event time zone"]').addEventListener('click', event => {
     const button = event.target.closest('[data-story-timezone]');
@@ -1043,12 +1029,21 @@ async function renderRawEvents(game, player, range, timezone, container = docume
   const saved = storeGet(`avn-highlights-${game.id}`) || {};
   const highlights = saved.rules || [];
   let mode = saved.mode || 'highlight';
+  let painted = false; // the entrance animation plays once; later redraws (toggles, edits) must not blink
+  let freshRule = -1; // a rule you just added opens for editing; the rest stay folded
   let events = []; let current = -1; let complete = false; let loadFailure = '';
   const persist = () => storeSet(`avn-highlights-${game.id}`, {rules: highlights, mode});
+  // Parameters you never read (random IDs, counters) can be hidden; keys are matched case-insensitively.
+  const paramState = {hidden: ['seq', 'attempt_id'], showAll: false, group: false, ...(storeGet(`avn-timeline-params-${game.id}`) || {})};
+  const hiddenParams = new Set(paramState.hidden);
+  const saveParams = () => storeSet(`avn-timeline-params-${game.id}`, {hidden: [...hiddenParams], showAll: paramState.showAll, group: paramState.group});
   container.querySelector('#story-body').innerHTML = `<section class="panel raw-timeline"><div class="panel-header"><div><h2>Timeline</h2><p>Every event, grouped by session · times in ${timezone === 'utc' ? 'UTC' : 'your local time'} · the gap is the time since the previous event</p></div>
     <div class="segmented" role="group" aria-label="Timeline mode"><button type="button" data-timeline-mode="highlight">Highlight timeline</button><button type="button" data-timeline-mode="filter">Filter timeline</button></div></div>
-    <details class="panel-body highlight-setup" id="timeline-highlights" data-disclosure="highlight-setup" open><summary>Highlight rules <span class="small muted" id="highlight-rule-summary"></span></summary><div class="highlight-setup-body"><p class="help">Keep the full timeline. Give each highlight a color and combine conditions with AND / OR groups. Rules are remembered for this game in this browser.</p><div id="highlight-rules"></div><button type="button" class="button small-button" id="highlight-add">+ Highlight</button></div></details>
-    <div class="highlight-navigation" hidden><label for="highlight-selection">Navigate</label><div class="highlight-navigation-controls"><select id="highlight-selection"><option value="all">All highlights</option></select><div class="highlight-navigation-buttons" role="group" aria-label="Navigate matching events"><button type="button" class="button" id="highlight-previous">← Previous</button><button type="button" class="button" id="highlight-next">Next →</button></div><span id="highlight-position" role="status" aria-live="polite"></span></div></div>
+    <div class="param-bar panel-body"><div class="segmented" role="group" aria-label="Parameters shown"><button type="button" data-param-view="clean">Hide noise</button><button type="button" data-param-view="all">Show all</button></div><details class="param-chooser" data-disclosure="param-chooser"><summary>Choose parameters <span class="small muted" id="param-summary"></span></summary><div class="param-list" id="param-list"></div></details><label class="check-row" for="group-repeats"><input type="checkbox" id="group-repeats"> Group repeated events</label></div>
+    <div class="highlight-actions panel-body" id="highlight-actions"><div class="highlight-add-row"><button type="button" class="button small-button" id="highlight-add">+ Highlight</button><span class="small muted">Quick:</span>${HIGHLIGHT_PRESETS.map(([key, label]) => `<button type="button" class="button small-button" data-highlight-preset="${key}">+ ${label}</button>`).join('')}</div></div>
+    <div class="highlight-summary panel-body" id="highlight-summary" hidden></div>
+    <details class="panel-body highlight-setup" id="timeline-highlights" data-disclosure="highlight-setup"><summary>Highlight rules <span class="small muted" id="highlight-rule-summary"></span></summary><div class="highlight-setup-body"><p class="help">Keep the full timeline. Give each highlight a color and combine conditions with AND / OR groups. Rules are remembered for this game in this browser.</p><div id="highlight-rules"></div></div></details>
+    <div class="highlight-navigation" hidden><label for="highlight-selection">Navigate</label><div class="highlight-navigation-controls"><select id="highlight-selection"><option value="all">All highlights</option></select><div class="highlight-navigation-buttons" role="group" aria-label="Navigate matching events"><button type="button" class="button" id="highlight-previous" title="Shortcut: K">← Previous</button><button type="button" class="button" id="highlight-next" title="Shortcut: J">Next →</button></div><span id="highlight-position" role="status" aria-live="polite"></span><span class="small muted">Keys: J next · K previous</span></div></div>
     <div class="toolbar" id="timeline-search"><div class="search">${icon('search',16)}<input id="journey-filter" type="search" aria-label="Filter events" placeholder="Filter by event or parameter…"></div></div>
     <p class="help panel-body" id="timeline-load" role="status"></p><div class="panel-body" id="journey">${skeleton('table', 6, 3)}</div></section>`;
   const root = container.querySelector('#story-body');
@@ -1064,12 +1059,80 @@ async function renderRawEvents(game, player, range, timezone, container = docume
     root.querySelector('#highlight-previous').disabled = !indices.length || mode !== 'highlight';
     root.querySelector('#highlight-next').disabled = !indices.length || mode !== 'highlight';
   };
+  // How much of the timeline each highlight covers, and where along it the matches fall.
+  let summaryPainted = false;
+  const drawSummary = () => {
+    const active = highlights.map((rule, index) => ({rule, index})).filter(({rule}) => rule.enabled !== false && !conditionError(rule.conditions));
+    const summary = root.querySelector('#highlight-summary');
+    summary.hidden = mode !== 'highlight' || !active.length || !events.length;
+    if (summary.hidden) return;
+    summary.classList.toggle('settled', summaryPainted); summaryPainted = true;
+    const sessionIds = new Set(events.map(event => event.session_id));
+    const cards = active.map(({rule, index}) => {
+      const hits = events.filter(event => matches(event, rule));
+      const inSessions = new Set(hits.map(event => event.session_id)).size;
+      const share = 100 * hits.length / events.length;
+      return `<div class="highlight-card highlight-${rule.color}"><div class="highlight-card-head"><span class="highlight-dot" aria-hidden="true"></span><span class="highlight-card-name">${escapeHTML(rule.label || `Highlight ${index + 1}`)}</span><strong>${number(hits.length)}</strong></div><div class="highlight-bar" aria-hidden="true"><i data-width="${Math.max(share, hits.length ? 1.5 : 0)}"></i></div><span class="small muted">${percent(share)} of ${number(events.length)} events · in ${number(inSessions)} of ${number(sessionIds.size)} session${sessionIds.size === 1 ? '' : 's'}</span></div>`;
+    }).join('');
+    const ticks = events.flatMap((event, index) => {
+      const rule = active.find(({rule}) => matches(event, rule))?.rule;
+      return rule ? [`<button type="button" class="highlight-tick highlight-${rule.color}" data-left="${events.length > 1 ? 100 * index / (events.length - 1) : 0}" data-timeline-jump="${index}" aria-label="Go to ${escapeHTML(event.name)}, event ${index + 1}" title="${escapeHTML(event.name)} · event ${index + 1}"></button>`] : [];
+    }).slice(0, 3000).join('');
+    summary.innerHTML = `<div class="highlight-cards">${cards}</div><div class="highlight-map" role="group" aria-label="Where highlights fall in this player's timeline"><span class="small muted">Start</span><div class="highlight-track">${ticks}</div><span class="small muted">Latest</span></div>`;
+    setWidths(summary);
+    summary.querySelectorAll('[data-left]').forEach(tick => { tick.style.left = `${tick.dataset.left}%`; }); // CSP: no inline style attributes
+  };
+  const jumpTo = index => {
+    current = index;
+    box.querySelector('.timeline-current')?.classList.remove('timeline-current');
+    const target = box.querySelector(`[data-timeline-index="${current}"]`);
+    if (target) target.closest('.journey-session').open = true;
+    disclosures.remember();
+    target?.classList.add('timeline-current', 'jump-pulse'); setTimeout(() => target?.classList.remove('jump-pulse'), 800);
+    target?.focus({preventScroll: true}); target?.scrollIntoView({block: 'center', behavior: 'instant'}); updateNavigation();
+  };
+  const rowFor = (item, run = null) => {
+          const hits = mode === 'highlight' ? highlights.flatMap((rule, index) => matches(item, rule) ? [{...rule, index}] : []) : [];
+          const lit = new Set(hits.flatMap(rule => matchingConditionParams(item, rule.conditions)));
+          const quiet = [];
+          const chips = Object.entries(item.params).map(([key, value]) => {
+            if (!paramState.showAll && hiddenParams.has(key.toLowerCase()) && !lit.has(key)) { quiet.push(key); return ''; }
+            const hit = hits.find(rule => matchingConditionParams(item, rule.conditions).includes(key));
+            const off = hiddenParams.has(key.toLowerCase());
+            return `<span class="chip ${hit ? `highlight-ink highlight-${hit.color}` : ''} ${off ? 'chip-off' : ''}"><button type="button" class="chip-key" data-hide-param="${escapeHTML(key)}" title="${off ? `Show ${escapeHTML(key)} again in clean view` : `Hide ${escapeHTML(key)} in every event`}">${escapeHTML(key)}</button> <span title="${escapeHTML(typeof value === 'object' ? JSON.stringify(value) : value)}">${escapeHTML(chipValue(value))}</span></span>`;
+          }).join('') + (quiet.length ? `<button type="button" class="chip chip-more" data-param-view="all" title="Hidden: ${escapeHTML(quiet.join(', '))}. Click to show all parameters.">+${quiet.length}</button>` : '');
+          const params = item.name === 'session_start' && Object.keys(item.params).length ? `<details class="chip-collapse" ${lit.size ? 'open' : ''}><summary>${escapeHTML(sessionStartSummary(item.params))}</summary>${chips}</details>` : chips;
+          const last = run?.[run.length - 1];
+          const span = last ? `<span class="small muted">${clock(item.client_ts, timezone)}–${clock(last.client_ts, timezone)} · ${duration((Date.parse(last.client_ts) - Date.parse(item.client_ts)) / 1000)}</span>` : '';
+          return `<li data-timeline-index="${item.index}" tabindex="-1" class="${run ? 'timeline-run' : ''} ${hits.length ? `timeline-match highlight-${hits[0].color}` : ''} ${current === item.index && mode === 'highlight' ? 'timeline-current' : ''}"><time datetime="${escapeHTML(item.client_ts)}">${clock(item.client_ts, timezone)}</time><span class="journey-gap ${item.gap > 60 ? 'long' : ''}">${item.gap == null ? '' : `+${duration(item.gap)}`}</span><span class="journey-name">${escapeHTML(item.name)}${run ? `<span class="chip chip-count" title="${run.length} identical events in a row">×${run.length}</span>` : ''}${hits.map(rule => `<span class="highlight-tag highlight-${rule.color}">${escapeHTML(rule.label || `Highlight ${rule.index + 1}`)}</span>`).join('')}</span><span class="journey-params">${params}${span}</span></li>`;
+  };
+  // Runs of 3+ identical, un-highlighted events fold into one "×N" row (opt-in; highlighted events always stay visible so navigation works).
+  const runKey = item => {
+    if (mode === 'highlight' && highlights.some(rule => matches(item, rule))) return null;
+    const shown = Object.entries(item.params).filter(([key]) => paramState.showAll || !hiddenParams.has(key.toLowerCase()));
+    return `${item.name}|${JSON.stringify(shown)}`;
+  };
+  const rowsFor = items => {
+    const rows = [];
+    for (let start = 0; start < items.length;) {
+      const key = paramState.group ? runKey(items[start]) : null;
+      let end = start + 1;
+      if (key) while (end < items.length && runKey(items[end]) === key) end++;
+      if (end - start >= 3) rows.push(rowFor(items[start], items.slice(start, end)));
+      else for (let index = start; index < end; index++) rows.push(rowFor(items[index]));
+      start = end;
+    }
+    return rows.join('');
+  };
   const draw = () => {
     if (!box.isConnected) return;
     disclosures.remember();
+    root.querySelector('#highlight-actions').hidden = mode !== 'highlight';
+    root.querySelector('#group-repeats').checked = Boolean(paramState.group);
     root.querySelector('#timeline-highlights').hidden = mode !== 'highlight';
     root.querySelector('.highlight-navigation').hidden = mode !== 'highlight' || !highlights.some(rule => rule.enabled !== false && !conditionError(rule.conditions));
     root.querySelector('#timeline-search').hidden = mode !== 'filter';
+    root.querySelectorAll('[data-param-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.paramView === (paramState.showAll ? 'all' : 'clean'))));
     root.querySelectorAll('[data-timeline-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.timelineMode === mode)));
     root.querySelector('#timeline-load').textContent = loadFailure || `${number(events.length)} events ${complete ? 'in the full selected date range' : 'loaded · loading the rest of the timeline…'}`;
     root.querySelector('#timeline-load').classList.toggle('error', Boolean(loadFailure));
@@ -1096,23 +1159,24 @@ async function renderRawEvents(game, player, range, timezone, container = docume
       const divider = shownSessions++ ? `<div class="session-break" role="separator" aria-label="Session break before session ${index + 1}"><span aria-hidden="true">Session break</span></div>` : '';
       const sessionGap = gap == null ? '' : `<span class="session-gap">${duration(gap)} after previous session</span>`;
       return `${divider}<details class="journey-session" data-disclosure="session-${escapeHTML(session.id)}-${index}" open><summary class="journey-session-head"><strong>Session ${index + 1}</strong><span>${analysisDate(start, timezone)} · ${duration((Date.parse(end) - Date.parse(start)) / 1000)} · ${number(session.items.length)} events</span>${sessionGap}</summary>
-        <ol class="journey-events">${items.map(item => {
-          const hits = mode === 'highlight' ? highlights.flatMap((rule, index) => matches(item, rule) ? [{...rule, index}] : []) : [];
-          const chips = Object.entries(item.params).map(([key, value]) => {
-            const hit = hits.find(rule => matchingConditionParams(item, rule.conditions).includes(key));
-            return `<span class="chip ${hit ? `highlight-ink highlight-${hit.color}` : ''}"><b>${escapeHTML(key)}</b> ${escapeHTML(typeof value === 'object' ? JSON.stringify(value) : value)}</span>`;
-          }).join('');
-          return `<li data-timeline-index="${item.index}" tabindex="-1" class="${hits.length ? `timeline-match highlight-${hits[0].color}` : ''} ${current === item.index && mode === 'highlight' ? 'timeline-current' : ''}"><time datetime="${escapeHTML(item.client_ts)}">${clock(item.client_ts, timezone)}</time><span class="journey-gap ${item.gap > 60 ? 'long' : ''}">${item.gap == null ? '' : `+${duration(item.gap)}`}</span><span class="journey-name">${escapeHTML(item.name)}${hits.map(rule => `<span class="highlight-tag highlight-${rule.color}">${escapeHTML(rule.label || `Highlight ${rule.index + 1}`)}</span>`).join('')}</span><span class="journey-params">${chips}</span></li>`;
-        }).join('')}</ol></details>`;
+        <ol class="journey-events">${rowsFor(items)}</ol></details>`;
     }).join('') || `<p class="help">${events.length ? 'No events match the filter.' : complete ? 'No events from this player in these days.' : 'Loading events…'}</p>`;
-    disclosures.refresh(); updateNavigation();
+    if (events.length) { if (painted) box.classList.toggle('settled', true); painted = true; }
+    disclosures.refresh(); updateNavigation(); drawSummary();
+  };
+  const drawParams = () => {
+    const counts = new Map();
+    events.forEach(event => Object.keys(event.params).forEach(key => counts.set(key.toLowerCase(), {key, count: (counts.get(key.toLowerCase())?.count || 0) + 1})));
+    const keys = [...new Set([...counts.keys(), ...hiddenParams])].sort();
+    root.querySelector('#param-summary').textContent = `${number(hiddenParams.size)} hidden`;
+    root.querySelector('#param-list').innerHTML = `<p class="help">Untick parameters you never read. Clicking a parameter name in the timeline hides it too. Remembered for this game in this browser; a parameter used by a highlight stays visible.</p><div class="param-grid">${keys.map(key => `<label class="check-row"><input type="checkbox" data-param-toggle="${escapeHTML(key)}" ${hiddenParams.has(key) ? '' : 'checked'}> <code>${escapeHTML(counts.get(key)?.key || key)}</code> <span class="small muted">${number(counts.get(key)?.count || 0)}</span></label>`).join('')}</div><button type="button" class="button small-button" data-param-reset>Reset to default</button>`;
   };
   const drawRules = () => {
     disclosures.remember();
     const selected = selection.value;
     selection.innerHTML = '<option value="all">All highlights</option>' + highlights.map((rule, index) => `<option value="${index}">${escapeHTML(rule.label || `Highlight ${index + 1}`)}</option>`).join('');
     selection.value = [...selection.options].some(option => option.value === selected) ? selected : 'all';
-    rulesBox.innerHTML = highlights.map((rule, index) => `<details class="highlight-rule highlight-${rule.color}" data-highlight="${index}" data-disclosure="highlight-${index}" open><summary><span class="highlight-dot" aria-hidden="true"></span> ${escapeHTML(rule.label || `Highlight ${index + 1}`)} <span class="small muted" data-highlight-count="${index}"></span></summary><div class="highlight-settings"><label>Name<input data-highlight-field="label" value="${escapeHTML(rule.label)}" maxlength="80"></label><label>Color<select data-highlight-field="color">${HIGHLIGHT_COLORS.map(([key, label]) => `<option value="${key}" ${key === rule.color ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label class="check-row"><input type="checkbox" data-highlight-field="enabled" ${rule.enabled !== false ? 'checked' : ''}> Enabled</label><button type="button" class="button small-button" data-highlight-remove>Remove highlight</button></div><div data-highlight-editor></div><p class="error" data-highlight-error="${index}" role="alert"></p></details>`).join('');
+    rulesBox.innerHTML = highlights.map((rule, index) => `<details class="highlight-rule highlight-${rule.color}" data-highlight="${index}" data-disclosure="highlight-${index}" ${index === freshRule ? 'open' : ''}><summary><span class="highlight-dot" aria-hidden="true"></span> ${escapeHTML(rule.label || `Highlight ${index + 1}`)} <span class="small muted" data-highlight-count="${index}"></span></summary><div class="highlight-settings"><label>Name<input data-highlight-field="label" value="${escapeHTML(rule.label)}" maxlength="80"></label><label>Color<select data-highlight-field="color">${HIGHLIGHT_COLORS.map(([key, label]) => `<option value="${key}" ${key === rule.color ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label class="check-row"><input type="checkbox" data-highlight-field="enabled" ${rule.enabled !== false ? 'checked' : ''}> Enabled</label><button type="button" class="button small-button" data-highlight-remove>Remove highlight</button></div><div data-highlight-editor></div><p class="error" data-highlight-error="${index}" role="alert"></p></details>`).join('');
     rulesBox.querySelectorAll('[data-highlight-editor]').forEach((editor, index) => mountConditionEditor({container: editor, tree: highlights[index].conditions, catalog: () => catalog, onChange: () => {current = -1; persist(); draw();}}));
     root.querySelector('#highlight-add').disabled = highlights.length >= 20;
     root.querySelector('#highlight-rule-summary').textContent = `${number(highlights.length)} highlights`;
@@ -1121,21 +1185,40 @@ async function renderRawEvents(game, player, range, timezone, container = docume
   root.addEventListener('click', event => {
     const toggle = event.target.closest('[data-timeline-mode]');
     if (toggle) {mode = toggle.dataset.timelineMode; persist(); draw();}
+    const tick = event.target.closest('[data-timeline-jump]');
+    if (tick) jumpTo(Number(tick.dataset.timelineJump));
+    const view = event.target.closest('[data-param-view]');
+    if (view) { paramState.showAll = view.dataset.paramView === 'all'; saveParams(); draw(); }
+    const hide = event.target.closest('[data-hide-param]');
+    if (hide) { const key = hide.dataset.hideParam.toLowerCase();
+      if (hiddenParams.has(key)) hiddenParams.delete(key);
+      else {
+        hiddenParams.add(key); paramState.showAll = false;
+        toast(`Hid ${hide.dataset.hideParam} in every event.`, {label: 'Undo', run: () => { hiddenParams.delete(key); saveParams(); drawParams(); draw(); }});
+      }
+      saveParams(); drawParams(); draw(); }
+    if (event.target.closest('[data-param-reset]')) { hiddenParams.clear(); ['seq', 'attempt_id'].forEach(key => hiddenParams.add(key)); paramState.showAll = false; saveParams(); drawParams(); draw(); }
+    const preset = event.target.closest('[data-highlight-preset]');
+    if (preset) {
+      const [, label, pattern, keyword, color] = HIGHLIGHT_PRESETS.find(item => item[0] === preset.dataset.highlightPreset);
+      if (highlights.some(rule => rule.label === label)) toast(`You already have a ${label} highlight.`);
+      else if (highlights.length >= 20) toast('Use at most 20 highlights.');
+      else {
+        const names = catalog.events.map(item => item.name).filter(name => pattern.test(name));
+        highlights.push({label, color, enabled: true, conditions: {match: 'any', conditions: (names.length ? names : [keyword]).map(name => names.length ? eventCondition(name) : {...eventCondition(name), op: 'contains'})}});
+        current = -1; persist(); drawRules(); draw();
+      }
+    }
     if (event.target.closest('#highlight-add')) {
       highlights.push({label: `Highlight ${highlights.length + 1}`, color: HIGHLIGHT_COLORS[highlights.length % HIGHLIGHT_COLORS.length][0], enabled: true, conditions: conditionGroup([eventCondition(catalog.events[0]?.name)])});
-      current = -1; persist(); drawRules(); draw();
+      freshRule = highlights.length - 1; root.querySelector('#timeline-highlights').open = true; current = -1; persist(); drawRules(); draw();
     }
     if (event.target.closest('[data-highlight-remove]')) {highlights.splice(Number(event.target.closest('[data-highlight]').dataset.highlight), 1); current = -1; persist(); drawRules(); draw();}
     const nav = event.target.closest('#highlight-next, #highlight-previous');
     if (nav) {
       const indices = selectedMatches(); if (!indices.length) return;
       const next = nav.id === 'highlight-next';
-      current = highlightNavigationIndex(indices, current, next);
-      box.querySelector('.timeline-current')?.classList.remove('timeline-current');
-      const target = box.querySelector(`[data-timeline-index="${current}"]`);
-      if (target) target.closest('.journey-session').open = true;
-      disclosures.remember();
-      target?.classList.add('timeline-current'); target?.focus({preventScroll: true}); target?.scrollIntoView({block: 'center', behavior: 'instant'}); updateNavigation();
+      jumpTo(highlightNavigationIndex(indices, current, next));
     }
   });
   rulesBox.addEventListener('change', event => {
@@ -1144,9 +1227,26 @@ async function renderRawEvents(game, player, range, timezone, container = docume
     rule[field] = field === 'enabled' ? event.target.checked : event.target.value;
     current = -1; persist(); drawRules(); draw();
   });
+  root.addEventListener('change', event => {
+    if (event.target.id === 'group-repeats') { paramState.group = event.target.checked; saveParams(); draw(); return; }
+    const toggle = event.target.closest('[data-param-toggle]'); if (!toggle) return;
+    toggle.checked ? hiddenParams.delete(toggle.dataset.paramToggle) : hiddenParams.add(toggle.dataset.paramToggle);
+    saveParams(); drawParams(); draw();
+  });
   selection.addEventListener('change', () => {current = -1; updateNavigation();});
+  // J / K step through highlights, / jumps to the filter box. Ignored while typing; removed once this timeline is gone.
+  const onKey = event => {
+    if (!box.isConnected) { document.removeEventListener('keydown', onKey); return; }
+    if (event.ctrlKey || event.metaKey || event.altKey || document.querySelector('dialog[open]:not(.player-dialog)')) return;
+    if (/^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName) || event.target.isContentEditable) return;
+    if (event.key === '/' && mode === 'filter') { event.preventDefault(); search.focus(); return; }
+    if (mode !== 'highlight' || !['j', 'k'].includes(event.key)) return;
+    const indices = selectedMatches(); if (!indices.length) return;
+    event.preventDefault(); jumpTo(highlightNavigationIndex(indices, current, event.key === 'j'));
+  };
+  document.addEventListener('keydown', onKey);
   search.addEventListener('input', draw);
-  drawRules(); draw();
+  drawRules(); drawParams(); draw();
   try {
     let more = true; let snapshot = null;
     while (more && box.isConnected) {
@@ -1163,6 +1263,7 @@ async function renderRawEvents(game, player, range, timezone, container = docume
         });
         catalog = {events: [...byName.values()].map(event => ({name: event.name, params: [...event.params].map(([key, values]) => ({key, values: [...values]}))}))};
         if (!rulesBox.contains(document.activeElement)) drawRules();
+        if (!root.querySelector('#param-list').contains(document.activeElement)) drawParams();
       }
       draw();
     }
@@ -1214,7 +1315,7 @@ async function renderLevels() {
     renderLevels();
   });
   const drillGroups = [['total_drop', 'Total drop'], ['left', 'During level'], ['finished_stopped', 'After finish'], ['unknown_progress', 'Missing progress'], ['kept_going', 'Reached next level'], ['returning', 'Returning entrants'], ['missing_history', 'History unavailable'], ['stuck', 'Stuck'], ['started', 'Everyone who started']];
-  const storyLink = (row, level, cut) => `${gamePath(game, 'players')}?${new URLSearchParams({player: row.player, ...(cut ? {level, cut} : {})})}`;
+  const playerHref = row => `${gamePath(game, 'players')}?${new URLSearchParams({player: row.player})}`;
   const drillQuery = (level, state, extra = {}) => { const query = filterQuery(chosen); query.set('level', level); query.set('group', state.group); query.set('sort', state.sort); for (const [key, value] of Object.entries(extra)) query.set(key, value); return query; };
   // The panel is as wide as the visible part of the table and stays in view when the table scrolls sideways.
   const fitDrill = level => { const box = document.querySelector(`[data-level-drill="${level}"]`); const wrap = box?.closest('.table-wrap'); if (wrap) box.style.width = `${wrap.clientWidth}px`; };
@@ -1226,7 +1327,7 @@ async function renderLevels() {
     fitDrill(level);
     const counts = state.counts;
     const summary = data.levels.find(row => row.level === level);
-    const table = state.error ? loadError(state.error, 'data-retry-drill') : state.loading && !state.players.length ? skeleton('table', 5, 8) : !state.players.length ? '<p class="help">Nobody is in this group in the selected days and filters.</p>' : `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Player</th><th class="num">Tries</th><th class="num">Fails</th><th>Last on this level</th><th>Opened the game later</th><th>Version</th><th class="num">Session duration</th><th>Their story</th></tr></thead><tbody>${state.players.map(row => `<tr><td><a class="row-title" href="${storyLink(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a></td><td class="num">${number(row.tries)}</td><td class="num">${number(row.fails)}</td><td class="small muted">${analysisDate(row.exit_at, chosen.timezone)}</td><td>${row.came_back ? '<span class="pill good">came back</span>' : '<span class="small muted">—</span>'}</td><td class="small">${escapeHTML(row.app_version || '—')}</td><td class="num">${duration(row.session_seconds)}</td><td class="small level-story-links"><a class="text-link" href="${storyLink(row, level, 'until')}">Up to level ${level}</a> <a class="text-link" href="${storyLink(row, level, 'from')}">From level ${level}</a></td></tr>`).join('')}</tbody></table></div><div class="pager"><span class="small muted">${number(state.players.length)} of ${number(state.total)}</span>${state.players.length < state.total ? `<button type="button" class="button" data-drill-more>${state.loading ? 'Loading…' : 'Show more'}</button>` : ''}</div>`;
+    const table = state.error ? loadError(state.error, 'data-retry-drill') : state.loading && !state.players.length ? skeleton('table', 5, 8) : !state.players.length ? '<p class="help">Nobody is in this group in the selected days and filters.</p>' : `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Player</th><th class="num">Tries</th><th class="num">Fails</th><th>Last on this level</th><th>Opened the game later</th><th>Version</th><th class="num">Session duration</th></tr></thead><tbody>${state.players.map(row => `<tr><td><a class="row-title" href="${playerHref(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a></td><td class="num">${number(row.tries)}</td><td class="num">${number(row.fails)}</td><td class="small muted">${analysisDate(row.exit_at, chosen.timezone)}</td><td>${row.came_back ? '<span class="pill good">came back</span>' : '<span class="small muted">—</span>'}</td><td class="small">${escapeHTML(row.app_version || '—')}</td><td class="num">${duration(row.session_seconds)}</td></tr>`).join('')}</tbody></table></div><div class="pager"><span class="small muted">${number(state.players.length)} of ${number(state.total)}</span>${state.players.length < state.total ? `<button type="button" class="button" data-drill-more>${state.loading ? 'Loading…' : 'Show more'}</button>` : ''}</div>`;
     box.innerHTML = `${levelBreakdown(summary)}<div class="level-drill-head"><div class="segmented" role="group" aria-label="Players on level ${level}">${drillGroups.map(([key, label]) => `<button type="button" data-drill-group="${key}" aria-pressed="${state.group === key}">${label}${counts ? ` <span class="drill-count">${number(counts[key])}</span>` : ''}</button>`).join('')}</div>
       <div class="quiet-actions"><label class="inline-field">Sort<select data-drill-sort><option value="exit_at">Latest on this level</option><option value="tries">Most tries</option><option value="fails">Most fails</option></select></label><button type="button" class="button" data-drill-csv>${icon('export', 14)} CSV</button></div></div>
       ${table}`;
@@ -1269,7 +1370,7 @@ async function renderLevels() {
           }
           return players[index];
         }};
-        renderJourney(game, query.get('player'), {overlay: true, level: query.get('level'), cut: query.get('cut'), filters: chosen, trigger: playerLink, browse});
+        renderJourney(game, query.get('player'), {overlay: true, filters: chosen, trigger: playerLink, browse});
         return;
       }
     }

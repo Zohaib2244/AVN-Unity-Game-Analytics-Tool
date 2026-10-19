@@ -760,8 +760,6 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         start: DateParam,
         end: DateParam,
         hidden: bool = False,
-        level: Annotated[int, Query(ge=0, le=1_000_000)] | None = None,
-        cut: Literal["until", "from"] | None = None,
         tz_offset: TimezoneOffset = 0,
     ):
         return journeys.player_story(
@@ -770,8 +768,6 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             player,
             *day_range(start, end, tz_offset),
             show_hidden=hidden,
-            level=level,
-            cut=cut,
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/device-specs")

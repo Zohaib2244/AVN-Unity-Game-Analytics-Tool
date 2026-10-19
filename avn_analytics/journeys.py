@@ -59,12 +59,8 @@ def _definitions(storage, game_id):
     return storage.get_dictionary(game_id)
 
 
-def player_story(storage, game_id, player, start, end, show_hidden=False, level=None, cut=None):
-    """One player's events as chapters (sessions) of readable lines, plus a few totals.
-
-    level + cut ("until" or "from") shows only the story up to the last time they played that
-    level, or from the first time they started it. `cut` in the result says what was left out.
-    """
+def player_story(storage, game_id, player, start, end, show_hidden=False):
+    """One player's events as chapters (sessions) of readable lines, plus a few totals."""
     storage.get_game(game_id)
     labeler = stories.Labeler(_definitions(storage, game_id))
     condition, args = where(start, end)
@@ -100,18 +96,7 @@ def player_story(storage, game_id, player, start, end, show_hidden=False, level=
         }
         for row in rows
     ]
-    shown, cut_info = events, None
-    if level is not None and cut in ("until", "from"):
-        played = [
-            index
-            for index, event in enumerate(events)
-            if (info := labeler.level_info(event["name"], event["params"], event["app_version"]))
-            and info[1] == level
-        ]
-        if played:
-            shown = events[: played[-1] + 1] if cut == "until" else events[played[0] :]
-        hidden = len(events) - len(shown)
-        cut_info = {"level": level, "mode": cut, "found": bool(played), "hidden": hidden}
+    shown = events
     chapters = stories.story(shown, labeler, show_hidden)
     last = rows[-1] if rows else None
     latest_payload = json.loads(latest_info["payload"]) if latest_info else {}
@@ -130,7 +115,6 @@ def player_story(storage, game_id, player, start, end, show_hidden=False, level=
         "sessions": len(chapters),
         "first_seen": shown[0]["client_ts"] if shown else None,
         "last_seen": shown[-1]["client_ts"] if shown else None,
-        "cut": cut_info,
         "highest_level": reached,
         "country": last["country"] if last else None,
         "app_version": last["app_version"] if last else None,
