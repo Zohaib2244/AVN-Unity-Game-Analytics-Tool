@@ -1,32 +1,43 @@
-// The Event setup page: the three steps that get a game's events understood by the dashboards.
-//  1. Install the AVN standard with an AI agent.   2. Fill the event dictionary from the code.
-//  3. Map events to the moments the dashboards use.
-// Loaded after events.js (mapping helpers) and dictionary-import.js (steps 1 and 2).
+// The Event setup page: three independent tabs, open any of them in any order.
+//  Install the standard (AI agent adds the AVN events), Fill the dictionary (AI agent describes the
+//  events from the code), Mappings (which events stand for the moments the dashboards use).
+// Loaded after events.js (mapping helpers) and dictionary-import.js (the two AI agent tabs).
 
-const SETUP_STEPS = [
-  ['install', 'Install the standard', 'An AI agent adds the AVN events to your game, with the same names and parameters in every game.'],
-  ['fill', 'Fill the dictionary', 'An AI agent reads your game’s code and writes what each event and parameter means. You review every text.'],
-  ['mappings', 'Map your events', 'Tell Retention, Levels, player stories and journeys which events are a session start or a level moment.'],
+const SETUP_TABS = [
+  ['install', 'Install the standard', 'Add the AVN events to your game with an AI agent.'],
+  ['fill', 'Fill the dictionary', 'Describe your events from your game’s code.'],
+  ['mappings', 'Map your events', 'Tell the dashboards which events matter.'],
 ];
-// Steps 1 and 2 are panels; step 3 holds panels of its own, so it only gets a heading.
-const setupStep = ([key, title, text], number, extra = '') => {
-  const head = `<span class="step-number" aria-hidden="true">${number}</span><div><h2 id="step-${key}-title">${title}</h2><p>${text}</p></div>${extra}`;
-  return key === 'mappings'
-    ? `<section class="setup-flat section-spacing" id="${key}" aria-labelledby="step-${key}-title"><div class="setup-head">${head}</div><div id="step-${key}-body"></div></section>`
-    : `<section class="panel setup-step section-spacing" id="${key}" aria-labelledby="step-${key}-title"><div class="panel-header">${head}</div><div class="panel-body" id="step-${key}-body"></div></section>`;
-};
 
 async function renderEventSetup() {
   const game = currentGame;
-  shell('Event setup', heading('Event setup', 'Get your game’s events into the dashboards in three steps.', `<div class="heading-actions"><a class="button" href="${gamePath(game, 'dictionary')}">${icon('book', 15)} Event dictionary</a></div>`) +
-    `<nav class="setup-jump" aria-label="Steps">${SETUP_STEPS.map(([key, title], index) => `<a href="#${key}"><span class="step-number" aria-hidden="true">${index + 1}</span>${title}</a>`).join('')}</nav>` +
-    SETUP_STEPS.map((step, index) => setupStep(step, index + 1, step[0] === 'mappings' ? '<span class="pill" id="mappings-status" hidden></span>' : '')).join(''));
-  // Steps 1 and 2 fold away once done, and the page remembers it.
-  for (const [key] of SETUP_STEPS.slice(0, 2)) collapsible(document.querySelector(`#${key}`), game, `setup-${key}`);
+  const tabKey = `avn-setup-tab-${game.id}`;
+  const query = new URLSearchParams(location.search);
+  const keys = SETUP_TABS.map(([key]) => key);
+  const fromAddress = keys.includes(location.hash.slice(1)) ? location.hash.slice(1) : ['event', 'concept', 'version'].some(name => query.has(name)) ? 'mappings' : '';
+  let active = fromAddress || (keys.includes(storeGet(tabKey)) ? storeGet(tabKey) : 'install');
+  shell('Event setup', heading('Event setup', 'Get your game’s events understood by the dashboards. Use the tabs in any order.', `<div class="heading-actions"><a class="button" href="${gamePath(game, 'dictionary')}">${icon('book', 15)} Event dictionary</a></div>`) +
+    `<div class="setup-tabs" role="tablist" aria-label="Event setup">${SETUP_TABS.map(([key, title, text]) => `<button type="button" class="setup-tab" role="tab" id="tab-${key}" data-setup-tab="${key}" aria-controls="panel-${key}"><span class="setup-tab-title">${title}${key === 'mappings' ? ' <span class="pill" id="mappings-status" hidden></span>' : ''}</span><span class="setup-tab-text">${text}</span></button>`).join('')}</div>` +
+    SETUP_TABS.map(([key]) => `<section class="setup-panel ${key === 'mappings' ? '' : 'panel'}" role="tabpanel" id="panel-${key}" aria-labelledby="tab-${key}"><div id="step-${key}-body" class="${key === 'mappings' ? '' : 'panel-body'}"></div></section>`).join(''));
+  const show = (key, remember = true) => {
+    active = key;
+    document.querySelectorAll('[data-setup-tab]').forEach(tab => { const on = tab.dataset.setupTab === key; tab.setAttribute('aria-selected', String(on)); tab.tabIndex = on ? 0 : -1; });
+    SETUP_TABS.forEach(([name]) => { document.querySelector(`#panel-${name}`).hidden = name !== key; });
+    if (remember) storeSet(tabKey, key);
+    history.replaceState(null, '', `${location.pathname}${location.search}#${key}`);
+  };
+  const bar = document.querySelector('.setup-tabs');
+  bar.addEventListener('click', event => { const tab = event.target.closest('[data-setup-tab]'); if (tab) show(tab.dataset.setupTab); });
+  bar.addEventListener('keydown', event => {
+    const step = {ArrowRight: 1, ArrowLeft: -1}[event.key]; if (!step) return;
+    event.preventDefault();
+    const next = keys[(keys.indexOf(active) + step + keys.length) % keys.length];
+    show(next); document.querySelector(`#tab-${next}`).focus();
+  });
+  show(active, false);
   mountStandardInstall(document.querySelector('#step-install-body'));
   const load = await mountMappings(document.querySelector('#step-mappings-body'), game);
   mountDictionaryFill(document.querySelector('#step-fill-body'), game, load);
-  if (location.hash) document.querySelector(location.hash)?.scrollIntoView({block: 'start'});
 }
 
 async function mountMappings(body, game) {
@@ -52,11 +63,12 @@ async function mountMappings(body, game) {
     const asking = chosenEvent ? `<section class="panel section-spacing mapping-ask"><div class="panel-body"><p>What does <code>${escapeHTML(chosenEvent.name)}</code> stand for?${rulesOf(chosenEvent.name).length ? ` <span class="muted small">Already: ${rulesOf(chosenEvent.name).map(rule => escapeHTML(conceptName(rule.action))).join(', ')}.</span>` : ''}</p><div class="quiet-actions">${concepts.map(concept => `<button type="button" class="button" data-add-mapping="${concept.key}">${escapeHTML(concept.label)}</button>`).join('')}</div></div></section>` : '';
     const versions = [...new Set([...data.versions, version].filter(Boolean))];
     const suggestions = data.events.flatMap(item => item.suggestions.filter(rule => !rulesOf(item.name).some(existing => JSON.stringify(existing) === JSON.stringify(rule))).map(rule => ({event: item.name, rule})));
-    body.innerHTML = `<section class="panel section-spacing"><div class="panel-body"><div class="field"><label for="mapping-version">App version</label><select id="mapping-version"><option value="">All versions</option>${versions.map(item => `<option value="${escapeHTML(item)}" ${item === version ? 'selected' : ''}>${escapeHTML(item)}</option>`).join('')}</select><p class="help">${version ? `New mappings apply only to ${escapeHTML(version)}. For an event with version-specific rules, those replace its shared rules.` : 'New mappings apply to every app version. Pick a version to map a release separately.'} All analytics pages use these same mappings.</p></div></div></section>${asking}<section class="panel ${asking ? 'section-spacing' : ''}"><div class="panel-body"><p>Retention, Levels, player stories and journeys need to know which of your events are a session start, or a level being started, completed, failed or restarted. AVN Analytics recognises the common shapes by itself (a <code>session_start</code> event, or level events that carry a <code>level</code> parameter). For anything else, point the right event at the right moment below. Any event your game has sent works, described yet or not.</p><p class="help">A mapping lives with the event in the dictionary. It changes how the dashboards read your events, never the stored events themselves. ${data.capped ? `Counts come from the latest ${number(data.scanned)} events.` : `Counts cover all ${number(data.scanned)} events.`}</p></div></section>
+    body.innerHTML = `<div class="mapping-top"><div id="mappings-summary">${stats([['Moments understood', `${number(mapped + auto)} of ${number(concepts.length)}`, `${number(mapped)} mapped by you · ${number(auto)} automatically`], ['Not found', number(missing), missing ? 'Their dashboards will be empty or partial' : 'Everything is covered']])}</div>
+      <div class="field mapping-version"><label for="mapping-version">App version</label><select id="mapping-version"><option value="">All versions</option>${versions.map(item => `<option value="${escapeHTML(item)}" ${item === version ? 'selected' : ''}>${escapeHTML(item)}</option>`).join('')}</select><p class="help">${version ? `New mappings apply only to ${escapeHTML(version)}.` : 'New mappings apply to every app version.'}</p></div></div>${asking}
+      <details class="mapping-how"><summary>How mappings work</summary><div><p>Retention, Levels, player stories and journeys need to know which of your events are a session start, or a level being started, completed, failed or restarted. AVN Analytics recognises the common shapes by itself (a <code>session_start</code> event, or level events that carry a <code>level</code> parameter). For anything else, point the right event at the right moment below. Any event your game has sent works, described yet or not.</p><p class="help">A mapping lives with the event in the dictionary. It changes how the dashboards read your events, never the stored events themselves. With a version picked, an event's version-specific rules replace its shared rules. ${data.capped ? `Counts come from the latest ${number(data.scanned)} events.` : `Counts cover all ${number(data.scanned)} events.`}</p></div></details>
       ${data.conflicts.length ? `<div class="notice-banner section-spacing" role="alert">${icon('pulse', 18)}<div><strong>Some mappings overlap.</strong> ${data.conflicts.map(item => `${escapeHTML(item.event)}: ${number(item.events)} events count as more than one level action`).join('; ')}. Add a condition such as <code>STATE = Completed</code>, or remove the broad rule.</div></div>` : ''}
-      <div id="mappings-summary" class="section-spacing">${stats([['Moments understood', `${number(mapped + auto)} of ${number(concepts.length)}`, `${number(mapped)} mapped by you · ${number(auto)} automatically`], ['Not found', number(missing), missing ? 'Their dashboards will be empty or partial' : 'Everything is covered']])}</div>
       ${suggestions.length ? `<section class="panel section-spacing"><div class="panel-header"><div><h2>Suggested mappings</h2><p>Known event shapes, ready to preview. Review each before saving.</p></div></div><div class="panel-body mapping-suggestions">${suggestions.map(item => `<div><code>${escapeHTML(item.event)}</code><span>${escapeHTML(conceptName(item.rule.action))} · ${escapeHTML(ruleText(item.rule))}</span><button type="button" class="button" data-suggest-event="${escapeHTML(item.event)}" data-suggest-rule="${escapeHTML(JSON.stringify(item.rule))}">Review mapping</button></div>`).join('')}</div></section>` : ''}
-      <details class="panel section-spacing"><summary class="panel-body">Standard event format</summary><div class="panel-body"><p>For new integrations, send one event per moment: <code>level_started</code>, <code>level_completed</code>, <code>level_failed</code> or <code>level_restarted</code>, with <code>{"level": 3}</code> in parameters. Keep <code>app_version</code> in the event envelope.</p><p class="help">Existing formats work too: <code>LEVEL_ANALYSIS</code> with <code>{"Started": 3}</code>, or <code>level_analysis</code> with <code>{"action": "started", "level": 3}</code>. Also recognised: <code>{"STATE": "Started", "NUMBER": 3}</code>. When the parameter name is the action, choose “exists” and use that same parameter for the level number.</p></div></details>
+      <details class="mapping-how"><summary>Standard event format</summary><div><p>For new integrations, send one event per moment: <code>level_started</code>, <code>level_completed</code>, <code>level_failed</code> or <code>level_restarted</code>, with <code>{"level": 3}</code> in parameters. Keep <code>app_version</code> in the event envelope.</p><p class="help">Existing formats work too: <code>LEVEL_ANALYSIS</code> with <code>{"Started": 3}</code>, or <code>level_analysis</code> with <code>{"action": "started", "level": 3}</code>. Also recognised: <code>{"STATE": "Started", "NUMBER": 3}</code>. When the parameter name is the action, choose “exists” and use that same parameter for the level number.</p></div></details>
       ${concepts.map(card).join('')}
       ${data.other.length ? `<section class="panel section-spacing"><div class="panel-header"><div><h2>Other mappings</h2><p>These name something the dashboards don’t use. They are kept in the dictionary and exports.</p></div></div><div class="panel-body"><table class="compact-table"><tbody>${data.other.map(item => `<tr><td><code>${escapeHTML(item.event)}</code></td><td><code>${escapeHTML(item.rule.action)}</code> <span class="small muted">${escapeHTML(ruleText(item.rule))}</span></td><td class="num"><button type="button" class="button" data-remove-rule="${escapeHTML(item.event)}" data-rule="${escapeHTML(JSON.stringify(item.rule))}">Remove</button></td></tr>`).join('')}</tbody></table></div></section>` : ''}`;
     forms.forEach((_, key) => openForm(key, true));

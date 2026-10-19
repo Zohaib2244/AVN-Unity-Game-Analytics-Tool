@@ -322,7 +322,7 @@ function mountStandardInstall(root) {
         ${STANDARD_TIERS.map(([key, title, text]) => `<label class="import-choice"><input type="checkbox" name="tier" value="${key}" ${tiers.includes(key) ? 'checked' : ''} ${key === 'core' ? 'checked disabled' : ''}><span><strong>${title}</strong><small>${text}</small></span></label>`).join('')}
       </div>
       <div id="standard-summary">${skeleton('table', 3, 3)}</div>
-      <ol class="import-steps"><li>Unzip the download in the root of your game project.</li><li>Run <code>AGENT_PROMPT.md</code> in your AI agent from that folder.</li><li>Send a test build, then check the events under Event dictionary and the mappings below.</li></ol>
+      <ol class="import-steps"><li>Unzip the download in the root of your game project.</li><li>Run <code>AGENT_PROMPT.md</code> in your AI agent from that folder.</li><li>Send a test build, then check the events under Event dictionary, then use the “Map your events” tab.</li></ol>
       <div class="error" role="alert"></div>
       <div class="modal-actions import-actions"><button type="button" class="button" data-standard-copy>${icon('copy', 14)} Copy the prompt</button><button type="button" class="button primary" data-standard-download>${icon('export', 14)} Download setup files</button></div>
       <details class="import-prompt"><summary>Show the prompt</summary><textarea readonly rows="12" aria-label="Agent prompt" id="standard-prompt"></textarea></details>`;
