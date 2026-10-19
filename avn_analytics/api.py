@@ -33,6 +33,7 @@ from . import (
     insights,
     journeys,
     standard,
+    standard_status,
 )
 from .auth import AccessVerifier, Accounts, Principal
 from .config import Settings
@@ -547,6 +548,21 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             raise HTTPException(404, "No such custom event")
         accounts.audit(principal, "standard.custom_event_delete", name)
         return {"deleted": name}
+
+    @admin_api.get("/v1/games/{game_id}/standard")
+    def game_standard(game_id: UUID):
+        return standard_status.status(storage, str(game_id), custom_events.load(storage))
+
+    @admin_api.put("/v1/games/{game_id}/standard/ignored/{name}", status_code=204)
+    def standard_ignore(game_id: UUID, name: Name, principal: Current):
+        storage.get_game(str(game_id))
+        standard_status.ignore(storage, str(game_id), name)
+        accounts.audit(principal, "standard.ignore", str(game_id), name)
+
+    @admin_api.delete("/v1/games/{game_id}/standard/ignored/{name}", status_code=204)
+    def standard_unignore(game_id: UUID, name: Name, principal: Current):
+        standard_status.ignore(storage, str(game_id), name, on=False)
+        accounts.audit(principal, "standard.unignore", str(game_id), name)
 
     @admin_api.get("/v1/events-standard/download")
     def events_standard_download(tiers: Tiers = ["core", "standard"]):  # noqa: B006

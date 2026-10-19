@@ -309,11 +309,11 @@ const STANDARD_TIERS = [
   ['extended', 'Extended', 'Device hardware.'],
 ];
 
-function mountStandardInstall(root) {
+function mountStandardInstall(root, game) {
   const storeKey = 'avn-standard-tiers';
   const saved = storeGet(storeKey);
   let tiers = Array.isArray(saved) ? STANDARD_TIERS.map(([key]) => key).filter(key => key === 'core' || saved.includes(key)) : ['core', 'standard'];
-  let summary = null; let loading = 0; let custom = [];
+  let summary = null; let loading = 0; let custom = []; let gameStatus = null;
   // Custom events are part of the standard, so they are always in the downloads.
   const query = () => new URLSearchParams([...tiers, ...(custom.length ? ['custom'] : [])].map(tier => ['tiers', tier])).toString();
 
@@ -321,6 +321,7 @@ function mountStandardInstall(root) {
     root.innerHTML = `<div class="import-choices standard-tiers" role="group" aria-label="Which events">
         ${STANDARD_TIERS.map(([key, title, text]) => `<label class="import-choice"><input type="checkbox" name="tier" value="${key}" ${tiers.includes(key) ? 'checked' : ''} ${key === 'core' ? 'checked disabled' : ''}><span><strong>${title}</strong><small>${text}</small></span></label>`).join('')}
       </div>
+      <div id="unlisted-events" class="custom-events unlisted-events" hidden></div>
       <div id="custom-events" class="custom-events"></div>
       <div class="error" role="alert"></div>
       <div class="import-actions setup-actions"><button type="button" class="button primary" data-standard-download>${icon('export', 15)} Download setup files</button><button type="button" class="button" data-standard-copy>${icon('copy', 15)} Copy prompt</button></div>
@@ -349,9 +350,15 @@ function mountStandardInstall(root) {
       finally { button.disabled = false; }
     });
   };
-  const drawCustom = () => { root.querySelector('#custom-events').innerHTML = customEventsHTML(custom); };
+  const drawCustom = () => {
+    root.querySelector('#custom-events').innerHTML = customEventsHTML(custom, gameStatus?.sent);
+    const unlisted = root.querySelector('#unlisted-events');
+    unlisted.hidden = !(gameStatus && (gameStatus.unlisted.length || gameStatus.ignored.length));
+    if (!unlisted.hidden) unlisted.innerHTML = unlistedEventsHTML(gameStatus);
+  };
   const refresh = async () => {
     try { custom = await request('/v1/events-standard/custom'); } catch { /* the list stays as it was */ }
+    try { gameStatus = await request(`/v1/games/${encodeURIComponent(game.id)}/standard`); } catch { /* no status shown */ }
     drawCustom(); load();
   };
   const load = async () => {
@@ -360,10 +367,11 @@ function mountStandardInstall(root) {
       const result = await request(`/v1/events-standard?${query()}`);
       if (current !== loading) return;
       summary = result;
-      box.innerHTML = `<details class="import-prompt standard-events"><summary>Show the ${number(result.events.length)} events</summary><div class="table-wrap"><table class="import-table"><thead><tr><th>Event</th><th>Tier</th><th>States</th></tr></thead><tbody>${result.events.map(item => `<tr><td><code>${escapeHTML(item.name)}</code></td><td>${escapeHTML(item.tier)}</td><td>${item.states.map(state => `<code>${escapeHTML(state)}</code>`).join(' ')}</td></tr>`).join('')}</tbody></table></div></details>`;
+      box.innerHTML = `<details class="import-prompt standard-events"><summary>Show the ${number(result.events.length)} events</summary><div class="table-wrap"><table class="import-table"><thead><tr><th>Event</th><th>Tier</th><th>States</th><th class="num">Sent by this game</th></tr></thead><tbody>${result.events.map(item => `<tr><td><code>${escapeHTML(item.name)}</code></td><td>${escapeHTML(item.tier)}</td><td>${item.states.map(state => `<code>${escapeHTML(state)}</code>`).join(' ')}</td><td class="num">${gameStatus?.sent[item.name] ? number(gameStatus.sent[item.name].events) : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table></div></details>`;
       root.querySelector('#standard-prompt').value = result.prompt;
     } catch (problem) { if (current === loading) box.innerHTML = `<p class="error">${escapeHTML(problem.message)}</p>`; }
   };
 
-  draw(); bindCustomEvents(root.querySelector('#custom-events'), () => custom, refresh); refresh();
+  draw(); bindCustomEvents(root.querySelector('#custom-events'), () => custom, refresh);
+  bindUnlistedEvents(root.querySelector('#unlisted-events'), () => gameStatus, game, refresh); refresh();
 }

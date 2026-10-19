@@ -1389,3 +1389,6 @@ progress.mapping-meter::-moz-progress-bar{background:var(--accent-orange)}
 .custom-param .check-row{margin:0;white-space:nowrap}
 .custom-form .field.wide{min-width:0}
 @media(max-width:800px){.custom-form .custom-top,.custom-state-head{grid-template-columns:1fr}.custom-param{grid-template-columns:1fr 1fr;padding-bottom:8px;border-bottom:1px solid var(--line)}}
+.unlisted-events{border-color:var(--accent-orange)}
+.unlisted-events .custom-list:first-of-type{margin-top:12px}
+.custom-list .button{margin:0}

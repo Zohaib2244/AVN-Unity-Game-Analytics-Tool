@@ -216,3 +216,59 @@ def test_only_the_admin_changes_the_standard(tmp_path):
     with TestClient(create_app(settings, admin=True, access_keys={})) as client:
         assert client.put("/v1/events-standard/custom/SHOP", json=SHOP).status_code == 401
         assert client.delete("/v1/events-standard/custom/SHOP").status_code == 401
+
+
+def test_events_a_game_sends_outside_the_standard_can_be_added_or_ignored(tmp_path):
+    from test_backend import event, register, send
+
+    settings = Settings(data_dir=tmp_path, admin_token=TOKEN)
+    with TestClient(create_app(settings, admin=True)) as admin:
+        with TestClient(create_app(settings)) as ingest:
+            game = register(admin)
+            send(
+                ingest,
+                game,
+                [
+                    event(name="LEVEL", params={"STATE": "Started", "LEVEL_NUMBER": 1}),
+                    event(name="SHOP", params={"STATE": "Opened", "TAB": "Coins", "COUNT": 3}),
+                    event(name="SHOP", params={"STATE": "Opened", "TAB": "Gems"}),
+                    event(name="SHOP", params={"STATE": "Closed", "seq": 4, "ratio": 0.5}),
+                    event(name="shop_open", params={"source": "menu"}),
+                    event(name="session_start", params={}),
+                ],
+            )
+            url = f"/v1/games/{game['id']}/standard"
+            result = admin.get(url, headers=AUTH).json()
+            assert list(result["sent"]) == ["LEVEL"]
+            assert result["sent"]["LEVEL"]["events"] == 1
+            by_name = {item["name"]: item for item in result["unlisted"]}
+            assert set(by_name) == {"SHOP", "shop_open"}  # the SDK's session_start is not listed
+            assert (
+                by_name["shop_open"]["valid_name"] is False and by_name["shop_open"]["states"] == []
+            )
+            shop = by_name["SHOP"]
+            assert shop["valid_name"] and shop["events"] == 3 and shop["players"] == 1
+            states = {state["name"]: state for state in shop["states"]}
+            assert states["Opened"]["params"] == [
+                {"key": "COUNT", "type": "int", "required": False},
+                {"key": "TAB", "type": "string", "required": True},
+            ]
+            assert shop["skipped"] == ["ratio"]  # lowercase keys can't join the standard
+
+            # ignoring is per game and can be undone
+            assert admin.put(f"{url}/ignored/SHOP", headers=AUTH).status_code == 204
+            result = admin.get(url, headers=AUTH).json()
+            assert [item["name"] for item in result["unlisted"]] == ["shop_open"]
+            assert result["ignored"] == [{"name": "SHOP", "events": 3}]
+            assert admin.delete(f"{url}/ignored/SHOP", headers=AUTH).status_code == 204
+            assert len(admin.get(url, headers=AUTH).json()["unlisted"]) == 2
+
+            # adding it to the standard moves it from "not in the standard" to "sent"
+            body = {
+                "purpose": "Shop screen",
+                "states": [{"name": "Opened", "trigger": "", "params": []}],
+            }
+            assert admin.put("/v1/events-standard/custom/SHOP", json=body, headers=AUTH).is_success
+            result = admin.get(url, headers=AUTH).json()
+            assert result["sent"]["SHOP"]["events"] == 3
+            assert [item["name"] for item in result["unlisted"]] == ["shop_open"]

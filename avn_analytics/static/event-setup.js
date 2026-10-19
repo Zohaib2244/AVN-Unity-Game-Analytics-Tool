@@ -36,7 +36,7 @@ async function renderEventSetup() {
     show(next); document.querySelector(`#tab-${next}`).focus();
   });
   show(active, false);
-  mountStandardInstall(document.querySelector('#step-install-body'));
+  mountStandardInstall(document.querySelector('#step-install-body'), game);
   const load = await mountMappings(document.querySelector('#step-mappings-body'), game);
   mountDictionaryFill(document.querySelector('#step-fill-body'), game, load);
 }

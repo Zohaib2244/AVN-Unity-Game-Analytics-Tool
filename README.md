@@ -283,6 +283,25 @@ test build sends events, the Event setup page suggests Level started, completed,
 restarted from `LEVEL` by itself. Over the API: `GET /v1/events-standard?tiers=standard` and
 `GET /v1/events-standard/download?tiers=standard`.
 
+### Events your game sends that the standard doesn't have
+
+**Add AVN Events** also lists, for the open game, every event it has sent that is neither in the
+standard nor a custom event (the SDK's `session_start`, `session_end` and `first_open` are left
+out) under **Sent, not in the standard**. For each one you can:
+
+- **Add to standard** (admin only): opens the custom event editor already filled in from what the
+  game sent: its `STATE` values as states, and each parameter with its type and whether every
+  event of that state carried it. Add a description and save; the event joins the standard and
+  moves to the custom list with a *Sent* count.
+- **Ignore**: hide it for this game only. It is listed under **Ignored** with a **Restore**
+  button; the events themselves stay in the data.
+
+Only events named in `UPPER_SNAKE` can be added, because the standard's names are exact (an event
+like `daily_gift_claimed` can only be ignored). Lowercase or otherwise invalid parameter keys and
+states are left out of the starting point. The event table under **Show the events** has a *Sent
+by this game* column, and each custom event shows whether this game has sent it. Over the API:
+`GET /v1/games/{id}/standard`, `PUT` and `DELETE /v1/games/{id}/standard/ignored/{NAME}`.
+
 ### Custom events
 
 Events the standard doesn't cover can be added from **Event setup → Add AVN Events → Custom events →
