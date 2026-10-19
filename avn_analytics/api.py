@@ -9,13 +9,32 @@ from threading import BoundedSemaphore
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    Response,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import Field
 from starlette.background import BackgroundTask
 
-from . import device_specs, dictionary_import, events, insights, journeys, standard
+from . import (
+    custom_events,
+    device_specs,
+    dictionary_import,
+    events,
+    insights,
+    journeys,
+    standard,
+    standard_status,
+)
 from .auth import AccessVerifier, Accounts, Principal
 from .config import Settings
 from .exports import build_export, period_bounds
@@ -24,6 +43,7 @@ from .models import (
     AnalyticsThresholdOverrides,
     AnalyticsThresholds,
     Batch,
+    CustomEvent,
     EnvironmentFix,
     EventActivityQuery,
     EventDefinition,
@@ -501,16 +521,53 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         accounts.audit(principal, "dictionary.import_undo", str(game_id), str(batch_id))
         return result
 
-    Tiers = Annotated[list[Literal["core", "standard", "extended"]], Query(max_length=3)]
+    Tiers = Annotated[list[Literal["core", "standard", "extended", "custom"]], Query(max_length=4)]
 
     @admin_api.get("/v1/events-standard")
     def events_standard(tiers: Tiers = ["core", "standard"]):  # noqa: B006
-        return standard.summary(tiers)
+        return standard.summary(tiers, custom_events.load(storage))
+
+    @admin_api.get("/v1/events-standard/custom")
+    def custom_events_list():
+        return [{"name": name, **body} for name, body in custom_events.load(storage).items()]
+
+    CustomName = Annotated[str, Path(min_length=1, max_length=40)]
+
+    @admin_api.put("/v1/events-standard/custom/{name}")
+    def custom_event_save(name: CustomName, body: CustomEvent, principal: TeamAdmin):
+        try:
+            custom_events.save(storage, name, body.model_dump(), standard.spec()["events"].keys())
+        except custom_events.CustomEventError as error:
+            raise HTTPException(422, str(error)) from error
+        accounts.audit(principal, "standard.custom_event_save", name)
+        return {"name": name, **body.model_dump()}
+
+    @admin_api.delete("/v1/events-standard/custom/{name}")
+    def custom_event_delete(name: CustomName, principal: TeamAdmin):
+        if not custom_events.delete(storage, name):
+            raise HTTPException(404, "No such custom event")
+        accounts.audit(principal, "standard.custom_event_delete", name)
+        return {"deleted": name}
+
+    @admin_api.get("/v1/games/{game_id}/standard")
+    def game_standard(game_id: UUID):
+        return standard_status.status(storage, str(game_id), custom_events.load(storage))
+
+    @admin_api.put("/v1/games/{game_id}/standard/ignored/{name}", status_code=204)
+    def standard_ignore(game_id: UUID, name: Name, principal: Current):
+        storage.get_game(str(game_id))
+        standard_status.ignore(storage, str(game_id), name)
+        accounts.audit(principal, "standard.ignore", str(game_id), name)
+
+    @admin_api.delete("/v1/games/{game_id}/standard/ignored/{name}", status_code=204)
+    def standard_unignore(game_id: UUID, name: Name, principal: Current):
+        standard_status.ignore(storage, str(game_id), name, on=False)
+        accounts.audit(principal, "standard.unignore", str(game_id), name)
 
     @admin_api.get("/v1/events-standard/download")
     def events_standard_download(tiers: Tiers = ["core", "standard"]):  # noqa: B006
         return Response(
-            standard.bundle(tiers),
+            standard.bundle(tiers, custom_events.load(storage)),
             media_type="application/zip",
             headers={
                 "Content-Disposition": 'attachment; filename="avn-events-setup.zip"',

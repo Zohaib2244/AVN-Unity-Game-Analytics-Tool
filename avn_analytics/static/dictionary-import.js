@@ -1,6 +1,8 @@
-// Fill the event dictionary from the game's code with an AI agent: prepare a file and a prompt,
-// upload the filled file, review what it would change, apply it, and undo it later if needed.
-// Loaded after events.js (which opens it from Mappings) and before app.js.
+// The two AI agent steps of the Event setup page. Each is mounted into a container of that page.
+//  - mountStandardInstall: install the AVN events standard in a game.
+//  - mountDictionaryFill: fill the event dictionary from the game's code (prepare a file and a
+//    prompt, upload the filled file, review what it would change, apply it, undo it later).
+// Loaded before event-setup.js and app.js.
 
 const IMPORT_DEFAULTS = {
   mode: 'fill_blanks', fields: ['description', 'params'],
@@ -23,6 +25,8 @@ const IMPORT_FLAGS = {
   type_mismatch: flag => `${flag.field.replace('param:', '')}: code says ${flag.code}, data says ${flag.observed.join('/')}`,
   changed_since_template: () => 'Changed since this file was prepared',
 };
+// A short left-to-right row of what to do, each with an icon.
+const flow = items => `<ol class="setup-flow">${items.map(([symbol, text]) => `<li>${icon(symbol, 16)}<span>${text}</span></li>`).join('')}</ol>`;
 const importList = value => String(value || '').split(/[\n,]/).map(item => item.trim()).filter(Boolean);
 const importField = field => field === 'description' ? 'description' : field.replace('param:', 'parameter ');
 const importMerge = (base, saved) => {
@@ -34,7 +38,7 @@ const importMerge = (base, saved) => {
   return out;
 };
 
-function openDictionaryImport(game, done) {
+function mountDictionaryFill(root, game, done) {
   const storeKey = `avn-import-options-${game.id}`;
   let options = importMerge(IMPORT_DEFAULTS, storeGet(storeKey));
   let tab = 'prepare';
@@ -45,11 +49,9 @@ function openDictionaryImport(game, done) {
   const url = `${gameURL(game)}/dictionary`;
 
   const draw = () => {
-    modal.className = 'import-dialog';
-    modal.innerHTML = `<div class="player-dialog-head"><h2 id="dialog-title">Fill the dictionary with an AI agent</h2><button type="button" class="button" data-action="close" aria-label="Close">Close ×</button></div>
-      <div class="segmented" role="group" aria-label="Import step">${[['prepare', '1 · Prepare'], ['upload', '2 · Upload and review'], ['history', 'History']].map(([key, label]) => `<button type="button" data-import-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join('')}</div>
+    root.innerHTML = `<div class="segmented" role="group" aria-label="Import step">${[['prepare', 'Prepare', 'file'], ['upload', 'Upload and review', 'export'], ['history', 'History', 'refresh']].map(([key, label, symbol]) => `<button type="button" data-import-tab="${key}" aria-pressed="${tab === key}">${icon(symbol, 15)} ${label}</button>`).join('')}</div>
       <div class="import-body" id="import-body"></div>`;
-    modal.querySelector('#import-body').innerHTML = tab === 'prepare' ? prepareHTML() : tab === 'upload' ? uploadHTML() : skeleton('table', 4, 4);
+    root.querySelector('#import-body').innerHTML = tab === 'prepare' ? prepareHTML() : tab === 'upload' ? uploadHTML() : skeleton('table', 4, 4);
     if (tab === 'history') drawHistory();
     if (tab === 'prepare') bindPrepare();
     if (tab === 'upload') bindUpload();
@@ -58,8 +60,7 @@ function openDictionaryImport(game, done) {
     const next = event.target.closest('[data-import-tab]')?.dataset.importTab;
     if (next && next !== tab) { tab = next; draw(); }
   };
-  modal.addEventListener('click', onTab);
-  modal.addEventListener('close', () => { modal.classList.remove('import-dialog'); modal.removeEventListener('click', onTab); }, {once: true});
+  root.addEventListener('click', onTab);
 
   // ---- 1 · prepare
   const select = (name, value, choices) => `<select name="${name}">${choices.map(([key, label]) => `<option value="${key}" ${String(value) === String(key) ? 'selected' : ''}>${label}</option>`).join('')}</select>`;
@@ -69,13 +70,12 @@ function openDictionaryImport(game, done) {
     const listed = [...o.scope.names, ...o.scope.prefixes.map(prefix => `${prefix}*`)].join('\n');
     const choice = o.scope.events === 'undocumented' && o.mode === 'fill_blanks' ? 'missing' : o.scope.events === 'all' && o.mode === 'overwrite_all' ? 'all' : '';
     const card = (value, title, text) => `<label class="import-choice"><input type="radio" name="coverage" value="${value}" ${choice === value ? 'checked' : ''}><span><strong>${title}</strong><small>${text}</small></span></label>`;
-    return `<p class="help">Give the prompt to the AI agent you use inside your game's code, then upload the file it fills in. You review every text before anything is written.</p>
-      <form id="import-prepare" class="import-form">
+    return `<form id="import-prepare" class="import-form">
         <div class="import-choices" role="radiogroup" aria-label="What should the agent cover?">
-          ${card('missing', 'Missing only', 'Events and parameters with no description yet. Nothing already written is touched.')}
-          ${card('all', 'All events', 'The agent re-checks everything and may propose new text for events already described. You still approve each change.')}
+          ${card('missing', 'Missing only', 'Only what has no description yet')}
+          ${card('all', 'All events', 'Re-check everything, you approve each change')}
         </div>
-        ${choice ? '' : '<p class="help">Custom coverage is set under Advanced settings. Pick one above to go back to a preset.</p>'}
+        ${choice ? '' : '<p class="help">Custom coverage is set under Advanced settings.</p>'}
         <details class="import-advanced"><summary>Advanced settings</summary>
         <fieldset><legend>What may change</legend>
           <div class="field"><label>When a field already has text</label>${select('mode', o.mode, [['fill_blanks', 'Only fill blanks (keep all existing text)'], ['overwrite_ai_drafts', 'Also replace earlier AI drafts nobody confirmed'], ['overwrite_all', 'Replace existing text']])}</div>
@@ -108,15 +108,15 @@ function openDictionaryImport(game, done) {
         </fieldset>
         </details>
         <div class="error" role="alert"></div>
-        <div class="modal-actions"><button type="submit" class="button primary">Prepare the file and prompt</button></div>
+        <div class="modal-actions"><button type="submit" class="button primary">${icon('sparkle', 15)} Prepare file and prompt</button></div>
       </form>
       <div id="import-prepared">${prepared ? preparedHTML() : ''}</div>`;
   }
   function preparedHTML() {
     const count = Object.keys(prepared.file.events).length;
     return `<section class="import-prepared"><h3 class="event-sub">${number(count)} event${count === 1 ? '' : 's'} in the file</h3>
-      <ol class="import-steps"><li>Save <code>avn-events.json</code> in the root of your game project.</li><li>Run the prompt in your AI agent from that folder.</li><li>Come back and upload the filled file.</li></ol>
-      <div class="modal-actions import-actions"><button type="button" class="button" data-import-download>${icon('export', 14)} Download avn-events.json</button><button type="button" class="button" data-import-copy>${icon('copy', 14)} Copy the prompt</button><button type="button" class="button primary" data-import-tab="upload">Upload the filled file →</button></div>
+      ${flow([['export', 'Save <code>avn-events.json</code> in your game'], ['sparkle', 'Run the prompt in your AI agent'], ['file', 'Upload the filled file']])}
+      <div class="modal-actions import-actions"><button type="button" class="button" data-import-download>${icon('export', 14)} Download avn-events.json</button><button type="button" class="button" data-import-copy>${icon('copy', 14)} Copy the prompt</button><button type="button" class="button primary" data-import-tab="upload">Upload the filled file ${icon('arrow', 14)}</button></div>
       <details class="import-prompt"><summary>Show the prompt</summary><textarea readonly rows="10" aria-label="Agent prompt">${escapeHTML(prepared.prompt)}</textarea></details></section>`;
   }
   const readOptions = form => {
@@ -134,7 +134,7 @@ function openDictionaryImport(game, done) {
     };
   };
   function bindPrepare() {
-    const form = modal.querySelector('#import-prepare');
+    const form = root.querySelector('#import-prepare');
     const sync = () => {
       const listed = form.elements.events.value === 'listed';
       form.elements.names.disabled = !listed;
@@ -155,7 +155,7 @@ function openDictionaryImport(game, done) {
       try {
         options = readOptions(form); storeSet(storeKey, options);
         prepared = await request(`${url}/import/prepare`, {method: 'POST', body: JSON.stringify({options})});
-        modal.querySelector('#import-prepared').innerHTML = preparedHTML();
+        root.querySelector('#import-prepared').innerHTML = preparedHTML();
         bindPrepared();
       } catch (problem) { error.textContent = problem.message; }
       finally { button.disabled = false; }
@@ -163,7 +163,7 @@ function openDictionaryImport(game, done) {
     bindPrepared();
   }
   function bindPrepared() {
-    const box = modal.querySelector('#import-prepared');
+    const box = root.querySelector('#import-prepared');
     box.querySelector('[data-import-download]')?.addEventListener('click', () => {
       const href = URL.createObjectURL(new Blob([JSON.stringify(prepared.file, null, 2)], {type: 'application/json'}));
       const anchor = Object.assign(document.createElement('a'), {href, download: 'avn-events.json'});
@@ -181,19 +181,18 @@ function openDictionaryImport(game, done) {
   const allChanges = () => preview ? preview.events.flatMap(entry => entry.changes) : [];
   const selected = new Set();
   function uploadHTML() {
-    return `<p class="help">Choose the <code>avn-events.json</code> your agent filled in. You will see every text it wrote before anything is saved.</p>
-      <div class="field"><label for="import-file">Filled file</label><input id="import-file" type="file" accept=".json,application/json"></div>
+    return `<div class="field"><label for="import-file">Filled <code>avn-events.json</code></label><input id="import-file" type="file" accept=".json,application/json"></div>
       <div class="error" role="alert" id="import-error"></div>
       <div id="import-review">${preview ? reviewHTML() : ''}</div>`;
   }
   function bindUpload() {
-    modal.querySelector('#import-file').addEventListener('change', async event => {
+    root.querySelector('#import-file').addEventListener('change', async event => {
       const file = event.target.files[0]; if (!file) return;
-      const error = modal.querySelector('#import-error'); error.textContent = '';
+      const error = root.querySelector('#import-error'); error.textContent = '';
       try {
         uploaded = JSON.parse(await file.text()); override = null;
         await runPreview();
-      } catch (problem) { uploaded = null; preview = null; modal.querySelector('#import-review').innerHTML = ''; error.textContent = problem instanceof SyntaxError ? 'That file is not valid JSON. Ask the agent to fix it, or re-run it.' : problem.message; }
+      } catch (problem) { uploaded = null; preview = null; root.querySelector('#import-review').innerHTML = ''; error.textContent = problem instanceof SyntaxError ? 'That file is not valid JSON. Ask the agent to fix it, or re-run it.' : problem.message; }
     });
     bindReview();
   }
@@ -207,7 +206,7 @@ function openDictionaryImport(game, done) {
       const similar = entry.flags.some(flag => flag.flag === 'near_duplicate');
       if (!similar) entry.changes.forEach(change => selected.add(textKey(change)));
     });
-    modal.querySelector('#import-review').innerHTML = reviewHTML(); bindReview();
+    root.querySelector('#import-review').innerHTML = reviewHTML(); bindReview();
   }
   const changeText = change => `<li><label class="import-text"><input type="checkbox" data-import-text="${escapeHTML(textKey(change))}" ${selected.has(textKey(change)) ? 'checked' : ''} aria-label="Import ${escapeHTML(importField(change.field))} of ${escapeHTML(change.name)}"><span><span class="small muted">${importField(change.field)}</span> ${change.before ? `<del>${escapeHTML(change.before)}</del> → ` : ''}<ins>${escapeHTML(change.after)}</ins>${change.kind === 'fill' ? '' : ` <span class="pill bad">${change.kind === 'overwrite_draft' ? 'replaces a draft' : 'replaces text'}</span>`}</span></label></li>`;
   function reviewHTML() {
@@ -242,8 +241,8 @@ function openDictionaryImport(game, done) {
   }
   // Re-reads exactly the chosen texts from the server, checks they are what was shown, then applies.
   async function approve(keys, button) {
-    const error = modal.querySelector('#import-error'); error.textContent = '';
-    const buttons = modal.querySelectorAll('[data-import-selected],[data-import-approve-all]');
+    const error = root.querySelector('#import-error'); error.textContent = '';
+    const buttons = root.querySelectorAll('[data-import-selected],[data-import-approve-all]');
     const label = button.textContent; buttons.forEach(item => { item.disabled = true; }); button.textContent = 'Importing…';
     try {
       const left = allChanges().filter(change => !keys.has(textKey(change))).map(textKey);
@@ -258,11 +257,11 @@ function openDictionaryImport(game, done) {
       preview = null; uploaded = null; selected.clear(); tab = 'history'; draw();
       done?.();
     } catch (problem) { error.textContent = problem.message; }
-    finally { button.textContent = label; if (modal.contains(button)) syncSelection(modal.querySelector('#import-review')); }
+    finally { button.textContent = label; if (root.contains(button)) syncSelection(root.querySelector('#import-review')); }
   }
   function bindReview() {
-    const box = modal.querySelector('#import-review'); if (!box || !preview) return;
-    const error = modal.querySelector('#import-error');
+    const box = root.querySelector('#import-review'); if (!box || !preview) return;
+    const error = root.querySelector('#import-error');
     syncSelection(box);
     const toggle = (keys, on) => { keys.forEach(key => on ? selected.add(key) : selected.delete(key)); syncSelection(box); };
     box.addEventListener('change', event => {
@@ -284,10 +283,10 @@ function openDictionaryImport(game, done) {
 
   // ---- history
   async function drawHistory() {
-    const box = modal.querySelector('#import-body');
+    const box = root.querySelector('#import-body');
     try {
       const list = await request(`${url}/imports`);
-      box.innerHTML = list.length ? `<div class="table-wrap"><table class="compact-table"><thead><tr><th>When</th><th>Who</th><th>Texts</th><th>Rules</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${list.map(item => `<tr><td class="small">${escapeHTML(displayDate(item.created_at))}</td><td class="small">${escapeHTML(item.actor)}</td><td class="num">${number(item.summary.fields_changed)}</td><td class="small muted">${escapeHTML(item.options.mode.replace(/_/g, ' '))} · ${escapeHTML(item.options.status)}</td><td>${item.undone_at ? '<span class="pill">Undone</span>' : `<button type="button" class="button danger-text" data-import-undo="${escapeHTML(item.id)}">Undo</button>`}</td></tr>`).join('')}</tbody></table></div><p class="help">Undo puts back what an import wrote, except texts someone has edited since.</p>` : '<p class="help">No imports yet.</p>';
+      box.innerHTML = list.length ? `<div class="table-wrap"><table class="compact-table"><thead><tr><th>When</th><th>Who</th><th>Texts</th><th>Rules</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${list.map(item => `<tr><td class="small">${escapeHTML(displayDate(item.created_at))}</td><td class="small">${escapeHTML(item.actor)}</td><td class="num">${number(item.summary.fields_changed)}</td><td class="small muted">${escapeHTML(item.options.mode.replace(/_/g, ' '))} · ${escapeHTML(item.options.status)}</td><td>${item.undone_at ? '<span class="pill">Undone</span>' : `<button type="button" class="button danger-text" data-import-undo="${escapeHTML(item.id)}">Undo</button>`}</td></tr>`).join('')}</tbody></table></div>` : '<p class="help">No imports yet.</p>';
       box.querySelectorAll('[data-import-undo]').forEach(button => button.addEventListener('click', async () => {
         button.disabled = true;
         try {
@@ -300,46 +299,46 @@ function openDictionaryImport(game, done) {
   }
 
   draw();
-  modal.showModal();
 }
 
 // Set up the AVN events standard in a game: pick tiers, then download the prompt with the spec
 // (or copy the prompt) for the AI agent the developer runs in the game's code.
 const STANDARD_TIERS = [
-  ['core', 'Core', 'Levels, ads, coins and app lifecycle. Always included.'],
-  ['standard', 'Standard', 'Tutorials, first run, powerups, menus, purchases and player state.'],
+  ['core', 'Core', 'Levels, ads, coins, app. Always on.'],
+  ['standard', 'Standard', 'Tutorials, powerups, menus, purchases, player.'],
   ['extended', 'Extended', 'Device hardware.'],
 ];
 
-function openEventsSetup() {
+function mountStandardInstall(root, game) {
   const storeKey = 'avn-standard-tiers';
   const saved = storeGet(storeKey);
   let tiers = Array.isArray(saved) ? STANDARD_TIERS.map(([key]) => key).filter(key => key === 'core' || saved.includes(key)) : ['core', 'standard'];
-  let summary = null; let loading = 0;
-  const query = () => new URLSearchParams(tiers.map(tier => ['tiers', tier])).toString();
+  let summary = null; let loading = 0; let custom = []; let gameStatus = null;
+  // Custom events are part of the standard, so they are always in the downloads.
+  const query = () => new URLSearchParams([...tiers, ...(custom.length ? ['custom'] : [])].map(tier => ['tiers', tier])).toString();
 
   const draw = () => {
-    modal.className = 'import-dialog';
-    modal.innerHTML = `<div class="player-dialog-head"><h2 id="dialog-title">Set up events with an AI agent</h2><button type="button" class="button" data-action="close" aria-label="Close">Close ×</button></div>
-      <p class="help">The AI agent you use in your game's code adds the AVN standard events, with the same names and parameters in every game. Levels, Retention and stories then map themselves.</p>
-      <div class="import-choices standard-tiers" role="group" aria-label="Which events">
+    root.innerHTML = `<div class="import-choices standard-tiers" role="group" aria-label="Which events">
         ${STANDARD_TIERS.map(([key, title, text]) => `<label class="import-choice"><input type="checkbox" name="tier" value="${key}" ${tiers.includes(key) ? 'checked' : ''} ${key === 'core' ? 'checked disabled' : ''}><span><strong>${title}</strong><small>${text}</small></span></label>`).join('')}
       </div>
-      <div id="standard-summary">${skeleton('table', 3, 3)}</div>
-      <ol class="import-steps"><li>Unzip the download in the root of your game project.</li><li>Run <code>AGENT_PROMPT.md</code> in your AI agent from that folder.</li><li>Send a test build, then check the events under Dictionary and Mappings.</li></ol>
+      <div id="unlisted-events" class="custom-events unlisted-events" hidden></div>
+      <div id="custom-events" class="custom-events"></div>
       <div class="error" role="alert"></div>
-      <div class="modal-actions import-actions"><button type="button" class="button" data-standard-copy>${icon('copy', 14)} Copy the prompt</button><button type="button" class="button primary" data-standard-download>${icon('export', 14)} Download setup files</button></div>
+      <div class="import-actions setup-actions"><button type="button" class="button primary" data-standard-download>${icon('export', 15)} Download setup files</button><button type="button" class="button" data-standard-copy>${icon('copy', 15)} Copy prompt</button></div>
+      ${flow([['export', 'Unzip in your game'], ['sparkle', 'Run <code>AGENT_PROMPT.md</code> in your AI agent'], ['pulse', 'Send a test build']])}
+      <div id="standard-summary">${skeleton('table', 3, 3)}</div>
       <details class="import-prompt"><summary>Show the prompt</summary><textarea readonly rows="12" aria-label="Agent prompt" id="standard-prompt"></textarea></details>`;
-    modal.querySelectorAll('[name="tier"]').forEach(box => box.addEventListener('change', () => {
-      tiers = [...modal.querySelectorAll('[name="tier"]:checked')].map(item => item.value);
+    drawCustom();
+    root.querySelectorAll('[name="tier"]').forEach(box => box.addEventListener('change', () => {
+      tiers = [...root.querySelectorAll('[name="tier"]:checked')].map(item => item.value);
       storeSet(storeKey, tiers); load();
     }));
-    modal.querySelector('[data-standard-copy]').addEventListener('click', async () => {
+    root.querySelector('[data-standard-copy]').addEventListener('click', async () => {
       if (!summary) return;
       try { await navigator.clipboard.writeText(summary.prompt); toast('Prompt copied.'); } catch { toast('Open "Show the prompt" and copy it by hand.'); }
     });
-    modal.querySelector('[data-standard-download]').addEventListener('click', async event => {
-      const button = event.currentTarget; const error = modal.querySelector('.error');
+    root.querySelector('[data-standard-download]').addEventListener('click', async event => {
+      const button = event.currentTarget; const error = root.querySelector('.error');
       error.textContent = ''; button.disabled = true;
       try {
         const response = await fetch(`/v1/events-standard/download?${query()}`, {credentials: 'same-origin'});
@@ -351,18 +350,28 @@ function openEventsSetup() {
       finally { button.disabled = false; }
     });
   };
+  const drawCustom = () => {
+    root.querySelector('#custom-events').innerHTML = customEventsHTML(custom, gameStatus?.sent);
+    const unlisted = root.querySelector('#unlisted-events');
+    unlisted.hidden = !(gameStatus && (gameStatus.unlisted.length || gameStatus.ignored.length));
+    if (!unlisted.hidden) unlisted.innerHTML = unlistedEventsHTML(gameStatus);
+  };
+  const refresh = async () => {
+    try { custom = await request('/v1/events-standard/custom'); } catch { /* the list stays as it was */ }
+    try { gameStatus = await request(`/v1/games/${encodeURIComponent(game.id)}/standard`); } catch { /* no status shown */ }
+    drawCustom(); load();
+  };
   const load = async () => {
-    const current = ++loading; const box = modal.querySelector('#standard-summary');
+    const current = ++loading; const box = root.querySelector('#standard-summary');
     try {
       const result = await request(`/v1/events-standard?${query()}`);
       if (current !== loading) return;
       summary = result;
-      box.innerHTML = `<div class="table-wrap"><table class="import-table"><thead><tr><th>Event</th><th>Tier</th><th>States</th></tr></thead><tbody>${result.events.map(item => `<tr><td><code>${escapeHTML(item.name)}</code></td><td>${escapeHTML(item.tier)}</td><td>${item.states.map(state => `<code>${escapeHTML(state)}</code>`).join(' ')}</td></tr>`).join('')}</tbody></table></div>`;
-      modal.querySelector('#standard-prompt').value = result.prompt;
+      box.innerHTML = `<details class="import-prompt standard-events"><summary>Show the ${number(result.events.length)} events</summary><div class="table-wrap"><table class="import-table"><thead><tr><th>Event</th><th>Tier</th><th>States</th><th class="num">Sent by this game</th></tr></thead><tbody>${result.events.map(item => `<tr><td><code>${escapeHTML(item.name)}</code></td><td>${escapeHTML(item.tier)}</td><td>${item.states.map(state => `<code>${escapeHTML(state)}</code>`).join(' ')}</td><td class="num">${gameStatus?.sent[item.name] ? number(gameStatus.sent[item.name].events) : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table></div></details>`;
+      root.querySelector('#standard-prompt').value = result.prompt;
     } catch (problem) { if (current === loading) box.innerHTML = `<p class="error">${escapeHTML(problem.message)}</p>`; }
   };
 
-  modal.addEventListener('close', () => modal.classList.remove('import-dialog'), {once: true});
-  draw(); load();
-  modal.showModal();
+  draw(); bindCustomEvents(root.querySelector('#custom-events'), () => custom, refresh);
+  bindUnlistedEvents(root.querySelector('#unlisted-events'), () => gameStatus, game, refresh); refresh();
 }

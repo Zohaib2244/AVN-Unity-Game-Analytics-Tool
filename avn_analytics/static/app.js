@@ -51,6 +51,7 @@ const icons = {
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.3-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.8c1.6.8 2.6 2.6 3 5.2"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m13 7 4 4"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  sparkle: '<path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"/><path d="M19 16v4m-2-2h4"/>',
   lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4m-4 4v3"/>',
 };
 const icon = (name, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.grid}</svg>`;
@@ -262,7 +263,7 @@ function metric(title, value, footer, symbol) {
 // sections and an Android/iOS switch between its registered variants.
 let currentGame = null;
 let currentSection = 'overview';
-const GAME_SECTIONS = [['overview','grid','Overview'],['funnels','funnel','Funnels'],['levels','game','Levels'],['players','users','Players'],['exports','export','Exports'],['dictionary','book','Event dictionary'],['keys','key','API keys'],['settings','settings','Game settings']];
+const GAME_SECTIONS = [['overview','grid','Overview'],['funnels','funnel','Funnels'],['levels','game','Levels'],['players','users','Players'],['exports','export','Exports'],['dictionary','book','Event dictionary'],['event-setup','link','Event setup'],['keys','key','API keys'],['settings','settings','Game settings']];
 const gamePath = (game, section = 'overview') => `/games/${encodeURIComponent(game.id)}${section === 'overview' ? '' : `/${section}`}`;
 const sameGame = (a, b) => a.name.trim().toLowerCase() === b.name.trim().toLowerCase();
 const PLATFORM_ORDER = ['android', 'ios'];
@@ -323,7 +324,7 @@ function shell(title, content) {
   const link = ([url, symbol, label], active) => `<a href="${url}" aria-label="${label}" class="${active ? 'active' : ''}" ${active ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span></a>`;
   const game = currentGame;
   const main = game
-    ? `<a class="back-to-games" href="/">← All games</a><div class="sidebar-game">${avatar(game.name, variantsOf(game))}<div><strong>${escapeHTML(game.name)}</strong><span>${escapeHTML(game.bundle_id)}</span></div></div>${variantSwitch(game, currentSection)}<p class="nav-label eyebrow">Game</p><nav class="nav" aria-label="Game">${GAME_SECTIONS.map(([section, symbol, label]) => link([gamePath(game, section), symbol, label], section === currentSection || section === 'dictionary' && currentSection === 'mappings')).join('')}</nav>`
+    ? `<a class="back-to-games" href="/">← All games</a><div class="sidebar-game">${avatar(game.name, variantsOf(game))}<div><strong>${escapeHTML(game.name)}</strong><span>${escapeHTML(game.bundle_id)}</span></div></div>${variantSwitch(game, currentSection)}<p class="nav-label eyebrow">Game</p><nav class="nav" aria-label="Game">${GAME_SECTIONS.map(([section, symbol, label]) => link([gamePath(game, section), symbol, label], section === currentSection)).join('')}</nav>`
     : `<p class="nav-label eyebrow">Menu</p><nav class="nav" aria-label="Menu">${link(['/', 'grid', 'Games'], ['/', '/games', '/games/new'].includes(location.pathname))}</nav>`;
   const crumbs = game ? `<a href="/">Games</a> <span>/</span> <a href="${gamePath(game)}">${escapeHTML(game.name)} · ${platformLabel(game.platform)}</a> <span>/</span> <strong>${escapeHTML(title)}</strong>` : `Workspace <span>/</span> <strong>${escapeHTML(title)}</strong>`;
   const switcher = me.workspaces.length > 1 || me.is_admin ? `<div class="ws-switch"><label for="ws-select">Workspace</label><select id="ws-select" aria-label="Workspace">${me.workspaces.map(item => `<option value="${item.id}" ${item.id === currentWorkspace ? 'selected' : ''}>${escapeHTML(item.name)}</option>`).join('')}</select></div>` : '';
@@ -721,9 +722,9 @@ modal.addEventListener('close', () => {
 });
 
 const routes = {'/':renderHome, '/games':renderHome, '/games/new':renderNewGame, '/team':renderTeam, '/workspaces':renderWorkspaces, '/status':renderStatus, '/settings':renderSettings};
-const sections = {overview:renderGameOverview, funnels:renderFunnels, levels:renderLevels, players:renderPlayers, exports:renderExports, dictionary:renderDictionary, mappings:renderMappings, keys:renderKeys, settings:renderGameSettings};
+const sections = {overview:renderGameOverview, funnels:renderFunnels, levels:renderLevels, players:renderPlayers, exports:renderExports, dictionary:renderDictionary, 'event-setup':renderEventSetup, keys:renderKeys, settings:renderGameSettings};
 const LEGACY = ['/keys', '/exports', '/dictionary', '/funnels', '/players']; // old ?game= pages
-const gameRoute = pathname => pathname.match(/^\/games\/([^/]+)(?:\/([a-z]+))?\/?$/);
+const gameRoute = pathname => pathname.match(/^\/games\/([^/]+)(?:\/([a-z-]+))?\/?$/);
 
 function renderNotFound() {
   shell('Not found', heading('Page not found', 'This page or game isn’t in your workspace.') + '<a class="button" href="/">Back to games</a>');
@@ -771,8 +772,10 @@ async function renderRoute() {
         currentGame = overview.games.find(item => item.id === wanted) || null;
       }
     }
-    currentSection = match[2] === 'retention' ? 'levels' : match[2] || 'overview';
-    if (match[2] === 'retention' && currentGame) history.replaceState({}, '', gamePath(currentGame, 'levels') + location.search);
+    // Old addresses: Retention moved into Levels, Mappings into Event setup.
+    const moved = {retention: 'levels', mappings: 'event-setup'}[match[2]];
+    currentSection = moved || match[2] || 'overview';
+    if (moved && currentGame) history.replaceState({}, '', gamePath(currentGame, moved) + location.search + (moved === 'event-setup' ? '#mappings' : ''));
     if (!currentGame || !sections[currentSection]) { currentGame = null; return renderNotFound(); }
     await sections[currentSection]();
     if (typeof mountNutBot === 'function') mountNutBot();
