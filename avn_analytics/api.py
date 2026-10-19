@@ -32,6 +32,7 @@ from . import (
     events,
     insights,
     journeys,
+    sdk_package,
     standard,
     standard_status,
 )
@@ -548,6 +549,39 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             raise HTTPException(404, "No such custom event")
         accounts.audit(principal, "standard.custom_event_delete", name)
         return {"deleted": name}
+
+    @admin_api.get("/v1/sdk")
+    def sdk_info():
+        return sdk_package.info(storage)
+
+    @admin_api.get("/v1/sdk/download")
+    def sdk_download():
+        package = sdk_package.path(storage)
+        if not package:
+            raise HTTPException(404, "No Unity SDK package has been uploaded yet")
+        return FileResponse(
+            package,
+            media_type="application/octet-stream",
+            filename=sdk_package.FILENAME,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @admin_api.put("/v1/sdk")
+    async def sdk_upload(
+        request: Request,
+        principal: TeamAdmin,
+        version: Annotated[str, Query(max_length=40)] = "",
+    ):
+        result = sdk_package.save(storage, await request.body(), version.strip(), principal.email)
+        accounts.audit(principal, "sdk.upload", sdk_package.FILENAME, version.strip())
+        return result
+
+    @admin_api.delete("/v1/sdk")
+    def sdk_delete(principal: TeamAdmin):
+        if not sdk_package.clear(storage):
+            raise HTTPException(404, "No Unity SDK package has been uploaded")
+        accounts.audit(principal, "sdk.delete", sdk_package.FILENAME)
+        return {"deleted": sdk_package.FILENAME}
 
     @admin_api.get("/v1/games/{game_id}/standard")
     def game_standard(game_id: UUID):

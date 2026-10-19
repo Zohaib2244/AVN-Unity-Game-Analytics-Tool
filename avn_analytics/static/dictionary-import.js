@@ -328,6 +328,7 @@ function mountStandardInstall(root, game) {
       ${flow([['export', 'Unzip in your game'], ['sparkle', 'Run <code>AGENT_PROMPT.md</code> in your AI agent'], ['pulse', 'Send a test build']])}
       <div id="standard-summary">${skeleton('table', 3, 3)}</div>
       <details class="import-prompt"><summary>Show the prompt</summary><textarea readonly rows="12" aria-label="Agent prompt" id="standard-prompt"></textarea></details>`;
+    sdkDownloadButton().then(html => root.querySelector('.setup-actions')?.insertAdjacentHTML('beforeend', html));
     drawCustom();
     root.querySelectorAll('[name="tier"]').forEach(box => box.addEventListener('change', () => {
       tiers = [...root.querySelectorAll('[name="tier"]:checked')].map(item => item.value);
