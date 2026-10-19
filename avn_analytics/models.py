@@ -81,6 +81,29 @@ class EventContext(StrictModel):
     )
 
 
+class BatchContext(EventContext):
+    """The `context` of a batch: the shared fields, plus what the SDK stamps on it.
+
+    Unknown fields are ignored, not rejected: a rejected batch is lost data, so a newer SDK can add
+    a field without waiting for a server release. Events themselves stay strict.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    standard: Context | None = None  # the events standard the batch follows, e.g. "avn-events"
+    standard_version: int | None = None  # that standard's version; absent on older SDKs and games
+
+    @field_validator("standard", "standard_version", mode="before")
+    @classmethod
+    def metadata_never_rejects(cls, value, info):
+        """These two only describe the batch, so a malformed one is dropped rather than a 400."""
+        if info.field_name == "standard":
+            ok = isinstance(value, str) and 1 <= len(value) <= 128
+        else:
+            ok = type(value) is int and 0 <= value < 2**31
+        return value if ok else None
+
+
 class EventIn(EventBase, EventContext):
     """An event as sent: context fields may be omitted when the batch supplies them."""
 
@@ -95,6 +118,8 @@ class Event(EventBase):
     build: Context
     platform: Context
     environment: Context | None = None
+    standard: Context | None = None  # from the batch context; stored with the event
+    standard_version: int | None = None
 
     @model_validator(mode="after")
     def require_identity(self):
@@ -104,7 +129,7 @@ class Event(EventBase):
 
 
 class Batch(StrictModel):
-    context: EventContext | None = None
+    context: BatchContext | None = None
     events: list[EventIn] = Field(min_length=1, max_length=500)
     _resolved: list[Event] = PrivateAttr(default_factory=list)
 
