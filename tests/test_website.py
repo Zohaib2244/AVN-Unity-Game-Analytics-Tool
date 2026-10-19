@@ -33,6 +33,7 @@ def test_pages_assets_and_api_separation(website):
     assert client.get("/assets/app.js").status_code == 200
     assert client.get("/assets/style.css").status_code == 200
     assert client.get("/assets/event-setup.js").status_code == 200
+    assert client.get("/assets/custom-events.js").status_code == 200
     assert client.get("/v1/overview").status_code == 200
     with TestClient(create_app(settings)) as ingest:
         assert ingest.get("/").status_code == 404

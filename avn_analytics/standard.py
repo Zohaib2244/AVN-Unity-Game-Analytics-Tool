@@ -15,7 +15,7 @@ FOLDER = Path(__file__).parent / "events_standard"
 SPEC = "standard.spec.json"
 GUIDE = "STANDARD.md"
 PROMPT = "AGENT_PROMPT.md"
-TIERS = ("core", "standard", "extended")
+TIERS = ("core", "standard", "extended", "custom")
 TIERS_LINE = re.compile(r"^Tiers to implement: .*$", re.M)
 
 
@@ -24,8 +24,58 @@ def _read(name):
     return (FOLDER / name).read_text(encoding="utf-8")
 
 
-def spec():
-    return json.loads(_read(SPEC))
+def _spec_entry(body):
+    """A custom event in spec format, from the editor's lists."""
+    states = {}
+    for state in body["states"]:
+        params = {}
+        for param in state["params"]:
+            item = {"type": param["type"], "required": param["required"]}
+            if param["note"]:
+                item["note"] = param["note"]
+            if param["values"]:
+                item["enum"] = list(param["values"])
+            params[param["key"]] = item
+        states[state["name"]] = {"trigger": state["trigger"], "params": params}
+    return {"tier": "custom", "purpose": body["purpose"], "states": states, "shared_params": {}}
+
+
+def spec(custom=None):
+    """The built-in standard, plus the custom events ({name: stored body}) as the custom tier."""
+    data = json.loads(_read(SPEC))
+    if custom:
+        for name, body in custom.items():
+            data["events"][name] = _spec_entry(body)
+        data["tiers"]["custom"] = f"{', '.join(custom)}. Added on this installation."
+    return data
+
+
+def guide(custom=None):
+    """STANDARD.md, with a section per custom event so it matches the spec."""
+    text = _read(GUIDE)
+    if not custom:
+        return text
+    lines = [
+        "",
+        "## Custom events",
+        "",
+        "Added on this installation, on top of the standard above.",
+        "",
+    ]
+    for name, body in custom.items():
+        lines += [f"### {name} (custom)", "", body["purpose"] or "", ""]
+        for state in body["states"]:
+            lines += [f"#### `{state['name']}`", "", state["trigger"] or "", ""]
+            if state["params"]:
+                lines += ["| Key | Type | Required | Note |", "|---|---|---|---|"]
+                for param in state["params"]:
+                    note = param["note"]
+                    if param["values"]:
+                        note = f"{note} One of: {', '.join(param['values'])}.".strip()
+                    required = "yes" if param["required"] else "no"
+                    lines.append(f"| `{param['key']}` | {param['type']} | {required} | {note} |")
+                lines.append("")
+    return text.rstrip("\n") + "\n" + "\n".join(lines)
 
 
 def tiers_for(chosen):
@@ -43,9 +93,9 @@ def prompt(chosen):
     return TIERS_LINE.sub(line, body, count=1) + "\n"
 
 
-def summary(chosen):
+def summary(chosen, custom=None):
     tiers = tiers_for(chosen)
-    data = spec()
+    data = spec(custom)
     events = [
         {"name": name, "tier": entry["tier"], "states": list(entry["states"])}
         for name, entry in data["events"].items()
@@ -54,11 +104,11 @@ def summary(chosen):
     return {"version": data["version"], "tiers": tiers, "events": events, "prompt": prompt(chosen)}
 
 
-def bundle(chosen):
+def bundle(chosen, custom=None):
     """A ZIP to unpack in the root of the game project."""
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(PROMPT, prompt(chosen))
-        archive.writestr(SPEC, _read(SPEC))
-        archive.writestr(GUIDE, _read(GUIDE))
+        archive.writestr(SPEC, json.dumps(spec(custom), indent=2) + "\n" if custom else _read(SPEC))
+        archive.writestr(GUIDE, guide(custom))
     return buffer.getvalue()

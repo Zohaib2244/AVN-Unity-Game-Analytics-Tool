@@ -140,7 +140,7 @@ The website is organized around games. The home page lists your games; Android a
 | **Players** | Everyone active in the chosen days, searchable and sortable (last active, first seen, events, sessions, average session length, total playtime, app version). **Event rules** add your own columns from events (times they did something, highest/lowest/total of a parameter, first/last time), sort by them, and keep only players who did, or never did, an event. Total playtime sums session durations in the selected days and filters. Countries show their full name on hover. Open a player for their **story**: sessions as chapters, with runs of levels folded into one line ("Played levels 1–10, completed all"). The raw event list and a **Player info** tab (latest version, build, platform, device and country, and an optional device specification lookup) are one click away. |
 | **Exports** | Download the raw events, using the same days and filters. |
 | **Event dictionary** | Every event your game has sent or defined, with counts, players, trends, descriptions, parameter types and values, activity by version/environment/country, and raw examples. Describe events in place, set story labels or hidden state, and open an event directly in Mappings. Flags identify missing descriptions, changing parameter types, quiet events and similar names. Dictionary progress is folded below the totals. |
-| **Event setup → Map your events** | Shared meanings for Retention, Levels, player stories and journeys. Pick **All versions** for shared rules or an app version for release-specific rules. A version's rules replace the shared rules for that event; other events still inherit theirs. Parameter choices and counts follow the selected version. Review suggested mappings for known event shapes, preview counts and matching parameters before saving, and see warnings for overlapping rules. **Set up events with AI agent** and **Fill with AI agent** live here. |
+| **Event setup → Mappings** | Shared meanings for Retention, Levels, player stories and journeys. Pick **All versions** for shared rules or an app version for release-specific rules. A version's rules replace the shared rules for that event; other events still inherit theirs. Parameter choices and counts follow the selected version. Review suggested mappings for known event shapes, preview counts and matching parameters before saving, and see warnings for overlapping rules. **Set up events with AI agent** and **Fill with AI agent** live here. |
 | **API keys** | Create, copy and delete the game's collection keys. |
 | **Game settings** | Game icon, game details, the [environment](#fixing-a-build-that-shipped-in-the-wrong-mode) each build reported, [analysis confidence](#analysis-confidence) overrides, archive (pause collection) and delete. |
 
@@ -263,7 +263,7 @@ version. Those rules replace the shared rules **for that event and release**. Ot
 other events retain their rules. Removing all of an event's rules for a release restores its
 shared rules. Mappings apply consistently across all analytics pages and never rewrite raw events.
 
-## Install the standard with an AI agent
+## Add AVN events with an AI agent
 
 New games, or games whose events should be cleaned up, can use the **AVN events standard**: a
 fixed set of event names, states and parameters (`LEVEL`, `AD`, `ECONOMY`, `APP`, `TUTORIAL`,
@@ -273,7 +273,7 @@ the dashboards map them on their own. The standard lives in
 `standard.spec.json` for agents and tools, and `AGENT_PROMPT.md`, the prompt that adds it to a
 Unity game.
 
-**Event setup → Install the standard** picks the tiers (core is always
+**Event setup → Add AVN Events** picks the tiers (core is always
 included; standard and extended are optional), lists the events they bring, and downloads
 `avn-events-setup.zip` with the prompt and the standard, or copies the prompt. Unzip it in the
 game project's root and run the prompt with any coding agent. The agent adds one sender
@@ -283,9 +283,23 @@ test build sends events, the Event setup page suggests Level started, completed,
 restarted from `LEVEL` by itself. Over the API: `GET /v1/events-standard?tiers=standard` and
 `GET /v1/events-standard/download?tiers=standard`.
 
+### Custom events
+
+Events the standard doesn't cover can be added from **Event setup → Add AVN Events → Custom events →
+Add event**: a name (`UPPER_SNAKE`), what it tracks, one or more states (`PascalCase`, with when
+each is sent) and their parameters (`UPPER_SNAKE` key, `int`, `float` or `string`, required or not,
+optional list of allowed values). The page checks the same naming rules as the standard and the
+server refuses names that clash with a built-in event. Custom events are stored with the
+workspace data, not in the repository, and join every download as the `custom` tier: they are in
+the downloaded `standard.spec.json`, in a *Custom events* section of `STANDARD.md`, and in the
+prompt's tier line, so an agent sets them up with the rest. Only the admin can add, edit or delete
+them. Deleting one only removes it from future downloads; games already sending it, and the events
+already stored, are not touched. Over the API: `GET /v1/events-standard/custom`,
+`PUT /v1/events-standard/custom/{NAME}` and `DELETE /v1/events-standard/custom/{NAME}`.
+
 ## Fill the dictionary with an AI agent
 
-Describing every event by hand is slow, and the meaning of an event lives in the game's code. **Event setup → Fill the dictionary** turns that into three steps:
+Describing every event by hand is slow, and the meaning of an event lives in the game's code. **Event setup → Fill Dictionary** turns that into three steps:
 
 1. **Prepare.** Pick **Missing only** (events and parameters with no description yet) or **All events** (the agent may propose new text for ones already described); everything else is under **Advanced settings** with sensible defaults. Then download `avn-events.json` (the events and parameters that still need a meaning, with how often and as which types they were seen) and copy the generated prompt. Parameter values from real players are never put in the file.
 2. **Run the prompt** in your game's repository with any AI agent. It reads the code and fills only the `proposed` part of each event: a description, parameter descriptions, a `confidence` (`certain` / `inferred` / `unknown`) and a `source` (`path/File.cs:123`). It may add events found in the code that were never received, and lists names it cannot resolve.

@@ -1,8 +1,8 @@
 # Prompt: set up AVN events in a Unity game
 
 Run this in the game's repository with any coding agent, with `standard.spec.json` and
-`STANDARD.md` in the repository root. The website's **Event setup → Install the
-standard** downloads all three with the tiers filled in. Everything between the lines is the
+`STANDARD.md` in the repository root. The website's **Event setup → Add AVN
+Events** downloads all three with the tiers filled in. Everything between the lines is the
 prompt.
 
 ---

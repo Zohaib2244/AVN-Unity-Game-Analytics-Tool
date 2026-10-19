@@ -1,11 +1,12 @@
 // The Event setup page: three independent tabs, open any of them in any order.
-//  Install the standard (AI agent adds the AVN events), Fill the dictionary (AI agent describes the
-//  events from the code), Mappings (which events stand for the moments the dashboards use).
+//  Add AVN Events (an AI agent adds the AVN events, and custom events can join the standard), Fill
+//  Dictionary (an AI agent describes the events from the code), Mappings (which events stand for the
+//  moments the dashboards use).
 // Loaded after events.js (mapping helpers) and dictionary-import.js (the two AI agent tabs).
 
 const SETUP_TABS = [
-  ['install', 'Install standard', 'export'],
-  ['fill', 'Fill dictionary', 'edit'],
+  ['install', 'Add AVN Events', 'export'],
+  ['fill', 'Fill Dictionary', 'edit'],
   ['mappings', 'Mappings', 'link'],
 ];
 

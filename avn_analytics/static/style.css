@@ -1259,7 +1259,7 @@ body:has(dialog.player-dialog[open]){overflow:hidden}
 }
 
 /* ─── Dictionary import dialog ─── */
-dialog.import-dialog{width:min(980px,calc(100vw - 32px));max-width:980px;max-height:92dvh;padding:24px;overscroll-behavior:contain;overflow:auto}
+dialog.import-dialog,dialog.custom-event-dialog{width:min(980px,calc(100vw - 32px));max-width:980px;max-height:92dvh;padding:24px;overscroll-behavior:contain;overflow:auto}
 .import-dialog .segmented{margin-bottom:16px}
 .import-form fieldset{border:1.5px solid var(--border);border-radius:10px;padding:14px 16px 4px;margin:0 0 14px}
 .import-form legend{padding:0 8px;font-family:var(--font-label);font-size:var(--fs-label);color:var(--text-muted-dim)}
@@ -1369,3 +1369,23 @@ progress.mapping-meter::-moz-progress-bar{background:var(--accent-orange)}
   .setup-tab{flex:1 1 0;flex-direction:column;gap:2px;padding:8px 4px;font-size:var(--fs-sm);text-align:center;white-space:normal}
   .setup-tab .pill{display:none}
 }
+
+/* ─── Custom events ─── */
+.custom-events{margin:0 0 18px;padding:14px 16px;border:1px solid var(--line);border-radius:12px}
+.custom-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0}
+.custom-head h3{display:flex;align-items:center;gap:8px;font-size:var(--fs-md);font-weight:600;margin:0}
+.custom-head h3 svg{color:var(--accent-orange)}
+.custom-events>p{margin:10px 0 0}
+.custom-list{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:2px}
+.custom-list li{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;padding:6px 0;border-top:1px solid var(--line)}
+.custom-actions{margin-left:auto;display:inline-flex;gap:2px}
+.custom-form .custom-top{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:0 14px}
+.custom-state{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0 0 12px}
+.custom-state legend{padding:0 8px;color:var(--text-muted);font-size:var(--fs-sm)}
+.custom-state-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr) auto;gap:0 14px;align-items:end}
+.custom-param{display:grid;grid-template-columns:minmax(120px,1.2fr) 90px auto minmax(110px,1fr) minmax(110px,1.2fr) auto;gap:8px;align-items:center;margin:0 0 8px}
+.custom-state-head .icon-button{margin-bottom:12px}
+.custom-param input,.custom-param select{width:100%}
+.custom-param .check-row{margin:0;white-space:nowrap}
+.custom-form .field.wide{min-width:0}
+@media(max-width:800px){.custom-form .custom-top,.custom-state-head{grid-template-columns:1fr}.custom-param{grid-template-columns:1fr 1fr;padding-bottom:8px;border-bottom:1px solid var(--line)}}

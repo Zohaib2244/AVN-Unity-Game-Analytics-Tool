@@ -313,18 +313,21 @@ function mountStandardInstall(root) {
   const storeKey = 'avn-standard-tiers';
   const saved = storeGet(storeKey);
   let tiers = Array.isArray(saved) ? STANDARD_TIERS.map(([key]) => key).filter(key => key === 'core' || saved.includes(key)) : ['core', 'standard'];
-  let summary = null; let loading = 0;
-  const query = () => new URLSearchParams(tiers.map(tier => ['tiers', tier])).toString();
+  let summary = null; let loading = 0; let custom = [];
+  // Custom events are part of the standard, so they are always in the downloads.
+  const query = () => new URLSearchParams([...tiers, ...(custom.length ? ['custom'] : [])].map(tier => ['tiers', tier])).toString();
 
   const draw = () => {
     root.innerHTML = `<div class="import-choices standard-tiers" role="group" aria-label="Which events">
         ${STANDARD_TIERS.map(([key, title, text]) => `<label class="import-choice"><input type="checkbox" name="tier" value="${key}" ${tiers.includes(key) ? 'checked' : ''} ${key === 'core' ? 'checked disabled' : ''}><span><strong>${title}</strong><small>${text}</small></span></label>`).join('')}
       </div>
+      <div id="custom-events" class="custom-events"></div>
       <div class="error" role="alert"></div>
       <div class="import-actions setup-actions"><button type="button" class="button primary" data-standard-download>${icon('export', 15)} Download setup files</button><button type="button" class="button" data-standard-copy>${icon('copy', 15)} Copy prompt</button></div>
       ${flow([['export', 'Unzip in your game'], ['sparkle', 'Run <code>AGENT_PROMPT.md</code> in your AI agent'], ['pulse', 'Send a test build']])}
       <div id="standard-summary">${skeleton('table', 3, 3)}</div>
       <details class="import-prompt"><summary>Show the prompt</summary><textarea readonly rows="12" aria-label="Agent prompt" id="standard-prompt"></textarea></details>`;
+    drawCustom();
     root.querySelectorAll('[name="tier"]').forEach(box => box.addEventListener('change', () => {
       tiers = [...root.querySelectorAll('[name="tier"]:checked')].map(item => item.value);
       storeSet(storeKey, tiers); load();
@@ -346,6 +349,11 @@ function mountStandardInstall(root) {
       finally { button.disabled = false; }
     });
   };
+  const drawCustom = () => { root.querySelector('#custom-events').innerHTML = customEventsHTML(custom); };
+  const refresh = async () => {
+    try { custom = await request('/v1/events-standard/custom'); } catch { /* the list stays as it was */ }
+    drawCustom(); load();
+  };
   const load = async () => {
     const current = ++loading; const box = root.querySelector('#standard-summary');
     try {
@@ -357,5 +365,5 @@ function mountStandardInstall(root) {
     } catch (problem) { if (current === loading) box.innerHTML = `<p class="error">${escapeHTML(problem.message)}</p>`; }
   };
 
-  draw(); load();
+  draw(); bindCustomEvents(root.querySelector('#custom-events'), () => custom, refresh); refresh();
 }
