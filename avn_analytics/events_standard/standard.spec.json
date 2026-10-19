@@ -1,8 +1,8 @@
 {
   "standard": "avn-events",
-  "version": 3,
+  "version": 4,
   "conventions": {
-    "event_names": "Exactly the names in `events`. UPPER_SNAKE, no suffix. A game never invents new event names.",
+    "event_names": "Exactly the names in `events`. UPPER_SNAKE, always ending in _ANALYSIS (LEVEL_ANALYSIS, AD_ANALYSIS, SCREEN_ANALYSIS). A game never invents new event names.",
     "parameter_keys": "Exactly the keys listed for the state, UPPER_SNAKE. Pattern keys (BALANCE_<CURRENCY>, POWERUP_<NAME>) are the only generated keys.",
     "state": "Every event has STATE. Never STAGE, STATUS, or a value used as a key.",
     "closed_enums": "Values listed in an `enum` are PascalCase and exactly as written.",
@@ -31,12 +31,12 @@
     "currencies": "lower_snake: coins, gems."
   },
   "tiers": {
-    "core": "LEVEL, AD, ECONOMY, APP. Ship first.",
-    "standard": "TUTORIAL, FTUE, POWERUP, SCREEN, IAP, PLAYER.",
-    "extended": "DEVICE."
+    "core": "LEVEL_ANALYSIS, AD_ANALYSIS, ECONOMY_ANALYSIS, APP_ANALYSIS. Ship first.",
+    "standard": "TUTORIAL_ANALYSIS, FTUE_ANALYSIS, POWERUP_ANALYSIS, SCREEN_ANALYSIS, IAP_ANALYSIS, PLAYER_ANALYSIS.",
+    "extended": "DEVICE_ANALYSIS."
   },
   "events": {
-    "LEVEL": {
+    "LEVEL_ANALYSIS": {
       "tier": "core",
       "purpose": "One attempt at a level, joined by ATTEMPT_ID.",
       "states": {
@@ -103,17 +103,17 @@
           "MOVES": { "type": "int", "required": false, "note": "Player actions (taps, shots, moves)." },
           "REVIVES": { "type": "int", "required": true },
           "POWERUPS_USED": { "type": "int", "required": true },
-          "ADS_SHOWN": { "type": "int", "required": true, "note": "AD Show events during this attempt." },
+          "ADS_SHOWN": { "type": "int", "required": true, "note": "AD_ANALYSIS Show events during this attempt." },
           "SKIP_OFFERED": { "type": "int", "required": false, "note": "1 when the result screen offers a skip. Offers on the result screen are flags here, never their own events." }
         }
       },
       "rules": [
         "Send each of Completed/Failed/Skipped at most once per result. A Revive continues the same attempt and may produce another result.",
-        "Backgrounding is not Left; APP Background and Foreground cover it.",
-        "Coins are never reported here; ECONOMY is the ledger."
+        "Backgrounding is not Left; APP_ANALYSIS Background and Foreground cover it.",
+        "Coins are never reported here; ECONOMY_ANALYSIS is the ledger."
       ]
     },
-    "AD": {
+    "AD_ANALYSIS": {
       "tier": "core",
       "purpose": "One ad attempt, joined by AD_ID. Revenue and impressions come from the ad plugin.",
       "states": {
@@ -151,7 +151,7 @@
         "Show is not proof of an impression; a missing Closed is not proof of a crash."
       ]
     },
-    "ECONOMY": {
+    "ECONOMY_ANALYSIS": {
       "tier": "core",
       "purpose": "The ledger for every soft currency. The only place amounts appear.",
       "states": {
@@ -176,7 +176,7 @@
         }
       }
     },
-    "APP": {
+    "APP_ANALYSIS": {
       "tier": "core",
       "purpose": "Process lifecycle. Never creates SDK sessions.",
       "states": {
@@ -208,7 +208,7 @@
         }
       }
     },
-    "TUTORIAL": {
+    "TUTORIAL_ANALYSIS": {
       "tier": "standard",
       "purpose": "Guided sequences.",
       "states": {
@@ -230,7 +230,7 @@
       },
       "rules": ["Repeated hints after the tutorial is done are not new Shown events."]
     },
-    "FTUE": {
+    "FTUE_ANALYSIS": {
       "tier": "standard",
       "purpose": "First-run steps before the first player input, invisible to every other event.",
       "states": {
@@ -248,7 +248,7 @@
         "board_visible: the first level is drawn and accepts input. first_input: the first gameplay input."
       ]
     },
-    "POWERUP": {
+    "POWERUP_ANALYSIS": {
       "tier": "standard",
       "purpose": "Powerup inventory and use.",
       "states": {
@@ -270,7 +270,7 @@
         }
       }
     },
-    "SCREEN": {
+    "SCREEN_ANALYSIS": {
       "tier": "standard",
       "purpose": "Every menu and popup, one event name.",
       "states": {
@@ -298,9 +298,9 @@
           }
         }
       },
-      "rules": ["Gameplay and level result screens are covered by LEVEL and are never SCREEN events."]
+      "rules": ["Gameplay and level result screens are covered by LEVEL_ANALYSIS and are never SCREEN_ANALYSIS events."]
     },
-    "IAP": {
+    "IAP_ANALYSIS": {
       "tier": "standard",
       "purpose": "Store purchases, from existing store callbacks only.",
       "states": {
@@ -327,7 +327,7 @@
       },
       "rules": ["Restores, renewals and refunds are not sent."]
     },
-    "PLAYER": {
+    "PLAYER_ANALYSIS": {
       "tier": "standard",
       "purpose": "The player's state, once per SDK session after load.",
       "states": {
@@ -344,7 +344,7 @@
         }
       }
     },
-    "DEVICE": {
+    "DEVICE_ANALYSIS": {
       "tier": "extended",
       "purpose": "Hardware facts the SDK does not send.",
       "states": {
@@ -365,16 +365,16 @@
     "sdk_events": "session_start, session_end and first_open come from the SDK and are never sent by the game.",
     "derived": [
       "session number and session seconds (session_start and client_ts)",
-      "process runs (APP Launch ordered by seq)",
+      "process runs (APP_ANALYSIS Launch ordered by seq)",
       "install age (first_open)",
       "time buckets and funnels over existing events"
     ],
     "mappings": [
       { "concept": "session_start", "event": "session_start", "condition": "SDK event, automatic" },
-      { "concept": "level_started", "event": "LEVEL", "condition": "STATE = Started", "number_param": "LEVEL_NUMBER" },
-      { "concept": "level_completed", "event": "LEVEL", "condition": "STATE = Completed", "number_param": "LEVEL_NUMBER" },
-      { "concept": "level_failed", "event": "LEVEL", "condition": "STATE = Failed", "number_param": "LEVEL_NUMBER" },
-      { "concept": "level_restarted", "event": "LEVEL", "condition": "STATE = Restarted, or ACTION = Restart", "number_param": "LEVEL_NUMBER" }
+      { "concept": "level_started", "event": "LEVEL_ANALYSIS", "condition": "STATE = Started", "number_param": "LEVEL_NUMBER" },
+      { "concept": "level_completed", "event": "LEVEL_ANALYSIS", "condition": "STATE = Completed", "number_param": "LEVEL_NUMBER" },
+      { "concept": "level_failed", "event": "LEVEL_ANALYSIS", "condition": "STATE = Failed", "number_param": "LEVEL_NUMBER" },
+      { "concept": "level_restarted", "event": "LEVEL_ANALYSIS", "condition": "STATE = Restarted, or ACTION = Restart", "number_param": "LEVEL_NUMBER" }
     ]
   }
 }

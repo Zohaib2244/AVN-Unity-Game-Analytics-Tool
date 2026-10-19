@@ -24,7 +24,7 @@ def admin(tmp_path):
 def test_spec_is_complete_and_matches_the_guide():
     spec = standard.spec()
     guide = (standard.FOLDER / standard.GUIDE).read_text()
-    assert spec["version"] == 3
+    assert spec["version"] == 4
     for name, entry in spec["events"].items():
         assert re.fullmatch(r"[A-Z]+(_[A-Z]+)*", name)
         assert entry["tier"] in standard.TIERS
@@ -38,13 +38,13 @@ def test_spec_is_complete_and_matches_the_guide():
 
 def test_level_states_map_themselves_on_the_mappings_page():
     """The standard's LEVEL shape must keep matching what the Mappings page suggests."""
-    level = standard.spec()["events"]["LEVEL"]
+    level = standard.spec()["events"]["LEVEL_ANALYSIS"]
     examples = {
         "STATE": list(level["states"]),
         "ACTION": level["states"]["Choice"]["params"]["ACTION"]["enum"],
         "LEVEL_NUMBER": ["3"],
     }
-    rules = _suggestions("LEVEL", dict.fromkeys(examples, 1), examples, "")
+    rules = _suggestions("LEVEL_ANALYSIS", dict.fromkeys(examples, 1), examples, "")
     assert {(rule["action"], rule["param"], rule["value"]) for rule in rules} == {
         ("level_started", "STATE", "Started"),
         ("level_completed", "STATE", "Completed"),
@@ -71,12 +71,13 @@ def test_website_lists_events_and_serves_the_setup_files(admin):
     default = admin.get("/v1/events-standard", headers=AUTH).json()
     assert default["tiers"] == ["core", "standard"]
     names = [item["name"] for item in default["events"]]
-    assert "LEVEL" in names and "SCREEN" in names and "DEVICE" not in names
+    assert "LEVEL_ANALYSIS" in names and "SCREEN_ANALYSIS" in names
+    assert "DEVICE_ANALYSIS" not in names
     assert "Tiers to implement: **core, standard**." in default["prompt"]
 
     chosen = admin.get("/v1/events-standard?tiers=extended", headers=AUTH).json()
     assert [item["tier"] for item in chosen["events"]].count("standard") == 0
-    assert "DEVICE" in [item["name"] for item in chosen["events"]]
+    assert "DEVICE_ANALYSIS" in [item["name"] for item in chosen["events"]]
 
     assert admin.get("/v1/events-standard?tiers=gold", headers=AUTH).status_code == 400
 
@@ -123,30 +124,35 @@ SHOP = {
 
 def test_custom_events_join_the_standard_and_the_downloads(admin):
     assert admin.get("/v1/events-standard/custom", headers=AUTH).json() == []
-    assert admin.put("/v1/events-standard/custom/SHOP", json=SHOP, headers=AUTH).is_success
+    assert admin.put("/v1/events-standard/custom/SHOP_ANALYSIS", json=SHOP, headers=AUTH).is_success
     listed = admin.get("/v1/events-standard/custom", headers=AUTH).json()
-    assert [item["name"] for item in listed] == ["SHOP"]
+    assert [item["name"] for item in listed] == ["SHOP_ANALYSIS"]
 
     chosen = admin.get("/v1/events-standard?tiers=custom", headers=AUTH).json()
     assert chosen["tiers"] == ["core", "custom"]
-    assert {"name": "SHOP", "tier": "custom", "states": ["Opened", "Closed"]} in chosen["events"]
+    assert {"name": "SHOP_ANALYSIS", "tier": "custom", "states": ["Opened", "Closed"]} in chosen[
+        "events"
+    ]
     assert "core, custom" in chosen["prompt"]
 
     bundle = admin.get("/v1/events-standard/download?tiers=custom", headers=AUTH).content
     with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
         spec = json.loads(archive.read(standard.SPEC))
         guide = archive.read(standard.GUIDE).decode()
-    tab = spec["events"]["SHOP"]["states"]["Opened"]["params"]["TAB"]
+    tab = spec["events"]["SHOP_ANALYSIS"]["states"]["Opened"]["params"]["TAB"]
     assert tab == {"type": "string", "required": True, "enum": ["Coins", "Gems"]}
-    assert spec["events"]["SHOP"]["tier"] == "custom" and spec["tiers"]["custom"].startswith("SHOP")
+    assert spec["events"]["SHOP_ANALYSIS"]["tier"] == "custom" and spec["tiers"][
+        "custom"
+    ].startswith("SHOP_ANALYSIS")
     assert (
-        "### SHOP (custom)" in guide and "| `TAB` | string | yes | One of: Coins, Gems. |" in guide
+        "### SHOP_ANALYSIS (custom)" in guide
+        and "| `TAB` | string | yes | One of: Coins, Gems. |" in guide
     )
-    assert "### LEVEL (core)" in guide  # the built-in guide is kept
+    assert "### LEVEL_ANALYSIS (core)" in guide  # the built-in guide is kept
 
     # without custom events the downloads are the files, unchanged
-    assert admin.delete("/v1/events-standard/custom/SHOP", headers=AUTH).is_success
-    assert admin.delete("/v1/events-standard/custom/SHOP", headers=AUTH).status_code == 404
+    assert admin.delete("/v1/events-standard/custom/SHOP_ANALYSIS", headers=AUTH).is_success
+    assert admin.delete("/v1/events-standard/custom/SHOP_ANALYSIS", headers=AUTH).status_code == 404
     plain = admin.get("/v1/events-standard/download", headers=AUTH).content
     with zipfile.ZipFile(io.BytesIO(plain)) as archive:
         assert archive.read(standard.SPEC).decode() == (standard.FOLDER / standard.SPEC).read_text()
@@ -156,25 +162,25 @@ def test_custom_events_join_the_standard_and_the_downloads(admin):
     ("name", "change", "message"),
     [
         ("shop", {}, "must be UPPER_SNAKE"),
-        ("LEVEL", {}, "already exists"),
-        ("SHOP", {"states": [{"name": "opened", "params": []}]}, "must be PascalCase"),
+        ("LEVEL_ANALYSIS", {}, "already exists"),
+        ("SHOP_ANALYSIS", {"states": [{"name": "opened", "params": []}]}, "must be PascalCase"),
         (
-            "SHOP",
+            "SHOP_ANALYSIS",
             {"states": [{"name": "Opened", "params": []}, {"name": "Opened", "params": []}]},
             "state Opened twice",
         ),
         (
-            "SHOP",
+            "SHOP_ANALYSIS",
             {"states": [{"name": "Opened", "params": [{"key": "tab", "type": "int"}]}]},
             "must be UPPER_SNAKE",
         ),
         (
-            "SHOP",
+            "SHOP_ANALYSIS",
             {"states": [{"name": "Opened", "params": [{"key": "STATE", "type": "int"}]}]},
             "added to every event",
         ),
         (
-            "SHOP",
+            "SHOP_ANALYSIS",
             {
                 "states": [
                     {"name": "Opened", "params": [{"key": "A", "type": "int", "values": ["x"]}]}
@@ -183,7 +189,7 @@ def test_custom_events_join_the_standard_and_the_downloads(admin):
             "type must be string",
         ),
         (
-            "SHOP",
+            "SHOP_ANALYSIS",
             {
                 "states": [
                     {
@@ -214,8 +220,8 @@ def test_only_the_admin_changes_the_standard(tmp_path):
         lan_admin=False,
     )
     with TestClient(create_app(settings, admin=True, access_keys={})) as client:
-        assert client.put("/v1/events-standard/custom/SHOP", json=SHOP).status_code == 401
-        assert client.delete("/v1/events-standard/custom/SHOP").status_code == 401
+        assert client.put("/v1/events-standard/custom/SHOP_ANALYSIS", json=SHOP).status_code == 401
+        assert client.delete("/v1/events-standard/custom/SHOP_ANALYSIS").status_code == 401
 
 
 def test_events_a_game_sends_outside_the_standard_can_be_added_or_ignored(tmp_path):
@@ -229,24 +235,29 @@ def test_events_a_game_sends_outside_the_standard_can_be_added_or_ignored(tmp_pa
                 ingest,
                 game,
                 [
-                    event(name="LEVEL", params={"STATE": "Started", "LEVEL_NUMBER": 1}),
-                    event(name="SHOP", params={"STATE": "Opened", "TAB": "Coins", "COUNT": 3}),
-                    event(name="SHOP", params={"STATE": "Opened", "TAB": "Gems"}),
-                    event(name="SHOP", params={"STATE": "Closed", "seq": 4, "ratio": 0.5}),
+                    event(name="LEVEL_ANALYSIS", params={"STATE": "Started", "LEVEL_NUMBER": 1}),
+                    event(
+                        name="SHOP_ANALYSIS", params={"STATE": "Opened", "TAB": "Coins", "COUNT": 3}
+                    ),
+                    event(name="SHOP_ANALYSIS", params={"STATE": "Opened", "TAB": "Gems"}),
+                    event(name="SHOP_ANALYSIS", params={"STATE": "Closed", "seq": 4, "ratio": 0.5}),
                     event(name="shop_open", params={"source": "menu"}),
                     event(name="session_start", params={}),
                 ],
             )
             url = f"/v1/games/{game['id']}/standard"
             result = admin.get(url, headers=AUTH).json()
-            assert list(result["sent"]) == ["LEVEL"]
-            assert result["sent"]["LEVEL"]["events"] == 1
+            assert list(result["sent"]) == ["LEVEL_ANALYSIS"]
+            assert result["sent"]["LEVEL_ANALYSIS"]["events"] == 1
             by_name = {item["name"]: item for item in result["unlisted"]}
-            assert set(by_name) == {"SHOP", "shop_open"}  # the SDK's session_start is not listed
+            assert set(by_name) == {
+                "SHOP_ANALYSIS",
+                "shop_open",
+            }  # the SDK's session_start is not listed
             assert (
                 by_name["shop_open"]["valid_name"] is False and by_name["shop_open"]["states"] == []
             )
-            shop = by_name["SHOP"]
+            shop = by_name["SHOP_ANALYSIS"]
             assert shop["valid_name"] and shop["events"] == 3 and shop["players"] == 1
             states = {state["name"]: state for state in shop["states"]}
             assert states["Opened"]["params"] == [
@@ -256,11 +267,11 @@ def test_events_a_game_sends_outside_the_standard_can_be_added_or_ignored(tmp_pa
             assert shop["skipped"] == ["ratio"]  # lowercase keys can't join the standard
 
             # ignoring is per game and can be undone
-            assert admin.put(f"{url}/ignored/SHOP", headers=AUTH).status_code == 204
+            assert admin.put(f"{url}/ignored/SHOP_ANALYSIS", headers=AUTH).status_code == 204
             result = admin.get(url, headers=AUTH).json()
             assert [item["name"] for item in result["unlisted"]] == ["shop_open"]
-            assert result["ignored"] == [{"name": "SHOP", "events": 3}]
-            assert admin.delete(f"{url}/ignored/SHOP", headers=AUTH).status_code == 204
+            assert result["ignored"] == [{"name": "SHOP_ANALYSIS", "events": 3}]
+            assert admin.delete(f"{url}/ignored/SHOP_ANALYSIS", headers=AUTH).status_code == 204
             assert len(admin.get(url, headers=AUTH).json()["unlisted"]) == 2
 
             # adding it to the standard moves it from "not in the standard" to "sent"
@@ -268,7 +279,9 @@ def test_events_a_game_sends_outside_the_standard_can_be_added_or_ignored(tmp_pa
                 "purpose": "Shop screen",
                 "states": [{"name": "Opened", "trigger": "", "params": []}],
             }
-            assert admin.put("/v1/events-standard/custom/SHOP", json=body, headers=AUTH).is_success
+            assert admin.put(
+                "/v1/events-standard/custom/SHOP_ANALYSIS", json=body, headers=AUTH
+            ).is_success
             result = admin.get(url, headers=AUTH).json()
-            assert result["sent"]["SHOP"]["events"] == 3
+            assert result["sent"]["SHOP_ANALYSIS"]["events"] == 3
             assert [item["name"] for item in result["unlisted"]] == ["shop_open"]
