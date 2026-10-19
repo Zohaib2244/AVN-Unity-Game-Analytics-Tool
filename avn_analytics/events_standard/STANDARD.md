@@ -183,7 +183,7 @@ Once per install and when the app version or quality tier changes.
 | Level failed | `LEVEL` with `STATE=Failed` | `LEVEL_NUMBER` |
 | Level restarted | `LEVEL` with `STATE=Restarted`, or `ACTION=Restart` | `LEVEL_NUMBER` |
 
-The Mappings page suggests all of these automatically from the `STATE` and `ACTION` values.
+The Event setup page suggests all of these automatically from the `STATE` and `ACTION` values.
 
 ## Changing the standard
 

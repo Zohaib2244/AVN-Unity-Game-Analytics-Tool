@@ -1,6 +1,8 @@
-// Fill the event dictionary from the game's code with an AI agent: prepare a file and a prompt,
-// upload the filled file, review what it would change, apply it, and undo it later if needed.
-// Loaded after events.js (which opens it from Mappings) and before app.js.
+// The two AI agent steps of the Event setup page. Each is mounted into a container of that page.
+//  - mountStandardInstall: install the AVN events standard in a game.
+//  - mountDictionaryFill: fill the event dictionary from the game's code (prepare a file and a
+//    prompt, upload the filled file, review what it would change, apply it, undo it later).
+// Loaded before event-setup.js and app.js.
 
 const IMPORT_DEFAULTS = {
   mode: 'fill_blanks', fields: ['description', 'params'],
@@ -34,7 +36,7 @@ const importMerge = (base, saved) => {
   return out;
 };
 
-function openDictionaryImport(game, done) {
+function mountDictionaryFill(root, game, done) {
   const storeKey = `avn-import-options-${game.id}`;
   let options = importMerge(IMPORT_DEFAULTS, storeGet(storeKey));
   let tab = 'prepare';
@@ -45,11 +47,9 @@ function openDictionaryImport(game, done) {
   const url = `${gameURL(game)}/dictionary`;
 
   const draw = () => {
-    modal.className = 'import-dialog';
-    modal.innerHTML = `<div class="player-dialog-head"><h2 id="dialog-title">Fill the dictionary with an AI agent</h2><button type="button" class="button" data-action="close" aria-label="Close">Close ×</button></div>
-      <div class="segmented" role="group" aria-label="Import step">${[['prepare', '1 · Prepare'], ['upload', '2 · Upload and review'], ['history', 'History']].map(([key, label]) => `<button type="button" data-import-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join('')}</div>
+    root.innerHTML = `<div class="segmented" role="group" aria-label="Import step">${[['prepare', '1 · Prepare'], ['upload', '2 · Upload and review'], ['history', 'History']].map(([key, label]) => `<button type="button" data-import-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join('')}</div>
       <div class="import-body" id="import-body"></div>`;
-    modal.querySelector('#import-body').innerHTML = tab === 'prepare' ? prepareHTML() : tab === 'upload' ? uploadHTML() : skeleton('table', 4, 4);
+    root.querySelector('#import-body').innerHTML = tab === 'prepare' ? prepareHTML() : tab === 'upload' ? uploadHTML() : skeleton('table', 4, 4);
     if (tab === 'history') drawHistory();
     if (tab === 'prepare') bindPrepare();
     if (tab === 'upload') bindUpload();
@@ -58,8 +58,7 @@ function openDictionaryImport(game, done) {
     const next = event.target.closest('[data-import-tab]')?.dataset.importTab;
     if (next && next !== tab) { tab = next; draw(); }
   };
-  modal.addEventListener('click', onTab);
-  modal.addEventListener('close', () => { modal.classList.remove('import-dialog'); modal.removeEventListener('click', onTab); }, {once: true});
+  root.addEventListener('click', onTab);
 
   // ---- 1 · prepare
   const select = (name, value, choices) => `<select name="${name}">${choices.map(([key, label]) => `<option value="${key}" ${String(value) === String(key) ? 'selected' : ''}>${label}</option>`).join('')}</select>`;
@@ -134,7 +133,7 @@ function openDictionaryImport(game, done) {
     };
   };
   function bindPrepare() {
-    const form = modal.querySelector('#import-prepare');
+    const form = root.querySelector('#import-prepare');
     const sync = () => {
       const listed = form.elements.events.value === 'listed';
       form.elements.names.disabled = !listed;
@@ -155,7 +154,7 @@ function openDictionaryImport(game, done) {
       try {
         options = readOptions(form); storeSet(storeKey, options);
         prepared = await request(`${url}/import/prepare`, {method: 'POST', body: JSON.stringify({options})});
-        modal.querySelector('#import-prepared').innerHTML = preparedHTML();
+        root.querySelector('#import-prepared').innerHTML = preparedHTML();
         bindPrepared();
       } catch (problem) { error.textContent = problem.message; }
       finally { button.disabled = false; }
@@ -163,7 +162,7 @@ function openDictionaryImport(game, done) {
     bindPrepared();
   }
   function bindPrepared() {
-    const box = modal.querySelector('#import-prepared');
+    const box = root.querySelector('#import-prepared');
     box.querySelector('[data-import-download]')?.addEventListener('click', () => {
       const href = URL.createObjectURL(new Blob([JSON.stringify(prepared.file, null, 2)], {type: 'application/json'}));
       const anchor = Object.assign(document.createElement('a'), {href, download: 'avn-events.json'});
@@ -187,13 +186,13 @@ function openDictionaryImport(game, done) {
       <div id="import-review">${preview ? reviewHTML() : ''}</div>`;
   }
   function bindUpload() {
-    modal.querySelector('#import-file').addEventListener('change', async event => {
+    root.querySelector('#import-file').addEventListener('change', async event => {
       const file = event.target.files[0]; if (!file) return;
-      const error = modal.querySelector('#import-error'); error.textContent = '';
+      const error = root.querySelector('#import-error'); error.textContent = '';
       try {
         uploaded = JSON.parse(await file.text()); override = null;
         await runPreview();
-      } catch (problem) { uploaded = null; preview = null; modal.querySelector('#import-review').innerHTML = ''; error.textContent = problem instanceof SyntaxError ? 'That file is not valid JSON. Ask the agent to fix it, or re-run it.' : problem.message; }
+      } catch (problem) { uploaded = null; preview = null; root.querySelector('#import-review').innerHTML = ''; error.textContent = problem instanceof SyntaxError ? 'That file is not valid JSON. Ask the agent to fix it, or re-run it.' : problem.message; }
     });
     bindReview();
   }
@@ -207,7 +206,7 @@ function openDictionaryImport(game, done) {
       const similar = entry.flags.some(flag => flag.flag === 'near_duplicate');
       if (!similar) entry.changes.forEach(change => selected.add(textKey(change)));
     });
-    modal.querySelector('#import-review').innerHTML = reviewHTML(); bindReview();
+    root.querySelector('#import-review').innerHTML = reviewHTML(); bindReview();
   }
   const changeText = change => `<li><label class="import-text"><input type="checkbox" data-import-text="${escapeHTML(textKey(change))}" ${selected.has(textKey(change)) ? 'checked' : ''} aria-label="Import ${escapeHTML(importField(change.field))} of ${escapeHTML(change.name)}"><span><span class="small muted">${importField(change.field)}</span> ${change.before ? `<del>${escapeHTML(change.before)}</del> → ` : ''}<ins>${escapeHTML(change.after)}</ins>${change.kind === 'fill' ? '' : ` <span class="pill bad">${change.kind === 'overwrite_draft' ? 'replaces a draft' : 'replaces text'}</span>`}</span></label></li>`;
   function reviewHTML() {
@@ -242,8 +241,8 @@ function openDictionaryImport(game, done) {
   }
   // Re-reads exactly the chosen texts from the server, checks they are what was shown, then applies.
   async function approve(keys, button) {
-    const error = modal.querySelector('#import-error'); error.textContent = '';
-    const buttons = modal.querySelectorAll('[data-import-selected],[data-import-approve-all]');
+    const error = root.querySelector('#import-error'); error.textContent = '';
+    const buttons = root.querySelectorAll('[data-import-selected],[data-import-approve-all]');
     const label = button.textContent; buttons.forEach(item => { item.disabled = true; }); button.textContent = 'Importing…';
     try {
       const left = allChanges().filter(change => !keys.has(textKey(change))).map(textKey);
@@ -258,11 +257,11 @@ function openDictionaryImport(game, done) {
       preview = null; uploaded = null; selected.clear(); tab = 'history'; draw();
       done?.();
     } catch (problem) { error.textContent = problem.message; }
-    finally { button.textContent = label; if (modal.contains(button)) syncSelection(modal.querySelector('#import-review')); }
+    finally { button.textContent = label; if (root.contains(button)) syncSelection(root.querySelector('#import-review')); }
   }
   function bindReview() {
-    const box = modal.querySelector('#import-review'); if (!box || !preview) return;
-    const error = modal.querySelector('#import-error');
+    const box = root.querySelector('#import-review'); if (!box || !preview) return;
+    const error = root.querySelector('#import-error');
     syncSelection(box);
     const toggle = (keys, on) => { keys.forEach(key => on ? selected.add(key) : selected.delete(key)); syncSelection(box); };
     box.addEventListener('change', event => {
@@ -284,7 +283,7 @@ function openDictionaryImport(game, done) {
 
   // ---- history
   async function drawHistory() {
-    const box = modal.querySelector('#import-body');
+    const box = root.querySelector('#import-body');
     try {
       const list = await request(`${url}/imports`);
       box.innerHTML = list.length ? `<div class="table-wrap"><table class="compact-table"><thead><tr><th>When</th><th>Who</th><th>Texts</th><th>Rules</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${list.map(item => `<tr><td class="small">${escapeHTML(displayDate(item.created_at))}</td><td class="small">${escapeHTML(item.actor)}</td><td class="num">${number(item.summary.fields_changed)}</td><td class="small muted">${escapeHTML(item.options.mode.replace(/_/g, ' '))} · ${escapeHTML(item.options.status)}</td><td>${item.undone_at ? '<span class="pill">Undone</span>' : `<button type="button" class="button danger-text" data-import-undo="${escapeHTML(item.id)}">Undo</button>`}</td></tr>`).join('')}</tbody></table></div><p class="help">Undo puts back what an import wrote, except texts someone has edited since.</p>` : '<p class="help">No imports yet.</p>';
@@ -300,7 +299,6 @@ function openDictionaryImport(game, done) {
   }
 
   draw();
-  modal.showModal();
 }
 
 // Set up the AVN events standard in a game: pick tiers, then download the prompt with the spec
@@ -311,7 +309,7 @@ const STANDARD_TIERS = [
   ['extended', 'Extended', 'Device hardware.'],
 ];
 
-function openEventsSetup() {
+function mountStandardInstall(root) {
   const storeKey = 'avn-standard-tiers';
   const saved = storeGet(storeKey);
   let tiers = Array.isArray(saved) ? STANDARD_TIERS.map(([key]) => key).filter(key => key === 'core' || saved.includes(key)) : ['core', 'standard'];
@@ -319,27 +317,25 @@ function openEventsSetup() {
   const query = () => new URLSearchParams(tiers.map(tier => ['tiers', tier])).toString();
 
   const draw = () => {
-    modal.className = 'import-dialog';
-    modal.innerHTML = `<div class="player-dialog-head"><h2 id="dialog-title">Set up events with an AI agent</h2><button type="button" class="button" data-action="close" aria-label="Close">Close ×</button></div>
-      <p class="help">The AI agent you use in your game's code adds the AVN standard events, with the same names and parameters in every game. Levels, Retention and stories then map themselves.</p>
+    root.innerHTML = `<p class="help">Pick the events to add. Levels, Retention and stories then map themselves.</p>
       <div class="import-choices standard-tiers" role="group" aria-label="Which events">
         ${STANDARD_TIERS.map(([key, title, text]) => `<label class="import-choice"><input type="checkbox" name="tier" value="${key}" ${tiers.includes(key) ? 'checked' : ''} ${key === 'core' ? 'checked disabled' : ''}><span><strong>${title}</strong><small>${text}</small></span></label>`).join('')}
       </div>
       <div id="standard-summary">${skeleton('table', 3, 3)}</div>
-      <ol class="import-steps"><li>Unzip the download in the root of your game project.</li><li>Run <code>AGENT_PROMPT.md</code> in your AI agent from that folder.</li><li>Send a test build, then check the events under Dictionary and Mappings.</li></ol>
+      <ol class="import-steps"><li>Unzip the download in the root of your game project.</li><li>Run <code>AGENT_PROMPT.md</code> in your AI agent from that folder.</li><li>Send a test build, then check the events under Event dictionary and the mappings below.</li></ol>
       <div class="error" role="alert"></div>
       <div class="modal-actions import-actions"><button type="button" class="button" data-standard-copy>${icon('copy', 14)} Copy the prompt</button><button type="button" class="button primary" data-standard-download>${icon('export', 14)} Download setup files</button></div>
       <details class="import-prompt"><summary>Show the prompt</summary><textarea readonly rows="12" aria-label="Agent prompt" id="standard-prompt"></textarea></details>`;
-    modal.querySelectorAll('[name="tier"]').forEach(box => box.addEventListener('change', () => {
-      tiers = [...modal.querySelectorAll('[name="tier"]:checked')].map(item => item.value);
+    root.querySelectorAll('[name="tier"]').forEach(box => box.addEventListener('change', () => {
+      tiers = [...root.querySelectorAll('[name="tier"]:checked')].map(item => item.value);
       storeSet(storeKey, tiers); load();
     }));
-    modal.querySelector('[data-standard-copy]').addEventListener('click', async () => {
+    root.querySelector('[data-standard-copy]').addEventListener('click', async () => {
       if (!summary) return;
       try { await navigator.clipboard.writeText(summary.prompt); toast('Prompt copied.'); } catch { toast('Open "Show the prompt" and copy it by hand.'); }
     });
-    modal.querySelector('[data-standard-download]').addEventListener('click', async event => {
-      const button = event.currentTarget; const error = modal.querySelector('.error');
+    root.querySelector('[data-standard-download]').addEventListener('click', async event => {
+      const button = event.currentTarget; const error = root.querySelector('.error');
       error.textContent = ''; button.disabled = true;
       try {
         const response = await fetch(`/v1/events-standard/download?${query()}`, {credentials: 'same-origin'});
@@ -352,17 +348,15 @@ function openEventsSetup() {
     });
   };
   const load = async () => {
-    const current = ++loading; const box = modal.querySelector('#standard-summary');
+    const current = ++loading; const box = root.querySelector('#standard-summary');
     try {
       const result = await request(`/v1/events-standard?${query()}`);
       if (current !== loading) return;
       summary = result;
-      box.innerHTML = `<div class="table-wrap"><table class="import-table"><thead><tr><th>Event</th><th>Tier</th><th>States</th></tr></thead><tbody>${result.events.map(item => `<tr><td><code>${escapeHTML(item.name)}</code></td><td>${escapeHTML(item.tier)}</td><td>${item.states.map(state => `<code>${escapeHTML(state)}</code>`).join(' ')}</td></tr>`).join('')}</tbody></table></div>`;
-      modal.querySelector('#standard-prompt').value = result.prompt;
+      box.innerHTML = `<details class="import-prompt standard-events"><summary>Show the ${number(result.events.length)} events</summary><div class="table-wrap"><table class="import-table"><thead><tr><th>Event</th><th>Tier</th><th>States</th></tr></thead><tbody>${result.events.map(item => `<tr><td><code>${escapeHTML(item.name)}</code></td><td>${escapeHTML(item.tier)}</td><td>${item.states.map(state => `<code>${escapeHTML(state)}</code>`).join(' ')}</td></tr>`).join('')}</tbody></table></div></details>`;
+      root.querySelector('#standard-prompt').value = result.prompt;
     } catch (problem) { if (current === loading) box.innerHTML = `<p class="error">${escapeHTML(problem.message)}</p>`; }
   };
 
-  modal.addEventListener('close', () => modal.classList.remove('import-dialog'), {once: true});
   draw(); load();
-  modal.showModal();
 }
