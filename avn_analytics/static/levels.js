@@ -117,7 +117,10 @@ function mountLevelTools(container, game, restore) {
     });
   });
   container.querySelector('#levels-delete-view').addEventListener('click', () => {
-    const views = storeGet(viewKey) || {}; delete views[savedSelect.value]; storeSet(viewKey, views); storeSet(activeViewKey, ''); drawViews();
+    const name = savedSelect.value;
+    confirmDialog(`Delete “${name}”?`, 'This removes the saved view from this browser. Your event data is not affected.', 'Delete view', () => {
+      const views = storeGet(viewKey) || {}; delete views[name]; storeSet(viewKey, views); storeSet(activeViewKey, ''); drawViews();
+    });
   });
   drawViews(); sync();
   return {update(state) { selected = structuredClone(state); comparisonTicket++; funnelTicket++; compare(); loadFunnel(); }};

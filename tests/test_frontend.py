@@ -1,5 +1,6 @@
 """Exercise the browser request contract without a browser or a frontend build step."""
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -214,3 +215,27 @@ assert.equal(node('.highlight-navigation').hidden, true,
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_accessibility_markup_and_text_safe_colour_tokens():
+    static = Path(__file__).parents[1] / "avn_analytics/static"
+    scripts = {path.name: path.read_text() for path in static.glob("*.js")}
+    css = (static / "style.css").read_text()
+    # aria-pressed is not valid on links; the platform switch marks the current page instead.
+    assert 'aria-current="page" ' in scripts["app.js"]
+    assert "variant-switch a[aria-pressed" not in css
+    # Every column header needs text, even icon-only action columns.
+    assert all("<th></th>" not in text for text in scripts.values())
+    # The visible brand text is the link's accessible name.
+    assert 'class="brand" aria-label' not in scripts["app.js"]
+    # Raw status colours miss 4.5:1 as small text; text uses the -text variants.
+    assert not re.search(r"(?<![-\w])color:var\(--status-(up|down)\)", css)
+    # Deleting a saved Levels view asks first, like every other destructive action.
+    levels = scripts["levels.js"]
+    assert (
+        "confirmDialog("
+        in levels[levels.index("querySelector('#levels-delete-view').addEventListener") :][:500]
+    )
+    # A funnel gap shows the lost share in the warning colour, plus a text flag for the worst step.
+    assert 'class="lost">' in scripts["insights.js"] and "Biggest drop" in scripts["insights.js"]
+    assert "font-size:.78rem" not in css  # text sizes come from the --fs-* scale

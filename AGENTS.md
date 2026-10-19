@@ -49,5 +49,6 @@ tests through `scripts/check.sh` (or `. scripts/_env.sh` first); a bare
 - Keep the repo generic: no hostnames, IPs, domains or personal deployment details. Per-server settings live outside git (`.env`, `compose.override.yaml`, both gitignored; commit only the `*.example`).
 - Releases and deploys are the owner's job: `scripts/release.sh` tags and pushes, `scripts/deploy.sh` updates the server. Agents never run them.
 - The admin website follows the AVN Style ("Nutstyle") design system. If a `nutstyle` skill is available, read it before changing UI.
+  - One documented exception: the "Calm layer" at the end of `avn_analytics/static/style.css` (system UI font for body text, sentence-case labels, thin borders, no offset shadows). Keep new UI inside it: colours from tokens (use the `-text` variants for small text), sizes from the `--fs-*` scale, 44px touch targets, labelled controls, and check both themes.
 - Raw events are kept indefinitely and SQLite may hold committed data in `-wal` files: never "clean up" data files as part of a change.
 - Don't push, merge or open PRs yourself; leave the branch for review.
