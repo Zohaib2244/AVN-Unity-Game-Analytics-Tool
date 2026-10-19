@@ -1393,4 +1393,3 @@ progress.mapping-meter::-moz-progress-bar{background:var(--accent-orange)}
 .unlisted-events .custom-list:first-of-type{margin-top:12px}
 .custom-list .button{margin:0}
 .sdk-actions{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0 0}
-.sdk-version{margin-top:16px;max-width:240px}

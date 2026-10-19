@@ -73,11 +73,10 @@ AvnAnalytics.LogEvent("level_complete",
 
 See the [SDK README](unity/AVNAnalytics/README.md) for the persistence design, test harness and configuration.
 
-A built `.unitypackage` can be kept on the server: the admin uploads it under **Settings → Unity SDK**
-(optionally with a version label), and everyone who can open the website downloads it there or from
-**Event setup → Add AVN Events**. One package per server, stored in the data directory (`sdk/`);
-uploading again replaces it. Over the API: `GET /v1/sdk`, `GET /v1/sdk/download`, and (admin) `PUT /v1/sdk?version=`
-with the file as the request body, and `DELETE /v1/sdk`.
+The built package, `AVNAnalytics.unitypackage`, is kept in [`avn_analytics/sdk/`](avn_analytics/sdk/) and
+shipped with the app. Everyone who can open the website downloads it under **Settings → Unity SDK**
+or **Event setup → Add AVN Events**, or over the API with `GET /v1/sdk/download`. To release a new
+build, replace that file in the repository.
 
 ### Events collected automatically
 
