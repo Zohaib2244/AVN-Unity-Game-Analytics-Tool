@@ -12,8 +12,8 @@ from functools import cache
 from pathlib import Path
 
 FOLDER = Path(__file__).parent / "events_standard"
-SPEC = "standard.spec.json"
-GUIDE = "STANDARD.md"
+SPEC = "avn_events_standard.json"
+GUIDE = "avn_events_standard.md"
 PROMPT = "AGENT_PROMPT.md"
 TIERS = ("core", "standard", "extended", "custom")
 TIERS_LINE = re.compile(r"^Tiers to implement: .*$", re.M)
@@ -51,7 +51,7 @@ def spec(custom=None):
 
 
 def guide(custom=None):
-    """STANDARD.md, with a section per custom event so it matches the spec."""
+    """avn_events_standard.md, with a section per custom event so it matches the spec."""
     text = _read(GUIDE)
     if not custom:
         return text

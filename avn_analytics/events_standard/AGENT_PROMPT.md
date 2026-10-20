@@ -1,13 +1,13 @@
 # Prompt: set up AVN events in a Unity game
 
-Run this in the game's repository with any coding agent, with `standard.spec.json` and
-`STANDARD.md` in the repository root. The website's **Event setup → Add AVN
+Run this in the game's repository with any coding agent, with `avn_events_standard.json` and
+`avn_events_standard.md` in the repository root. The website's **Event setup → Add AVN
 Events** downloads all three with the tiers filled in. Everything between the lines is the
 prompt.
 
 ---
 
-You are adding AVN Analytics events to this Unity game. The contract is `standard.spec.json`
+You are adding AVN Analytics events to this Unity game. The contract is `avn_events_standard.json`
 (AVN events standard, version 3). Follow it exactly. Two different games set up with this prompt
 must produce the same event names, keys and enum values, so there is no room for your own naming,
 extra events or "improvements".
@@ -37,7 +37,7 @@ Tiers to implement: **core, standard** (change this line to choose).
 
 Do these steps in order and do not skip any.
 
-1. **Read** `standard.spec.json` fully. Find the AVN SDK (`AvnAnalytics.LogEvent`) and how the game
+1. **Read** `avn_events_standard.json` fully. Find the AVN SDK (`AvnAnalytics.LogEvent`) and how the game
    initializes it.
 2. **Inventory the game.** For every spec event and state in the chosen tiers, find the exact code
    location (file, class, method) where its trigger happens. Also collect the game vocabulary:

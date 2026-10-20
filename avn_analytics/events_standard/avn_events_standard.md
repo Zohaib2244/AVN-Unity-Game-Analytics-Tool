@@ -1,7 +1,7 @@
 # AVN events standard (version 4)
 
 The exact events, states and parameters AVN Analytics expects from a game. The machine-readable
-copy is [`standard.spec.json`](standard.spec.json); in it, `"$ref"` inside `params` pulls in a
+copy is [`avn_events_standard.json`](avn_events_standard.json); in it, `"$ref"` inside `params` pulls in a
 named set from the event's `shared_params`. To set up a game, give an AI agent
 [`AGENT_PROMPT.md`](AGENT_PROMPT.md) together with the spec.
 

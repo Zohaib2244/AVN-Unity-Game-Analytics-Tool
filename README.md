@@ -275,8 +275,8 @@ fixed set of event names, states and parameters (`LEVEL_ANALYSIS`, `AD_ANALYSIS`
 `FTUE_ANALYSIS`, `POWERUP_ANALYSIS`, `SCREEN_ANALYSIS`, `IAP_ANALYSIS`, `PLAYER_ANALYSIS`,
 `DEVICE_ANALYSIS`), so every game sends the same shapes and
 the dashboards map them on their own. The standard lives in
-[`avn_analytics/events_standard/`](avn_analytics/events_standard/): `STANDARD.md` to read,
-`standard.spec.json` for agents and tools, and `AGENT_PROMPT.md`, the prompt that adds it to a
+[`avn_analytics/events_standard/`](avn_analytics/events_standard/): `avn_events_standard.md` to read,
+`avn_events_standard.json` for agents and tools, and `AGENT_PROMPT.md`, the prompt that adds it to a
 Unity game.
 
 **Event setup → Add AVN Events** picks the tiers (core is always
@@ -316,7 +316,7 @@ each is sent) and their parameters (`UPPER_SNAKE` key, `int`, `float` or `string
 optional list of allowed values). The page checks the same naming rules as the standard and the
 server refuses names that clash with a built-in event. Custom events are stored with the
 workspace data, not in the repository, and join every download as the `custom` tier: they are in
-the downloaded `standard.spec.json`, in a *Custom events* section of `STANDARD.md`, and in the
+the downloaded `avn_events_standard.json`, in a *Custom events* section of `avn_events_standard.md`, and in the
 prompt's tier line, so an agent sets them up with the rest. Only the admin can add, edit or delete
 them. Deleting one only removes it from future downloads; games already sending it, and the events
 already stored, are not touched. Over the API: `GET /v1/events-standard/custom`,
