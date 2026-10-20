@@ -326,3 +326,98 @@ assert.doesNotMatch(list, /data-unlisted-older/);
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_first_session_renders_one_level_table_with_level_drills():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/first-session.js").read_text()
+    rendering = script[: script.index("function mountFirstSession(")]
+    checks = """
+import assert from 'node:assert/strict';
+const escapeHTML = value => String(value).replace(/</g, '&lt;');
+const number = value => String(value);
+const percent = value => `${value}%`;
+const shortId = id => id;
+const icon = () => '';
+const empty = (title, text) => `<div class="empty">${title} ${text}</div>`;
+const loadError = () => '<p class="error">failed</p>';
+const skeleton = () => '<div class="skeleton"></div>';
+const stats = items => items.map(([label, value, note]) => `${label}=${value} (${note})`).join('|');
+const reasons = [
+  {stage: 'between', reason: 'Opened <settings>', players: 2},
+  {stage: 'during', reason: 'Failed the level', players: 1},
+];
+const data = {
+  players: 4, minimum_players: 30, reached_end: 1, excluded: {started_at_other_level: 2},
+  config: {first_level: 1, last_level: 3},
+  run_lengths: [{levels: 0, players: 1}, {levels: 1, players: 2}, {levels: 3, players: 1}],
+  steps: [
+    {level: 1, started: 4, completed: 3, percent: 75, ended: 3, flagged: 1, reasons},
+    {level: 2, started: 1, completed: 1, percent: 25, ended: 0, flagged: 0, reasons: []},
+  ],
+};
+const summary = flowSummaryHTML(data);
+assert.match(summary, /New players=4 \\(fewer than 30, a small sample\\)/);
+assert.match(summary, /Levels in a row=1/);  // the median run
+assert.match(summary, /Most runs end at=Level 1 \\(3 of 4 players\\)/);
+const table = flowTableHTML(data, new Set([1]));
+assert.match(table, /class="levels-grid"/);  // the same table as Level by level
+assert.match(table, /data-flow-toggle="1" aria-expanded="true"/);
+assert.match(table, /data-flow-detail="2" hidden/);
+assert.match(table, /Opened &lt;settings>/);  // the main reason, escaped
+assert.match(flowTableHTML({...data, players: 0}, new Set()), /No new players here/);
+const href = row => `/players?player=${row.player}`;
+const state = {group: 'end', reason: 0, players: [
+  {player: 'p1', levels_in_a_row: 1, ended: 'Opened settings', ended_stage: 'between',
+   app_version: '1.0', first_seen: '2026-10-04T10:00:00Z', flags: []},
+], total: 3, loading: false, error: null};
+let drill = flowDrillHTML(data.steps[0], state, href, () => 'Oct 4');
+assert.match(drill, /data-flow-reason="0" aria-pressed="true"/);
+assert.match(drill, /data-flow-group="ended_at" aria-pressed="true"/);
+assert.match(drill, /href="\\/players\\?player=p1"/);  // a real link, like Level by level
+assert.match(drill, /After the win: Opened settings/);
+assert.match(drill, /1 of 3/);
+assert.match(drill, /data-flow-more/);
+drill = flowDrillHTML(data.steps[1], {...state, group: 'completed', players: []}, href, String);
+assert.doesNotMatch(drill, /flow-reasons/);
+assert.match(drill, /Nobody is in this group/);
+const many = Array.from(
+  {length: 7}, (_, index) => ({stage: 'during', reason: `R${index}`, players: 1}));
+drill = flowDrillHTML({...data.steps[0], reasons: many}, {...state, reason: null}, href, String);
+assert.match(drill, /2 more reasons/);  // the long tail folds away
+assert.doesNotMatch(drill, /<details class="flow-reasons-more" open/);
+const paths = flowPathsHTML([
+  {key: 'between|Shop', stage: 'between', path: 'Opened shop', players: 3, allowed: true},
+  {key: 'during|Failed', stage: 'during', path: 'Failed the level', players: 1, allowed: false},
+]);
+assert.match(paths, /data-flow-path="between\\|Shop" checked>/);
+assert.match(paths, /1 player</);
+assert.match(flowPathsHTML([]), /No detours seen/);
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=rendering + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_levels_page_shows_one_sub_page_at_a_time():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/insights.js").read_text()
+    levels = script[script.index("async function renderLevels(") :]
+    assert 'data-levels-view="table">Level by level' in levels
+    assert 'data-levels-view="explore">Explore levels' in levels
+    # The explore tools only query while their sub page is open, and a level link from them
+    # switches back to the table.
+    assert "if (levelsView === 'explore') toolsPanel.update(chosen);" in levels
+    assert "chooseView('table'); jumpTo(event.detail);" in levels
+    assert 'id="levels-csv"' not in levels
+
+
+def test_run_conditions_sit_above_the_results_and_start_open():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/first-session.js").read_text()
+    mount = script[script.index("function mountFirstSession(") :]
+    assert mount.index('id="flow-conditions"') < mount.index('id="flow-summary"')
+    assert "conditions.open = storeGet(conditionsKey) !== 'closed';" in mount

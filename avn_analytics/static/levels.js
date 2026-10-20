@@ -2,15 +2,16 @@ function mountLevelTools(container, game, restore) {
   const preferenceKey = `avn-level-tools-${game.id}`;
   const viewKey = `avn-level-views-${game.id}`;
   const activeViewKey = `avn-level-active-view-${game.id}`;
-  const prefs = {compare: false, funnel: false, origin: 'level1', lastLevel: 20, finishes: false, ...(storeGet(preferenceKey) || {})};
+  const prefs = {compare: false, funnel: false, flow: true, origin: 'level1', lastLevel: 20, finishes: false, ...(storeGet(preferenceKey) || {})};
   prefs.origin = prefs.origin === 'session' ? 'session' : 'level1';
   prefs.lastLevel = Math.min(1000, Math.max(1, Math.trunc(Number(prefs.lastLevel) || 20)));
   let selected = null; let comparisonTicket = 0; let funnelTicket = 0;
   const remember = () => storeSet(preferenceKey, prefs);
-  container.innerHTML = `<section class="panel level-explore"><div class="panel-header"><h2>Explore levels</h2><div class="quiet-actions"><button type="button" class="button" data-explore="compare" aria-controls="release-comparison">Compare releases</button><button type="button" class="button" data-explore="funnel" aria-controls="level-funnel">Level funnel</button></div></div>
+  container.innerHTML = `<section class="panel level-explore"><div class="panel-header"><h2>Explore levels</h2><div class="quiet-actions"><button type="button" class="button" data-explore="compare" aria-controls="release-comparison">Compare releases</button><button type="button" class="button" data-explore="funnel" aria-controls="level-funnel">Level funnel</button><button type="button" class="button" data-explore="flow" aria-controls="first-session">First session</button></div></div>
     <div class="level-saved-views"><label class="inline-field">Saved view<select id="levels-saved-view" aria-label="Saved level view"><option value="">Choose a saved view…</option></select></label><button type="button" class="button small-button" id="levels-save-view">Save current view</button><button type="button" class="button small-button" id="levels-delete-view" disabled>Delete view</button></div>
     <div id="release-comparison" class="panel-body" hidden><div class="level-analysis-controls"><label>Release A<select id="release-a"></select></label><label>Release B<select id="release-b"></select></label><button type="button" class="button" id="compare-refresh">Compare</button></div><p class="help">Same dates and other filters for both releases. These selectors replace the app-version filter here only. Players are grouped by the version at each level’s start, then followed across updates until the end date. Samples may overlap when players replay after updating.</p><div id="release-results" aria-live="polite"></div></div>
-    <div id="level-funnel" class="panel-body" hidden><form id="level-funnel-controls" class="level-analysis-controls"><div><label>Start funnel at</label><div class="segmented" role="group" aria-label="Funnel starting point"><button type="button" data-funnel-origin="level1">Level 1</button><button type="button" data-funnel-origin="session">Session start</button></div></div><label>Through level<input id="funnel-last-level" type="number" min="1" max="1000" required value="${Number(prefs.lastLevel) || 20}"></label><label class="check-row"><input id="funnel-finishes" type="checkbox" ${prefs.finishes ? 'checked' : ''}> Include finishes</label><button class="button" type="submit">Update funnel</button></form><p class="help">Follows the same players through every listed step in order, across sessions and updates until the end date. Missing steps are never inferred. Session start mode still goes through Level 1; players returning midway may appear outside this path.</p><div id="level-funnel-results" aria-live="polite"></div></div></section>`;
+    <div id="level-funnel" class="panel-body" hidden><form id="level-funnel-controls" class="level-analysis-controls"><div><label>Start funnel at</label><div class="segmented" role="group" aria-label="Funnel starting point"><button type="button" data-funnel-origin="level1">Level 1</button><button type="button" data-funnel-origin="session">Session start</button></div></div><label>Through level<input id="funnel-last-level" type="number" min="1" max="1000" required value="${Number(prefs.lastLevel) || 20}"></label><label class="check-row"><input id="funnel-finishes" type="checkbox" ${prefs.finishes ? 'checked' : ''}> Include finishes</label><button class="button" type="submit">Update funnel</button></form><p class="help">Follows the same players through every listed step in order, across sessions and updates until the end date. Missing steps are never inferred. Session start mode still goes through Level 1; players returning midway may appear outside this path.</p><div id="level-funnel-results" aria-live="polite"></div></div><div id="first-session" class="panel-body" hidden></div></section>`;
+  const firstSession = mountFirstSession(container.querySelector('#first-session'), game);
   const comparison = container.querySelector('#release-results');
   const funnel = container.querySelector('#level-funnel-results');
   const versions = [container.querySelector('#release-a'), container.querySelector('#release-b')];
@@ -22,9 +23,9 @@ function mountLevelTools(container, game, restore) {
     container.querySelector('#levels-delete-view').disabled = !savedSelect.value;
   };
   const sync = () => {
-    for (const name of ['compare', 'funnel']) {
+    for (const name of ['compare', 'funnel', 'flow']) {
       container.querySelector(`[data-explore="${name}"]`).setAttribute('aria-expanded', String(Boolean(prefs[name])));
-      container.querySelector(name === 'compare' ? '#release-comparison' : '#level-funnel').hidden = !prefs[name];
+      container.querySelector({compare: '#release-comparison', funnel: '#level-funnel', flow: '#first-session'}[name]).hidden = !prefs[name];
     }
     container.querySelectorAll('[data-funnel-origin]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.funnelOrigin === prefs.origin)));
   };
@@ -80,7 +81,7 @@ function mountLevelTools(container, game, restore) {
     const toggle = event.target.closest('[data-explore]');
     if (toggle) {
       const name = toggle.dataset.explore; prefs[name] = !prefs[name]; remember(); sync();
-      name === 'compare' ? compare() : loadFunnel();
+      if (name === 'compare') compare(); else if (name === 'funnel') loadFunnel(); else firstSession.show();
     }
     const origin = event.target.closest('[data-funnel-origin]');
     if (origin) { prefs.origin = origin.dataset.funnelOrigin; remember(); sync(); loadFunnel(); }
@@ -123,5 +124,5 @@ function mountLevelTools(container, game, restore) {
     });
   });
   drawViews(); sync();
-  return {update(state) { selected = structuredClone(state); comparisonTicket++; funnelTicket++; compare(); loadFunnel(); }};
+  return {update(state) { selected = structuredClone(state); comparisonTicket++; funnelTicket++; compare(); loadFunnel(); firstSession.update(state); }};
 }

@@ -117,6 +117,7 @@ class Storage:
         sessions: the environment (production, editor, development...) of each session, taken
         from the batch's `environment` or from session_start's `environment` param, so every event
         of a session can be filtered without the SDK repeating it. funnels: saved funnel steps.
+        flows: saved first-session flow settings.
         environment_fixes: "count what this build sent as development as production" rules for a
         build that shipped in the wrong mode; applied when events are read, never to the events.
         dictionary_drafts: description texts written by an agent import that nobody has confirmed
@@ -129,6 +130,12 @@ class Storage:
                 environment TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS funnels (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                definition TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS flows (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 definition TEXT NOT NULL,

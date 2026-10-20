@@ -1009,3 +1009,34 @@ def delete_funnel(storage, game_id, funnel_id):
     with storage.connect(storage.game_path(game_id)) as connection:
         if connection.execute("DELETE FROM funnels WHERE id=?", (funnel_id,)).rowcount == 0:
             raise HTTPException(404, "Funnel not found")
+
+
+def saved_flows(storage, game_id):
+    storage.get_game(game_id)
+    with storage.connect(storage.game_path(game_id)) as connection:
+        return [
+            {"id": row["id"], "name": row["name"], "updated_at": row["updated_at"]}
+            | json.loads(row["definition"])
+            for row in connection.execute("SELECT * FROM flows ORDER BY name COLLATE NOCASE")
+        ]
+
+
+def save_flow(storage, game_id, flow_id, saved):
+    storage.get_game(game_id)
+    flow_id = flow_id or str(uuid4())
+    definition = {key: value for key, value in saved.items() if key != "name"}
+    with storage.connect(storage.game_path(game_id)) as connection:
+        connection.execute(
+            """INSERT INTO flows VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+               name=excluded.name, definition=excluded.definition,
+               updated_at=excluded.updated_at""",
+            (flow_id, saved["name"], json.dumps(definition), timestamp()),
+        )
+    return {"id": flow_id, **saved}
+
+
+def delete_flow(storage, game_id, flow_id):
+    storage.get_game(game_id)
+    with storage.connect(storage.game_path(game_id)) as connection:
+        if connection.execute("DELETE FROM flows WHERE id=?", (flow_id,)).rowcount == 0:
+            raise HTTPException(404, "Flow not found")

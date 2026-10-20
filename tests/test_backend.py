@@ -3167,3 +3167,230 @@ def test_raw_event_paging_covers_entire_timeline_with_stable_ties(backend, monke
     assert received == [
         row["params"]["index"] for row in sorted(rows, key=lambda row: row["event_id"])
     ]
+
+
+def _flow_events(player, steps, session="s1", start_minute=0, version="1.0"):
+    """steps: (name, params) pairs sent one second apart for one player."""
+    records = []
+    for index, (name, params) in enumerate(steps):
+        records.append(
+            event(
+                device_id=player,
+                session_id=f"{player}-{session}",
+                name=name,
+                params=params,
+                app_version=version,
+                client_ts=f"2026-10-04T10:{start_minute:02d}:{index:02d}Z",
+            )
+        )
+    return records
+
+
+def _level(state, number, **extra):
+    return (
+        "LEVEL_ANALYSIS",
+        {"STATE": state, "LEVEL_NUMBER": number, "ATTEMPT_ID": f"a{number}", **extra},
+    )
+
+
+def _flow_fixture(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = []
+    clean = [
+        _level("Started", 1),
+        _level("Completed", 1),
+        _level("Started", 2),
+        _level("Completed", 2),
+        _level("Started", 3),
+        _level("Completed", 3),
+    ]
+    records += _flow_events("clean", clean)
+    settings = ("SCREEN_ANALYSIS", {"STATE": "Opened", "SCREEN": "settings"})
+    records += _flow_events(
+        "settings",
+        [
+            _level("Started", 1),
+            _level("Completed", 1),
+            settings,
+            _level("Started", 2),
+            _level("Completed", 2),
+        ],
+    )
+    records += _flow_events(
+        "retry",
+        [
+            _level("Started", 1),
+            _level("Failed", 1),
+            _level("Started", 1),
+            _level("Completed", 1),
+            _level("Started", 2),
+        ],
+    )
+    records += _flow_events(
+        "away",
+        [
+            _level("Started", 1),
+            _level("Completed", 1),
+            ("APP_ANALYSIS", {"STATE": "Foreground", "CAUSE": "Player", "AWAY_SECONDS": 400}),
+            _level("Started", 2),
+        ],
+    )
+    records += _flow_events("late", [_level("Started", 37), _level("Completed", 37)])
+    records += _flow_events("menu", [("SCREEN_ANALYSIS", {"STATE": "Opened", "SCREEN": "home"})])
+    # Not new: first seen the day before the range.
+    old = _flow_events("old", [_level("Started", 1), _level("Completed", 1)])
+    for record in old:
+        record["client_ts"] = record["client_ts"].replace("10-04", "10-03")
+    records += old
+    # Second session of a new player never counts.
+    records += _flow_events("clean", [_level("Started", 4)], session="s2", start_minute=30)
+    assert send(ingest, game, records).status_code == 200
+    return admin, game
+
+
+def _flow(admin, game, **settings):
+    body = {"start": "2026-10-04", "end": "2026-10-04", "last_level": 3, **settings}
+    response = admin.post(f"/v1/games/{game['id']}/insights/levels/first-session", json=body)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_first_session_flow_counts_unbroken_runs_and_lists_paths(backend):
+    admin, game = _flow_fixture(backend)
+    data = _flow(admin, game)
+    assert data["players"] == 4
+    assert data["excluded"] == {"started_at_other_level": 1, "no_level_started": 1}
+    assert [(s["started"], s["completed"]) for s in data["steps"]] == [(4, 3), (1, 1), (1, 1)]
+    assert {item["levels"]: item["players"] for item in data["run_lengths"]} == {0: 1, 1: 2, 3: 1}
+    reasons = {item["reason"]: item["players"] for item in data["ends"]}
+    assert reasons["Opened settings"] == 1
+    assert reasons["Failed the level"] == 1
+    assert reasons["Left the app for over 60s"] == 1
+    assert data["reached_end"] == 1
+    keys = {item["key"] for item in data["paths"]}
+    assert "between|Opened settings" in keys
+    assert "during|Failed the level" in keys
+    first = data["steps"][0]
+    assert (first["ended"], first["flagged"]) == (3, 0)
+    assert {item["reason"] for item in first["reasons"]} == {
+        "Opened settings",
+        "Failed the level",
+        "Left the app for over 60s",
+    }
+
+
+def test_first_session_flow_allowed_paths_continue_and_flag(backend):
+    admin, game = _flow_fixture(backend)
+    data = _flow(
+        admin,
+        game,
+        max_away_seconds=600,
+        allow=["between|Opened settings", "during|Failed the level"],
+    )
+    assert {item["levels"]: item["players"] for item in data["run_lengths"]} == {1: 2, 2: 1, 3: 1}
+    flagged = {
+        (item["level"], item["stage"], item["path"]): item["players"] for item in data["flags"]
+    }
+    assert flagged[(1, "between", "Opened settings")] == 1
+    assert flagged[(1, "during", "Failed the level")] == 1
+    assert flagged[(1, "between", "Left the app briefly")] == 1
+    assert all(item["allowed"] for item in data["paths"] if "settings" in item["path"])
+
+
+def test_first_session_flow_validation_and_saved_flows(backend):
+    admin, game = _flow_fixture(backend)
+    url = f"/v1/games/{game['id']}/insights/levels/first-session"
+    body = {"start": "2026-10-04", "end": "2026-10-04"}
+    assert admin.post(url, json={**body, "first_level": 5, "last_level": 2}).status_code == 400
+    assert admin.post(url, json={**body, "last_level": 1001}).status_code == 400
+    assert admin.post(url, json={**body, "surprise": 1}).status_code == 400
+    flows = f"/v1/games/{game['id']}/insights/flows"
+    saved = admin.post(flows, json={"name": "Strict", "last_level": 5, "allow": ["x|y"]})
+    assert saved.status_code == 201, saved.text
+    flow_id = saved.json()["id"]
+    assert (
+        admin.put(f"{flows}/{flow_id}", json={"name": "Looser", "max_away_seconds": 9}).status_code
+        == 200
+    )
+    listed = admin.get(flows).json()
+    assert [(item["name"], item["max_away_seconds"]) for item in listed] == [("Looser", 9)]
+    assert admin.delete(f"{flows}/{flow_id}").status_code == 204
+    assert admin.delete(f"{flows}/{flow_id}").status_code == 404
+    assert admin.get(flows).json() == []
+
+
+def test_first_session_flow_flags_skipped_levels(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = _flow_events(
+        "skipper",
+        [_level("Started", 1), _level("Skipped", 1), _level("Started", 2), _level("Completed", 2)],
+    )
+    records += _flow_events(
+        "winner",
+        [
+            _level("Started", 1),
+            _level("Completed", 1),
+            _level("Started", 2),
+            _level("Completed", 2),
+        ],
+    )
+    assert send(ingest, game, records).status_code == 200
+    data = _flow(admin, game, last_level=2)
+    assert {item["levels"]: item["players"] for item in data["run_lengths"]} == {0: 1, 2: 1}
+    assert data["ends"][0]["reason"] == "Skipped the level"
+    assert data["paths"][0]["key"] == "during|Skipped the level"
+    data = _flow(admin, game, last_level=2, allow=["during|Skipped the level"])
+    assert {item["levels"]: item["players"] for item in data["run_lengths"]} == {2: 2}
+    assert [(f["level"], f["stage"], f["path"]) for f in data["flags"]] == [
+        (1, "during", "Skipped the level")
+    ]
+
+
+def test_first_session_players_list_the_rows_of_the_results(backend):
+    admin, game = _flow_fixture(backend)
+    url = f"/v1/games/{game['id']}/insights/levels/first-session/players"
+
+    def players(target, **extra):
+        body = {"start": "2026-10-04", "end": "2026-10-04", "last_level": 3, "target": target}
+        response = admin.post(url, json={**body, **extra})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    reason = "Opened settings"
+    ended = players({"kind": "end", "level": 1, "stage": "between", "reason": reason})
+    assert [item["player"] for item in ended["players"]] == ["settings"]
+    assert ended["players"][0]["ended"] == reason
+    assert [i["player"] for i in players({"kind": "finished"})["players"]] == ["clean"]
+    assert players({"kind": "run", "levels": 0})["total"] == 1
+    assert players({"kind": "ended_at", "level": 1})["total"] == 3
+    assert players({"kind": "flagged_at", "level": 1}, allow=["during|Failed the level"])[
+        "players"
+    ][0]["flags"] == [{"level": 1, "stage": "during", "path": "Failed the level"}]
+    assert players({"kind": "step", "level": 1, "which": "started"})["total"] == 4
+    assert players({"kind": "step", "level": 1, "which": "completed"})["total"] == 3
+    path = {"kind": "path", "stage": "during", "path": "Failed the level"}
+    assert [i["player"] for i in players(path)["players"]] == ["retry"]
+    flag = {"kind": "flag", "level": 1, "stage": "during", "path": "Failed the level"}
+    assert players(flag)["total"] == 0
+    assert players(flag, allow=["during|Failed the level"])["total"] == 1
+    page = players({"kind": "step", "level": 1, "which": "started"}, limit=2, offset=3)
+    assert (page["total"], len(page["players"])) == (4, 1)
+    bad = {"start": "2026-10-04", "end": "2026-10-04", "target": {"kind": "everyone"}}
+    assert admin.post(url, json=bad).status_code == 400
+
+
+def test_first_session_paths_have_readable_names():
+    from avn_analytics.first_session import _token
+
+    assert _token("SCREEN_ANALYSIS", {"STATE": "Opened", "SCREEN": "daily_reward"}) == (
+        "Opened daily reward"
+    )
+    assert _token("AD_ANALYSIS", {"STATE": "Show", "FORMAT": "Interstitial"}) == ("Interstitial ad")
+    assert _token("AD_ANALYSIS", {"STATE": "Failed", "FORMAT": "Rewarded"}) == "Rewarded ad failed"
+    assert _token("LEVEL_ANALYSIS", {"STATE": "Choice", "ACTION": "DoubleReward"}) == (
+        "Chose double reward"
+    )
+    assert _token("LEVEL_ANALYSIS", {"STATE": "Left", "REASON": "Home"}) == "Left the level (home)"
+    assert _token("MY_EVENT", {}) == "MY_EVENT"
