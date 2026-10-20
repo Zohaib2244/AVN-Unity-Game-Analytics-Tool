@@ -1,6 +1,6 @@
 """The AVN events standard and the prompt that sets it up in a game with an AI agent.
 
-The files in `events_standard/` are the only copy: the website hands them out as they are, with
+The files in `avn_events_standard/` are the only copy: the website hands them out as they are, with
 the prompt's tiers line set to what the person picked.
 """
 
@@ -11,7 +11,7 @@ import zipfile
 from functools import cache
 from pathlib import Path
 
-FOLDER = Path(__file__).parent / "events_standard"
+FOLDER = Path(__file__).parent / "avn_events_standard"
 SPEC = "avn_events_standard.json"
 GUIDE = "avn_events_standard.md"
 PROMPT = "AGENT_PROMPT.md"

@@ -8,7 +8,7 @@ editor starts from what the game sent) or ignored for this game. Read live from 
 import re
 from collections import defaultdict
 
-from . import custom_events, standard
+from . import avn_events_standard, custom_events
 from .insights import HIDDEN_PARAMS, PLAYER, SDK_EVENTS
 
 SQL_KINDS = {"integer": "int", "real": "float", "text": "string"}
@@ -104,7 +104,7 @@ def _draft(connection, name):
 def status(storage, game_id, custom):
     """{sent: {name: {events, last_seen}}, unlisted: [...], ignored: [...]} for one game."""
     storage.get_game(game_id)
-    known = set(standard.spec(custom)["events"])
+    known = set(avn_events_standard.spec(custom)["events"])
     hidden = ignored(storage, game_id)
     with storage.connect(storage.game_path(game_id)) as connection:
         rows = connection.execute(

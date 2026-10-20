@@ -275,7 +275,7 @@ fixed set of event names, states and parameters (`LEVEL_ANALYSIS`, `AD_ANALYSIS`
 `FTUE_ANALYSIS`, `POWERUP_ANALYSIS`, `SCREEN_ANALYSIS`, `IAP_ANALYSIS`, `PLAYER_ANALYSIS`,
 `DEVICE_ANALYSIS`), so every game sends the same shapes and
 the dashboards map them on their own. The standard lives in
-[`avn_analytics/events_standard/`](avn_analytics/events_standard/): `avn_events_standard.md` to read,
+[`avn_analytics/avn_events_standard/`](avn_analytics/avn_events_standard/): `avn_events_standard.md` to read,
 `avn_events_standard.json` for agents and tools, and `AGENT_PROMPT.md`, the prompt that adds it to a
 Unity game.
 

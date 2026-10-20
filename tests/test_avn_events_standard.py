@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from test_backend import AUDIENCE, AUTH, TEAM_DOMAIN, TOKEN
 
-from avn_analytics import standard, stories
+from avn_analytics import avn_events_standard, stories
 from avn_analytics.api import create_app
 from avn_analytics.config import Settings
 from avn_analytics.events import _suggestions
@@ -22,12 +22,12 @@ def admin(tmp_path):
 
 
 def test_spec_is_complete_and_matches_the_guide():
-    spec = standard.spec()
-    guide = (standard.FOLDER / standard.GUIDE).read_text()
+    spec = avn_events_standard.spec()
+    guide = (avn_events_standard.FOLDER / avn_events_standard.GUIDE).read_text()
     assert spec["version"] == 4
     for name, entry in spec["events"].items():
         assert re.fullmatch(r"[A-Z]+(_[A-Z]+)*", name)
-        assert entry["tier"] in standard.TIERS
+        assert entry["tier"] in avn_events_standard.TIERS
         assert entry["states"], name
         assert f"### {name} ({entry['tier']})" in guide
         for state in entry["states"]:
@@ -38,7 +38,7 @@ def test_spec_is_complete_and_matches_the_guide():
 
 def test_level_states_map_themselves_on_the_mappings_page():
     """The standard's LEVEL shape must keep matching what the Mappings page suggests."""
-    level = standard.spec()["events"]["LEVEL_ANALYSIS"]
+    level = avn_events_standard.spec()["events"]["LEVEL_ANALYSIS"]
     examples = {
         "STATE": list(level["states"]),
         "ACTION": level["states"]["Choice"]["params"]["ACTION"]["enum"],
@@ -56,14 +56,18 @@ def test_level_states_map_themselves_on_the_mappings_page():
 
 
 def test_prompt_always_includes_core_and_fills_in_the_tiers():
-    assert standard.tiers_for([]) == ["core"]
-    assert standard.tiers_for(["extended", "standard"]) == ["core", "standard", "extended"]
-    text = standard.prompt(["extended"])
+    assert avn_events_standard.tiers_for([]) == ["core"]
+    assert avn_events_standard.tiers_for(["extended", "standard"]) == [
+        "core",
+        "standard",
+        "extended",
+    ]
+    text = avn_events_standard.prompt(["extended"])
     assert "Tiers to implement: **core, extended**." in text
     assert "change this line" not in text
     assert not text.startswith("# Prompt")  # only the prompt, not the page around it
     with pytest.raises(ValueError, match="Unknown tier: gold"):
-        standard.tiers_for(["gold"])
+        avn_events_standard.tiers_for(["gold"])
 
 
 def test_website_lists_events_and_serves_the_setup_files(admin):
@@ -86,10 +90,15 @@ def test_website_lists_events_and_serves_the_setup_files(admin):
     assert "avn-events-setup.zip" in response.headers["content-disposition"]
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         assert sorted(archive.namelist()) == sorted(
-            [standard.PROMPT, standard.SPEC, standard.GUIDE]
+            [avn_events_standard.PROMPT, avn_events_standard.SPEC, avn_events_standard.GUIDE]
         )
-        assert archive.read(standard.PROMPT).decode() == standard.prompt(["standard"])
-        assert archive.read(standard.SPEC).decode() == (standard.FOLDER / standard.SPEC).read_text()
+        assert archive.read(avn_events_standard.PROMPT).decode() == avn_events_standard.prompt(
+            ["standard"]
+        )
+        assert (
+            archive.read(avn_events_standard.SPEC).decode()
+            == (avn_events_standard.FOLDER / avn_events_standard.SPEC).read_text()
+        )
 
 
 def test_setup_files_need_a_sign_in(tmp_path):
@@ -135,8 +144,8 @@ def test_custom_events_join_the_standard_and_the_downloads(admin):
 
     bundle = admin.get("/v1/events-standard/download?tiers=custom", headers=AUTH).content
     with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
-        spec = json.loads(archive.read(standard.SPEC))
-        guide = archive.read(standard.GUIDE).decode()
+        spec = json.loads(archive.read(avn_events_standard.SPEC))
+        guide = archive.read(avn_events_standard.GUIDE).decode()
     tab = spec["events"]["SHOP"]["states"]["Opened"]["params"]["TAB"]
     assert tab == {"type": "string", "required": True, "enum": ["Coins", "Gems"]}
     assert spec["events"]["SHOP"]["tier"] == "custom" and spec["tiers"]["custom"].startswith("SHOP")
@@ -150,7 +159,10 @@ def test_custom_events_join_the_standard_and_the_downloads(admin):
     assert admin.delete("/v1/events-standard/custom/SHOP", headers=AUTH).status_code == 404
     plain = admin.get("/v1/events-standard/download", headers=AUTH).content
     with zipfile.ZipFile(io.BytesIO(plain)) as archive:
-        assert archive.read(standard.SPEC).decode() == (standard.FOLDER / standard.SPEC).read_text()
+        assert (
+            archive.read(avn_events_standard.SPEC).decode()
+            == (avn_events_standard.FOLDER / avn_events_standard.SPEC).read_text()
+        )
 
 
 @pytest.mark.parametrize(

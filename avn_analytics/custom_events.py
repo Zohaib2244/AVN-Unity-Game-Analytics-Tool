@@ -1,8 +1,9 @@
 """Events added to the AVN events standard from the website.
 
-They live in the registry database, next to the built-in standard in `events_standard/`, and are
+They live in the registry database, next to the built-in standard in `avn_events_standard/`, and are
 merged into the spec, the guide and the downloads as the `custom` tier. The stored shape is the
-one the editor uses (lists of states and parameters); `standard.spec` turns it into spec format.
+one the editor uses (lists of states and parameters); `avn_events_standard.spec` turns it into the
+spec format.
 """
 
 import json
