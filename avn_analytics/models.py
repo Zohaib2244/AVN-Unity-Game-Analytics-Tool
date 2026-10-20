@@ -428,6 +428,26 @@ class FunnelQuery(FunnelDefinition):
     timezone_offset_minutes: Annotated[int, Field(ge=-840, le=840)] = 0
 
 
+class FlowSettings(StrictModel):
+    """Which levels count and which detours keep a first-session run going."""
+
+    first_level: Annotated[int, Field(ge=0, le=1000)] = 1
+    last_level: Annotated[int, Field(ge=1, le=1000)] = 20
+    max_away_seconds: Annotated[float, Field(ge=0, le=86400)] = 60
+    allow: list[Annotated[str, Field(max_length=400)]] = Field(default_factory=list, max_length=300)
+
+
+class FlowQuery(FlowSettings):
+    start: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    end: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    filters: Filters = Filters()
+    timezone_offset_minutes: Annotated[int, Field(ge=-840, le=840)] = 0
+
+
+class SavedFlow(FlowSettings):
+    name: Annotated[str, Field(min_length=1, max_length=80)]
+
+
 class JourneyTarget(StrictModel):
     """Which players to list: one whole journey (its steps and outcome), or one exit."""
 

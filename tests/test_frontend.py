@@ -326,3 +326,45 @@ assert.doesNotMatch(list, /data-unlisted-older/);
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_first_session_results_and_paths_render_what_the_server_sent():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/first-session.js").read_text()
+    rendering = script[: script.index("function mountFirstSession(")]
+    checks = """
+import assert from 'node:assert/strict';
+const escapeHTML = value => String(value).replace(/</g, '&lt;');
+const number = value => String(value);
+const percent = value => `${value}%`;
+const data = {
+  players: 4, minimum_players: 30, reached_end: 1, excluded: {started_at_other_level: 2},
+  steps: [{level: 1, started: 4, completed: 3, percent: 75}],
+  run_lengths: [{levels: 0, players: 1}, {levels: 3, players: 3}],
+  ends: [{level: 1, stage: 'between', reason: 'Opened <settings>', players: 2}],
+  flags: [{level: 1, stage: 'during', path: 'Failed the level', players: 1}],
+};
+let html = flowResultsHTML(data);
+assert.match(html, /4 new players · small sample/);
+assert.match(html, /2 started somewhere other than the first level/);
+assert.match(html, /Opened &lt;settings>/);  // server text is escaped
+assert.match(html, /Flagged detours/);
+assert.doesNotMatch(flowResultsHTML({...data, flags: []}), /Flagged detours/);
+assert.match(flowResultsHTML({...data, players: 0}), /No new players/);
+const paths = flowPathsHTML([
+  {key: 'between|Shop', stage: 'between', path: 'Shop', players: 3, allowed: true},
+  {key: 'during|Failed the level', stage: 'during', path: 'Failed the level',
+   players: 2, allowed: false},
+]);
+assert.match(paths, /data-flow-path="between\\|Shop" checked>/);
+assert.match(paths, /data-flow-path="during\\|Failed the level" >/);
+assert.match(flowPathsHTML([]), /No detours seen/);
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=rendering + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr

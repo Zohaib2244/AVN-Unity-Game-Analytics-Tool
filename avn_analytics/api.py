@@ -32,6 +32,7 @@ from . import (
     device_specs,
     dictionary_import,
     events,
+    first_session,
     insights,
     journeys,
     sdk_package,
@@ -51,6 +52,7 @@ from .models import (
     EventDefinition,
     EventMappings,
     Filters,
+    FlowQuery,
     FunnelQuery,
     GameCreate,
     GameUpdate,
@@ -64,6 +66,7 @@ from .models import (
     Name,
     NutBotChat,
     PlayerRules,
+    SavedFlow,
     SavedFunnel,
     TeamAdd,
     TeamUpdate,
@@ -761,6 +764,35 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             *day_range(query.start, query.end, query.timezone_offset_minutes),
             query.model_dump(),
         )
+
+    @admin_api.post("/v1/games/{game_id}/insights/levels/first-session")
+    def insights_first_session(game_id: UUID, query: FlowQuery):
+        settings = query.model_dump(
+            include={"first_level", "last_level", "max_away_seconds", "allow"}
+        )
+        return first_session.first_session_flow(
+            storage,
+            str(game_id),
+            *day_range(query.start, query.end, query.timezone_offset_minutes),
+            query.filters.model_dump(),
+            settings,
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/flows")
+    def list_flows(game_id: UUID):
+        return insights.saved_flows(storage, str(game_id))
+
+    @admin_api.post("/v1/games/{game_id}/insights/flows", status_code=201)
+    def create_flow(game_id: UUID, saved: SavedFlow):
+        return insights.save_flow(storage, str(game_id), None, saved.model_dump())
+
+    @admin_api.put("/v1/games/{game_id}/insights/flows/{flow_id}")
+    def update_flow(game_id: UUID, flow_id: UUID, saved: SavedFlow):
+        return insights.save_flow(storage, str(game_id), str(flow_id), saved.model_dump())
+
+    @admin_api.delete("/v1/games/{game_id}/insights/flows/{flow_id}", status_code=204)
+    def delete_flow(game_id: UUID, flow_id: UUID):
+        insights.delete_flow(storage, str(game_id), str(flow_id))
 
     @admin_api.post("/v1/games/{game_id}/insights/journeys")
     def insights_journeys(game_id: UUID, query: JourneyQuery):
