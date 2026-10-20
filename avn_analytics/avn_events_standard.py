@@ -11,6 +11,8 @@ import zipfile
 from functools import cache
 from pathlib import Path
 
+from .custom_events import tier_of
+
 FOLDER = Path(__file__).parent / "avn_events_standard"
 SPEC = "avn_events_standard.json"
 GUIDE = "avn_events_standard.md"
@@ -37,7 +39,12 @@ def _spec_entry(body):
                 item["enum"] = list(param["values"])
             params[param["key"]] = item
         states[state["name"]] = {"trigger": state["trigger"], "params": params}
-    return {"tier": "custom", "purpose": body["purpose"], "states": states, "shared_params": {}}
+    return {
+        "tier": tier_of(body),
+        "purpose": body["purpose"],
+        "states": states,
+        "shared_params": {},
+    }
 
 
 def spec(custom=None):
@@ -46,7 +53,12 @@ def spec(custom=None):
     if custom:
         for name, body in custom.items():
             data["events"][name] = _spec_entry(body)
-        data["tiers"]["custom"] = f"{', '.join(custom)}. Added on this installation."
+        for tier in ("core", "custom"):
+            added = [name for name, body in custom.items() if tier_of(body) == tier]
+            if tier == "core" and added:
+                data["tiers"]["core"] += f" Added on this installation: {', '.join(added)}."
+            elif added:
+                data["tiers"]["custom"] = f"{', '.join(added)}. Added on this installation."
     return data
 
 
@@ -59,11 +71,12 @@ def guide(custom=None):
         "",
         "## Custom events",
         "",
-        "Added on this installation, on top of the standard above.",
+        "Added on this installation, on top of the standard above. Events marked core are part of "
+        "the core tier; events marked custom are in the custom tier.",
         "",
     ]
     for name, body in custom.items():
-        lines += [f"### {name} (custom)", "", body["purpose"] or "", ""]
+        lines += [f"### {name} ({tier_of(body)})", "", body["purpose"] or "", ""]
         for state in body["states"]:
             lines += [f"#### `{state['name']}`", "", state["trigger"] or "", ""]
             if state["params"]:

@@ -75,7 +75,7 @@ function openCustomEventEditor(existing, done, prefill = null) {
 function customEventsHTML(list, sent) {
   const canEdit = me.can_manage_team;
   return `<div class="custom-head"><h3>${icon('sparkle', 16)} Custom events ${list.length ? `<span class="count">${number(list.length)}</span>` : ''}</h3>${canEdit ? `<button type="button" class="button" data-custom-add>${icon('plus', 14)} Add event</button>` : ''}</div>
-    ${list.length ? `<ul class="custom-list">${list.map(item => `<li><code>${escapeHTML(item.name)}</code><span class="small muted">${number(item.states.length)} state${item.states.length === 1 ? '' : 's'} · ${item.states.map(state => escapeHTML(state.name)).join(', ')}</span>${sent ? (sent[item.name] ? `<span class="pill good">Sent · ${number(sent[item.name].events)}</span>` : '<span class="pill">Not sent yet</span>') : ''}${canEdit ? `<span class="custom-actions"><button type="button" class="icon-button" data-custom-edit="${escapeHTML(item.name)}" aria-label="Edit ${escapeHTML(item.name)}" title="Edit">${icon('edit', 14)}</button><button type="button" class="icon-button" data-custom-delete="${escapeHTML(item.name)}" aria-label="Delete ${escapeHTML(item.name)}" title="Delete">${icon('close', 14)}</button></span>` : ''}</li>`).join('')}</ul>` : '<p class="muted small">None yet.</p>'}`;
+    ${list.length ? `<ul class="custom-list">${list.map(item => `<li><code>${escapeHTML(item.name)}</code><span class="small muted">${number(item.states.length)} state${item.states.length === 1 ? '' : 's'} · ${item.states.map(state => escapeHTML(state.name)).join(', ')}</span>${item.tier === 'core' ? '<span class="pill" title="Always in the setup files">Core</span>' : ''}${sent ? (sent[item.name] ? `<span class="pill good">Sent · ${number(sent[item.name].events)}</span>` : '<span class="pill">Not sent yet</span>') : ''}${canEdit ? `<span class="custom-actions"><button type="button" class="button" data-custom-tier="${escapeHTML(item.name)}:${item.tier === 'core' ? 'custom' : 'core'}">${item.tier === 'core' ? 'Demote to custom' : 'Promote to core'}</button><button type="button" class="icon-button" data-custom-edit="${escapeHTML(item.name)}" aria-label="Edit ${escapeHTML(item.name)}" title="Edit">${icon('edit', 14)}</button><button type="button" class="icon-button" data-custom-delete="${escapeHTML(item.name)}" aria-label="Delete ${escapeHTML(item.name)}" title="Delete">${icon('close', 14)}</button></span>` : ''}</li>`).join('')}</ul>` : '<p class="muted small">None yet.</p>'}`;
 }
 
 function bindCustomEvents(box, getList, refresh) {
@@ -83,6 +83,13 @@ function bindCustomEvents(box, getList, refresh) {
     const target = event.target.closest('button'); if (!target) return;
     if ('customAdd' in target.dataset) openCustomEventEditor(null, refresh);
     else if (target.dataset.customEdit) openCustomEventEditor(getList().find(item => item.name === target.dataset.customEdit), refresh);
+    else if (target.dataset.customTier) {
+      const [name, tier] = target.dataset.customTier.split(':');
+      const promote = tier === 'core';
+      confirmDialog(promote ? `Promote ${name} to core?` : `Demote ${name} to custom?`,
+        promote ? 'Core events are in every setup download, even when custom events are left out. Games should send it from now on.' : 'It stays in the standard, but only comes with the setup files when custom events are included.',
+        promote ? 'Promote' : 'Demote', async () => { await request(`${CUSTOM_URL}/${encodeURIComponent(name)}/tier`, {method: 'PUT', body: JSON.stringify({tier})}); toast(promote ? `${name} is now a core event.` : `${name} is a custom event again.`); refresh(); });
+    }
     else if (target.dataset.customDelete) {
       const name = target.dataset.customDelete;
       confirmDialog(`Delete ${name}?`, 'It leaves the standard and the setup downloads. Games already using it keep sending it, and the events stay in your data.', 'Delete event', async () => { await request(`${CUSTOM_URL}/${encodeURIComponent(name)}`, {method: 'DELETE'}); toast(`${name} deleted.`); refresh(); });
@@ -90,20 +97,53 @@ function bindCustomEvents(box, getList, refresh) {
   });
 }
 
+// Which app versions the event counts are for. `choice` is {version: ''|'@latest'|'1.4.2', newer}.
+function versionFilterHTML(versions, choice) {
+  const latest = versions.find(item => item.players)?.version;
+  const selected = choice.version === '@latest' ? (latest ?? '') : choice.version;
+  const label = item => `${item.version} · ${number(item.players)} player${item.players === 1 ? '' : 's'} · last seen ${agoText(item.last_seen)}`;
+  return `<div class="inline-field"><label for="version-filter-select">Events sent by</label><select id="version-filter-select"><option value="">All versions</option>${versions.map(item => `<option value="${escapeHTML(item.version)}" ${item.version === selected ? 'selected' : ''}>${escapeHTML(label(item))}</option>`).join('')}</select></div>
+    <label class="check-row"><input type="checkbox" id="version-filter-newer" ${choice.newer ? 'checked' : ''} ${selected ? '' : 'disabled'}> and newer versions</label>`;
+}
+
+function bindVersionFilter(box, getStatus, getChoice, choose) {
+  box.addEventListener('change', event => {
+    const versions = getStatus()?.versions || [];
+    const newer = box.querySelector('#version-filter-newer').checked;
+    if (event.target.id === 'version-filter-select') {
+      const value = event.target.value;
+      // Picking the newest version follows the newest from then on, as new builds ship.
+      choose({version: value && value === versions.find(item => item.players)?.version ? '@latest' : value, newer});
+    } else if (event.target.id === 'version-filter-newer') choose({...getChoice(), newer});
+  });
+}
+
 // Events the game sends that the standard does not have: add them to the standard, or ignore them.
 function unlistedEventsHTML(status) {
   const canAdd = me.can_manage_team;
-  const row = item => `<li><code>${escapeHTML(item.name)}</code><span class="small muted">${number(item.events)} events · last seen ${escapeHTML(agoText(item.last_seen))}</span>${item.valid_name ? '' : '<span class="pill" title="Event names in the standard are UPPER_SNAKE">Name not UPPER_SNAKE</span>'}<span class="custom-actions">${item.valid_name && canAdd ? `<button type="button" class="button" data-unlisted-add="${escapeHTML(item.name)}">${icon('plus', 14)} Add to standard</button>` : ''}<button type="button" class="button" data-unlisted-ignore="${escapeHTML(item.name)}">Ignore</button></span></li>`;
-  return `${status.unlisted.length ? `<div class="custom-head"><h3>${icon('pulse', 16)} Sent, not in the standard <span class="count">${number(status.unlisted.length)}</span></h3></div><ul class="custom-list">${status.unlisted.map(row).join('')}</ul>` : ''}
+  const more = versions => versions.length > 3 ? ` +${versions.length - 3}` : '';
+  const row = item => `<li><code>${escapeHTML(item.name)}</code><span class="small muted">${number(item.events)} event${item.events === 1 ? '' : 's'} · last seen ${escapeHTML(agoText(item.last_seen))}${item.versions.length ? ` · ${item.versions.slice(0, 3).map(escapeHTML).join(', ')}${more(item.versions)}` : ''}</span>${item.valid_name ? '' : '<span class="pill" title="Event names in the standard are UPPER_SNAKE">Name not UPPER_SNAKE</span>'}<span class="custom-actions">${item.valid_name && canAdd ? `<button type="button" class="button" data-unlisted-add="${escapeHTML(item.name)}">${icon('plus', 14)} Add to standard</button>` : ''}<button type="button" class="button" data-unlisted-ignore="${escapeHTML(item.name)}">Ignore</button></span></li>`;
+  const shown = status.unlisted.length < status.total_unlisted ? ` <span class="small muted">showing ${number(status.unlisted.length)}</span>` : '';
+  const older = status.older_only.length ? `<p class="older-note small muted">${number(status.older_only.length)} more event${status.older_only.length === 1 ? ' is' : 's are'} only sent by older versions. ${canAdd ? `<button type="button" class="button" data-unlisted-older>Ignore ${status.older_only.length === 1 ? 'it' : 'them'}</button>` : ''}</p>` : '';
+  return `${status.unlisted.length ? `<div class="custom-head"><h3>${icon('pulse', 16)} Sent, not in the standard <span class="count">${number(status.total_unlisted)}</span>${shown}</h3></div><ul class="custom-list">${status.unlisted.map(row).join('')}</ul>` : ''}
+    ${older}
     ${status.ignored.length ? `<details class="mapping-how"><summary>Ignored (${number(status.ignored.length)})</summary><ul class="custom-list">${status.ignored.map(item => `<li><code>${escapeHTML(item.name)}</code><span class="small muted">${number(item.events)} events</span><span class="custom-actions"><button type="button" class="button" data-unlisted-restore="${escapeHTML(item.name)}">Restore</button></span></li>`).join('')}</ul></details>` : ''}`;
 }
 
-function bindUnlistedEvents(box, getStatus, game, refresh) {
+function bindUnlistedEvents(box, getStatus, game, refresh, getChoice) {
   const url = name => `/v1/games/${encodeURIComponent(game.id)}/standard/ignored/${encodeURIComponent(name)}`;
   box.addEventListener('click', async event => {
     const target = event.target.closest('button'); if (!target) return;
     const {unlistedAdd, unlistedIgnore, unlistedRestore} = target.dataset;
-    if (unlistedAdd) openCustomEventEditor(null, refresh, getStatus().unlisted.find(item => item.name === unlistedAdd));
+    if ('unlistedOlder' in target.dataset) {
+      const count = getStatus().older_only.length;
+      confirmDialog(`Ignore ${number(count)} event${count === 1 ? '' : 's'} from older versions?`, 'They are hidden for this game in every version. Restore any of them from the Ignored list.', 'Ignore', async () => {
+        const {version, newer} = getChoice();
+        const result = await request(`/v1/games/${encodeURIComponent(game.id)}/standard/ignore-older`, {method: 'POST', body: JSON.stringify({version, newer})});
+        toast(`${number(result.ignored)} event${result.ignored === 1 ? '' : 's'} ignored for this game.`); refresh();
+      });
+    }
+    else if (unlistedAdd) openCustomEventEditor(null, refresh, getStatus().unlisted.find(item => item.name === unlistedAdd));
     else if (unlistedIgnore || unlistedRestore) {
       target.disabled = true;
       try { await request(url(unlistedIgnore || unlistedRestore), {method: unlistedIgnore ? 'PUT' : 'DELETE'}); toast(unlistedIgnore ? `${unlistedIgnore} ignored for this game.` : `${unlistedRestore} restored.`); refresh(); }

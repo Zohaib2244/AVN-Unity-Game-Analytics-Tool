@@ -45,6 +45,7 @@ from .models import (
     AnalyticsThresholds,
     Batch,
     CustomEvent,
+    CustomEventTier,
     EnvironmentFix,
     EventActivityQuery,
     EventDefinition,
@@ -53,6 +54,7 @@ from .models import (
     FunnelQuery,
     GameCreate,
     GameUpdate,
+    IgnoreOlder,
     ImportPrepare,
     ImportRequest,
     JourneyPlayersQuery,
@@ -545,6 +547,13 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         accounts.audit(principal, "standard.custom_event_save", name)
         return {"name": name, **body.model_dump()}
 
+    @admin_api.put("/v1/events-standard/custom/{name}/tier")
+    def custom_event_tier(name: CustomName, body: CustomEventTier, principal: TeamAdmin):
+        if not custom_events.set_tier(storage, name, body.tier):
+            raise HTTPException(404, "No such custom event")
+        accounts.audit(principal, "standard.custom_event_tier", name, body.tier)
+        return {"name": name, "tier": body.tier}
+
     @admin_api.delete("/v1/events-standard/custom/{name}")
     def custom_event_delete(name: CustomName, principal: TeamAdmin):
         if not custom_events.delete(storage, name):
@@ -566,8 +575,24 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         )
 
     @admin_api.get("/v1/games/{game_id}/standard")
-    def game_standard(game_id: UUID):
-        return avn_events_standard_status.status(storage, str(game_id), custom_events.load(storage))
+    def game_standard(game_id: UUID, version: str = "", newer: bool = False):
+        try:
+            return avn_events_standard_status.status(
+                storage, str(game_id), custom_events.load(storage), version, newer
+            )
+        except LookupError as error:
+            raise HTTPException(404, str(error)) from error
+
+    @admin_api.post("/v1/games/{game_id}/standard/ignore-older")
+    def standard_ignore_older(game_id: UUID, body: IgnoreOlder, principal: Current):
+        try:
+            count = avn_events_standard_status.ignore_older(
+                storage, str(game_id), body.version, body.newer
+            )
+        except LookupError as error:
+            raise HTTPException(404, str(error)) from error
+        accounts.audit(principal, "standard.ignore_older", str(game_id), f"{count} events")
+        return {"ignored": count}
 
     @admin_api.put("/v1/games/{game_id}/standard/ignored/{name}", status_code=204)
     def standard_ignore(game_id: UUID, name: Name, principal: Current):

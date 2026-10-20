@@ -603,3 +603,16 @@ class CustomEvent(StrictModel):
 
     purpose: Annotated[str, Field(max_length=300)] = ""
     states: Annotated[list[CustomState], Field(min_length=1, max_length=30)]
+
+
+class IgnoreOlder(StrictModel):
+    """Ignore the events only older app versions sent (the chosen version, and optionally newer)."""
+
+    version: Annotated[str, Field(min_length=1, max_length=100)]
+    newer: bool = False
+
+
+class CustomEventTier(StrictModel):
+    """Promote a custom event to the core tier, or demote it back to custom."""
+
+    tier: Literal["custom", "core"]

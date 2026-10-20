@@ -16,6 +16,7 @@ STATE = re.compile(r"[A-Z][A-Za-z0-9]*")
 KEY = re.compile(r"[A-Z][A-Z0-9_]*")
 RESERVED_KEYS = {"STATE", "LEVEL_NUMBER"}
 MAX_EVENTS = 100
+TIERS = ("custom", "core")  # "core" is a custom event the owner promoted; "custom" is the default
 
 
 class CustomEventError(ValueError):
@@ -94,12 +95,37 @@ def save(storage, name, body, builtin):
         if name not in existing and len(existing) >= MAX_EVENTS:
             raise CustomEventError(f"At most {MAX_EVENTS} custom events.")
         validate(name, body, set(builtin))
+        row = registry.execute("SELECT body FROM custom_events WHERE name=?", (name,)).fetchone()
+        if row:  # editing an event keeps the tier it was promoted to
+            body = {**body, "tier": tier_of(json.loads(row["body"]))}
         now = timestamp()
         registry.execute(
             "INSERT INTO custom_events (name, body, created_at, updated_at) VALUES (?, ?, ?, ?) "
             "ON CONFLICT(name) DO UPDATE SET body=excluded.body, updated_at=excluded.updated_at",
             (name, json.dumps(body, sort_keys=True), now, now),
         )
+
+
+def tier_of(body):
+    return body.get("tier") if body.get("tier") in TIERS else "custom"
+
+
+def set_tier(storage, name, tier):
+    """Promote a custom event to core, or demote it back; False when there is no such event."""
+    if tier not in TIERS:
+        raise CustomEventError(f"Unknown tier {tier!r}.")
+    with storage.connect(storage.root / "registry.sqlite3") as registry:
+        init(registry)
+        registry.execute("BEGIN IMMEDIATE")
+        row = registry.execute("SELECT body FROM custom_events WHERE name=?", (name,)).fetchone()
+        if row is None:
+            return False
+        body = {**json.loads(row["body"]), "tier": tier}
+        registry.execute(
+            "UPDATE custom_events SET body=?, updated_at=? WHERE name=?",
+            (json.dumps(body, sort_keys=True), timestamp(), name),
+        )
+        return True
 
 
 def delete(storage, name):

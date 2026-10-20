@@ -302,6 +302,18 @@ out) under **Sent, not in the standard**. For each one you can:
 - **Ignore**: hide it for this game only. It is listed under **Ignored** with a **Restore**
   button; the events themselves stay in the data.
 
+Old builds keep sending their own events long after nobody plays them, so the **Events sent by**
+selector limits this list (and the *Sent* counts) to one app version, or to that version and the
+ones first seen after it (**and newer versions**, on by default). It starts on the newest version
+that has players and follows new builds as they ship; each version shows its player count and when
+it was last seen. Events that only older versions sent are not listed; a line under the list
+counts them, and **Ignore them** hides them all for this game (they are under **Ignored**, so
+nothing is lost). The editor's starting point is built from the chosen versions only, and each
+event shows which versions sent it. Versions are ordered by when they were first seen, so
+unusual version strings need no special handling. Over the API,
+`GET /v1/games/{id}/standard?version=1.4.2&newer=true` (`version=@latest` for the newest with
+players) and `POST /v1/games/{id}/standard/ignore-older`.
+
 Only events named in `UPPER_SNAKE` can be added, because the standard's names are exact (an event
 like `daily_gift_claimed` can only be ignored). Lowercase or otherwise invalid parameter keys and
 states are left out of the starting point. The event table under **Show the events** has a *Sent
@@ -321,6 +333,12 @@ prompt's tier line, so an agent sets them up with the rest. Only the admin can a
 them. Deleting one only removes it from future downloads; games already sending it, and the events
 already stored, are not touched. Over the API: `GET /v1/events-standard/custom`,
 `PUT /v1/events-standard/custom/{NAME}` and `DELETE /v1/events-standard/custom/{NAME}`.
+
+**Promote to core** moves a custom event into the core tier: it is then in every download, even
+when custom events are left out, and is marked *(core)* in the guide. **Demote to custom** puts it
+back, and editing a promoted event keeps it core. The spec's `version` does not change when you
+promote or demote, as with any other custom event. Over the API:
+`PUT /v1/events-standard/custom/{NAME}/tier` with `{"tier": "core"}` or `{"tier": "custom"}`.
 
 ## Fill the dictionary with an AI agent
 
