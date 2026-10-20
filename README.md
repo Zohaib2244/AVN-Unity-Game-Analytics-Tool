@@ -56,22 +56,19 @@ Open `http://127.0.0.1:8101`, register a game and copy its API key. The admin si
 
 ## Unity SDK
 
-The SDK lives in [`unity/AVNAnalytics`](unity/AVNAnalytics) (Unity 2020.1+, no dependencies). Copy the folder into `Assets/`, then:
+The SDK ships as a Unity package (Unity 2020.1+, no dependencies). Import `AVNAnalytics.unitypackage` into your project, fill in the endpoint and key on `Resources/AVNGameAnalyticsConfig.asset`, then:
 
 ```csharp
-using Avn.Analytics;
+using AVNAnalytics;
 
-AvnAnalytics.Initialize(new AvnConfig {
-    Endpoint = "https://analytics.example.com/v1/events",
-    ApiKey   = "YOUR_GAME_KEY",
-});
+AVNGameAnalytics.Initialize();
 
-AvnAnalytics.LogEvent("level_complete",
-    new AvnParameter("level", 3),
-    new AvnParameter("duration_seconds", 42.5));
+AVNGameAnalytics.LogEvent("level_complete",
+    new AVNGameAnalyticsParameter("level", 3),
+    new AVNGameAnalyticsParameter("duration_seconds", 42.5));
 ```
 
-See the [SDK README](unity/AVNAnalytics/README.md) for the persistence design, test harness and configuration.
+The SDK source and its README (persistence design, configuration) live inside the package, under `Assets/AVNAnalytics/`; this repository does not keep a copy.
 
 The built package, `AVNAnalytics.unitypackage`, is kept in [`avn_analytics/sdk/`](avn_analytics/sdk/) and
 shipped with the app. Everyone who can open the website downloads it under **Settings → Unity SDK**

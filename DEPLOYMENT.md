@@ -161,16 +161,7 @@ The server fills each event's `country` from the `CF-IPCountry` header, which Cl
 
 ## 5. Connect the Unity SDK
 
-Copy `unity/AVNAnalytics` into your project's `Assets/` folder and initialize it with your endpoint and key:
-
-```csharp
-AvnAnalytics.Initialize(new AvnConfig {
-    Endpoint = "https://analytics.example.com/v1/events",
-    ApiKey   = "YOUR_GAME_KEY",
-});
-```
-
-Use the demo component in the SDK folder to test. Confirm arrival on the website's Overview or Games page.
+Import `AVNAnalytics.unitypackage` (download it from the website under **Settings → Unity SDK**) into your project. Enter your endpoint and key on `Assets/AVNAnalytics/Resources/AVNGameAnalyticsConfig.asset`, then call `AVNGameAnalytics.Initialize();` once at startup. Confirm arrival on the website's Overview or Games page.
 
 ## 6. Exports
 
@@ -276,7 +267,7 @@ To move to a new disk: stop, `rsync -a ./data/ /new/disk/avn-data/`, set `AVN_HO
 | Game gets **429** | Per-key rate limit; the SDK backs off. Raise `AVN_REQUESTS_PER_MINUTE` if many players share a key. |
 | **503** responses | Database or disk problem; check the SQLite error in container logs. `SQLITE_FULL` can mean a full query-temp filesystem even when the main disk has space. Current images set `SQLITE_TMPDIR=/data/sqlite-tmp`; check the effective container environment and free space on that mount. Older images may still spill to the small `/tmp` tmpfs. |
 | Container exits with "SQLite temporary storage is unavailable" | The configured `SQLITE_TMPDIR` cannot be created or written by the container UID, or its disk is full. Correct the mount, ownership or capacity before restarting. |
-| Events never show up, SDK says "offline" | Device has no connectivity, or the endpoint URL in `AvnConfig` is wrong (check `LastStatus` in the demo). |
+| Events never show up, SDK says "offline" | Device has no connectivity, or the endpoint URL in the SDK config is wrong (check `AVNGameAnalytics.LastStatus`). |
 | `country` is always `null` | Not behind Cloudflare, or a proxy drops the `CF-IPCountry` header. |
 
 ## Running without Docker

@@ -20,7 +20,7 @@ full picture; `DEPLOYMENT.md` for self-hosting.
 - `avn_analytics/nutbot.py` — NutBot assistant (shells out to agent CLIs)
 - `avn_analytics/skill/` — the analysis skill shipped inside exports
 - `avn_analytics/avn_events_standard.py` + `avn_analytics/avn_events_standard/` — the AVN events standard (spec, guide, setup prompt) served by the website
-- `unity/AVNAnalytics/` — Unity SDK (C#)
+- `avn_analytics/sdk/` — the built Unity SDK package (`AVNAnalytics.unitypackage`, made in Unity; the C# source is not kept in this repo)
 - `tests/` — pytest suite
 
 ## Commands
