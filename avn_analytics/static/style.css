@@ -1392,6 +1392,11 @@ progress.mapping-meter::-moz-progress-bar{background:var(--accent-orange)}
 .unlisted-events{border-color:var(--accent-orange)}
 .unlisted-events .custom-list:first-of-type{margin-top:12px}
 .custom-list .button{margin:0}
+.version-filter{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 20px;margin:16px 0}
+.version-filter .inline-field select{min-width:min(100%,320px)}
+.version-filter .check-row{margin:0;min-height:44px;font-family:var(--font-ui);font-size:var(--fs-body)}
+.older-note{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:12px 0 0}
+.older-note .button{margin:0}
 .sdk-actions{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0 0}
 
 /* ─── Audit pass: touch, wrapping, safe areas, timeline polish ─── */

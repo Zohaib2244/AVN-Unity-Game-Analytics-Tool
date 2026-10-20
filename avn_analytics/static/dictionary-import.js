@@ -314,13 +314,18 @@ function mountStandardInstall(root, game) {
   const saved = storeGet(storeKey);
   let tiers = Array.isArray(saved) ? STANDARD_TIERS.map(([key]) => key).filter(key => key === 'core' || saved.includes(key)) : ['core', 'standard'];
   let summary = null; let loading = 0; let custom = []; let gameStatus = null;
-  // Custom events are part of the standard, so they are always in the downloads.
-  const query = () => new URLSearchParams([...tiers, ...(custom.length ? ['custom'] : [])].map(tier => ['tiers', tier])).toString();
+  // The app versions the counts below are for. By default the newest one that has players, and later ones.
+  const choiceKey = `avn-standard-version-${game.id}`;
+  let choice = storeGet(choiceKey) || {version: '@latest', newer: true};
+  // Custom events are part of the standard, so they are always in the downloads. Promoted ones are core.
+  const query = () => new URLSearchParams([...tiers, ...(custom.some(item => item.tier !== 'core') ? ['custom'] : [])].map(tier => ['tiers', tier])).toString();
+  const statusUrl = () => `/v1/games/${encodeURIComponent(game.id)}/standard${choice.version ? `?${new URLSearchParams({version: choice.version, newer: choice.newer})}` : ''}`;
 
   const draw = () => {
     root.innerHTML = `<div class="import-choices standard-tiers" role="group" aria-label="Which events">
         ${STANDARD_TIERS.map(([key, title, text]) => `<label class="import-choice"><input type="checkbox" name="tier" value="${key}" ${tiers.includes(key) ? 'checked' : ''} ${key === 'core' ? 'checked disabled' : ''}><span><strong>${title}</strong><small>${text}</small></span></label>`).join('')}
       </div>
+      <div id="version-filter" class="version-filter" hidden></div>
       <div id="unlisted-events" class="custom-events unlisted-events" hidden></div>
       <div id="custom-events" class="custom-events"></div>
       <div class="error" role="alert"></div>
@@ -352,15 +357,24 @@ function mountStandardInstall(root, game) {
   };
   const drawCustom = () => {
     root.querySelector('#custom-events').innerHTML = customEventsHTML(custom, gameStatus?.sent);
+    const filter = root.querySelector('#version-filter');
+    filter.hidden = !(gameStatus && gameStatus.versions.length > 1);
+    if (!filter.hidden) filter.innerHTML = versionFilterHTML(gameStatus.versions, choice);
     const unlisted = root.querySelector('#unlisted-events');
-    unlisted.hidden = !(gameStatus && (gameStatus.unlisted.length || gameStatus.ignored.length));
+    unlisted.hidden = !(gameStatus && (gameStatus.unlisted.length || gameStatus.ignored.length || gameStatus.older_only.length));
     if (!unlisted.hidden) unlisted.innerHTML = unlistedEventsHTML(gameStatus);
   };
   const refresh = async () => {
     try { custom = await request('/v1/events-standard/custom'); } catch { /* the list stays as it was */ }
-    try { gameStatus = await request(`/v1/games/${encodeURIComponent(game.id)}/standard`); } catch { /* no status shown */ }
+    try { gameStatus = await request(statusUrl()); }
+    catch {
+      // A remembered version the game no longer has: fall back to the newest one.
+      choice = {version: '@latest', newer: true};
+      try { gameStatus = await request(statusUrl()); } catch { /* no status shown */ }
+    }
     drawCustom(); load();
   };
+  const choose = next => { choice = next; storeSet(choiceKey, choice); refresh(); };
   const load = async () => {
     const current = ++loading; const box = root.querySelector('#standard-summary');
     try {
@@ -373,5 +387,6 @@ function mountStandardInstall(root, game) {
   };
 
   draw(); bindCustomEvents(root.querySelector('#custom-events'), () => custom, refresh);
-  bindUnlistedEvents(root.querySelector('#unlisted-events'), () => gameStatus, game, refresh); refresh();
+  bindVersionFilter(root.querySelector('#version-filter'), () => gameStatus, () => choice, choose);
+  bindUnlistedEvents(root.querySelector('#unlisted-events'), () => gameStatus, game, refresh, () => choice); refresh();
 }

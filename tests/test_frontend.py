@@ -258,3 +258,71 @@ def test_accessibility_markup_and_text_safe_colour_tokens():
     # A funnel gap shows the lost share in the warning colour, plus a text flag for the worst step.
     assert 'class="lost">' in scripts["insights.js"] and "Biggest drop" in scripts["insights.js"]
     assert "font-size:.78rem" not in css  # text sizes come from the --fs-* scale
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_version_filter_follows_the_newest_build_and_flags_older_events():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/custom-events.js").read_text()
+    filtering = script[
+        script.index("// Which app versions the event counts are for.") : script.index(
+            "function bindUnlistedEvents("
+        )
+    ]
+    checks = """
+import assert from 'node:assert/strict';
+const escapeHTML = value => String(value);
+const number = value => String(value);
+const agoText = () => 'now';
+const icon = () => '';
+const me = {can_manage_team: true};
+const versions = [
+  {version: '1.2', players: 0, last_seen: ''},
+  {version: '1.1', players: 4, last_seen: ''},
+  {version: '1.0', players: 9, last_seen: ''},
+];
+// The newest version with players is the default; a build nobody plays does not count.
+let html = versionFilterHTML(versions, {version: '@latest', newer: true});
+assert.match(html, /value="1\\.1" selected/);
+assert.match(html, /id="version-filter-newer" checked >/);
+html = versionFilterHTML(versions, {version: '', newer: true});
+assert.match(html, /<option value="" >|<option value="">All versions/);
+assert.match(html, /disabled>/);  // "and newer" means nothing for all versions
+
+let chosen = null;
+let handler = null;
+const box = {
+  addEventListener: (type, callback) => { handler = callback; },
+  querySelector: () => ({checked: true}),
+};
+bindVersionFilter(
+  box, () => ({versions}), () => ({version: '1.0', newer: true}), value => { chosen = value; });
+handler({target: {id: 'version-filter-select', value: '1.1'}});
+assert.deepEqual(chosen, {version: '@latest', newer: true});  // follows new builds
+handler({target: {id: 'version-filter-select', value: '1.0'}});
+assert.deepEqual(chosen, {version: '1.0', newer: true});
+handler({target: {id: 'version-filter-select', value: ''}});
+assert.deepEqual(chosen, {version: '', newer: true});
+handler({target: {id: 'version-filter-newer'}});
+assert.deepEqual(chosen, {version: '1.0', newer: true});
+
+const item = (name, versions) => (
+  {name, events: 1, players: 1, last_seen: '', valid_name: true, versions});
+let list = unlistedEventsHTML({
+  unlisted: [item('SHOP', ['1.1', '1.0', '0.9', '0.8'])], total_unlisted: 7, ignored: [],
+  older_only: [{name: 'OLD', events: 3}, {name: 'OLDER', events: 2}],
+});
+assert.match(list, /1\\.1, 1\\.0, 0\\.9 \\+1/);  // the first three versions, then a count
+assert.match(list, /showing 1/);
+assert.match(list, /2 more events are only sent by older versions/);
+assert.match(list, /data-unlisted-older/);
+list = unlistedEventsHTML({unlisted: [], total_unlisted: 0, ignored: [], older_only: []});
+assert.doesNotMatch(list, /data-unlisted-older/);
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=filtering + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr

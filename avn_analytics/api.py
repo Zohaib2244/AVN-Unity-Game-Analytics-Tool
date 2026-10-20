@@ -26,6 +26,8 @@ from pydantic import Field
 from starlette.background import BackgroundTask
 
 from . import (
+    avn_events_standard,
+    avn_events_standard_status,
     custom_events,
     device_specs,
     dictionary_import,
@@ -33,8 +35,6 @@ from . import (
     insights,
     journeys,
     sdk_package,
-    standard,
-    standard_status,
 )
 from .auth import AccessVerifier, Accounts, Principal
 from .config import Settings
@@ -45,6 +45,7 @@ from .models import (
     AnalyticsThresholds,
     Batch,
     CustomEvent,
+    CustomEventTier,
     EnvironmentFix,
     EventActivityQuery,
     EventDefinition,
@@ -53,6 +54,7 @@ from .models import (
     FunnelQuery,
     GameCreate,
     GameUpdate,
+    IgnoreOlder,
     ImportPrepare,
     ImportRequest,
     JourneyPlayersQuery,
@@ -525,8 +527,8 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     Tiers = Annotated[list[Literal["core", "standard", "extended", "custom"]], Query(max_length=4)]
 
     @admin_api.get("/v1/events-standard")
-    def events_standard(tiers: Tiers = ["core", "standard"]):  # noqa: B006
-        return standard.summary(tiers, custom_events.load(storage))
+    def avn_events_standard_summary(tiers: Tiers = ["core", "standard"]):  # noqa: B006
+        return avn_events_standard.summary(tiers, custom_events.load(storage))
 
     @admin_api.get("/v1/events-standard/custom")
     def custom_events_list():
@@ -537,11 +539,20 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     @admin_api.put("/v1/events-standard/custom/{name}")
     def custom_event_save(name: CustomName, body: CustomEvent, principal: TeamAdmin):
         try:
-            custom_events.save(storage, name, body.model_dump(), standard.spec()["events"].keys())
+            custom_events.save(
+                storage, name, body.model_dump(), avn_events_standard.spec()["events"].keys()
+            )
         except custom_events.CustomEventError as error:
             raise HTTPException(422, str(error)) from error
         accounts.audit(principal, "standard.custom_event_save", name)
         return {"name": name, **body.model_dump()}
+
+    @admin_api.put("/v1/events-standard/custom/{name}/tier")
+    def custom_event_tier(name: CustomName, body: CustomEventTier, principal: TeamAdmin):
+        if not custom_events.set_tier(storage, name, body.tier):
+            raise HTTPException(404, "No such custom event")
+        accounts.audit(principal, "standard.custom_event_tier", name, body.tier)
+        return {"name": name, "tier": body.tier}
 
     @admin_api.delete("/v1/events-standard/custom/{name}")
     def custom_event_delete(name: CustomName, principal: TeamAdmin):
@@ -564,24 +575,40 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         )
 
     @admin_api.get("/v1/games/{game_id}/standard")
-    def game_standard(game_id: UUID):
-        return standard_status.status(storage, str(game_id), custom_events.load(storage))
+    def game_standard(game_id: UUID, version: str = "", newer: bool = False):
+        try:
+            return avn_events_standard_status.status(
+                storage, str(game_id), custom_events.load(storage), version, newer
+            )
+        except LookupError as error:
+            raise HTTPException(404, str(error)) from error
+
+    @admin_api.post("/v1/games/{game_id}/standard/ignore-older")
+    def standard_ignore_older(game_id: UUID, body: IgnoreOlder, principal: Current):
+        try:
+            count = avn_events_standard_status.ignore_older(
+                storage, str(game_id), body.version, body.newer
+            )
+        except LookupError as error:
+            raise HTTPException(404, str(error)) from error
+        accounts.audit(principal, "standard.ignore_older", str(game_id), f"{count} events")
+        return {"ignored": count}
 
     @admin_api.put("/v1/games/{game_id}/standard/ignored/{name}", status_code=204)
     def standard_ignore(game_id: UUID, name: Name, principal: Current):
         storage.get_game(str(game_id))
-        standard_status.ignore(storage, str(game_id), name)
+        avn_events_standard_status.ignore(storage, str(game_id), name)
         accounts.audit(principal, "standard.ignore", str(game_id), name)
 
     @admin_api.delete("/v1/games/{game_id}/standard/ignored/{name}", status_code=204)
     def standard_unignore(game_id: UUID, name: Name, principal: Current):
-        standard_status.ignore(storage, str(game_id), name, on=False)
+        avn_events_standard_status.ignore(storage, str(game_id), name, on=False)
         accounts.audit(principal, "standard.unignore", str(game_id), name)
 
     @admin_api.get("/v1/events-standard/download")
-    def events_standard_download(tiers: Tiers = ["core", "standard"]):  # noqa: B006
+    def avn_events_standard_download(tiers: Tiers = ["core", "standard"]):  # noqa: B006
         return Response(
-            standard.bundle(tiers, custom_events.load(storage)),
+            avn_events_standard.bundle(tiers, custom_events.load(storage)),
             media_type="application/zip",
             headers={
                 "Content-Disposition": 'attachment; filename="avn-events-setup.zip"',
