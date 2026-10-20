@@ -1402,6 +1402,16 @@ progress.mapping-meter::-moz-progress-bar{background:var(--accent-orange)}
 :is(.level-explore,.levels-panel) :is(.level-saved-views,.levels-navigation,.level-analysis-controls,.quiet-actions,.flow-saved){align-items:flex-end}
 :is(.level-explore,.levels-panel) :is(.level-saved-views,.levels-navigation,.level-analysis-controls,.quiet-actions,.flow-saved) label{margin-bottom:0}
 :is(.level-explore,.levels-panel) :is(.level-saved-views,.levels-navigation,.level-analysis-controls,.quiet-actions,.flow-saved) :is(.button,select,input:not([type="checkbox"])){height:40px;min-height:40px;padding-top:0;padding-bottom:0}
+/* What is selected: the open Explore tool, the open level row, and the chosen drill tab all read at a
+   glance, the same way the Levels sub-page tabs do (accent fill, never colour alone: the chevron and
+   the pressed text stay too). */
+.level-explore .panel-header .button[aria-expanded="true"],.level-drill .segmented button[aria-pressed="true"],.level-explore .segmented button[aria-pressed="true"]{background:var(--accent-fill);color:var(--badge-text);border-color:var(--accent-orange);box-shadow:none}
+.level-explore .panel-header .button[aria-expanded="true"]:hover{color:var(--badge-text)}
+.level-drill .segmented button[aria-pressed="true"] .drill-count{color:inherit}
+.levels-grid tr:has(.level-toggle[aria-expanded="true"])>td{background:color-mix(in srgb,var(--accent-orange) 7%,var(--bg-card))}
+.levels-grid>tbody>tr:not(.level-detail):has(.level-toggle[aria-expanded="true"])>td:first-child{background:color-mix(in srgb,var(--accent-orange) 7%,var(--bg-card));box-shadow:inset 3px 0 var(--accent-orange)}
+.levels-grid .level-toggle[aria-expanded="true"]{color:var(--accent-orange)}
+.flow-reason[aria-pressed="true"]{border-color:var(--accent-orange);background:color-mix(in srgb,var(--accent-orange) 8%,var(--bg-card))}
 /* First session */
 .flow-toolbar{row-gap:14px}
 .flow-saved{display:flex;flex-wrap:wrap;gap:8px;margin-left:auto}
