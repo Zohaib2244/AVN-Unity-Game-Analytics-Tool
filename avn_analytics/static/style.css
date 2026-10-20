@@ -1184,6 +1184,8 @@ body:has(dialog.player-dialog[open]){overflow:hidden}
 
 :root{--motion-fast:160ms;--motion-normal:240ms;--motion-ease:cubic-bezier(.2,.75,.25,1)}
 .level-explore{margin-bottom:24px}
+.levels-views{margin:0 0 18px}
+.levels-panel .levels-navigation>.quiet-actions{align-self:flex-end;align-items:center}
 .level-saved-views,.levels-navigation,.level-analysis-controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 20px}
 .level-analysis-controls{padding:0;align-items:end}
 .level-analysis-controls>label{min-width:140px}

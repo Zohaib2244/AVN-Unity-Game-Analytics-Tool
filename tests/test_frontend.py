@@ -402,3 +402,15 @@ assert.match(flowPathsHTML([]), /No detours seen/);
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_levels_page_shows_one_sub_page_at_a_time():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/insights.js").read_text()
+    levels = script[script.index("async function renderLevels(") :]
+    assert 'data-levels-view="table">Level by level' in levels
+    assert 'data-levels-view="explore">Explore levels' in levels
+    # The explore tools only query while their sub page is open, and a level link from them
+    # switches back to the table.
+    assert "if (levelsView === 'explore') toolsPanel.update(chosen);" in levels
+    assert "chooseView('table'); jumpTo(event.detail);" in levels
+    assert 'id="levels-csv"' not in levels

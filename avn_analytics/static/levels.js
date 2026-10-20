@@ -2,7 +2,7 @@ function mountLevelTools(container, game, restore) {
   const preferenceKey = `avn-level-tools-${game.id}`;
   const viewKey = `avn-level-views-${game.id}`;
   const activeViewKey = `avn-level-active-view-${game.id}`;
-  const prefs = {compare: false, funnel: false, flow: false, origin: 'level1', lastLevel: 20, finishes: false, ...(storeGet(preferenceKey) || {})};
+  const prefs = {compare: false, funnel: false, flow: true, origin: 'level1', lastLevel: 20, finishes: false, ...(storeGet(preferenceKey) || {})};
   prefs.origin = prefs.origin === 'session' ? 'session' : 'level1';
   prefs.lastLevel = Math.min(1000, Math.max(1, Math.trunc(Number(prefs.lastLevel) || 20)));
   let selected = null; let comparisonTicket = 0; let funnelTicket = 0;
