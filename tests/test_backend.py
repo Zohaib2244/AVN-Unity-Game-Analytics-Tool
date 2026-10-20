@@ -3264,13 +3264,20 @@ def test_first_session_flow_counts_unbroken_runs_and_lists_paths(backend):
     assert [(s["started"], s["completed"]) for s in data["steps"]] == [(4, 3), (1, 1), (1, 1)]
     assert {item["levels"]: item["players"] for item in data["run_lengths"]} == {0: 1, 1: 2, 3: 1}
     reasons = {item["reason"]: item["players"] for item in data["ends"]}
-    assert reasons["SCREEN_ANALYSIS Opened (settings) (after the win)"] == 1
-    assert reasons["Failed the level (in the level)"] == 1
-    assert reasons["Left the app for over 60s (after the win)"] == 1
+    assert reasons["Opened settings"] == 1
+    assert reasons["Failed the level"] == 1
+    assert reasons["Left the app for over 60s"] == 1
     assert data["reached_end"] == 1
     keys = {item["key"] for item in data["paths"]}
-    assert "between|SCREEN_ANALYSIS Opened (settings)" in keys
+    assert "between|Opened settings" in keys
     assert "during|Failed the level" in keys
+    first = data["steps"][0]
+    assert (first["ended"], first["flagged"]) == (3, 0)
+    assert {item["reason"] for item in first["reasons"]} == {
+        "Opened settings",
+        "Failed the level",
+        "Left the app for over 60s",
+    }
 
 
 def test_first_session_flow_allowed_paths_continue_and_flag(backend):
@@ -3279,13 +3286,13 @@ def test_first_session_flow_allowed_paths_continue_and_flag(backend):
         admin,
         game,
         max_away_seconds=600,
-        allow=["between|SCREEN_ANALYSIS Opened (settings)", "during|Failed the level"],
+        allow=["between|Opened settings", "during|Failed the level"],
     )
     assert {item["levels"]: item["players"] for item in data["run_lengths"]} == {1: 2, 2: 1, 3: 1}
     flagged = {
         (item["level"], item["stage"], item["path"]): item["players"] for item in data["flags"]
     }
-    assert flagged[(1, "between", "SCREEN_ANALYSIS Opened (settings)")] == 1
+    assert flagged[(1, "between", "Opened settings")] == 1
     assert flagged[(1, "during", "Failed the level")] == 1
     assert flagged[(1, "between", "Left the app briefly")] == 1
     assert all(item["allowed"] for item in data["paths"] if "settings" in item["path"])
@@ -3332,7 +3339,7 @@ def test_first_session_flow_flags_skipped_levels(backend):
     assert send(ingest, game, records).status_code == 200
     data = _flow(admin, game, last_level=2)
     assert {item["levels"]: item["players"] for item in data["run_lengths"]} == {0: 1, 2: 1}
-    assert data["ends"][0]["reason"] == "Skipped the level (in the level)"
+    assert data["ends"][0]["reason"] == "Skipped the level"
     assert data["paths"][0]["key"] == "during|Skipped the level"
     data = _flow(admin, game, last_level=2, allow=["during|Skipped the level"])
     assert {item["levels"]: item["players"] for item in data["run_lengths"]} == {2: 2}
@@ -3351,12 +3358,16 @@ def test_first_session_players_list_the_rows_of_the_results(backend):
         assert response.status_code == 200, response.text
         return response.json()
 
-    reason = "SCREEN_ANALYSIS Opened (settings) (after the win)"
+    reason = "Opened settings"
     ended = players({"kind": "end", "level": 1, "stage": "between", "reason": reason})
     assert [item["player"] for item in ended["players"]] == ["settings"]
     assert ended["players"][0]["ended"] == reason
     assert [i["player"] for i in players({"kind": "finished"})["players"]] == ["clean"]
     assert players({"kind": "run", "levels": 0})["total"] == 1
+    assert players({"kind": "ended_at", "level": 1})["total"] == 3
+    assert players({"kind": "flagged_at", "level": 1}, allow=["during|Failed the level"])[
+        "players"
+    ][0]["flags"] == [{"level": 1, "stage": "during", "path": "Failed the level"}]
     assert players({"kind": "step", "level": 1, "which": "started"})["total"] == 4
     assert players({"kind": "step", "level": 1, "which": "completed"})["total"] == 3
     path = {"kind": "path", "stage": "during", "path": "Failed the level"}
@@ -3368,3 +3379,18 @@ def test_first_session_players_list_the_rows_of_the_results(backend):
     assert (page["total"], len(page["players"])) == (4, 1)
     bad = {"start": "2026-10-04", "end": "2026-10-04", "target": {"kind": "everyone"}}
     assert admin.post(url, json=bad).status_code == 400
+
+
+def test_first_session_paths_have_readable_names():
+    from avn_analytics.first_session import _token
+
+    assert _token("SCREEN_ANALYSIS", {"STATE": "Opened", "SCREEN": "daily_reward"}) == (
+        "Opened daily reward"
+    )
+    assert _token("AD_ANALYSIS", {"STATE": "Show", "FORMAT": "Interstitial"}) == ("Interstitial ad")
+    assert _token("AD_ANALYSIS", {"STATE": "Failed", "FORMAT": "Rewarded"}) == "Rewarded ad failed"
+    assert _token("LEVEL_ANALYSIS", {"STATE": "Choice", "ACTION": "DoubleReward"}) == (
+        "Chose double reward"
+    )
+    assert _token("LEVEL_ANALYSIS", {"STATE": "Left", "REASON": "Home"}) == "Left the level (home)"
+    assert _token("MY_EVENT", {}) == "MY_EVENT"

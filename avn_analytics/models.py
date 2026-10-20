@@ -447,7 +447,7 @@ class FlowQuery(FlowSettings):
 class FlowTarget(StrictModel):
     """One row of the first-session results: whose players to list."""
 
-    kind: Literal["end", "finished", "flag", "run", "step", "path"]
+    kind: Literal["end", "ended_at", "flagged_at", "finished", "flag", "run", "step", "path"]
     level: Annotated[int, Field(ge=0, le=1000)] = 0
     stage: Literal["during", "between"] = "during"
     reason: Annotated[str, Field(max_length=400)] = ""

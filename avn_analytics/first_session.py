@@ -8,6 +8,7 @@ every other path ends it.
 """
 
 import json
+import re
 from collections import Counter
 
 from fastapi import HTTPException
@@ -29,9 +30,30 @@ def _param(params, key):
     return None if value is None else str(value)
 
 
+def _words(value):
+    """settings_menu -> settings menu, DoubleReward -> double reward."""
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", value).replace("_", " ").lower()
+
+
 def _token(name, params):
-    """One short, stable text for an event that is not part of the level chain."""
+    """A short, readable, stable text for an event that is not part of the level chain."""
     state = _param(params, "STATE")
+    screen, action = _param(params, "SCREEN"), _param(params, "ACTION")
+    ad, reason = _param(params, "FORMAT"), _param(params, "REASON")
+    if name == "SCREEN_ANALYSIS" and screen:
+        if state == "Opened":
+            return f"Opened {_words(screen)}"
+        if state == "Closed":
+            return f"Closed {_words(screen)}"
+        if state == "Interaction":
+            return f"Tapped {_words(action)} on {_words(screen)}" if action else "Tapped a button"
+    if name == "AD_ANALYSIS" and ad:
+        return f"{_words(ad).capitalize()} ad{' failed' if state == 'Failed' else ''}"
+    if name == "LEVEL_ANALYSIS":
+        if state == "Left":
+            return f"Left the level ({_words(reason)})" if reason else "Left the level"
+        if state == "Choice" and action:
+            return f"Chose {_words(action)}"
     detail = "/".join(value for key in DETAIL_KEYS if (value := _param(params, key)))
     text = f"{name} {state}" if state else name
     return f"{text} ({detail})" if detail else text
@@ -102,7 +124,9 @@ def _read(rows, labeler):
         if verb in ("failed", "restart") and number == level and stage == "during":
             tokens.append("failed" if verb == "failed" else "restarted")
             continue
-        tokens.append(_token(row["name"], params))
+        token = _token(row["name"], params)
+        if not tokens or tokens[-1] != token:  # an ad's show and close read as one step
+            tokens.append(token)
     return segments, {
         "kind": "end",
         "stage": stage,
@@ -125,17 +149,13 @@ def signature(tokens):
     return " → ".join(_pretty(token) for token in tokens)
 
 
-def _stage_text(stage):
-    return "in the level" if stage == "during" else "after the win"
-
-
 def _judge(stage, tokens, away, config):
     """None when the stretch keeps the run going, else why it ended."""
     if away is not None and away > config["max_away_seconds"]:
-        return f"Left the app for over {config['max_away_seconds']:g}s ({_stage_text(stage)})"
+        return f"Left the app for over {config['max_away_seconds']:g}s"
     text = signature(tokens)
     if text and path_key(stage, text) not in config["allow"]:
-        return f"{text} ({_stage_text(stage)})"
+        return text
     return None
 
 
@@ -177,18 +197,7 @@ def _walk(segments, ending, config):
         reason = _judge(stage, [], away, config)
     else:
         last_event = _pretty(tokens[-1]) if tokens else None
-        if stage == "during":
-            reason = (
-                f"Stopped in the level, last event: {last_event}"
-                if last_event
-                else "Stopped right after starting the level"
-            )
-        else:
-            reason = (
-                f"Stopped after the win, last event: {last_event}"
-                if last_event
-                else "Stopped right after the win"
-            )
+        reason = f"Session ended after: {last_event}" if last_event else "Session ended"
     return started, completed, flags, (level, stage, reason)
 
 
@@ -288,12 +297,22 @@ def first_session_flow(storage, game_id, start, end, filters, config):
         if record["end"]:
             ends[record["end"]] += 1
     reached = max([level for level in started if started[level]] or [first_level])
+    ended_at, flagged_at = Counter(), Counter()
+    reasons = {}
+    for (level, stage, reason), count in ends.items():
+        ended_at[level] += count
+        reasons.setdefault(level, []).append({"stage": stage, "reason": reason, "players": count})
+    for record in records:
+        flagged_at.update({level for level, _, _ in record["flags"]})
     steps = [
         {
             "level": level,
             "started": started[level],
             "completed": completed[level],
             "percent": round(100 * completed[level] / players, 1) if players else None,
+            "ended": ended_at[level],
+            "flagged": flagged_at[level],
+            "reasons": sorted(reasons.get(level, []), key=lambda item: -item["players"]),
         }
         for level in range(first_level, reached + 1)
     ]
@@ -340,6 +359,10 @@ def _member(record, target):
     kind = target["kind"]
     if kind == "end":
         return record["end"] == (target["level"], target["stage"], target["reason"])
+    if kind == "ended_at":
+        return bool(record["end"]) and record["end"][0] == target["level"]
+    if kind == "flagged_at":
+        return any(level == target["level"] for level, _, _ in record["flags"])
     if kind == "finished":
         return record["end"] is None
     if kind == "flag":
@@ -369,6 +392,11 @@ def first_session_players(storage, game_id, start, end, filters, config, target,
                 "levels_in_a_row": record["run"],
                 "ended": record["end"][2] if record["end"] else "Played through the last level",
                 "ended_at_level": record["end"][0] if record["end"] else None,
+                "ended_stage": record["end"][1] if record["end"] else None,
+                "flags": [
+                    {"level": level, "stage": stage, "path": text}
+                    for level, stage, text in sorted(record["flags"])
+                ],
             }
             for record in members[offset : offset + limit]
         ],
