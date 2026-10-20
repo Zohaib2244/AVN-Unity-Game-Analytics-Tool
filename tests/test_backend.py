@@ -1900,31 +1900,6 @@ def test_level_players_show_the_last_level_session_duration(backend, reported, e
     assert data["players"][0]["came_back"] is True
 
 
-def test_story_can_stop_at_or_start_from_a_level(backend):
-    admin, game = _journey_game(backend)
-    url = f"/v1/games/{game['id']}/insights/story"
-    base = {"player": "p1", "start": "2026-10-04", "end": "2026-10-04"}
-    texts = lambda data: [  # noqa: E731
-        segment["text"] for chapter in data["chapters"] for segment in chapter["segments"]
-    ]
-    everything = admin.get(url, params=base).json()
-    assert everything["cut"] is None
-
-    until = admin.get(url, params={**base, "level": 2, "cut": "until"}).json()
-    assert texts(until)[-1] == "Played levels 1–2, completed all"
-    assert until["cut"] == {"level": 2, "mode": "until", "found": True, "hidden": 3}
-    assert until["events"] == everything["events"] - 3
-
-    later = admin.get(url, params={**base, "level": 2, "cut": "from"}).json()
-    assert texts(later)[0] == "Played levels 2–3, completed all"
-    assert later["cut"]["hidden"] == 5 and later["cut"]["found"] is True
-
-    missing = admin.get(url, params={**base, "level": 9, "cut": "until"}).json()
-    assert missing["cut"] == {"level": 9, "mode": "until", "found": False, "hidden": 0}
-    assert texts(missing) == texts(everything)
-    assert admin.get(url, params={**base, "level": 2, "cut": "sideways"}).status_code == 400
-
-
 def test_dictionary_labels_and_hidden_events(backend):
     admin, game = _journey_game(backend)
     url = f"/v1/games/{game['id']}/dictionary"

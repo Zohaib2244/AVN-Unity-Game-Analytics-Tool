@@ -128,12 +128,17 @@ def test_raw_timeline_navigation_visibility_and_session_gaps():
     raw_events = script[
         script.index("async function renderRawEvents(") : script.index("/* ─── Levels:")
     ]
-    checks = """
+    formatting = script[script.index("const chipValue") : script.index("const paramChips")]
+    checks = (
+        formatting
+        + """
 import assert from 'node:assert/strict';
 const escapeHTML = value => String(value ?? '');
 const icon = () => '';
 const skeleton = () => '';
 const number = String;
+const setWidths = () => {};
+const percent = value => `${value}%`;
 const analysisDate = value => value;
 const clock = value => value;
 const duration = seconds => `${seconds}s`;
@@ -141,6 +146,8 @@ const gameURL = game => `/v1/games/${game.id}`;
 const storeGet = () => null;
 const storeSet = () => {};
 const mountDisclosures = () => ({remember() {}, refresh() {}});
+const HIGHLIGHT_PRESETS = [];
+const toast = () => {};
 const nodes = new Map();
 function node(key) {
   if (!nodes.has(key)) nodes.set(key, {
@@ -163,16 +170,27 @@ const root = node('root');
 root.querySelector = node;
 root.querySelectorAll = () => [];
 const container = {querySelector: () => root};
-globalThis.document = {activeElement:null};
+globalThis.document = {activeElement:null, addEventListener() {}, removeEventListener() {},
+  querySelector() {return null;}};
 const rows = [
   {name:'AD_ANALYSIS',session_id:'one',client_ts:'2026-10-04T09:00:00Z',params:{}},
   {name:'AD_ANALYSIS',session_id:'one',client_ts:'2026-10-04T09:01:00Z',params:{}},
-  {name:'OTHER_EVENT',session_id:'two',client_ts:'2026-10-04T09:11:00Z',params:{}},
+  {name:'OTHER_EVENT',session_id:'two',client_ts:'2026-10-04T09:11:00Z',params:{seq:1,LEVEL_NUMBER:2,SECONDS:6.9673786}},
+  {name:'session_start',session_id:'two',client_ts:'2026-10-04T09:11:00Z',
+    params:{session_number:1,device_model:'Pixel',os_version:'Android OS 13 / API-33 (X)'}},
   {name:'LAST_EVENT',session_id:'three',client_ts:'2026-10-04T09:11:00Z',params:{}},
 ];
 const api = async () => ({events:rows,truncated:false,snapshot:rows.length});
 await renderRawEvents({id:'test'},'player',{from:'2026-10-04',to:'2026-10-04'},'utc',container);
 assert.equal(node('.highlight-navigation').hidden, true, 'No highlights means no navigation');
+assert.doesNotMatch(node('#journey').innerHTML, /data-hide-param="seq"/,
+  'noise parameters are hidden by default');
+assert.match(node('#journey').innerHTML, /data-hide-param="LEVEL_NUMBER"/);
+assert.match(node('#journey').innerHTML, /chip-more[^>]*>\+1</,
+  'a hidden parameter is counted');
+assert.match(node('#journey').innerHTML, />6\.97</, 'long decimals are rounded');
+assert.match(node('#journey').innerHTML, /<summary>Session 1 · Pixel · Android OS 13<\/summary>/,
+  'session_start collapses into one line');
 assert.equal((node('#journey').innerHTML.match(/role="separator"/g) || []).length, 2);
 assert.match(node('#journey').innerHTML, /600s after previous session/);
 assert.match(node('#journey').innerHTML, /0s after previous session/);
@@ -207,6 +225,7 @@ click({'[data-highlight-remove]':{},'[data-highlight]':{dataset:{highlight:'0'}}
 assert.equal(node('.highlight-navigation').hidden, true,
   'Removing the last highlight hides navigation');
 """
+    )
     result = subprocess.run(
         [shutil.which("node"), "--input-type=module"],
         input=(assets / "conditions.js").read_text() + raw_events + checks,
