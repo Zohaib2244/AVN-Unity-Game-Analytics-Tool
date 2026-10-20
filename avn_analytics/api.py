@@ -52,6 +52,7 @@ from .models import (
     EventDefinition,
     EventMappings,
     Filters,
+    FlowPlayersQuery,
     FlowQuery,
     FunnelQuery,
     GameCreate,
@@ -776,6 +777,22 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             *day_range(query.start, query.end, query.timezone_offset_minutes),
             query.filters.model_dump(),
             settings,
+        )
+
+    @admin_api.post("/v1/games/{game_id}/insights/levels/first-session/players")
+    def insights_first_session_players(game_id: UUID, query: FlowPlayersQuery):
+        settings = query.model_dump(
+            include={"first_level", "last_level", "max_away_seconds", "allow"}
+        )
+        return first_session.first_session_players(
+            storage,
+            str(game_id),
+            *day_range(query.start, query.end, query.timezone_offset_minutes),
+            query.filters.model_dump(),
+            settings,
+            query.target.model_dump(),
+            query.offset,
+            query.limit,
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/flows")

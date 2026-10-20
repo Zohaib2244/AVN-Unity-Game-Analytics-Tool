@@ -63,6 +63,9 @@ def _read(rows, labeler):
                 stage, level, tokens, away = "during", number, [], None
             elif stage == "during" and number == level:
                 continue  # starting the same level again is a retry; the fail/restart is the token
+            elif stage == "during" and number == level + 1 and "skipped" in tokens:
+                segments.append((stage, level, tuple(tokens), away))
+                stage, level, tokens, away = "during", number, [], None
             elif stage == "between" and number == level + 1:
                 segments.append((stage, level, tuple(tokens), away))
                 stage, level, tokens, away = "during", number, [], None
@@ -93,6 +96,9 @@ def _read(rows, labeler):
                 if cause in (None, "Player") and seconds is not None:
                     away = max(away or 0, seconds)
             continue
+        if stage == "during" and _param(params, "STATE") == "Skipped":
+            tokens.append("skipped")
+            continue
         if verb in ("failed", "restart") and number == level and stage == "during":
             tokens.append("failed" if verb == "failed" else "restarted")
             continue
@@ -111,6 +117,7 @@ def _pretty(token):
     return {
         "failed": "Failed the level",
         "restarted": "Restarted the level",
+        "skipped": "Skipped the level",
     }.get(token, token)
 
 
@@ -185,8 +192,8 @@ def _walk(segments, ending, config):
     return started, completed, flags, (level, stage, reason)
 
 
-def first_session_flow(storage, game_id, start, end, filters, config):
-    """Unbroken level runs of new players' first sessions."""
+def _scan(storage, game_id, start, end, filters, config):
+    """Every eligible new player's first session, walked under the allowed paths."""
     storage.get_game(game_id)
     if config["last_level"] < config["first_level"]:
         raise HTTPException(400, "The last level cannot come before the first level.")
@@ -199,16 +206,11 @@ def first_session_flow(storage, game_id, start, end, filters, config):
     }
     scope, scope_args = where("0", "~", wide)
     config = {**config, "allow": set(config.get("allow") or [])}
-    last = config["last_level"]
-    first_level = config["first_level"]
     excluded = Counter()
-    started, completed = Counter(), Counter()
-    run_lengths = Counter()
-    ends, flags, paths = Counter(), Counter(), Counter()
-    players = 0
+    paths = Counter()
+    records = []
 
     def finish(rows):
-        nonlocal players
         if not rows:
             return
         if not rows[0]["selected"]:
@@ -220,26 +222,25 @@ def first_session_flow(storage, game_id, start, end, filters, config):
         if ending["first"] is None:
             excluded["no_level_started"] += 1
             return
-        if ending["first"] != first_level:
+        if ending["first"] != config["first_level"]:
             excluded["started_at_other_level"] += 1
             return
-        players += 1
-        seen = set()
-        for stage, _level, tokens, _ in segments:
-            key = (stage, signature(tokens))
-            if tokens and key not in seen:
-                seen.add(key)
-                paths[key] += 1
+        seen = {(stage, signature(tokens)) for stage, _level, tokens, _ in segments if tokens}
+        paths.update(seen)
         begun, done, noted, end_state = _walk(segments, ending, config)
-        for level in set(begun):
-            started[level] += 1
-        for level in set(done):
-            completed[level] += 1
-        run_lengths[len(done)] += 1
-        for item in set(noted):
-            flags[item] += 1
-        if end_state:
-            ends[end_state] += 1
+        records.append(
+            {
+                "player": rows[0]["player"],
+                "first_seen": rows[0]["client_ts"],
+                "app_version": rows[0]["app_version"],
+                "begun": set(begun),
+                "done": set(done),
+                "run": len(done),
+                "flags": set(noted),
+                "end": end_state,
+                "paths": seen,
+            }
+        )
 
     with storage.connect(storage.game_path(game_id)) as connection:
         cursor = connection.execute(
@@ -269,17 +270,33 @@ def first_session_flow(storage, game_id, start, end, filters, config):
             item["params"] = json.loads(row["params"]) if row["params"] else {}
             rows.append(item)
         finish(rows)
-    steps = []
+    return records, excluded, paths, config
+
+
+def first_session_flow(storage, game_id, start, end, filters, config):
+    """Unbroken level runs of new players' first sessions."""
+    records, excluded, paths, config = _scan(storage, game_id, start, end, filters, config)
+    players = len(records)
+    first_level, last = config["first_level"], config["last_level"]
+    started, completed = Counter(), Counter()
+    run_lengths, ends, flags = Counter(), Counter(), Counter()
+    for record in records:
+        started.update(record["begun"])
+        completed.update(record["done"])
+        run_lengths[record["run"]] += 1
+        flags.update(record["flags"])
+        if record["end"]:
+            ends[record["end"]] += 1
     reached = max([level for level in started if started[level]] or [first_level])
-    for level in range(first_level, reached + 1):
-        steps.append(
-            {
-                "level": level,
-                "started": started[level],
-                "completed": completed[level],
-                "percent": round(100 * completed[level] / players, 1) if players else None,
-            }
-        )
+    steps = [
+        {
+            "level": level,
+            "started": started[level],
+            "completed": completed[level],
+            "percent": round(100 * completed[level] / players, 1) if players else None,
+        }
+        for level in range(first_level, reached + 1)
+    ]
     total_ends = sum(ends.values())
     return {
         "players": players,
@@ -316,4 +333,43 @@ def first_session_flow(storage, game_id, start, end, filters, config):
             for (stage, text), count in sorted(paths.items(), key=lambda item: -item[1])[:MAX_PATHS]
         ],
         "config": {**config, "allow": sorted(config["allow"])},
+    }
+
+
+def _member(record, target):
+    kind = target["kind"]
+    if kind == "end":
+        return record["end"] == (target["level"], target["stage"], target["reason"])
+    if kind == "finished":
+        return record["end"] is None
+    if kind == "flag":
+        return (target["level"], target["stage"], target["path"]) in record["flags"]
+    if kind == "run":
+        return record["run"] == target["levels"]
+    if kind == "step":
+        return target["level"] in record["begun" if target["which"] == "started" else "done"]
+    if kind == "path":
+        return (target["stage"], target["path"]) in record["paths"]
+    return False
+
+
+def first_session_players(storage, game_id, start, end, filters, config, target, offset, limit):
+    """The players behind one row of the first-session results."""
+    records, _, _, _ = _scan(storage, game_id, start, end, filters, config)
+    members = [record for record in records if _member(record, target)]
+    members.sort(key=lambda record: (record["first_seen"], record["player"]), reverse=True)
+    return {
+        "total": len(members),
+        "offset": offset,
+        "players": [
+            {
+                "player": record["player"],
+                "first_seen": record["first_seen"],
+                "app_version": record["app_version"],
+                "levels_in_a_row": record["run"],
+                "ended": record["end"][2] if record["end"] else "Played through the last level",
+                "ended_at_level": record["end"][0] if record["end"] else None,
+            }
+            for record in members[offset : offset + limit]
+        ],
     }

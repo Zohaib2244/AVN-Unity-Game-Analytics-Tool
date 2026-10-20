@@ -444,6 +444,24 @@ class FlowQuery(FlowSettings):
     timezone_offset_minutes: Annotated[int, Field(ge=-840, le=840)] = 0
 
 
+class FlowTarget(StrictModel):
+    """One row of the first-session results: whose players to list."""
+
+    kind: Literal["end", "finished", "flag", "run", "step", "path"]
+    level: Annotated[int, Field(ge=0, le=1000)] = 0
+    stage: Literal["during", "between"] = "during"
+    reason: Annotated[str, Field(max_length=400)] = ""
+    path: Annotated[str, Field(max_length=400)] = ""
+    levels: Annotated[int, Field(ge=0, le=1000)] = 0
+    which: Literal["started", "completed"] = "started"
+
+
+class FlowPlayersQuery(FlowQuery):
+    target: FlowTarget
+    offset: Annotated[int, Field(ge=0, le=1_000_000)] = 0
+    limit: Annotated[int, Field(ge=1, le=200)] = 50
+
+
 class SavedFlow(FlowSettings):
     name: Annotated[str, Field(min_length=1, max_length=80)]
 

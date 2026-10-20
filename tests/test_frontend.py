@@ -337,6 +337,7 @@ import assert from 'node:assert/strict';
 const escapeHTML = value => String(value).replace(/</g, '&lt;');
 const number = value => String(value);
 const percent = value => `${value}%`;
+const shortId = id => id;
 const data = {
   players: 4, minimum_players: 30, reached_end: 1, excluded: {started_at_other_level: 2},
   steps: [{level: 1, started: 4, completed: 3, percent: 75}],
@@ -359,6 +360,21 @@ const paths = flowPathsHTML([
 assert.match(paths, /data-flow-path="between\\|Shop" checked>/);
 assert.match(paths, /data-flow-path="during\\|Failed the level" >/);
 assert.match(flowPathsHTML([]), /No detours seen/);
+// Every count opens the players behind it, with the row it came from.
+assert.match(html, /data-flow-list="[^"]*"kind":"step"/);
+assert.match(html, /"kind":"end","level":1,"stage":"between"/);
+assert.match(html, /"kind":"finished"/);
+assert.match(paths, /"kind":"path"/);
+assert.match(flowTargetTitle({kind: 'run', levels: 1}), /^1 level in a row$/);
+assert.match(flowTargetTitle({kind: 'end', level: 2, reason: 'Quit'}), /level 2: Quit/);
+const list = {total: 3, players: [{player: 'p<1>', levels_in_a_row: 2, ended: 'Quit',
+  app_version: null, first_seen: '2026-10-04T10:00:00Z'}]};
+html = flowPlayersHTML(list, 'Title', true);
+assert.match(html, /3 players/);
+assert.match(html, /data-flow-player="0">p&lt;1>/);
+assert.match(html, /unknown/);
+assert.match(html, /data-flow-more/);
+assert.doesNotMatch(flowPlayersHTML(list, 'Title', false), /data-flow-more/);
 """
     result = subprocess.run(
         [shutil.which("node"), "--input-type=module"],

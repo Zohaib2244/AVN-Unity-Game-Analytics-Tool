@@ -3311,3 +3311,60 @@ def test_first_session_flow_validation_and_saved_flows(backend):
     assert admin.delete(f"{flows}/{flow_id}").status_code == 204
     assert admin.delete(f"{flows}/{flow_id}").status_code == 404
     assert admin.get(flows).json() == []
+
+
+def test_first_session_flow_flags_skipped_levels(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = _flow_events(
+        "skipper",
+        [_level("Started", 1), _level("Skipped", 1), _level("Started", 2), _level("Completed", 2)],
+    )
+    records += _flow_events(
+        "winner",
+        [
+            _level("Started", 1),
+            _level("Completed", 1),
+            _level("Started", 2),
+            _level("Completed", 2),
+        ],
+    )
+    assert send(ingest, game, records).status_code == 200
+    data = _flow(admin, game, last_level=2)
+    assert {item["levels"]: item["players"] for item in data["run_lengths"]} == {0: 1, 2: 1}
+    assert data["ends"][0]["reason"] == "Skipped the level (in the level)"
+    assert data["paths"][0]["key"] == "during|Skipped the level"
+    data = _flow(admin, game, last_level=2, allow=["during|Skipped the level"])
+    assert {item["levels"]: item["players"] for item in data["run_lengths"]} == {2: 2}
+    assert [(f["level"], f["stage"], f["path"]) for f in data["flags"]] == [
+        (1, "during", "Skipped the level")
+    ]
+
+
+def test_first_session_players_list_the_rows_of_the_results(backend):
+    admin, game = _flow_fixture(backend)
+    url = f"/v1/games/{game['id']}/insights/levels/first-session/players"
+
+    def players(target, **extra):
+        body = {"start": "2026-10-04", "end": "2026-10-04", "last_level": 3, "target": target}
+        response = admin.post(url, json={**body, **extra})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    reason = "SCREEN_ANALYSIS Opened (settings) (after the win)"
+    ended = players({"kind": "end", "level": 1, "stage": "between", "reason": reason})
+    assert [item["player"] for item in ended["players"]] == ["settings"]
+    assert ended["players"][0]["ended"] == reason
+    assert [i["player"] for i in players({"kind": "finished"})["players"]] == ["clean"]
+    assert players({"kind": "run", "levels": 0})["total"] == 1
+    assert players({"kind": "step", "level": 1, "which": "started"})["total"] == 4
+    assert players({"kind": "step", "level": 1, "which": "completed"})["total"] == 3
+    path = {"kind": "path", "stage": "during", "path": "Failed the level"}
+    assert [i["player"] for i in players(path)["players"]] == ["retry"]
+    flag = {"kind": "flag", "level": 1, "stage": "during", "path": "Failed the level"}
+    assert players(flag)["total"] == 0
+    assert players(flag, allow=["during|Failed the level"])["total"] == 1
+    page = players({"kind": "step", "level": 1, "which": "started"}, limit=2, offset=3)
+    assert (page["total"], len(page["players"])) == (4, 1)
+    bad = {"start": "2026-10-04", "end": "2026-10-04", "target": {"kind": "everyone"}}
+    assert admin.post(url, json=bad).status_code == 400
