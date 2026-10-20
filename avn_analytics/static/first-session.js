@@ -62,8 +62,8 @@ function mountFirstSession(container, game) {
   container.innerHTML = `<form id="flow-form" class="level-analysis-controls flow-toolbar"><label>First level<input id="flow-first" type="number" inputmode="numeric" min="0" max="1000" required></label><label>Through level<input id="flow-last" type="number" inputmode="numeric" min="1" max="1000" required></label><label>Break after away (seconds)<input id="flow-away" type="number" inputmode="numeric" min="0" max="86400" required></label><button class="button" type="submit">Update</button>
       <div class="flow-saved"><label class="inline-field">Saved flow<select id="flow-saved"><option value="">None</option></select></label><button type="button" class="button" id="flow-save">Save</button><button type="button" class="button" id="flow-save-as">Save as…</button><button type="button" class="button" id="flow-delete" disabled>Delete</button></div></form>
     <p class="help">New players only (first event in these dates), first session only. A run is a level start, its win and the next start with nothing in between.</p>
+    <details class="flow-settings" id="flow-conditions"><summary>${icon('settings', 16)}<span class="flow-settings-title">Run conditions</span><span class="small muted" id="flow-allowed"></span><span class="flow-settings-toggle">${icon('chevron', 14)}</span></summary><p class="help">Everything new players did inside a level or between a win and the next start, like opening settings, an ad, a fail and retry or a skip. Tick one to keep the run going when a player does it (it then counts as a detour); anything unticked ends the run.</p><div id="flow-paths"></div></details>
     <div id="flow-summary"></div>
-    <details class="flow-settings"><summary>What keeps a run going <span class="small muted" id="flow-allowed"></span></summary><p class="help">Everything new players did inside a level or between a win and the next start. Ticked ones keep the run going and count as a detour; the rest end it.</p><div id="flow-paths"></div></details>
     <div id="flow-table" aria-live="polite"></div>`;
   const summaryBox = container.querySelector('#flow-summary');
   const tableBox = container.querySelector('#flow-table');
@@ -77,7 +77,9 @@ function mountFirstSession(container, game) {
     container.querySelector('#flow-first').value = settings.first_level;
     container.querySelector('#flow-last').value = settings.last_level;
     container.querySelector('#flow-away').value = settings.max_away_seconds;
-    container.querySelector('#flow-allowed').textContent = settings.allow.length ? `· ${number(settings.allow.length)} allowed` : '· nothing allowed';
+    const found = data ? data.paths.length : null;
+    const allowed = data ? data.paths.filter(item => item.allowed).length : settings.allow.length;
+    container.querySelector('#flow-allowed').textContent = found == null ? '' : found ? `Choose what doesn’t break a run · ${number(allowed)} of ${number(found)} allowed` : 'No detours seen yet';
   };
   const drawSaved = () => {
     savedSelect.innerHTML = '<option value="">None</option>' + saved.map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name)}</option>`).join('');
@@ -120,6 +122,7 @@ function mountFirstSession(container, game) {
   const draw = () => {
     summaryBox.innerHTML = data.players ? flowSummaryHTML(data) : '';
     pathsBox.innerHTML = flowPathsHTML(data.paths);
+    fill();
     tableBox.innerHTML = flowTableHTML(data, open);
     setWidths(tableBox);
   };
@@ -218,6 +221,11 @@ function mountFirstSession(container, game) {
     await api(`${gameURL(game)}/insights/flows/${current.id}`, {method: 'DELETE'});
     current = {id: '', name: ''}; await loadSaved(); toast('Flow deleted.');
   }));
+  // Open the first time so the conditions are easy to find; then remember the choice.
+  const conditions = container.querySelector('#flow-conditions');
+  const conditionsKey = `avn-first-session-conditions-${game.id}`;
+  conditions.open = storeGet(conditionsKey) !== 'closed';
+  conditions.addEventListener('toggle', () => storeSet(conditionsKey, conditions.open ? 'open' : 'closed'));
   fill(); loadSaved();
   return {update(state) { selected = structuredClone(state); load(); }, show() { load(); }};
 }

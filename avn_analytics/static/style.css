@@ -1407,8 +1407,14 @@ progress.mapping-meter::-moz-progress-bar{background:var(--accent-orange)}
 .flow-saved{display:flex;flex-wrap:wrap;gap:8px;margin-left:auto}
 .flow-saved select{max-width:220px}
 #flow-summary .stat-strip{margin:18px 2px}
-.flow-settings{margin:0 0 18px;padding:0 16px;border:1px solid var(--line);border-radius:8px}
-.flow-settings>summary{display:flex;align-items:center;gap:8px;min-height:44px;cursor:pointer;color:var(--text-primary);font-weight:500}
+.flow-settings{margin:16px 0 0;padding:0 16px;border:1px solid var(--line-strong);border-left:3px solid var(--accent-orange);border-radius:8px;background:var(--bg-nested)}
+.flow-settings>summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-height:48px;cursor:pointer;color:var(--text-primary);list-style:none}
+.flow-settings>summary::-webkit-details-marker{display:none}
+.flow-settings>summary:focus-visible{outline:2px solid var(--accent-orange);outline-offset:2px;border-radius:6px}
+.flow-settings-title{font-weight:600}
+.flow-settings-toggle{display:inline-grid;margin-left:auto;color:var(--text-muted)}
+.flow-settings-toggle svg{transition:transform .15s;transform:rotate(-90deg)}
+.flow-settings[open] .flow-settings-toggle svg{transform:none}
 .flow-paths{list-style:none;margin:0 0 12px;padding:0}
 .flow-paths li{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;border-top:1px solid var(--line)}
 .flow-paths .check-row{flex:1 1 260px;min-height:44px;margin:0;font-family:var(--font-ui);font-size:var(--fs-body);color:var(--text-primary)}

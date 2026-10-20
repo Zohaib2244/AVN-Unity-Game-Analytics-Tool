@@ -414,3 +414,10 @@ def test_levels_page_shows_one_sub_page_at_a_time():
     assert "if (levelsView === 'explore') toolsPanel.update(chosen);" in levels
     assert "chooseView('table'); jumpTo(event.detail);" in levels
     assert 'id="levels-csv"' not in levels
+
+
+def test_run_conditions_sit_above_the_results_and_start_open():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/first-session.js").read_text()
+    mount = script[script.index("function mountFirstSession(") :]
+    assert mount.index('id="flow-conditions"') < mount.index('id="flow-summary"')
+    assert "conditions.open = storeGet(conditionsKey) !== 'closed';" in mount
