@@ -33,7 +33,7 @@ function openCustomEventEditor(existing, done, prefill = null) {
       <button type="button" class="button" data-add-param="${s}">${icon('plus', 14)} Parameter</button></fieldset>`;
   const render = () => {
     const form = modal.querySelector('#custom-form');
-    form.querySelector('#custom-body').innerHTML = `<div class="custom-top">${field('Event name', `data-f="name" data-id="name" placeholder="SHOP_ANALYSIS" maxlength="40" ${locked ? 'readonly' : ''}`, model.name)}${field('What does it track?', 'data-f="purpose" maxlength="300" placeholder="The player opens the shop"', model.purpose, true)}</div>
+    form.querySelector('#custom-body').innerHTML = `<div class="custom-top">${field('Event name', `data-f="name" data-id="name" placeholder="SHOP" maxlength="40" ${locked ? 'readonly' : ''}`, model.name)}${field('What does it track?', 'data-f="purpose" maxlength="300" placeholder="The player opens the shop"', model.purpose, true)}</div>
       ${model.states.map(stateBox).join('')}<button type="button" class="button" data-add-state>${icon('plus', 14)} State</button>`;
     if (focus) { modal.querySelector(`[data-id="${focus}"]`)?.focus(); focus = null; }
   };
@@ -52,11 +52,6 @@ function openCustomEventEditor(existing, done, prefill = null) {
     else if (f === 'key') input.value = param.key = upperSnake(input.value);
     else if (f === 'required') param.required = input.checked;
     else param[f] = input.value;
-  });
-  form.addEventListener('change', event => {
-    const input = event.target;
-    if (input.dataset.f !== 'name' || !input.value || input.value.endsWith('_ANALYSIS')) return;
-    input.value = model.name = `${input.value.replace(/_+$/, '')}_ANALYSIS`;
   });
   form.addEventListener('click', event => {
     const target = event.target.closest('button'); if (!target) return;
@@ -98,7 +93,7 @@ function bindCustomEvents(box, getList, refresh) {
 // Events the game sends that the standard does not have: add them to the standard, or ignore them.
 function unlistedEventsHTML(status) {
   const canAdd = me.can_manage_team;
-  const row = item => `<li><code>${escapeHTML(item.name)}</code><span class="small muted">${number(item.events)} events · last seen ${escapeHTML(agoText(item.last_seen))}</span>${item.valid_name ? '' : '<span class="pill" title="Event names in the standard are UPPER_SNAKE and end in _ANALYSIS">Name must be UPPER_SNAKE and end in _ANALYSIS</span>'}<span class="custom-actions">${item.valid_name && canAdd ? `<button type="button" class="button" data-unlisted-add="${escapeHTML(item.name)}">${icon('plus', 14)} Add to standard</button>` : ''}<button type="button" class="button" data-unlisted-ignore="${escapeHTML(item.name)}">Ignore</button></span></li>`;
+  const row = item => `<li><code>${escapeHTML(item.name)}</code><span class="small muted">${number(item.events)} events · last seen ${escapeHTML(agoText(item.last_seen))}</span>${item.valid_name ? '' : '<span class="pill" title="Event names in the standard are UPPER_SNAKE">Name not UPPER_SNAKE</span>'}<span class="custom-actions">${item.valid_name && canAdd ? `<button type="button" class="button" data-unlisted-add="${escapeHTML(item.name)}">${icon('plus', 14)} Add to standard</button>` : ''}<button type="button" class="button" data-unlisted-ignore="${escapeHTML(item.name)}">Ignore</button></span></li>`;
   return `${status.unlisted.length ? `<div class="custom-head"><h3>${icon('pulse', 16)} Sent, not in the standard <span class="count">${number(status.unlisted.length)}</span></h3></div><ul class="custom-list">${status.unlisted.map(row).join('')}</ul>` : ''}
     ${status.ignored.length ? `<details class="mapping-how"><summary>Ignored (${number(status.ignored.length)})</summary><ul class="custom-list">${status.ignored.map(item => `<li><code>${escapeHTML(item.name)}</code><span class="small muted">${number(item.events)} events</span><span class="custom-actions"><button type="button" class="button" data-unlisted-restore="${escapeHTML(item.name)}">Restore</button></span></li>`).join('')}</ul></details>` : ''}`;
 }

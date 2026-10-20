@@ -2,7 +2,7 @@
   "standard": "avn-events",
   "version": 4,
   "conventions": {
-    "event_names": "Exactly the names in `events`. UPPER_SNAKE, always ending in _ANALYSIS (LEVEL_ANALYSIS, AD_ANALYSIS, SCREEN_ANALYSIS). A game never invents new event names.",
+    "event_names": "Exactly the names in `events`. UPPER_SNAKE (LEVEL_ANALYSIS, AD_ANALYSIS, SCREEN_ANALYSIS). A game never invents new event names.",
     "parameter_keys": "Exactly the keys listed for the state, UPPER_SNAKE. Pattern keys (BALANCE_<CURRENCY>, POWERUP_<NAME>) are the only generated keys.",
     "state": "Every event has STATE. Never STAGE, STATUS, or a value used as a key.",
     "closed_enums": "Values listed in an `enum` are PascalCase and exactly as written.",
