@@ -177,8 +177,11 @@ function diagram() {
   return `<div class="welcome-art" aria-hidden="true"><svg viewBox="0 0 340 230" fill="none"><circle cx="185" cy="115" r="82" stroke="currentColor"/><circle cx="185" cy="115" r="57" stroke="currentColor" opacity=".6"/><path d="M52 70h48l48 44m-96 59h50l46-48m77-11h68" stroke="var(--accent-cyan)" stroke-width="1.4" stroke-dasharray="4 5"/><rect x="26" y="43" width="59" height="54" rx="13" fill="var(--bg-nested)" stroke="var(--border)"/><rect x="26" y="146" width="59" height="54" rx="13" fill="var(--bg-nested)" stroke="var(--border)"/><rect x="139" y="75" width="87" height="81" rx="20" fill="var(--accent-orange)" stroke="var(--border)"/><rect x="266" y="87" width="49" height="54" rx="12" fill="var(--bg-nested)" stroke="var(--border)"/><path d="M169 99h28v12h-28Zm0 18h28v12h-28Z" stroke="var(--badge-text)" stroke-width="2"/><circle cx="175" cy="105" r="1.5" fill="var(--badge-text)"/><circle cx="175" cy="123" r="1.5" fill="var(--badge-text)"/><path d="M45 65h19l3 14-8-3h-9l-8 3 3-14Zm2 5h7m-3-3v6m9-2h.1M45 167h21v14H45Zm3 17h15m-11-3v3m6-3v3M279 101h15m-15 6h15m-15 6h9m-9 6h12" stroke="var(--accent-orange)" stroke-width="1.5" stroke-linecap="round"/><circle cx="241" cy="65" r="12" fill="var(--bg-nested)" stroke="var(--accent-cyan)"/><path d="m236 65 3 3 6-6" stroke="var(--accent-cyan)" stroke-width="1.5"/><circle cx="116" cy="181" r="4" fill="var(--accent-cyan)"/><circle cx="288" cy="167" r="3" fill="var(--accent-cyan)"/></svg></div>`;
 }
 
-function toast(message, action = null) {
+function toast(message, action = null, kind = 'status') {
   const notice = document.querySelector('#notice');
+  notice.dataset.kind = kind;
+  notice.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  notice.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
   notice.textContent = message;
   if (action) {
     const button = document.createElement('button');
@@ -187,7 +190,25 @@ function toast(message, action = null) {
     notice.append(' ', button);
   }
   clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => { notice.textContent = ''; }, action ? 8000 : 4500);
+  const dismiss = document.createElement('button');
+  dismiss.type = 'button'; dismiss.className = 'button small-button'; dismiss.textContent = 'Dismiss';
+  dismiss.addEventListener('click', () => { notice.textContent = ''; });
+  notice.append(dismiss);
+  if (kind !== 'error') noticeTimer = setTimeout(() => { notice.textContent = ''; }, action ? 8000 : 4500);
+}
+
+function toastError(error) {
+  if (error?.name !== 'AbortError') toast(error.message || 'The action failed. Please try again.', null, 'error');
+}
+
+let pendingRequests = 0; let requestIndicatorTimer;
+function requestActivity(change) {
+  pendingRequests = Math.max(0, pendingRequests + change);
+  const indicator = document.querySelector('#request-activity');
+  if (!indicator) return;
+  if (!pendingRequests) { clearTimeout(requestIndicatorTimer); requestIndicatorTimer = null; indicator.hidden = true; return; }
+  if (requestIndicatorTimer != null) return;
+  requestIndicatorTimer = setTimeout(() => { indicator.hidden = false; }, 250);
 }
 
 // Short-lived cache for read requests, so revisiting a page (or hovering a link first) skips the network.
@@ -199,24 +220,36 @@ const cacheable = path => !path.includes('/health') && !path.includes('/export')
 
 async function request(path, options = {}) {
   const canRetry = (options.method || 'GET').toUpperCase() === 'GET';
-  let response;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      response = await fetch(path, {credentials:'same-origin', ...options,
-        headers: {...(options.body ? {'Content-Type':'application/json'} : {}), ...options.headers}});
-    } catch (error) {
-      if (error.name === 'AbortError') throw error;
-      throw Object.assign(new Error('Couldn’t connect. Check your connection and try again.'), {status: 0});
+  const readOnly = canRetry || (typeof analyticsRead === 'function' && analyticsRead(path, options));
+  const timeoutMessage = readOnly ? 'This request took too long. Try a shorter date range or retry.' : 'The request timed out. Check whether the change was saved before trying again.';
+  const timeout = AbortSignal.timeout(60000);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+  if (typeof requestActivity === 'function') requestActivity(1);
+  try {
+    let response;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        response = await fetch(path, {credentials:'same-origin', ...options, signal,
+          headers: {...(options.body ? {'Content-Type':'application/json'} : {}), ...options.headers}});
+      } catch (error) {
+        if (timeout.aborted) throw Object.assign(new Error(timeoutMessage), {status: 408});
+        if (error.name === 'AbortError') throw error;
+        throw Object.assign(new Error('Couldn’t connect. Check your connection and try again.'), {status: 0});
+      }
+      if (!canRetry || attempt || ![502, 503, 504].includes(response.status)) break;
+      const wait = Math.min(5, Math.max(1, Number(response.headers.get('Retry-After')) || 1));
+      await new Promise(resolve => setTimeout(resolve, wait * 1000));
     }
-    if (!canRetry || attempt || ![502, 503, 504].includes(response.status)) break;
-    const wait = Math.min(5, Math.max(1, Number(response.headers.get('Retry-After')) || 1));
-    await new Promise(resolve => setTimeout(resolve, wait * 1000));
-  }
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw Object.assign(new Error(typeof error.detail === 'string' ? error.detail : 'Please check your details and try again.'), {status: response.status});
-  }
-  return response.status === 204 ? null : response.json();
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      const details = Array.isArray(error.errors) ? error.errors.map(item => `${(item.loc || []).filter(part => part !== 'body').join(' · ')}: ${item.msg}`).join('; ') : '';
+      const messages = {401: 'Your session has expired. Reload the page to sign in again.', 403: 'You don’t have permission for this action. Contact a workspace admin.', 429: 'Too many requests. Wait a moment before trying again.', 500: 'The server couldn’t finish this request. Try again.', 502: 'The server is temporarily unavailable. Try again shortly.', 503: 'The server is temporarily unavailable. Try again shortly.', 504: 'The server took too long. Try fewer days or retry.'};
+      throw Object.assign(new Error(details || messages[response.status] || (typeof error.detail === 'string' ? error.detail : 'Please check your details and try again.')), {status: response.status});
+    }
+    if (response.status === 204) return null;
+    try { return await response.json(); }
+    catch { throw Object.assign(new Error(timeout.aborted ? timeoutMessage : 'The server returned an unreadable response. Reload or try again.'), {status: timeout.aborted ? 408 : response.status}); }
+  } finally { if (typeof requestActivity === 'function') requestActivity(-1); }
 }
 
 function skeleton(kind = 'table', rows = 5, columns = 5) {
@@ -230,25 +263,65 @@ function skeleton(kind = 'table', rows = 5, columns = 5) {
 }
 
 function loadError(error, action = 'data-action="refresh"') {
-  const message = [502, 503, 504].includes(error.status)
-    ? 'Data is temporarily unavailable. Try again in a moment.'
-    : error.message || 'Couldn’t load this data. Please try again.';
-  return `<div class="load-error" role="alert"><div>${icon('pulse', 18)}<p>${escapeHTML(message)}</p></div><button type="button" class="button" ${action}>${icon('refresh', 14)} Try again</button></div>`;
+  if (error.name === 'AbortError') return '';
+  const message = error.message || 'Couldn’t load this data. Please try again.';
+  if (error.status === 401) action = 'data-action="reload-session"';
+  const retry = error.status === 403 ? '' : `<button type="button" class="button" ${action}>${icon('refresh', 14)} ${error.status === 401 ? 'Reload page' : 'Try again'}</button>`;
+  return `<div class="load-error" role="alert"><div>${icon('pulse', 18)}<p>${escapeHTML(message)}</p></div>${retry}</div>`;
 }
 
+// Only these POST endpoints are reads. Saved funnels/flows and other writes invalidate cache.
+function analyticsRead(path, options = {}) {
+  return (options.method || 'GET').toUpperCase() === 'POST' &&
+    /\/insights\/(?:funnel|journeys(?:\/players)?|levels\/first-session(?:\/players)?)$/.test(path.split('?')[0]);
+}
 function api(path, options = {}) {
-  if (path.includes('/insights/')) return options.method && options.method !== 'GET' ? request(path, options) : cachedRequest(path, options); // read-only queries
-  if (options.method && options.method !== 'GET') return request(path, options).finally(() => { cache.clear(); overviewStale = true; });
-  return cacheable(path) ? cachedRequest(path, options) : request(path, options);
+  const method = (options.method || 'GET').toUpperCase();
+  if (method !== 'GET' && !analyticsRead(path, options)) {
+    return request(path, options).finally(() => { cache.clear(); overviewStale = true; });
+  }
+  return cacheable(path) && !options.signal ? cachedRequest(path, options) : request(path, options);
 }
 
-function cachedRequest(path, options) {
-  const hit = cache.get(path);
-  if (hit && Date.now() - hit.time < CACHE_MS) return hit.promise;
-  const promise = request(path, options);
-  cache.set(path, {time: Date.now(), promise});
-  promise.catch(() => { if (cache.get(path)?.promise === promise) cache.delete(path); });
-  return promise;
+function cachedRequest(path, options = {}) {
+  const key = (options.method || 'GET').toUpperCase() === 'GET' ? path : `${path}\n${options.body || ''}`;
+  const hit = cache.get(key);
+  if (hit && (!hit.settled || Date.now() - hit.time < CACHE_MS)) return hit.promise;
+  const entry = {time: Date.now(), settled: false, promise: null};
+  entry.promise = request(path, options);
+  cache.delete(key); cache.set(key, entry);
+  // Bound retained queries, including large player histories, in long-running tabs.
+  while (cache.size > 60) cache.delete(cache.keys().next().value);
+  entry.promise.then(() => { entry.time = Date.now(); entry.settled = true; }, () => {
+    if (cache.get(key) === entry) cache.delete(key);
+  });
+  return entry.promise;
+}
+
+function spinner(label = 'Loading…') {
+  return `<span class="inline-loading" role="status"><span class="loading-spinner" aria-hidden="true"></span>${escapeHTML(label)}</span>`;
+}
+
+// A short wait keeps cache hits from flashing a placeholder. Existing rows remain visibly stale.
+const regionLoads = new WeakMap();
+function beginLoading(element, placeholder) {
+  const previous = regionLoads.get(element); if (previous) previous();
+  element.setAttribute('aria-busy', 'true');
+  let status = null;
+  const timer = setTimeout(() => {
+    if (!element.isConnected) return;
+    if (!element.textContent.trim() || element.querySelector('.loading-placeholder,.load-error')) element.innerHTML = placeholder;
+    else {
+      status = document.createElement('div'); status.className = 'refresh-status';
+      status.innerHTML = spinner('Updating… Showing previous results.'); element.prepend(status);
+    }
+    element.setAttribute('aria-busy', 'true');
+  }, 150);
+  const finish = () => {
+    clearTimeout(timer); status?.remove();
+    if (regionLoads.get(element) === finish) { element.removeAttribute('aria-busy'); regionLoads.delete(element); }
+  };
+  regionLoads.set(element, finish); return finish;
 }
 
 function empty(title, description, action = '', type = 'game') {
@@ -375,7 +448,7 @@ function renderNewGame() {
   iconInput.addEventListener('change', async () => {
     const preview = document.querySelector('#icon-preview');
     try { const url = await new Promise((resolve, reject) => { (async () => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(await iconFromFile(iconInput.files[0])); })().catch(reject); }); preview.classList.add('has-icon'); preview.innerHTML = `<img src="${url}" alt="" width="42" height="42">`; }
-    catch (error) { iconInput.value = ''; preview.classList.remove('has-icon'); preview.textContent = '?'; toast(error.message); }
+    catch (error) { iconInput.value = ''; preview.classList.remove('has-icon'); preview.textContent = '?'; toastError(error); }
   });
   bindForm('#register-form', async (form, values) => {
     delete values.icon; values.workspace_id = currentWorkspace;
@@ -474,10 +547,10 @@ async function renderGameSettings() {
   };
   document.querySelector('#icon-file')?.addEventListener('change', async event => {
     const file = event.target.files[0]; if (!file) return;
-    try { await uploadIcon(game, file); await refreshAfterIcon('Icon updated.'); } catch (error) { toast(error.message); }
+    try { await uploadIcon(game, file); await refreshAfterIcon('Icon updated.'); } catch (error) { toastError(error); }
   });
   document.querySelector('#icon-remove')?.addEventListener('click', async () => {
-    try { await removeIcon(game); await refreshAfterIcon('Icon removed.'); } catch (error) { toast(error.message); }
+    try { await removeIcon(game); await refreshAfterIcon('Icon removed.'); } catch (error) { toastError(error); }
   });
   document.querySelectorAll('[data-copy]').forEach(button => button.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(button.dataset.copy); toast('Copied.'); } catch { toast('Select the text and copy it manually.'); }
@@ -487,7 +560,7 @@ async function renderGameSettings() {
     const action = button.dataset.gameAction;
     if (action === 'edit') return editGame(game, update);
     if (action === 'archive') return confirmDialog('Archive this game?', `${game.name} will stop accepting events. Nothing is deleted, and devices keep their events queued until you restore it.`, 'Archive game', () => update({archived:true}, 'Game archived. Collection is paused.'));
-    if (action === 'unarchive') { try { await update({archived:false}, 'Game restored. Collection has resumed.'); } catch (error) { toast(error.message); } return; }
+    if (action === 'unarchive') { try { await update({archived:false}, 'Game restored. Collection has resumed.'); } catch (error) { toastError(error); } return; }
     if (action === 'delete') return deleteGame(game);
   }));
 }
@@ -521,7 +594,7 @@ function mountEnvironment(box, game, manage) {
   const changed = async message => { cache.clear(); overviewStale = true; await draw(); toast(message); };
   box.addEventListener('click', event => {
     const undo = event.target.closest('[data-undo]');
-    if (undo) { request(`${gameURL(game)}/environment-fixes/${undo.dataset.undo}`, {method: 'DELETE'}).then(() => changed('Back to as reported.')).catch(error => toast(error.message)); return; }
+    if (undo) { request(`${gameURL(game)}/environment-fixes/${undo.dataset.undo}`, {method: 'DELETE'}).then(() => changed('Back to as reported.')).catch(error => toastError(error)); return; }
     const recount = event.target.closest('[data-recount]');
     if (!recount) return;
     const row = data.seen[Number(recount.dataset.recount)];
@@ -640,12 +713,13 @@ function bindForm(selector, submit) {
     event.preventDefault();
     const form = event.currentTarget;
     const button = form.querySelector('[type="submit"]');
+    if (button.disabled) return;
     const original = button.innerHTML;
     form.querySelector('.error').textContent = '';
-    button.disabled = true; button.textContent = 'Working…';
+    button.disabled = true; button.setAttribute('aria-busy', 'true'); button.innerHTML = spinner('Working…');
     try { await submit(form, Object.fromEntries(new FormData(form))); }
-    catch (error) { form.querySelector('.error').textContent = error.message; }
-    finally { if (button.textContent !== 'Game registered') { button.disabled = false; button.innerHTML = original; } }
+    catch (error) { const box = form.querySelector('.error'); box.setAttribute('role', 'alert'); box.textContent = error.message; }
+    finally { button.removeAttribute('aria-busy'); if (button.textContent !== 'Game registered') { button.disabled = false; button.innerHTML = original; } }
   });
 }
 
@@ -668,13 +742,13 @@ document.addEventListener('click', async event => {
     const sidebar = document.querySelector('#sidebar'); const button = event.target.closest('[data-action="nav"]');
     const open = !sidebar.classList.contains('mobile-open'); sidebar.classList.toggle('mobile-open', open); button.setAttribute('aria-expanded', String(open)); button.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
   }
+  if (action === 'reload-session') { location.reload(); return; }
   if (action === 'close') dismissModal();
   if (action === 'refresh') {
     // Fetch everything again and redraw the current page in place, without reloading the site.
     cache.clear(); overviewStale = true;
     document.querySelectorAll('[data-action="refresh"]').forEach(button => button.classList.add('spinning'));
     await go(location.href, false);
-    toast('Updated.');
   }
   if (action === 'copy-key') {
     const value = event.target.closest('[data-action]').dataset.key;
@@ -808,11 +882,8 @@ async function go(url, push) {
   if (modal.open) { modal.close(); modal.innerHTML = ''; }
   const target = new URL(url, location.href).pathname;
   document.querySelectorAll('.nav a').forEach(link => link.classList.toggle('active', link.getAttribute('href') === target));
-  const loading = setTimeout(() => document.documentElement.classList.add('is-loading'), 80);
   if (!overview || overviewStale) await loadOverview().catch(() => {});
-  await prefetch(url);
-  clearTimeout(loading);
-  document.documentElement.classList.remove('is-loading');
+  prefetch(url); // Warm shared requests without delaying the destination shell.
   if (current !== navigation) return;
   if (push) history.pushState({}, '', url);
   return transition(renderRoute);

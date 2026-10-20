@@ -1,10 +1,8 @@
-"""First-session flow: how many levels new players play in one unbroken run.
+"""Observed first-session progression, with optional uninterrupted-run conditions.
 
-Looks only at players whose very first event falls in the chosen dates, and only at their first
-session. A run is Start -> Complete -> Start -> Complete ... of consecutive levels. Whatever
-happens inside a level or between a win and the next start (a screen, an ad, a fail and retry,
-going home) is a "path". Paths the user lists as allowed keep the run going and are flagged;
-every other path ends it.
+The default counts actual starts and wins across the first session, including retries,
+menus, ads and jumps. Strict mode follows consecutive levels until an unapproved path
+or an excessive time away ends the run.
 """
 
 import json
@@ -201,6 +199,39 @@ def _walk(segments, ending, config):
     return started, completed, flags, (level, stage, reason)
 
 
+def _progress(rows, labeler, config):
+    """Observed first-session levels; never infer wins or require consecutive starts."""
+    started, completed, flags = set(), set(), set()
+    level, stage = None, "during"
+    end_level, end_stage = None, "during"
+    for row in rows:
+        info = labeler.level_info(row["name"], row["params"], row["app_version"])
+        verb, number = info if info else (None, None)
+        if verb == "started":
+            level, stage = number, "during"
+            if config["first_level"] <= level <= config["last_level"]:
+                started.add(level)
+                end_level, end_stage = level, stage
+        elif verb == "completed" and number in started:
+            completed.add(number)
+            level, stage = number, "between"
+            end_level, end_stage = level, stage
+        elif level in started and row["name"] not in NOISE | {"APP_ANALYSIS"}:
+            flags.add((level, stage, _token(row["name"], row["params"])))
+    if not started:
+        return [], [], [], None
+    end = (
+        None
+        if config["last_level"] in completed
+        else (
+            end_level,
+            end_stage,
+            "Session ended" if level in started else "Continued outside level range",
+        )
+    )
+    return started, completed, flags, end
+
+
 def _scan(storage, game_id, start, end, filters, config):
     """Every eligible new player's first session, walked under the allowed paths."""
     storage.get_game(game_id)
@@ -231,12 +262,19 @@ def _scan(storage, game_id, start, end, filters, config):
         if ending["first"] is None:
             excluded["no_level_started"] += 1
             return
-        if ending["first"] != config["first_level"]:
+        if config.get("mode", "strict") == "strict" and ending["first"] != config["first_level"]:
             excluded["started_at_other_level"] += 1
             return
         seen = {(stage, signature(tokens)) for stage, _level, tokens, _ in segments if tokens}
         paths.update(seen)
-        begun, done, noted, end_state = _walk(segments, ending, config)
+        begun, done, noted, end_state = (
+            _progress(rows, labeler, config)
+            if config.get("mode") == "all"
+            else _walk(segments, ending, config)
+        )
+        if not begun:
+            excluded["outside_level_range"] += 1
+            return
         records.append(
             {
                 "player": rows[0]["player"],

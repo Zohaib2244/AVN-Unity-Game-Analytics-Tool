@@ -205,9 +205,10 @@ async function renderDictionary() {
   // ---- loading
   const load = async state => {
     chosen = state; const ticket = ++latest;
-    document.querySelector('#events-summary').innerHTML = skeleton('stats');
-    document.querySelector('#dictionary-status').innerHTML = skeleton('stats');
-    document.querySelector('#events-table').innerHTML = skeleton('table', 8, 6);
+    const finishLoading = [
+      ['events-summary', skeleton('stats')], ['dictionary-status', skeleton('stats')],
+      ['events-table', skeleton('table', 8, 6)],
+    ].map(([id, placeholder]) => beginLoading(document.querySelector(`#${id}`), placeholder));
     try {
       const result = await api(`${gameURL(game)}/insights/events?${filterQuery(state)}`);
       if (ticket !== latest || !table.isConnected) return;
@@ -216,6 +217,7 @@ async function renderDictionary() {
       if (requestedEvent && data.events.some(item => item.name === requestedEvent)) open.add(requestedEvent);
       draw(); open.forEach(fetchDetail);
     } catch (error) { if (ticket === latest && table.isConnected) { document.querySelector('#events-summary').innerHTML = ''; document.querySelector('#dictionary-status').innerHTML = ''; document.querySelector('#events-table').innerHTML = loadError(error); } }
+    finally { finishLoading.forEach(finish => finish()); }
   };
   const reload = async message => { cache.clear(); detail.clear(); const result = await api(`${gameURL(game)}/insights/events?${filterQuery(chosen)}`); data = result; draw(); open.forEach(fetchDetail); if (message) toast(message); };
 

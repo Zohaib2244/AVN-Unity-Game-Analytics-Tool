@@ -147,7 +147,7 @@ function bindUnlistedEvents(box, getStatus, game, refresh, getChoice) {
     else if (unlistedIgnore || unlistedRestore) {
       target.disabled = true;
       try { await request(url(unlistedIgnore || unlistedRestore), {method: unlistedIgnore ? 'PUT' : 'DELETE'}); toast(unlistedIgnore ? `${unlistedIgnore} ignored for this game.` : `${unlistedRestore} restored.`); refresh(); }
-      catch (error) { toast(error.message); target.disabled = false; }
+      catch (error) { toastError(error); target.disabled = false; }
     }
   });
 }

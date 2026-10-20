@@ -57,7 +57,7 @@ async function renderTeam() {
     const email = tr.dataset.email; const person = people.find(item => item.email === email);
     tr.querySelector('[data-role]')?.addEventListener('change', async event => {
       try { await patch(email, {workspace_id: here, role: event.target.value}); await reload('Role updated.'); }
-      catch (error) { toast(error.message); await reload(); }
+      catch (error) { toastError(error); await reload(); }
     });
     tr.querySelector('[data-games]')?.addEventListener('click', () => {
       modal.innerHTML = `<form id="games-form"><h2 id="dialog-title">Games for ${escapeHTML(person.name || email)}</h2><p>${escapeHTML(email)} can open only the games ticked here.</p>${gameBoxes(person.game_ids)}<div class="error" role="alert"></div><div class="modal-actions"><button type="button" class="button" data-action="close">Cancel</button><button class="button primary" type="submit">Save</button></div></form>`;
@@ -73,7 +73,7 @@ async function renderTeam() {
   });
   document.querySelectorAll('[data-demote]').forEach(button => button.addEventListener('click', async () => {
     const email = button.closest('tr').dataset.admin;
-    try { await patch(email, {admin: false}); await reload('Admin rights removed. They keep any workspace roles they have.'); } catch (error) { toast(error.message); }
+    try { await patch(email, {admin: false}); await reload('Admin rights removed. They keep any workspace roles they have.'); } catch (error) { toastError(error); }
   }));
 }
 
@@ -96,7 +96,7 @@ async function renderWorkspaces() {
     const item = list.find(entry => entry.id === tr.dataset.id);
     tr.querySelector('[data-nutbot]').addEventListener('change', async event => {
       try { await request(`/v1/workspaces/${item.id}/nutbot`, {method:'PATCH', body: JSON.stringify({access: event.target.value})}); await refreshMe(); toast(`NutBot: ${event.target.selectedOptions[0].textContent.toLowerCase()} in ${item.name}.`); }
-      catch (error) { toast(error.message); await reload(); }
+      catch (error) { toastError(error); await reload(); }
     });
     tr.querySelector('[data-open]').addEventListener('click', () => { chooseWorkspace(item.id); navigate('/'); });
     tr.querySelector('[data-rename]').addEventListener('click', () => {
@@ -135,7 +135,7 @@ async function loadGameAccess(game) {
     box.querySelector('#save-access')?.addEventListener('click', async () => {
       const emails = [...box.querySelectorAll('input:checked')].map(input => input.value);
       try { await request(`${gameURL(game)}/access`, {method:'PUT', body: JSON.stringify({emails})}); cache.clear(); toast('Access updated.'); }
-      catch (error) { toast(error.message); }
+      catch (error) { toastError(error); }
     });
   } catch (error) { box.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
 }

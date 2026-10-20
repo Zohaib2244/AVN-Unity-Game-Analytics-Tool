@@ -288,13 +288,10 @@ async function renderGameOverview() {
   });
   const filters = mountFilters(document.querySelector('#filters'), game, async state => {
     const ticket = ++latest;
-    summary = null;
-    document.querySelector('#totals').innerHTML = skeleton('stats');
-    document.querySelector('#daily').innerHTML = skeleton('chart');
-    document.querySelector('#breakdowns').innerHTML = skeleton('table', 5, 3);
-    document.querySelector('#top-events').innerHTML = skeleton('table', 5, 3);
-    document.querySelector('#anomalies').innerHTML = '';
-    document.querySelector('#active').innerHTML = '';
+    const finishLoading = [
+      ['totals', skeleton('stats')], ['daily', skeleton('chart')],
+      ['breakdowns', skeleton('table', 5, 3)], ['top-events', skeleton('table', 5, 3)],
+    ].map(([id, placeholder]) => beginLoading(document.querySelector(`#${id}`), placeholder));
     try {
       const data = await api(`${gameURL(game)}/insights/summary?${filterQuery(state)}`);
       if (ticket !== latest || !notice.isConnected) return;
@@ -307,8 +304,11 @@ async function renderGameOverview() {
       document.querySelector('#top-events').innerHTML = data.top_events.length ? `<table class="compact-table"><thead><tr><th>Event</th><th class="num">Events</th><th class="num">Players</th></tr></thead><tbody>${data.top_events.slice(0, 10).map(row => `<tr><td class="mono">${escapeHTML(row.name)}</td><td class="num">${number(row.events)}</td><td class="num">${number(row.players)}</td></tr>`).join('')}</tbody></table>` : '<p class="help panel-body">No events.</p>';
     } catch (error) { if (ticket === latest && notice.isConnected) {
       for (const id of ['totals', 'breakdowns', 'top-events']) document.querySelector(`#${id}`).innerHTML = '';
+      summary = null;
+      document.querySelector('#anomalies').innerHTML = '';
+      document.querySelector('#active').innerHTML = '';
       document.querySelector('#daily').innerHTML = loadError(error);
-    } }
+    } } finally { finishLoading.forEach(finish => finish()); }
   });
 }
 
@@ -460,7 +460,7 @@ async function renderFunnels() {
     const body = definition();
     if (body.steps.length < 2) { toast('A funnel needs at least two steps.'); return; }
     try { await request(`${gameURL(game)}/insights/funnels/${current.id}`, {method:'PUT', body: JSON.stringify(body)}); await loadSaved(); toast('Funnel saved.'); }
-    catch (error) { toast(error.message); }
+    catch (error) { toastError(error); }
   });
   document.querySelector('#delete-funnel').addEventListener('click', () => confirmDialog(`Delete “${current.name}”?`, 'Only the saved steps are removed. No event data is affected.', 'Delete funnel', async () => {
     await request(`${gameURL(game)}/insights/funnels/${current.id}`, {method:'DELETE'});
@@ -530,7 +530,7 @@ async function renderFunnels() {
   loadSaved().catch(() => {});
   const filters = mountFilters(document.querySelector('#filters'), game, async state => {
     try { catalog = await api(`${gameURL(game)}/insights/catalog?${filterQuery(state)}`); }
-    catch (error) { toast(error.message); catalog = {events: []}; }
+    catch (error) { toastError(error); catalog = {events: []}; }
     if (!current.steps.length && catalog.events.length) current.steps = [blankStep(catalog.events[0].name), blankStep(catalog.events[0].name)];
     drawSteps();
     journeys.redraw();
@@ -793,7 +793,7 @@ async function renderPlayers() {
     const body = rulesBody();
     lastMetrics = body.metrics;
     drawControls();
-    list.innerHTML = skeleton('table', 8, 7);
+    const finishLoading = beginLoading(list, skeleton('table', 8, 7));
     try {
       const query = `${filterQuery(chosen)}&${new URLSearchParams({search, offset, sort: view.sort, order: view.order, ...(body.conditions.length || body.metrics.length ? {rules: JSON.stringify(body)} : {})})}`;
       const data = await api(`${gameURL(game)}/insights/players?${query}`);
@@ -806,6 +806,7 @@ async function renderPlayers() {
       list.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Player</th>${head('events', 'Events', 'num')}${head('sessions', 'Sessions', 'num')}${head('session_length', 'Avg session', 'num')}${head('playtime', 'Total playtime', 'num')}${head('last_seen', 'Last active')}${body.metrics.map((metric, position) => head(`metric${position}`, metricLabel(metric), 'num metric')).join('')}${head('version', 'Version')}<th>Env</th><th>Country</th></tr></thead><tbody>${data.players.map(row => `<tr><td><a class="row-title" href="${link(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a><p class="small muted">${row.has_user_id ? 'User ID' : 'Install ID'} · ${platformLabel(row.platform || '—')}</p></td><td class="num">${number(row.events)}</td><td class="num">${number(row.sessions)}</td><td class="num">${duration(row.avg_session_seconds)}</td><td class="num">${duration(row.total_play_seconds)}</td><td class="small muted">${analysisDate(row.last_seen, chosen.timezone)}</td>${body.metrics.map((metric, position) => `<td class="num metric">${metricValue(metric, row.metrics[position], chosen.timezone)}</td>`).join('')}<td class="small">${escapeHTML(row.app_version || '—')}</td><td><span class="pill ${TEST_ENVIRONMENTS.includes(row.environment) ? '' : 'good'}">${escapeHTML(row.environment || '—')}</span></td><td class="small">${countryTag(row.country)}</td></tr>`).join('')}</tbody></table></div>
         <div class="pager"><span class="small muted">${number(offset + 1)}–${number(offset + data.players.length)} of ${number(data.total)}</span><span><button class="button" data-page="-1" ${offset ? '' : 'disabled'}>Previous</button> <button class="button" data-page="1" ${offset + data.players.length < data.total ? '' : 'disabled'}>Next</button></span></div>`;
     } catch (error) { if (ticket === latest) list.innerHTML = loadError(error); }
+    finally { finishLoading(); }
   };
   list.addEventListener('click', event => {
     const page = event.target.closest('[data-page]'); if (page) { offset = Math.max(0, offset + 50 * Number(page.dataset.page)); load(); return; }
@@ -960,14 +961,14 @@ async function renderJourney(game, player, options = {}) {
       container.querySelector('#story-metrics').innerHTML = '';
       draw();
       modal.scrollTop = 0;
-    } catch (error) { if (body.isConnected && modal.open) toast(error.message); }
+    } catch (error) { if (body.isConnected && modal.open) toastError(error); }
     finally { browsing = false; syncBrowse(); }
   };
   container.querySelector('[data-player-previous]')?.addEventListener('click', () => changePlayer(-1));
   container.querySelector('[data-player-next]')?.addEventListener('click', () => changePlayer(1));
   syncBrowse();
   const tabs = () => container.querySelectorAll('[data-story-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.storyView === view)));
-  body.addEventListener('click', event => { if (event.target.closest('[data-retry-story]')) { cache.clear(); draw(); } });
+  container.addEventListener('click', event => { if (event.target.closest('[data-retry-story]')) { cache.clear(); draw(); } });
   const draw = async () => {
     const ticket = ++latest;
     tabs();
@@ -975,6 +976,9 @@ async function renderJourney(game, player, options = {}) {
     container.querySelector('#story-context').textContent = `${timezone === 'utc' ? 'UTC' : 'Local time'} · player ID = user_id, otherwise device_id`;
     container.querySelector('#story-metrics').innerHTML = skeleton('stats');
     body.innerHTML = skeleton('table', 5, 2);
+    const rawPromise = view === 'info' ? null : renderRawEvents(game, player, range, timezone, container).catch(error => {
+      if (ticket === latest && body.isConnected) body.innerHTML = loadError(error, 'data-retry-story');
+    });
     try {
       const data = await api(`${gameURL(game)}/insights/story?${new URLSearchParams({start: range.from, end: range.to, player, tz_offset: timezone === 'utc' ? 0 : localTimezoneOffset()})}`);
       if (ticket !== latest || !body.isConnected) return;
@@ -995,14 +999,14 @@ async function renderJourney(game, player, options = {}) {
             fetchButton.textContent = 'Device info fetched';
           } catch (error) {
             result.innerHTML = deviceCatalog(fetchedDevice);
-            toast(error.message);
+            toastError(error);
             fetchButton.disabled = false; fetchButton.textContent = 'Try device lookup again';
           }
         });
         return;
       }
-      await renderRawEvents(game, player, range, timezone, container);
-    } catch (error) { if (ticket === latest && body.isConnected) { container.querySelector('#story-metrics').innerHTML = ''; body.innerHTML = loadError(error, 'data-retry-story'); } }
+      if (rawPromise) await rawPromise;
+    } catch (error) { if (ticket === latest && body.isConnected) { container.querySelector('#story-metrics').innerHTML = loadError(error, 'data-retry-story'); if (!rawPromise) body.innerHTML = '';  } }
   };
   container.querySelector('[aria-label="View"]').addEventListener('click', event => {
     const tab = event.target.closest('[data-story-view]');
@@ -1319,7 +1323,7 @@ async function renderLevels() {
     document.querySelector('#levels-by-level').hidden = levelsView !== 'table';
     document.querySelector('#level-tools').hidden = levelsView !== 'explore';
   };
-  const chooseView = next => {
+  const chooseView = async next => {
     if (next === levelsView) return;
     levelsView = next; storeSet(viewKey, next);
     const url = new URL(location.href);
@@ -1327,6 +1331,7 @@ async function renderLevels() {
     history.replaceState(null, '', url);
     showView();
     if (next === 'explore' && chosen) toolsPanel.update(chosen);
+    if (next === 'table' && chosen && !data) await load(chosen);
   };
   document.querySelector('.levels-views').addEventListener('click', event => {
     const tab = event.target.closest('[data-levels-view]');
@@ -1351,7 +1356,7 @@ async function renderLevels() {
     fitDrill(level);
     const counts = state.counts;
     const summary = data.levels.find(row => row.level === level);
-    const table = state.error ? loadError(state.error, 'data-retry-drill') : state.loading && !state.players.length ? skeleton('table', 5, 8) : !state.players.length ? '<p class="help">Nobody is in this group in the selected days and filters.</p>' : `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Player</th><th class="num">Tries</th><th class="num">Fails</th><th>Last on this level</th><th>Opened the game later</th><th>Version</th><th class="num">Session duration</th></tr></thead><tbody>${state.players.map(row => `<tr><td><a class="row-title" href="${playerHref(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a></td><td class="num">${number(row.tries)}</td><td class="num">${number(row.fails)}</td><td class="small muted">${analysisDate(row.exit_at, chosen.timezone)}</td><td>${row.came_back ? '<span class="pill good">came back</span>' : '<span class="small muted">—</span>'}</td><td class="small">${escapeHTML(row.app_version || '—')}</td><td class="num">${duration(row.session_seconds)}</td></tr>`).join('')}</tbody></table></div><div class="pager"><span class="small muted">${number(state.players.length)} of ${number(state.total)}</span>${state.players.length < state.total ? `<button type="button" class="button" data-drill-more>${state.loading ? 'Loading…' : 'Show more'}</button>` : ''}</div>`;
+    const table = state.error ? loadError(state.error, 'data-retry-drill') : state.loading && !state.players.length ? skeleton('table', 5, 8) : !state.players.length ? '<p class="help">Nobody is in this group in the selected days and filters.</p>' : `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Player</th><th class="num">Tries</th><th class="num">Fails</th><th>Last on this level</th><th>Opened the game later</th><th>Version</th><th class="num">Session duration</th></tr></thead><tbody>${state.players.map(row => `<tr><td><a class="row-title" href="${playerHref(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a></td><td class="num">${number(row.tries)}</td><td class="num">${number(row.fails)}</td><td class="small muted">${analysisDate(row.exit_at, chosen.timezone)}</td><td>${row.came_back ? '<span class="pill good">came back</span>' : '<span class="small muted">—</span>'}</td><td class="small">${escapeHTML(row.app_version || '—')}</td><td class="num">${duration(row.session_seconds)}</td></tr>`).join('')}</tbody></table></div><div class="pager"><span class="small muted">${number(state.players.length)} of ${number(state.total)}</span>${state.players.length < state.total ? `<button type="button" class="button" data-drill-more ${state.loading ? 'disabled aria-busy="true"' : ''}>${state.loading ? spinner('Loading…') : 'Show more'}</button>` : ''}</div>`;
     box.innerHTML = `${levelBreakdown(summary)}<div class="level-drill-head"><div class="segmented" role="group" aria-label="Players on level ${level}">${drillGroups.map(([key, label]) => `<button type="button" data-drill-group="${key}" aria-pressed="${state.group === key}">${label}${counts ? ` <span class="drill-count">${number(counts[key])}</span>` : ''}</button>`).join('')}</div>
       <div class="quiet-actions"><label class="inline-field">Sort<select data-drill-sort><option value="exit_at">Latest on this level</option><option value="tries">Most tries</option><option value="fails">Most fails</option></select></label><button type="button" class="button" data-drill-csv>${icon('export', 14)} CSV</button></div></div>
       ${table}`;
@@ -1416,7 +1421,7 @@ async function renderLevels() {
       try {
         const all = await api(`${gameURL(game)}/insights/levels/players?${drillQuery(level, state, {offset: 0, limit: 2000})}`);
         downloadCSV(`${game.name}-${platformLabel(game.platform)}-level-${level}-${state.group}-${chosen.range.from}_${chosen.range.to}.csv`, [['player', 'tries', 'fails', 'finished_level', 'last_on_level_utc', 'last_seen_utc', 'opened_game_later', 'app_version', 'session_seconds'], ...all.players.map(row => [row.player, row.tries, row.fails, row.completed, row.exit_at, row.last_seen, row.came_back, row.app_version, row.session_seconds])]);
-      } catch (error) { toast(error.message); }
+      } catch (error) { toastError(error); }
     }
   });
   document.querySelector('#levels-table').addEventListener('change', event => {
@@ -1460,14 +1465,15 @@ async function renderLevels() {
     chosen = structuredClone(state); page = 0; data = null; const ticket = ++latest;
     drill.forEach(state => { state.ticket++; });
     fitObserver?.disconnect();
-    if (levelsView === 'explore') toolsPanel.update(chosen);
+    if (levelsView === 'explore') { toolsPanel.update(chosen); return; }
     document.querySelector('#levels-page-info').textContent = '';
     document.querySelector('#levels-previous-page').disabled = true;
     document.querySelector('#levels-next-page').disabled = true;
-    document.querySelector('#levels-summary').innerHTML = skeleton('stats');
-    tableBox.innerHTML = skeleton('table', 8, 7);
+    const finishSummary = beginLoading(document.querySelector('#levels-summary'), skeleton('stats'));
+    const finishTable = beginLoading(tableBox, skeleton('table', 8, 7));
     try { const result = await api(`${gameURL(game)}/insights/levels?${filterQuery(state)}`); if (ticket === latest && tableBox.isConnected) { data = result; levelsFilters.setContext({anonymous_events: result.context.anonymous_events}); drill.clear(); draw(); open.forEach(ensureDrill); } }
     catch (error) { if (ticket === latest && tableBox.isConnected) { document.querySelector('#levels-summary').innerHTML = ''; tableBox.innerHTML = loadError(error); } }
+    finally { finishSummary(); finishTable(); }
   };
   const jumpTo = level => {
     if (!data) return;
@@ -1480,7 +1486,7 @@ async function renderLevels() {
     row.querySelector('.level-toggle').focus({preventScroll: true});
   };
   document.querySelector('#levels-jump-form').addEventListener('submit', event => { event.preventDefault(); jumpTo(Number(document.querySelector('#levels-jump').value)); });
-  document.querySelector('#level-tools').addEventListener('level-jump', event => { chooseView('table'); jumpTo(event.detail); });
+  document.querySelector('#level-tools').addEventListener('level-jump', async event => { await chooseView('table'); jumpTo(event.detail); });
   document.querySelector('#levels-previous-page').addEventListener('click', () => { if (page > 0) { page--; draw(); } });
   document.querySelector('#levels-next-page').addEventListener('click', () => { if (!document.querySelector('#levels-next-page').disabled) { page++; draw(); } });
   document.querySelector('#levels-page-size').addEventListener('change', () => { page = 0; rememberNavigation(); if (data) draw(); });

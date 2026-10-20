@@ -1405,8 +1405,8 @@ progress.mapping-meter::-moz-progress-bar{background:var(--accent-orange)}
 /* What is selected: the open Explore tool, the open level row, and the chosen drill tab all read at a
    glance, the same way the Levels sub-page tabs do (accent fill, never colour alone: the chevron and
    the pressed text stay too). */
-.level-explore .panel-header .button[aria-expanded="true"],.level-drill .segmented button[aria-pressed="true"],.level-explore .segmented button[aria-pressed="true"]{background:var(--accent-fill);color:var(--badge-text);border-color:var(--accent-orange);box-shadow:none}
-.level-explore .panel-header .button[aria-expanded="true"]:hover{color:var(--badge-text)}
+.level-explore .panel-header .button[aria-pressed="true"],.level-drill .segmented button[aria-pressed="true"],.level-explore .segmented button[aria-pressed="true"]{background:var(--accent-fill);color:var(--badge-text);border-color:var(--accent-orange);box-shadow:none}
+.level-explore .panel-header .button[aria-pressed="true"]:hover{color:var(--badge-text)}
 .level-drill .segmented button[aria-pressed="true"] .drill-count{color:inherit}
 .levels-grid tr:has(.level-toggle[aria-expanded="true"])>td{background:color-mix(in srgb,var(--accent-orange) 7%,var(--bg-card))}
 .levels-grid>tbody>tr:not(.level-detail):has(.level-toggle[aria-expanded="true"])>td:first-child{background:color-mix(in srgb,var(--accent-orange) 7%,var(--bg-card));box-shadow:inset 3px 0 var(--accent-orange)}
@@ -1474,3 +1474,44 @@ main{padding-bottom:calc(28px + env(safe-area-inset-bottom))}
   .highlight-track{height:44px}
   .highlight-tick::after{inset:-3px -12px}
 }
+
+/* First-session controls stay secondary to the observed progression. */
+.level-explore :is(.button,select,input:not([type="checkbox"])){min-height:44px}
+.level-explore .panel-header .quiet-actions{display:flex;flex-wrap:wrap;gap:6px}
+.flow-settings{border-left-width:1px}
+.flow-settings .check-row{min-height:44px}
+.flow-settings input[type="number"]{width:140px;min-height:44px}
+.flow-paths label{overflow-wrap:anywhere;min-width:0}
+#flow-scope{font-size:var(--fs-label);color:var(--text-muted)}
+
+.level-explore :is(.level-saved-views,.level-analysis-controls,.quiet-actions,.flow-saved) :is(.button,select,input:not([type="checkbox"])){height:44px;min-height:44px;box-shadow:none}
+.level-saved-options{padding:0 20px}
+.level-saved-options>summary,.flow-saved-options>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-size:var(--fs-label);color:var(--text-muted)}
+.level-saved-options>summary::before,.flow-saved-options>summary::before{content:'+';margin-right:8px}
+.level-saved-options[open]>summary::before,.flow-saved-options[open]>summary::before{content:'−'}
+.level-saved-options .level-saved-views{padding:8px 0 16px}
+.flow-saved-options{margin-left:auto}
+.flow-saved-options .flow-saved{margin:8px 0}
+#flow-strict-options,.flow-settings>.check-row{font-family:inherit}
+@media(max-width:640px){
+  .flow-toolbar{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .flow-toolbar>label input{width:100%}
+  .flow-saved-options{grid-column:1/-1;margin-left:0}
+  .level-explore .panel-header .quiet-actions{width:100%}
+}
+
+/* Shared request and action feedback: indeterminate activity never implies a percentage. */
+#request-activity{position:fixed;inset:0 0 auto;height:3px;overflow:hidden;z-index:100;background:var(--bg-nested);pointer-events:none}
+#request-activity[hidden]{display:none}
+#request-activity>span:first-child{display:block;width:30%;height:100%;background:var(--accent-orange);animation:request-slide 1.3s ease-in-out infinite}
+.loading-spinner{display:inline-block;width:16px;height:16px;flex:none;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:request-spin .8s linear infinite}
+.inline-loading{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-label)}
+.refresh-status{padding:12px 16px;background:var(--bg-nested);color:var(--text-muted);border-bottom:1px solid var(--line);font-size:var(--fs-label)}
+[aria-busy="true"] :is(a,button,input,select){pointer-events:none}
+#notice:not(:empty){display:flex;align-items:center;flex-wrap:wrap;gap:12px;box-shadow:none;font-family:inherit;letter-spacing:normal;text-transform:none;border-width:1px}
+#notice[data-kind="error"]{border-color:var(--status-down-text)}
+#notice .button{min-height:44px;box-shadow:none}
+@keyframes request-spin{to{transform:rotate(360deg)}}
+@keyframes request-slide{from{transform:translateX(-100%)}to{transform:translateX(440%)}}
+@media(prefers-reduced-motion:reduce){.loading-spinner,#request-activity>span:first-child{animation:none}#request-activity>span:first-child{width:100%}}
+#notice:not(:empty){width:min(560px,calc(100vw - 32px));max-width:calc(100vw - 32px)}

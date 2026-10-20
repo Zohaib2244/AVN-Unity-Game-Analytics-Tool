@@ -3250,7 +3250,13 @@ def _flow_fixture(backend):
 
 
 def _flow(admin, game, **settings):
-    body = {"start": "2026-10-04", "end": "2026-10-04", "last_level": 3, **settings}
+    body = {
+        "start": "2026-10-04",
+        "end": "2026-10-04",
+        "last_level": 3,
+        "mode": "strict",
+        **settings,
+    }
     response = admin.post(f"/v1/games/{game['id']}/insights/levels/first-session", json=body)
     assert response.status_code == 200, response.text
     return response.json()
@@ -3353,7 +3359,13 @@ def test_first_session_players_list_the_rows_of_the_results(backend):
     url = f"/v1/games/{game['id']}/insights/levels/first-session/players"
 
     def players(target, **extra):
-        body = {"start": "2026-10-04", "end": "2026-10-04", "last_level": 3, "target": target}
+        body = {
+            "start": "2026-10-04",
+            "end": "2026-10-04",
+            "last_level": 3,
+            "mode": "strict",
+            "target": target,
+        }
         response = admin.post(url, json={**body, **extra})
         assert response.status_code == 200, response.text
         return response.json()
@@ -3394,3 +3406,81 @@ def test_first_session_paths_have_readable_names():
     )
     assert _token("LEVEL_ANALYSIS", {"STATE": "Left", "REASON": "Home"}) == "Left the level (home)"
     assert _token("MY_EVENT", {}) == "MY_EVENT"
+
+
+def test_first_session_default_includes_interruptions_and_actual_progress(backend):
+    admin, game = _flow_fixture(backend)
+    url = f"/v1/games/{game['id']}/insights/levels/first-session"
+    body = {"start": "2026-10-04", "end": "2026-10-04", "last_level": 3}
+    result = admin.post(url, json=body)
+    assert result.status_code == 200
+    data = result.json()
+    assert data["config"]["mode"] == "all"
+    assert [(s["started"], s["completed"]) for s in data["steps"]] == [(4, 4), (4, 2), (1, 1)]
+    players = admin.post(
+        url + "/players",
+        json={**body, "target": {"kind": "step", "level": 2, "which": "started"}},
+    ).json()
+    assert players["total"] == 4
+
+
+def test_first_session_long_paths_round_trip_through_conditions_and_drills(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    events = [_level("Started", 1)]
+    events += [("SCREEN_ANALYSIS", {"STATE": "Opened", "SCREEN": f"screen_{i}"}) for i in range(40)]
+    events += [_level("Completed", 1), _level("Started", 2)]
+    assert send(ingest, game, _flow_events("long-path", events)).status_code == 200
+    data = _flow(admin, game)
+    path = data["paths"][0]
+    assert len(path["key"]) > 400
+    allowed = _flow(admin, game, allow=[path["key"]])
+    assert allowed["steps"][1]["started"] == 1
+    url = f"/v1/games/{game['id']}/insights/levels/first-session/players"
+    response = admin.post(
+        url,
+        json={
+            "start": "2026-10-04",
+            "end": "2026-10-04",
+            "mode": "strict",
+            "target": {"kind": "end", "level": 1, "stage": "during", "reason": path["path"]},
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    saved = admin.post(
+        f"/v1/games/{game['id']}/insights/flows",
+        json={
+            "name": "Long path",
+            "mode": "strict",
+            "allow": [path["key"]],
+        },
+    )
+    assert saved.status_code == 201
+    assert saved.json()["allow"] == [path["key"]]
+
+
+def test_first_session_default_does_not_infer_skipped_wins_or_stop_at_jumps(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = _flow_events(
+        "jump",
+        [
+            _level("Started", 2),
+            _level("Skipped", 2),
+            _level("Started", 4),
+            _level("Completed", 4),
+            _level("Started", 1),
+            _level("Completed", 1),
+        ],
+    )
+    assert send(ingest, game, records).status_code == 200
+    data = _flow(admin, game, mode="all", last_level=5)
+    assert data["players"] == 1
+    assert data["ends"][0]["level"] == 1
+    assert [(s["started"], s["completed"]) for s in data["steps"]] == [
+        (1, 1),
+        (1, 0),
+        (0, 0),
+        (1, 1),
+    ]

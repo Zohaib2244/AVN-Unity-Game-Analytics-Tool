@@ -769,7 +769,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     @admin_api.post("/v1/games/{game_id}/insights/levels/first-session")
     def insights_first_session(game_id: UUID, query: FlowQuery):
         settings = query.model_dump(
-            include={"first_level", "last_level", "max_away_seconds", "allow"}
+            include={"first_level", "last_level", "max_away_seconds", "allow", "mode"}
         )
         return first_session.first_session_flow(
             storage,
@@ -782,7 +782,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     @admin_api.post("/v1/games/{game_id}/insights/levels/first-session/players")
     def insights_first_session_players(game_id: UUID, query: FlowPlayersQuery):
         settings = query.model_dump(
-            include={"first_level", "last_level", "max_away_seconds", "allow"}
+            include={"first_level", "last_level", "max_away_seconds", "allow", "mode"}
         )
         return first_session.first_session_players(
             storage,

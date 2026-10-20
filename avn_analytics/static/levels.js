@@ -1,14 +1,20 @@
+function selectLevelTool(prefs, name) {
+  const active = ['compare', 'funnel', 'flow'].includes(name) ? name : 'flow';
+  for (const key of ['compare', 'funnel', 'flow']) prefs[key] = key === active;
+}
+
 function mountLevelTools(container, game, restore) {
   const preferenceKey = `avn-level-tools-${game.id}`;
   const viewKey = `avn-level-views-${game.id}`;
   const activeViewKey = `avn-level-active-view-${game.id}`;
   const prefs = {compare: false, funnel: false, flow: true, origin: 'level1', lastLevel: 20, finishes: false, ...(storeGet(preferenceKey) || {})};
+  selectLevelTool(prefs, prefs.flow ? 'flow' : prefs.compare ? 'compare' : prefs.funnel ? 'funnel' : 'flow');
   prefs.origin = prefs.origin === 'session' ? 'session' : 'level1';
   prefs.lastLevel = Math.min(1000, Math.max(1, Math.trunc(Number(prefs.lastLevel) || 20)));
   let selected = null; let comparisonTicket = 0; let funnelTicket = 0;
   const remember = () => storeSet(preferenceKey, prefs);
-  container.innerHTML = `<section class="panel level-explore"><div class="panel-header"><h2>Explore levels</h2><div class="quiet-actions"><button type="button" class="button" data-explore="compare" aria-controls="release-comparison">Compare releases</button><button type="button" class="button" data-explore="funnel" aria-controls="level-funnel">Level funnel</button><button type="button" class="button" data-explore="flow" aria-controls="first-session">First session</button></div></div>
-    <div class="level-saved-views"><label class="inline-field">Saved view<select id="levels-saved-view" aria-label="Saved level view"><option value="">Choose a saved view…</option></select></label><button type="button" class="button small-button" id="levels-save-view">Save current view</button><button type="button" class="button small-button" id="levels-delete-view" disabled>Delete view</button></div>
+  container.innerHTML = `<section class="panel level-explore"><div class="panel-header"><h2>Explore levels</h2><div class="quiet-actions" role="group" aria-label="Level analysis view"><button type="button" class="button" data-explore="flow" aria-controls="first-session">First session</button><button type="button" class="button" data-explore="compare" aria-controls="release-comparison">Compare releases</button><button type="button" class="button" data-explore="funnel" aria-controls="level-funnel">Level funnel</button></div></div>
+    <details class="level-saved-options"><summary>Saved views on this device</summary><div class="level-saved-views"><label class="inline-field">Saved view<select id="levels-saved-view" aria-label="Saved level view"><option value="">Choose a saved view…</option></select></label><button type="button" class="button small-button" id="levels-save-view">Save current view</button><button type="button" class="button small-button" id="levels-delete-view" disabled>Delete view</button></div></details>
     <div id="release-comparison" class="panel-body" hidden><div class="level-analysis-controls"><label>Release A<select id="release-a"></select></label><label>Release B<select id="release-b"></select></label><button type="button" class="button" id="compare-refresh">Compare</button></div><p class="help">Same dates and other filters for both releases. These selectors replace the app-version filter here only. Players are grouped by the version at each level’s start, then followed across updates until the end date. Samples may overlap when players replay after updating.</p><div id="release-results" aria-live="polite"></div></div>
     <div id="level-funnel" class="panel-body" hidden><form id="level-funnel-controls" class="level-analysis-controls"><div><label>Start funnel at</label><div class="segmented" role="group" aria-label="Funnel starting point"><button type="button" data-funnel-origin="level1">Level 1</button><button type="button" data-funnel-origin="session">Session start</button></div></div><label>Through level<input id="funnel-last-level" type="number" min="1" max="1000" required value="${Number(prefs.lastLevel) || 20}"></label><label class="check-row"><input id="funnel-finishes" type="checkbox" ${prefs.finishes ? 'checked' : ''}> Include finishes</label><button class="button" type="submit">Update funnel</button></form><p class="help">Follows the same players through every listed step in order, across sessions and updates until the end date. Missing steps are never inferred. Session start mode still goes through Level 1; players returning midway may appear outside this path.</p><div id="level-funnel-results" aria-live="polite"></div></div><div id="first-session" class="panel-body" hidden></div></section>`;
   const firstSession = mountFirstSession(container.querySelector('#first-session'), game);
@@ -24,7 +30,7 @@ function mountLevelTools(container, game, restore) {
   };
   const sync = () => {
     for (const name of ['compare', 'funnel', 'flow']) {
-      container.querySelector(`[data-explore="${name}"]`).setAttribute('aria-expanded', String(Boolean(prefs[name])));
+      container.querySelector(`[data-explore="${name}"]`).setAttribute('aria-pressed', String(Boolean(prefs[name])));
       container.querySelector({compare: '#release-comparison', funnel: '#level-funnel', flow: '#first-session'}[name]).hidden = !prefs[name];
     }
     container.querySelectorAll('[data-funnel-origin]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.funnelOrigin === prefs.origin)));
@@ -33,7 +39,7 @@ function mountLevelTools(container, game, restore) {
   const compare = async () => {
     if (!selected || !prefs.compare) return;
     const ticket = ++comparisonTicket;
-    comparison.innerHTML = '<p class="help">Comparing releases…</p>';
+    comparison.innerHTML = spinner('Comparing releases…');
     try {
       const facets = await api(`${gameURL(game)}/insights/facets?${new URLSearchParams({start: selected.range.from, end: selected.range.to, tz_offset: timezoneOffset(selected)})}`);
       if (!valid(ticket)) return;
@@ -61,12 +67,12 @@ function mountLevelTools(container, game, restore) {
         const difference = change == null ? '<span class="muted">Not comparable</span>' : `<span class="${small ? 'muted' : change > 0 ? 'loss' : change < 0 ? 'gain' : 'muted'}">${change > 0 ? '↑ +' : change < 0 ? '↓ −' : ''}${Math.abs(change)} pp · ${change > 0 ? 'more drop' : change < 0 ? 'less drop' : 'unchanged'}${small ? ' · small sample' : ''}</span>`;
         return `<tr><td><button type="button" class="text-link level-jump-link" data-jump-level="${level}">${level}</button></td>${[first, second].map(row => `<td>${row ? number(row.started) : '—'}</td><td>${row ? number(row.completed) : '—'}</td><td>${drop(row)}</td>`).join('')}<td>${difference}</td></tr>`;
       }).join('')}</tbody></table></div><p class="help">pp = percentage points. Missing next-level data is not treated as zero drop. Small samples are marked; these comparisons describe observed behavior, not proof a release caused a change.</p>` : '<p class="help">No level events for these releases and filters.</p>';
-    } catch (error) { if (valid(ticket)) comparison.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
+    } catch (error) { if (valid(ticket)) comparison.innerHTML = loadError(error, 'data-retry-comparison'); }
   };
   const loadFunnel = async () => {
     if (!selected || !prefs.funnel) return;
     const ticket = ++funnelTicket;
-    funnel.innerHTML = '<p class="help">Following players through the levels…</p>';
+    funnel.innerHTML = spinner('Following players through the levels…');
     const query = filterQuery(selected);
     query.set('origin', prefs.origin); query.set('last_level', prefs.lastLevel); query.set('include_finishes', String(prefs.finishes));
     try {
@@ -75,12 +81,14 @@ function mountLevelTools(container, game, restore) {
       const sample = data.players < data.minimum_players ? ' · small sample' : '';
       funnel.innerHTML = `<p class="help"><strong>${number(data.players)} players entered${sample}.</strong> ${number(data.without_entry)} active players had no matching entry event and are excluded.</p><div class="level-scroll funnel-scroll" tabindex="0" role="region" aria-label="Ordered level funnel"><table class="compact-table"><thead><tr><th>Step</th><th>Players</th><th>Of entry cohort</th><th>Lost since previous step</th><th title="Players with this event but without the complete preceding path">Outside this path</th></tr></thead><tbody>${data.steps.map((step, index) => `<tr><td>${step.level == null ? 'Session start' : `<button type="button" class="text-link level-jump-link" data-jump-level="${step.level}">Level ${step.level} · ${step.action === 'completed' ? 'finish' : 'start'}</button>`}</td><td>${number(step.players)}</td><td><div class="level-funnel-bar"><span data-width="${step.percent ?? 0}"></span></div><span>${step.percent == null ? '—' : percent(step.percent)}</span></td><td>${index ? `${number(step.drop)}${step.drop_percent == null ? '' : ` · ${percent(step.drop_percent)}`}` : '—'}</td><td>${number(step.outside_funnel)}</td></tr>`).join('')}</tbody></table></div><p class="help">Outside this path means the event exists but earlier required steps were not observed in order; this includes returning players and missing history. “Lost” means no observed next step by the end date.</p>`;
       setWidths(funnel);
-    } catch (error) { if (ticket === funnelTicket && container.isConnected) funnel.innerHTML = `<p class="error">${escapeHTML(error.message)}</p>`; }
+    } catch (error) { if (ticket === funnelTicket && container.isConnected) funnel.innerHTML = loadError(error, 'data-retry-level-funnel'); }
   };
   container.addEventListener('click', event => {
+    if (event.target.closest('[data-retry-comparison]')) compare();
+    if (event.target.closest('[data-retry-level-funnel]')) loadFunnel();
     const toggle = event.target.closest('[data-explore]');
     if (toggle) {
-      const name = toggle.dataset.explore; prefs[name] = !prefs[name]; remember(); sync();
+      const name = toggle.dataset.explore; selectLevelTool(prefs, name); remember(); sync();
       if (name === 'compare') compare(); else if (name === 'funnel') loadFunnel(); else firstSession.show();
     }
     const origin = event.target.closest('[data-funnel-origin]');

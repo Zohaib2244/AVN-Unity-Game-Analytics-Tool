@@ -251,7 +251,7 @@ async function mountNutBot() {
   launcher.addEventListener('click', async () => {
     if (!allowed) { toast('NutBot isn’t switched on for your role in this workspace. Ask an admin to enable it.'); return; }
     if (nutbotState.open) { nbClose(); return; }
-    if (!nutbotState.info) { try { nutbotState.info = await request('/v1/nutbot'); } catch (error) { toast(error.message); return; } }
+    if (!nutbotState.info) { try { nutbotState.info = await request('/v1/nutbot'); } catch (error) { toastError(error); return; } }
     if (!nutbotState.info.enabled) { toast('NutBot is turned off on this server.'); return; }
     nbOpen();
   });

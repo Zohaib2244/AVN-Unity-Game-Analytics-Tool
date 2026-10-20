@@ -411,13 +411,155 @@ def test_levels_page_shows_one_sub_page_at_a_time():
     assert 'data-levels-view="explore">Explore levels' in levels
     # The explore tools only query while their sub page is open, and a level link from them
     # switches back to the table.
-    assert "if (levelsView === 'explore') toolsPanel.update(chosen);" in levels
-    assert "chooseView('table'); jumpTo(event.detail);" in levels
+    assert "if (levelsView === 'explore') { toolsPanel.update(chosen); return; }" in levels
+    assert "await chooseView('table'); jumpTo(event.detail);" in levels
     assert 'id="levels-csv"' not in levels
 
 
-def test_run_conditions_sit_above_the_results_and_start_open():
+def test_run_conditions_are_optional_and_default_to_all_progress():
     script = (Path(__file__).parents[1] / "avn_analytics/static/first-session.js").read_text()
     mount = script[script.index("function mountFirstSession(") :]
     assert mount.index('id="flow-conditions"') < mount.index('id="flow-summary"')
-    assert "conditions.open = storeGet(conditionsKey) !== 'closed';" in mount
+    assert "conditions.open = settings.mode === 'strict'" in mount
+    assert "|| storeGet(conditionsKey) === 'open';" in mount
+    assert "mode: 'all'" in mount
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_level_tool_selection_is_exclusive_even_with_old_preferences():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/levels.js").read_text()
+    helper = script[: script.index("function mountLevelTools")]
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=helper
+        + """
+import assert from 'node:assert/strict';
+const prefs = {compare: true, funnel: true, flow: true, lastLevel: 20};
+for (const choice of ['flow', 'compare', 'funnel', 'funnel', 'unknown']) {
+  selectLevelTool(prefs, choice);
+  assert.equal(['compare', 'funnel', 'flow'].filter(key => prefs[key]).length, 1);
+  assert.equal(prefs[choice === 'unknown' ? 'flow' : choice], true);
+  assert.equal(prefs.lastLevel, 20);
+}
+""",
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_query_cache_deduplicates_reads_and_invalidates_saved_analytics():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/app.js").read_text()
+    source = script[script.index("function analyticsRead(") : script.index("function spinner(")]
+    checks = """
+import assert from 'node:assert/strict';
+const cache = new Map(); const CACHE_MS = 30000; let overviewStale = false;
+const cacheable = () => true;
+let count = 0; let finish; let fail = false;
+const request = () => { count++; return fail ? Promise.reject(new Error('offline')) :
+  new Promise(resolve => { finish = resolve; }); };
+const flow = '/v1/games/g/insights/levels/first-session';
+const options = {method: 'POST', body: JSON.stringify({first_level: 1})};
+const first = api(flow, options); const duplicate = api(flow, options);
+assert.equal(first, duplicate); assert.equal(count, 1);
+finish({players: 4}); await first;
+assert.equal(await api(flow, options), await first); assert.equal(count, 1);
+const different = api(flow, {...options, body: '{}'}); finish({players: 2}); await different;
+assert.equal(count, 2);
+for (const path of ['/insights/flows', '/insights/funnels', '/insights/flows/id']) {
+  const write = api('/v1/games/g' + path, {method: 'POST', body: '{}'});
+  finish({}); await write; assert.equal(cache.size, 0); assert.equal(overviewStale, true);
+}
+fail = true;
+await assert.rejects(api(flow, options)); assert.equal(cache.size, 0);
+fail = false;
+const retry = api(flow, options); finish({players: 3}); await retry;
+assert.equal((await api(flow, options)).players, 3);
+for (let i=0; i<65; i++) { const result = api('/read/' + i); finish({}); await result; }
+assert.equal(cache.size, 60);
+// Signals belong to one consumer and must not cancel another consumer's shared promise.
+const a = api('/read/signaled', {signal: new AbortController().signal});
+const b = api('/read/signaled', {signal: new AbortController().signal});
+assert.notEqual(a, b);
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=source + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_request_errors_are_actionable_and_malformed_success_is_not_cached():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/app.js").read_text()
+    source = script[script.index("async function request(") : script.index("function skeleton(")]
+    checks = """
+import assert from 'node:assert/strict';
+const statuses = [[401, /sign in/], [403, /permission/], [429, /Wait/], [500, /server/]];
+for (const [status, expected] of statuses) {
+  globalThis.fetch = async () => ({ok:false, status, json: async () => ({})});
+  await assert.rejects(request('/read'),
+    error => error.status === status && expected.test(error.message));
+}
+globalThis.fetch = async () => ({ok:false, status:400, json: async () => ({
+  detail:'Invalid request', errors:[{loc:['body','last_level'], msg:'Must be at least 1'}],
+})});
+await assert.rejects(request('/read'), /last_level: Must be at least 1/);
+globalThis.fetch = async () => ({ok:true, status:200,
+  json: async () => {throw new SyntaxError('HTML')},
+});
+await assert.rejects(request('/read'), /unreadable response/);
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=source + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_loading_regions_do_not_flash_or_clear_newer_request_state():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/app.js").read_text()
+    source = script[script.index("const regionLoads =") : script.index("function empty(")]
+    checks = """
+import assert from 'node:assert/strict';
+const pending = new Map(); let next = 0;
+globalThis.setTimeout = callback => {pending.set(++next, callback); return next;};
+globalThis.clearTimeout = id => pending.delete(id);
+const spinner = label => label;
+const notices = [];
+globalThis.document = {createElement: () => ({remove(){this.removed=true}})};
+const element = {isConnected:true, textContent:'Previous results', innerHTML:'rows',
+  attributes:new Map(), querySelector:()=>null, prepend:item=>notices.push(item),
+  setAttribute(key,value){this.attributes.set(key,value)},
+  removeAttribute(key){this.attributes.delete(key)},
+};
+let finish = beginLoading(element, 'skeleton');
+finish();
+assert.equal(pending.size,0); assert.equal(element.innerHTML,'rows');
+const old = beginLoading(element, 'skeleton');
+for (const callback of [...pending.values()]) callback();
+assert.match(notices[0].innerHTML,/Updating.*previous results/);
+const current = beginLoading(element, 'skeleton');
+old();
+assert.equal(element.attributes.get('aria-busy'),'true');
+current();
+assert.equal(element.attributes.has('aria-busy'),false);
+assert.equal(notices[0].removed,true);
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=source + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr

@@ -433,8 +433,9 @@ class FlowSettings(StrictModel):
 
     first_level: Annotated[int, Field(ge=0, le=1000)] = 1
     last_level: Annotated[int, Field(ge=1, le=1000)] = 20
+    mode: Literal["all", "strict"] = "all"
     max_away_seconds: Annotated[float, Field(ge=0, le=86400)] = 60
-    allow: list[Annotated[str, Field(max_length=400)]] = Field(default_factory=list, max_length=300)
+    allow: list[str] = Field(default_factory=list, max_length=300)
 
 
 class FlowQuery(FlowSettings):
@@ -450,8 +451,8 @@ class FlowTarget(StrictModel):
     kind: Literal["end", "ended_at", "flagged_at", "finished", "flag", "run", "step", "path"]
     level: Annotated[int, Field(ge=0, le=1000)] = 0
     stage: Literal["during", "between"] = "during"
-    reason: Annotated[str, Field(max_length=400)] = ""
-    path: Annotated[str, Field(max_length=400)] = ""
+    reason: str = ""
+    path: str = ""
     levels: Annotated[int, Field(ge=0, le=1000)] = 0
     which: Literal["started", "completed"] = "started"
 
