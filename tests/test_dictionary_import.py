@@ -78,7 +78,8 @@ def test_template_lists_what_needs_a_meaning_and_the_prompt_states_the_rules(bac
     shop = file["events"]["shop_open"]
     assert shop["status"] == "partial" and shop["proposed"]["params"] == {"source": None}
     assert "120 characters" in out["prompt"] and "avn-events.json" in out["prompt"]
-    assert "AvnAnalytics.LogEvent(" in out["prompt"]
+    assert "AVNGameAnalytics.LogEvent(" in out["prompt"]
+    assert "AvnSender.Send(" in out["prompt"]
     assert "http" not in out["prompt"]  # no hostnames in the shipped prompt
 
 

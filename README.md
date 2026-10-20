@@ -283,8 +283,8 @@ Unity game.
 **Event setup → Add AVN Events** picks the tiers (core is always
 included; standard and extended are optional), lists the events they bring, and downloads
 `avn-events-setup.zip` with the prompt and the standard, or copies the prompt. Unzip it in the
-game project's root and run the prompt with any coding agent. The agent adds one sender
-(`Assets/AVNEvents/`), keeps existing analytics untouched, and writes
+game project's root and run the prompt with any coding agent. The agent adds one file
+(`Assets/AVNEvents/AvnEvents.cs`) on top of the SDK package's helpers, keeps existing analytics untouched, and writes
 `avn-events-profile.json` with the game's vocabulary and anything it could not implement. Once a
 test build sends events, the Event setup page suggests Level started, completed, failed and
 restarted from `LEVEL_ANALYSIS` by itself. Over the API: `GET /v1/events-standard?tiers=standard` and

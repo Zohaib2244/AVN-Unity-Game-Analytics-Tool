@@ -248,7 +248,7 @@ def build_prompt(game_name, options: ImportOptions, count):
     if style.game_context.strip():
         lines += ["", "## About the game", "", style.game_context.strip()]
     lines += ["", "## Finding events", ""]
-    patterns = ["AvnAnalytics.LogEvent(", *options.code.call_patterns]
+    patterns = ["AVNGameAnalytics.LogEvent(", "AvnSender.Send(", *options.code.call_patterns]
     lines.append(
         "- Events are sent with " + ", ".join(f"`{pattern}`" for pattern in patterns) + "."
     )

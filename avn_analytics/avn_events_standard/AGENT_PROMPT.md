@@ -28,123 +28,152 @@ Tiers to implement: **core, standard** (change this line to choose).
 6. Do not change gameplay, rewards, prices, ad timing or existing analytics (Firebase, ByteBrew,
    plugin events). Add calls beside them. Do not remove or rename existing events.
 7. Do not send `session_start`, `session_end` or `first_open`; the AVN SDK does. Do not initialize
-   the SDK if the game already does.
+   the SDK if the game already does (`AVNGameAnalytics.Initialize()`).
 8. Nothing per frame, per shot or per tile. No `Requested` ad state. No banners.
 9. If a required parameter truly cannot be known in this game, omit it and list it in the report.
    Never fake a value.
+10. Never edit, copy or re-implement anything under `Assets/AVNAnalytics/`. It is the SDK package and
+    is overwritten when the package is updated. Use its helpers (step 4); all game-specific code goes
+    in `Assets/AVNEvents/`.
 
 ## Procedure
 
 Do these steps in order and do not skip any.
 
-1. **Read** `avn_events_standard.json` fully. Find the AVN SDK (`AvnAnalytics.LogEvent`) and how the game
-   initializes it.
+1. **Read** `avn_events_standard.json` fully. Check that the AVN SDK package is imported:
+   `Assets/AVNAnalytics/Scripts/` holds `AVNGameAnalytics.cs`, and `Scripts/Events/` holds
+   `AvnSender.cs`, `AvnAttempt.cs`, `AvnAds.cs`, `AvnMemory.cs` and `AvnRuntime.cs` (namespace
+   `AVNAnalytics.Events`). Read all of them. If they are missing, stop and tell the user to import
+   `AVNAnalytics.unitypackage` (website: Settings, Unity SDK). Find how the game calls
+   `AVNGameAnalytics.Initialize()`.
 2. **Inventory the game.** For every spec event and state in the chosen tiers, find the exact code
    location (file, class, method) where its trigger happens. Also collect the game vocabulary:
    every level flow, result screen, ad call site, currency change, tutorial, powerup, menu and
    popup, store callback and app focus/pause handler.
 3. **Name the vocabulary** with the naming rules, before writing any event code. Write it down in
    the profile (step 7).
-4. **Write one sender** in a new folder `Assets/AVNEvents/`, using exactly the structure below.
+4. **Write `AvnEvents.cs`** in a new folder `Assets/AVNEvents/`. It is the only game-specific file.
+   The package already does the heavy parts, so use its helpers and do not write your own:
+   - `AvnSender.Send(name, state, params)` is the only exit for an event. It adds `STATE` and
+     `LEVEL_NUMBER` and drops unknown values. Set `AvnSender.CurrentLevel` to a function returning
+     the game's current 1-based level (or null).
+   - `AvnAttempt` keeps the level attempt: `Begin(level)`, `EndWithResult()`, `EndWithoutResult()`,
+     `TakeChoice(out info)`, `Revive()`, `NotePowerupUsed()`, `TakeRecovered(...)`. It owns the attempt
+     id, the attempt number, active seconds and the force-close recovery. Set
+     `AvnAttempt.ProgressProvider` to a function returning the board progress 0-100.
+   - `AvnAds` keeps ad state per `AD_ID`: `Ask`, `Begin`, `Find`, `End`, the `TimedOut` and
+     `NotReady` events. Set `AvnAds.IsReady` to a function telling whether the ad network has an ad of
+     a format loaded.
+   - `AvnMemory` keeps "first time on this install" flags (`FirstTime`) and timers (`StartTimer`,
+     `StopTimer`) for tutorials, screens and FTUE.
+   - `AvnRuntime` raises `Launched`, `Backgrounded`, `Foregrounded`, `Quitting`. The game sets
+     `AvnRuntime.PurchaseActive` while a store dialog is open.
+
    Key names and enum strings exist only in `AvnEvents.cs`; game code passes structs and enums,
-   never strings for keys.
-   - `AvnEvents.cs`: the skeleton below, completed with one method per event and state in the
-     chosen tiers (`LevelStarted`, `LevelCompleted`, `AdShow`, `EconomyEarned`, `ScreenOpened`,
-     ...). Name methods `<Event><State>` in PascalCase. Add one struct per shared parameter set in
-     the spec, following the pattern of the ones given.
-   - `AvnEventsState.cs`: what the events need to remember (current attempt, attempt counts, ads
-     in progress, tutorial start times, screen open times, last exit), persisted with the game's
-     save system or `PlayerPrefs` only when it changes, never per frame.
+   never strings for keys. Complete the skeleton below with one method per event and state in the
+   chosen tiers (`LevelStarted`, `LevelCompleted`, `AdShow`, `EconomyEarned`, `ScreenOpened`, ...).
+   Name methods `<Event><State>` in PascalCase. Add one struct per shared parameter set in the spec,
+   following the pattern of the ones given. The skeleton shows the pattern, not every key: take keys,
+   types and required flags from the spec.
 
    ```csharp
    using System.Collections.Generic;
-   using Avn.Analytics;
+   using AVNAnalytics;
+   using AVNAnalytics.Events;
+   using UnityEngine;
 
    namespace AVNEvents
    {
        // Closed enums: the C# name is the exact string sent.
-       public enum LevelSource { Launch, Home, Next, Restart, Debug }
        public enum ChoiceAction { Next, DoubleReward, Restart, Revive, Home, Abandoned }
-       public enum LeftReason { Home, Quit, Killed }
        public enum PayMethod { Ad, Coins, Free }
        public enum AdFormat { Interstitial, Rewarded, AppOpen }
        public enum AdFailReason { NotReady, ShowFailed, Timeout }
        // ... one enum per closed enum in the spec, same pattern.
 
-       // Shared parameter sets from the spec. Optional fields are nullable and omitted when null.
-       public struct LevelProgress
-       {
-           public string AttemptId; public int Attempt; public int LevelNumber;
-           public float Seconds; public int ProgressPct;
-       }
-
-       public struct LevelResult
-       {
-           public LevelProgress Progress;
-           public int Revives; public int PowerupsUsed; public int AdsShown;
-           public int? Moves; public bool? SkipOffered;
-       }
-
-       public struct AdInfo
-       {
-           public string AdId; public AdFormat Format; public string Placement; public bool? Fallback;
-       }
-
-       public struct EconomyFlow
-       {
-           public string Currency; public int Amount; public int Balance;
-           public string Source; public string Detail;   // Source: spec ECONOMY_ANALYSIS SOURCE value
-       }
-
        public static class AvnEvents
        {
-           // Set by the game whenever the current level changes; null when there is none.
-           public static int? CurrentLevel;
-
-           public static void LevelCompleted(LevelResult r) => Send("LEVEL_ANALYSIS", "Completed", Result(r));
-
-           public static void LevelChoice(string attemptId, int level, ChoiceAction action,
-               PayMethod? method = null)
+           // Runs once at startup. Wire the game's values and the package's signals here.
+           [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+           static void Init()
            {
+               AVNGameAnalytics.StandardVersion = 3;                     // the spec version above
+               AvnSender.CurrentLevel = () => /* the game's current level, or null */ null;
+               AvnAttempt.ProgressProvider = () => /* board progress 0-100 */ 0;
+               AvnAds.IsReady = format => /* is an ad of this format loaded */ false;
+
+               // AppLaunch, AppForeground and AdFailed are written like AppBackground and AdShow below.
+               AvnRuntime.Launched += AppLaunch;
+               AvnRuntime.Backgrounded += AppBackground;
+               AvnRuntime.Foregrounded += AppForeground;
+               AvnAds.TimedOut += ad => AdFailed(ad, AdFailReason.Timeout);
+               AvnAds.NotReady += (format, placement, level) => { /* AD_ANALYSIS Failed, NotReady */ };
+           }
+
+           // Level attempts. Begin() makes the id and attempt number; the result closes the clock.
+           public static void LevelStarted(int level /*, LevelSource source, game extras */)
+           {
+               AvnAttempt.Begin(level);
+               AvnMemory.StartTimer("level");
+               // Send("LEVEL_ANALYSIS", "Started", Progress(AvnAttempt.Current()) + spec keys + extras);
+           }
+
+           public static void LevelCompleted(/* spec result keys: MOVES, SKIP_OFFERED ... */)
+           {
+               if (!AvnAttempt.InProgress) return;                       // one result per attempt
+               Send("LEVEL_ANALYSIS", "Completed", Result(AvnAttempt.EndWithResult()));
+           }
+
+           public static void LevelChoice(ChoiceAction action, PayMethod? method = null)
+           {
+               if (!AvnAttempt.TakeChoice(out AvnAttemptInfo info)) return;   // one Choice per result
+               if (action == ChoiceAction.Revive) AvnAttempt.Revive();        // same attempt, back in play
                var p = new Dictionary<string, object> {
-                   ["ATTEMPT_ID"] = attemptId, ["LEVEL_NUMBER"] = level, ["ACTION"] = action.ToString() };
+                   ["ATTEMPT_ID"] = info.Id, ["LEVEL_NUMBER"] = info.Level, ["ACTION"] = action.ToString() };
                if (method.HasValue) p["METHOD"] = method.Value.ToString();
                Send("LEVEL_ANALYSIS", "Choice", p);
            }
 
-           public static void AdShow(AdInfo ad) => Send("AD_ANALYSIS", "Show", Ad(ad));
+           // Ads. Ask() right before requesting an ad, Begin() when the network shows one.
+           public static void AdAsk(AdFormat format, string placement) =>
+               AvnAds.Ask(format.ToString(), placement, AvnAttempt.InProgress ? AvnAttempt.Level : (int?)null,
+                   watchReady: format == AdFormat.Rewarded);
 
-           static Dictionary<string, object> Progress(LevelProgress x) => new Dictionary<string, object> {
-               ["ATTEMPT_ID"] = x.AttemptId, ["ATTEMPT"] = x.Attempt, ["LEVEL_NUMBER"] = x.LevelNumber,
+           public static AvnAd AdShow(AdFormat format, bool fallback = false)
+           {
+               AvnAd ad = AvnAds.Begin(format.ToString(), fallback);
+               AvnAttempt.NoteAdShown();
+               Send("AD_ANALYSIS", "Show", Ad(ad));
+               return ad;
+           }
+
+           // App lifecycle comes from AvnRuntime; this file only turns it into events.
+           static void AppBackground(AvnCause cause) => Send("APP_ANALYSIS", "Background", new Dictionary<string, object> {
+               ["CAUSE"] = cause.ToString(), ["IN_LEVEL"] = AvnAttempt.InProgress ? 1 : 0 });
+
+           static Dictionary<string, object> Progress(AvnAttemptInfo x) => new Dictionary<string, object> {
+               ["ATTEMPT_ID"] = x.Id, ["ATTEMPT"] = x.Attempt, ["LEVEL_NUMBER"] = x.Level,
                ["SECONDS"] = x.Seconds, ["PROGRESS_PCT"] = x.ProgressPct };
 
-           static Dictionary<string, object> Result(LevelResult x)
+           static Dictionary<string, object> Result(AvnAttemptInfo x)
            {
-               var p = Progress(x.Progress);
+               var p = Progress(x);
                p["REVIVES"] = x.Revives; p["POWERUPS_USED"] = x.PowerupsUsed; p["ADS_SHOWN"] = x.AdsShown;
-               if (x.Moves.HasValue) p["MOVES"] = x.Moves.Value;
-               if (x.SkipOffered.HasValue) p["SKIP_OFFERED"] = x.SkipOffered.Value ? 1 : 0;
                return p;
            }
 
-           static Dictionary<string, object> Ad(AdInfo x)
+           static Dictionary<string, object> Ad(AvnAd x)
            {
                var p = new Dictionary<string, object> {
-                   ["AD_ID"] = x.AdId, ["FORMAT"] = x.Format.ToString(), ["PLACEMENT"] = x.Placement };
-               if (x.Fallback.HasValue) p["FALLBACK"] = x.Fallback.Value ? 1 : 0;
+                   ["AD_ID"] = x.Id, ["FORMAT"] = x.Format, ["PLACEMENT"] = x.Placement };
+               if (x.Fallback) p["FALLBACK"] = 1;
+               if (x.Level.HasValue) p["LEVEL_NUMBER"] = x.Level.Value;
                return p;
            }
 
-           // The only call to the SDK in the whole game.
-           static void Send(string name, string state, Dictionary<string, object> p)
-           {
-               p["STATE"] = state;
-               if (!p.ContainsKey("LEVEL_NUMBER") && CurrentLevel.HasValue) p["LEVEL_NUMBER"] = CurrentLevel.Value;
-               var clean = new Dictionary<string, object>();
-               foreach (var kv in p)
-                   if (kv.Value != null && !(kv.Value is string s && s.Length == 0)) clean[kv.Key] = kv.Value;
-               AvnAnalytics.LogEvent(name, clean);
-           }
+           // The only exit. Game code never calls AvnSender or AVNGameAnalytics directly.
+           static void Send(string name, string state, Dictionary<string, object> p) =>
+               AvnSender.Send(name, state, p);
        }
    }
    ```
@@ -154,14 +183,25 @@ Do these steps in order and do not skip any.
    install.
 6. **Handle the hard cases:**
    - Revive keeps the same `ATTEMPT_ID` and may produce another result.
-   - On launch, if the previous run died inside an attempt, send `LEVEL_ANALYSIS Left` with
+   - On `AvnRuntime.Launched`, call `AvnAttempt.TakeRecovered(out info, out hadResult)`. If the
+     previous run died inside an attempt (`hadResult` false), send `LEVEL_ANALYSIS Left` with
      `REASON=Killed`, `RECOVERED=1` and the saved attempt values. If it died with a result but no
-     choice, send `LEVEL_ANALYSIS Choice` with `ACTION=Abandoned`.
-   - `SECONDS` (level) excludes time in background and in fullscreen ads.
-   - Ad callbacks may arrive out of order or not at all; keep the ad state per `AD_ID`, and close
-     it as `Failed` with `REASON=Timeout` after 180 seconds without `Closed`.
-   - A rewarded button pressed with no ad loaded is `AD_ANALYSIS Failed` with `REASON=NotReady`.
-   - `APP_ANALYSIS Background` caused by an ad or a purchase dialog has `CAUSE=Ad` or `CAUSE=Purchase`.
+     choice (`hadResult` true), send `LEVEL_ANALYSIS Choice` with `ACTION=Abandoned`. The
+     `APP_ANALYSIS Launch` event takes `PREV_EXIT` from the same signal.
+   - `SECONDS` (level) excludes time in background and in fullscreen ads; `AvnAttempt` already
+     does this. Do not time levels yourself.
+   - Ad callbacks may arrive out of order or not at all. Look the ad up with `AvnAds.Find`, close it
+     with `AvnAds.End` and send `Closed` or `Failed` only when `End` returns true (a duplicate
+     callback returns false). `AvnAds.TimedOut` fires after 180 seconds without a close: send
+     `Failed` with `REASON=Timeout`.
+   - A rewarded button pressed with no ad loaded: call `AvnAds.Ask(..., watchReady: true)` and send
+     `AD_ANALYSIS Failed` with `REASON=NotReady` from `AvnAds.NotReady`.
+   - `APP_ANALYSIS Background` and `Foreground` come from `AvnRuntime`; the cause is `Ad` while an
+     ad is open and `Purchase` while `AvnRuntime.PurchaseActive` is true. Set that flag around every
+     store dialog.
+   - Tutorials, screens and FTUE steps: use `AvnMemory.StartTimer`/`StopTimer` for durations (a
+     `StopTimer` that returns false drops a second terminal state) and `AvnMemory.FirstTime` for
+     "once per install".
 7. **Write the profile** `Assets/AVNEvents/avn-events-profile.json`, exactly in this shape:
 
    ```json
@@ -197,8 +237,9 @@ Do these steps in order and do not skip any.
    `not_applicable` or `omitted` and `where` (Class.Method). List vocabulary values sorted
    alphabetically.
 8. **Check your work** before finishing:
-   - Search the code for every `AvnAnalytics.LogEvent` call: all of them must be inside
-     `Assets/AVNEvents/`.
+   - Search the code for `AVNGameAnalytics.LogEvent` and `AvnSender.Send`: outside the package
+     (`Assets/AVNAnalytics/`) only `Assets/AVNEvents/AvnEvents.cs` may call them, and nothing under
+     `Assets/AVNAnalytics/` may be modified.
    - Compare every event name, key and enum string in `AvnEvents.cs` against the spec, character
      by character.
    - Compile the project. If it has edit-mode tests, add one test per event method that checks the
