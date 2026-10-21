@@ -8,7 +8,6 @@ import json
 import re
 import threading
 import time
-from bisect import bisect_left
 from collections import Counter
 from statistics import median
 
@@ -514,131 +513,6 @@ def level_progress(storage, game_id, start, end, filters=None, scope="all"):
             else "New players, within their first session",
             "scope": scope,
         },
-    }
-
-
-def level_funnel(
-    storage,
-    game_id,
-    start,
-    end,
-    filters,
-    origin="level1",
-    last_level=20,
-    include_finishes=False,
-):
-    """Ordered progression for players whose entry event matches the selected filters."""
-    storage.get_game(game_id)
-    if origin not in ("level1", "session") or not 1 <= last_level <= 1000:
-        raise HTTPException(400, "Choose a funnel origin and an end level from 1 to 1000.")
-    labeler = stories.Labeler(_definitions(storage, game_id))
-    steps = [("session", None)] if origin == "session" else []
-    for number in range(1, last_level + 1):
-        steps.append(("started", number))
-        if include_finishes:
-            steps.append(("completed", number))
-    counts = Counter()
-    observed = Counter()
-    active_players = 0
-    condition, args = where(start, end, filters)
-    follow_condition, follow_args = where(
-        start,
-        end,
-        {
-            key: value
-            for key, value in (filters or {}).items()
-            if key in ("environments", "exclude_environments", "platforms")
-        },
-    )
-
-    def finish(events):
-        nonlocal active_players
-        if not events:
-            return
-        active_players += 1
-        times = {}
-        entered = None
-        for row, keys in events:
-            for key in keys:
-                times.setdefault(key, []).append(row["client_ts"])
-            if entered is None and row["selected"] and steps[0] in keys:
-                entered = row["client_ts"]
-        for key in times:
-            observed[key] += 1
-        if entered is None:
-            return
-        previous = entered
-        for key in steps:
-            available = times.get(key, [])
-            position = bisect_left(available, previous)
-            if position == len(available):
-                break
-            previous = available[position]
-            counts[key] += 1
-
-    with storage.connect(storage.game_path(game_id)) as connection:
-        rows = connection.execute(
-            f"""WITH selected AS (
-                    SELECT event_id, {PLAYER} AS player FROM events
-                    WHERE {condition} AND {IDENTIFIED}
-                )
-                SELECT {PLAYER} AS player, name, client_ts,
-                       json_extract(payload, '$.params') AS params,
-                       json_extract(payload, '$.app_version') AS app_version,
-                       event_id IN (SELECT event_id FROM selected) AS selected
-                FROM events WHERE {follow_condition} AND {IDENTIFIED}
-                    AND {PLAYER} IN (SELECT player FROM selected)
-                ORDER BY player, client_ts, event_id LIMIT ?""",
-            (*args, *follow_args, MAX_FUNNEL_EVENTS + 1),
-        )
-        player, events = None, []
-        for count, row in enumerate(rows, 1):
-            if count > MAX_FUNNEL_EVENTS:
-                raise HTTPException(400, "Too many events for this funnel. Pick fewer days.")
-            if row["player"] != player:
-                finish(events)
-                player, events = row["player"], []
-            params = json.loads(row["params"]) if row["params"] else {}
-            info = labeler.level_info(row["name"], params, row["app_version"])
-            keys = []
-            if info:
-                verb, number = info
-                if verb == "restarted":
-                    verb = "started"
-                keys.append((verb, number))
-            if row["name"] == "session_start" or "session_start" in labeler.canonical(
-                row["name"], params, row["app_version"]
-            ):
-                keys.append(("session", None))
-            events.append((row, keys))
-        finish(events)
-    entered = counts[steps[0]]
-    previous = entered
-    result = []
-    for index, key in enumerate(steps):
-        reached = counts[key]
-        result.append(
-            {
-                "action": key[0],
-                "level": key[1],
-                "players": reached,
-                "percent": round(100 * reached / entered, 1) if entered else None,
-                "drop": previous - reached if index else 0,
-                "drop_percent": round(100 * (previous - reached) / previous, 1)
-                if index and previous
-                else None,
-                "outside_funnel": observed[key] - reached,
-            }
-        )
-        previous = reached
-    return {
-        "origin": origin,
-        "last_level": last_level,
-        "include_finishes": include_finishes,
-        "players": entered,
-        "without_entry": active_players - entered,
-        "steps": result,
-        "minimum_players": storage.analytics_thresholds(game_id)["funnels_min_players"],
     }
 
 

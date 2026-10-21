@@ -270,10 +270,10 @@ function loadError(error, action = 'data-action="refresh"') {
   return `<div class="load-error" role="alert"><div>${icon('pulse', 18)}<p>${escapeHTML(message)}</p></div>${retry}</div>`;
 }
 
-// Only these POST endpoints are reads. Saved funnels/flows and other writes invalidate cache.
+// Only these POST endpoints are reads. Saved funnels and other writes invalidate cache.
 function analyticsRead(path, options = {}) {
   return (options.method || 'GET').toUpperCase() === 'POST' &&
-    /\/insights\/(?:funnel|journeys(?:\/players)?|levels\/first-session(?:\/players)?)$/.test(path.split('?')[0]);
+    /\/insights\/(?:funnel|journeys(?:\/players)?)$/.test(path.split('?')[0]);
 }
 function api(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();

@@ -1357,7 +1357,7 @@ async function renderLevels() {
   if (!LEVEL_SCOPES[navigation.scope]) navigation.scope = 'all';
   let page = 0; let highlighted = null;
   shell('Levels', heading('Levels', 'Follow the same players from one level’s start to the next, with a breakdown of where progress stops.') +
-    `<div id="filters"></div><div class="range-modes route-tabs levels-views" role="group" aria-label="Levels view"><button type="button" data-levels-view="table">Level by level</button><button type="button" data-levels-view="explore">Explore levels</button></div>
+    `<div id="filters"></div><div class="range-modes route-tabs levels-views" role="group" aria-label="Levels view"><button type="button" data-levels-view="table">Level by level</button><button type="button" data-levels-view="compare">Compare releases</button></div>
     <div id="level-tools" hidden></div><div id="levels-by-level"><div id="levels-summary"></div>
     <section class="panel levels-panel"><div class="panel-header"><div><h2>Level by level</h2><p id="levels-note">Counted from level start, complete, fail and restart events.</p></div><div class="quiet-actions"><div class="segmented" role="group" aria-label="Which players">${Object.entries(LEVEL_SCOPES).map(([key, label]) => `<button type="button" data-levels-scope="${key}">${label}</button>`).join('')}</div><label class="inline-field">Sort<select id="levels-sort"><option value="level">Level order</option><option value="drop">Highest total drop</option><option value="completion">Lowest completion</option><option value="tries">Most tries per player</option><option value="time">Slowest</option></select></label></div></div><div class="levels-navigation"><form id="levels-jump-form"><label for="levels-jump">Jump to level</label><input id="levels-jump" type="number" min="0" max="1000000" required placeholder="e.g. 120"><button type="submit" class="button small-button">Go</button></form><label class="inline-field">Rows<select id="levels-page-size"><option value="25">25</option><option value="50">50</option><option value="100">100</option><option value="all">All</option></select></label><div class="quiet-actions"><button type="button" class="button small-button" id="levels-previous-page">← Previous</button><span id="levels-page-info" class="small muted" aria-live="polite"></span><button type="button" class="button small-button" id="levels-next-page">Next →</button></div></div><div id="levels-table"></div></section></div>`);
   let data = null; let chosen = null; let latest = 0;
@@ -1369,23 +1369,23 @@ async function renderLevels() {
   const showScope = () => document.querySelectorAll('[data-levels-scope]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.levelsScope === navigation.scope)));
   const firstSession = () => navigation.scope === 'first_session';
   const levelsQuery = state => { const query = filterQuery(state); if (firstSession()) query.set('scope', 'first_session'); return query; };
-  // Two sub pages: the level table, or the explore tools (compare, funnel, first session). Only the
-  // open one is shown, and the explore tools only query while open.
+  // Two sub pages: the level table, or Compare releases. Only the open one is shown, and the
+  // comparison only queries while open. "explore" is the old name of the comparison page.
   const viewKey = `avn-levels-view-${game.id}`;
-  let levelsView = (new URLSearchParams(location.search).get('view') || storeGet(viewKey)) === 'explore' ? 'explore' : 'table';
+  let levelsView = ['compare', 'explore'].includes(new URLSearchParams(location.search).get('view') || storeGet(viewKey)) ? 'compare' : 'table';
   const showView = () => {
     document.querySelectorAll('[data-levels-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.levelsView === levelsView)));
     document.querySelector('#levels-by-level').hidden = levelsView !== 'table';
-    document.querySelector('#level-tools').hidden = levelsView !== 'explore';
+    document.querySelector('#level-tools').hidden = levelsView !== 'compare';
   };
   const chooseView = async next => {
     if (next === levelsView) return;
     levelsView = next; storeSet(viewKey, next);
     const url = new URL(location.href);
-    if (next === 'explore') url.searchParams.set('view', 'explore'); else url.searchParams.delete('view');
+    if (next === 'compare') url.searchParams.set('view', 'compare'); else url.searchParams.delete('view');
     history.replaceState(null, '', url);
     showView();
-    if (next === 'explore' && chosen) toolsPanel.update(chosen);
+    if (next === 'compare' && chosen) toolsPanel.update(chosen);
     if (next === 'table' && chosen && !data) await load(chosen);
   };
   document.querySelector('.levels-views').addEventListener('click', event => {
@@ -1534,7 +1534,7 @@ async function renderLevels() {
     chosen = structuredClone(state); page = 0; data = null; const ticket = ++latest;
     drill.forEach(state => { state.ticket++; });
     fitObserver?.disconnect();
-    if (levelsView === 'explore') { toolsPanel.update(chosen); return; }
+    if (levelsView === 'compare') { toolsPanel.update(chosen); return; }
     document.querySelector('#levels-page-info').textContent = '';
     document.querySelector('#levels-previous-page').disabled = true;
     document.querySelector('#levels-next-page').disabled = true;

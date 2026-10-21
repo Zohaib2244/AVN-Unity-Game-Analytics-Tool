@@ -32,7 +32,6 @@ from . import (
     device_specs,
     dictionary_import,
     events,
-    first_session,
     insights,
     journeys,
     sdk_package,
@@ -52,8 +51,6 @@ from .models import (
     EventDefinition,
     EventMappings,
     Filters,
-    FlowPlayersQuery,
-    FlowQuery,
     FunnelQuery,
     GameCreate,
     GameUpdate,
@@ -67,7 +64,6 @@ from .models import (
     Name,
     NutBotChat,
     PlayerRules,
-    SavedFlow,
     SavedFunnel,
     TeamAdd,
     TeamUpdate,
@@ -766,51 +762,6 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             query.model_dump(),
         )
 
-    @admin_api.post("/v1/games/{game_id}/insights/levels/first-session")
-    def insights_first_session(game_id: UUID, query: FlowQuery):
-        settings = query.model_dump(
-            include={"first_level", "last_level", "max_away_seconds", "allow", "mode"}
-        )
-        return first_session.first_session_flow(
-            storage,
-            str(game_id),
-            *day_range(query.start, query.end, query.timezone_offset_minutes),
-            query.filters.model_dump(),
-            settings,
-        )
-
-    @admin_api.post("/v1/games/{game_id}/insights/levels/first-session/players")
-    def insights_first_session_players(game_id: UUID, query: FlowPlayersQuery):
-        settings = query.model_dump(
-            include={"first_level", "last_level", "max_away_seconds", "allow", "mode"}
-        )
-        return first_session.first_session_players(
-            storage,
-            str(game_id),
-            *day_range(query.start, query.end, query.timezone_offset_minutes),
-            query.filters.model_dump(),
-            settings,
-            query.target.model_dump(),
-            query.offset,
-            query.limit,
-        )
-
-    @admin_api.get("/v1/games/{game_id}/insights/flows")
-    def list_flows(game_id: UUID):
-        return insights.saved_flows(storage, str(game_id))
-
-    @admin_api.post("/v1/games/{game_id}/insights/flows", status_code=201)
-    def create_flow(game_id: UUID, saved: SavedFlow):
-        return insights.save_flow(storage, str(game_id), None, saved.model_dump())
-
-    @admin_api.put("/v1/games/{game_id}/insights/flows/{flow_id}")
-    def update_flow(game_id: UUID, flow_id: UUID, saved: SavedFlow):
-        return insights.save_flow(storage, str(game_id), str(flow_id), saved.model_dump())
-
-    @admin_api.delete("/v1/games/{game_id}/insights/flows/{flow_id}", status_code=204)
-    def delete_flow(game_id: UUID, flow_id: UUID):
-        insights.delete_flow(storage, str(game_id), str(flow_id))
-
     @admin_api.post("/v1/games/{game_id}/insights/journeys")
     def insights_journeys(game_id: UUID, query: JourneyQuery):
         return journeys.journeys(
@@ -906,27 +857,6 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     ):
         return journeys.level_progress(
             storage, str(game_id), *day_range(start, end, tz_offset), chosen, scope
-        )
-
-    @admin_api.get("/v1/games/{game_id}/insights/levels/funnel")
-    def insights_level_funnel(
-        game_id: UUID,
-        start: DateParam,
-        end: DateParam,
-        chosen: Filtered,
-        origin: Literal["level1", "session"] = "level1",
-        last_level: Annotated[int, Query(ge=1, le=1000)] = 20,
-        include_finishes: bool = False,
-        tz_offset: TimezoneOffset = 0,
-    ):
-        return journeys.level_funnel(
-            storage,
-            str(game_id),
-            *day_range(start, end, tz_offset),
-            chosen,
-            origin=origin,
-            last_level=last_level,
-            include_finishes=include_finishes,
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/levels/players")
