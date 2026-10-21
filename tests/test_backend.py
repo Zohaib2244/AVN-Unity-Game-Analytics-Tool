@@ -1989,6 +1989,76 @@ def test_level_players_say_what_players_did_last_on_the_level(backend):
     assert failed["last_actions"] == data["last_actions"]
 
 
+def test_level_players_blame_the_ad_that_sent_the_app_to_the_background(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+
+    def level(player, moment, state, number):
+        return _played(
+            player,
+            f"s-{player}",
+            moment,
+            "LEVEL_ANALYSIS",
+            {"STATE": state, "LEVEL_NUMBER": number},
+        )
+
+    def ad(player, moment, kind, placement):
+        return _played(
+            player,
+            f"s-{player}",
+            moment,
+            "AD_ANALYSIS",
+            {"FORMAT": kind, "PLACEMENT": placement, "STATE": "Show", "LEVEL_NUMBER": 2},
+        )
+
+    def app(player, moment, state, **params):
+        return _played(player, f"s-{player}", moment, "APP_ANALYSIS", {"STATE": state, **params})
+
+    records = []
+    for player in ("inter", "reward", "player", "returned"):
+        records.append(level(player, "04T09:00:00", "Started", 1))
+        records.append(level(player, "04T09:00:40", "Completed", 1))
+    # The interstitial is logged just before the level start; the ad then backgrounds the app.
+    records += [
+        ad("inter", "04T09:01:02", "Interstitial", "level_interstitial"),
+        level("inter", "04T09:01:03", "Started", 2),
+        app("inter", "04T09:01:04", "Background", CAUSE="Ad"),
+        _played("inter", "s-inter", "04T09:01:05", "session_end", {"duration_seconds": 65}),
+    ]
+    # A power-up, then a rewarded ad after the level start.
+    records += [
+        level("reward", "04T09:01:03", "Started", 2),
+        _played("reward", "s-reward", "04T09:01:25", "POWERUP_ANALYSIS", {"POWERUP": "two_x"}),
+        ad("reward", "04T09:01:28", "Rewarded", "level_skip"),
+        app("reward", "04T09:01:29", "Background", CAUSE="Ad"),
+    ]
+    # The player left the app themselves: not an ad.
+    records += [
+        level("player", "04T09:01:03", "Started", 2),
+        ad("player", "04T09:01:01", "Interstitial", "level_interstitial"),
+        app("player", "04T09:01:10", "Background", CAUSE="Player"),
+    ]
+    # Backgrounded by an ad, but they came back and kept playing: the last thing they did counts.
+    records += [
+        ad("returned", "04T09:01:02", "Interstitial", "level_interstitial"),
+        level("returned", "04T09:01:03", "Started", 2),
+        app("returned", "04T09:01:04", "Background", CAUSE="Ad"),
+        app("returned", "04T09:01:09", "Foreground", AWAY_SECONDS=5),
+        level("returned", "04T09:01:20", "Failed", 2),
+    ]
+    assert send(ingest, game, records).is_success
+    rows = {
+        row["player"]: row["last_action"]
+        for row in _level_players(admin, game, 2, "left")["players"]
+    }
+    assert rows == {
+        "inter": "Interstitial ad",
+        "reward": "Rewarded ad",
+        "player": "Started level 2",
+        "returned": "Failed level 2",
+    }
+
+
 def test_levels_for_new_players_count_only_their_first_session(backend):
     admin, ingest, _ = backend
     game = register(admin)

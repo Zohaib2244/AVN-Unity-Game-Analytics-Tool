@@ -53,6 +53,7 @@ STUCK_TRIES = 3
 LAST_ACTIONS = 8
 # Not something the player did: SDK bookkeeping and the app going to the background.
 NOT_AN_ACTION = {"session_start", "session_end", "first_open", "APP_ANALYSIS"}
+AD_EVENT = re.compile(r"^ads?(_|$)", re.I)
 # The filters that decide whether a player's earlier history counts (the rest pick the cohort).
 HISTORY_FILTERS = ("environments", "exclude_environments", "platforms")
 LEVEL_CACHE_SECONDS = 60
@@ -517,16 +518,40 @@ def level_progress(storage, game_id, start, end, filters=None, scope="all"):
 
 
 def _last_action(events, index, labeler):
-    """What the player did last in the session of events[index], from that event on."""
+    """What the player did last in the session of events[index], from that event on.
+
+    A session whose last app event sent the app to the background because of an ad is put down to
+    that ad, even when the game logged the ad just before the level start.
+    """
     session = events[index][0]["session_id"]
-    last = events[index][0]
-    for row, _ in events[index + 1 :]:
-        if row["session_id"] != session:
-            break
+    end = last = index
+    while end + 1 < len(events) and events[end + 1][0]["session_id"] == session:
+        end += 1
+        row = events[end][0]
         if row["name"] not in NOT_AN_ACTION and not labeler.hidden(row["name"]):
-            last = row
-    params = json.loads(last["params"]) if last["params"] else {}
-    return stories.action_text(labeler, last["name"], params, last["app_version"])
+            last = end
+
+    def read(position):
+        row = events[position][0]
+        return row, json.loads(row["params"]) if row["params"] else {}
+
+    for position in range(end, last, -1):
+        row, params = read(position)
+        if row["name"] != "APP_ANALYSIS":
+            continue
+        if stories.param_text(params, "STATE") == "Background" and (
+            stories.param_text(params, "CAUSE") == "Ad"
+        ):
+            for earlier in range(position - 1, -1, -1):
+                ad, ad_params = read(earlier)
+                if ad["session_id"] != session:
+                    break
+                if AD_EVENT.match(ad["name"]):
+                    return stories.action_text(labeler, ad["name"], ad_params, ad["app_version"])
+            return "Left during an ad"
+        break  # the app was last in the foreground, or left for another reason
+    row, params = read(last)
+    return stories.action_text(labeler, row["name"], params, row["app_version"])
 
 
 def _level_transitions(storage, game_id, start, end, filters, scope="all"):

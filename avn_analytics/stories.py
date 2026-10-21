@@ -324,7 +324,7 @@ def shape_label(self, name, params, app_version=None):
 Labeler.shape = shape_label
 
 
-def _param_text(params, key):
+def param_text(params, key):
     value = _lookup(params, key)
     return None if value is None else str(value)
 
@@ -336,9 +336,9 @@ def _words(value):
 
 def standard_text(name, params):
     """Plain words for a screen, ad or level event of the AVN events standard, else None."""
-    state = _param_text(params, "STATE")
-    screen, action = _param_text(params, "SCREEN"), _param_text(params, "ACTION")
-    ad, reason = _param_text(params, "FORMAT"), _param_text(params, "REASON")
+    state = param_text(params, "STATE")
+    screen, action = param_text(params, "SCREEN"), param_text(params, "ACTION")
+    ad, reason = param_text(params, "FORMAT"), param_text(params, "REASON")
     if name == "SCREEN_ANALYSIS" and screen:
         if state == "Opened":
             return f"Opened {_words(screen)}"
