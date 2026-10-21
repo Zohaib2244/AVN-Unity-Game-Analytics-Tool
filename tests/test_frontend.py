@@ -125,9 +125,7 @@ assert.equal(storeGet('player').session, true);
 def test_raw_timeline_navigation_visibility_and_session_gaps():
     assets = Path(__file__).parents[1] / "avn_analytics/static"
     script = (assets / "insights.js").read_text()
-    raw_events = script[
-        script.index("async function renderRawEvents(") : script.index("/* ─── Levels:")
-    ]
+    raw_events = script[script.index("function timelineSessions(") : script.index("/* ─── Levels:")]
     formatting = script[script.index("const chipValue") : script.index("const paramChips")]
     checks = (
         formatting
@@ -180,7 +178,7 @@ const rows = [
     params:{session_number:1,device_model:'Pixel',os_version:'Android OS 13 / API-33 (X)'}},
   {name:'LAST_EVENT',session_id:'three',client_ts:'2026-10-04T09:11:00Z',params:{}},
 ];
-const api = async () => ({events:rows,truncated:false,snapshot:rows.length});
+let api = async () => ({events:rows,truncated:false,snapshot:rows.length});
 await renderRawEvents({id:'test'},'player',{from:'2026-10-04',to:'2026-10-04'},'utc',container);
 assert.equal(node('.highlight-navigation').hidden, true, 'No highlights means no navigation');
 assert.doesNotMatch(node('#journey').innerHTML, /data-hide-param="seq"/,
@@ -224,6 +222,41 @@ assert.equal(node('.highlight-navigation').hidden, false);
 click({'[data-highlight-remove]':{},'[data-highlight]':{dataset:{highlight:'0'}}});
 assert.equal(node('.highlight-navigation').hidden, true,
   'Removing the last highlight hides navigation');
+
+// One button per session; picking one shows only that session.
+node('#journey-filter').value = '';
+click({'[data-timeline-mode]':{dataset:{timelineMode:'highlight'}}});
+assert.equal(node('#session-picker').hidden, false);
+assert.match(node('#session-picker').innerHTML, /data-session-pick="all" aria-pressed="true"/);
+assert.match(node('#session-picker').innerHTML, /data-session-pick="2" aria-pressed="false"/);
+assert.match(node('#session-picker').innerHTML, /no levels/);
+click({'[data-session-pick]':{dataset:{sessionPick:'1'}}});
+assert.match(node('#journey').innerHTML, /<strong>Session 2<\/strong>/);
+assert.doesNotMatch(node('#journey').innerHTML, /<strong>Session (1|3)<\/strong>/);
+assert.equal((node('#journey').innerHTML.match(/role="separator"/g) || []).length, 0);
+assert.match(node('#session-picker').innerHTML, /data-session-pick="1" aria-pressed="true"/);
+click({'[data-session-pick]':{dataset:{sessionPick:'all'}}});
+assert.match(node('#journey').innerHTML, /<strong>Session 3<\/strong>/);
+assert.equal(node('#timeline-focus').hidden, true, 'No level, no exit event to point at');
+
+// Opened from a level: the player's last event on it is marked and one click away.
+const leveled = rows.map(
+  (row, index) => ({...row, event_id:`e${index}`, level:index === 2 ? 2 : null}));
+api = async () => ({events:leveled,truncated:false,snapshot:leveled.length});
+const focus = {event:'e2', label:'Last on level 2'};
+const dates = {from:'2026-10-04',to:'2026-10-04'};
+await renderRawEvents({id:'test'},'player',dates,'utc',container,focus);
+assert.match(node('#journey').innerHTML, /class="[^"]*timeline-focus[^"]*"/);
+assert.match(node('#journey').innerHTML, /focus-tag">Last on level 2</);
+assert.equal((node('#journey').innerHTML.match(/timeline-focus/g) || []).length, 1);
+assert.equal(node('#timeline-focus').hidden, false);
+assert.match(node('#timeline-focus').innerHTML, /data-timeline-jump="2"/);
+assert.match(node('#session-picker').innerHTML, /Session 2 <span class="pill">Last on level 2</);
+assert.match(node('#session-picker').innerHTML, /· level 2<\/span>/);
+await renderRawEvents({id:'test'},'player',dates,'utc',container,
+  {event:'gone', label:'Last on level 9'});
+assert.match(node('#timeline-focus').innerHTML, /Last on level 9 is not in these dates/);
+assert.doesNotMatch(node('#journey').innerHTML, /timeline-focus/);
 """
     )
     result = subprocess.run(
@@ -402,6 +435,60 @@ assert.match(flowPathsHTML([]), /No detours seen/);
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_level_drill_opens_on_the_bigger_drop_and_lists_what_players_did_last():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/insights.js").read_text()
+    helpers = script[
+        script.index("const LEVEL_SCOPES") : script.index("async function renderLevels(")
+    ]
+    checks = """
+import assert from 'node:assert/strict';
+const escapeHTML = value => String(value).replace(/</g, '&lt;');
+const number = String;
+assert.deepEqual(
+  LEVEL_DRILL_GROUPS.map(([key]) => key), ['left', 'finished_stopped', 'kept_going']);
+const row = transition => ({level: 5, transition});
+assert.equal(
+  levelDrillGroup(row({left: 2, finished_stopped: 5, kept_going: 9})), 'finished_stopped');
+assert.equal(levelDrillGroup(row({left: 4, finished_stopped: 4, kept_going: 9})), 'left');
+assert.equal(levelDrillGroup(row({left: 0, finished_stopped: 0, kept_going: 3})), 'kept_going');
+assert.equal(levelDrillGroup(row(null)), 'left');
+const lastActions = [{text: 'Failed level 5', players: 6}, {text: 'Opened <shop>', players: 2}];
+let html = lastActionsHTML(5, {group: 'left', lastActions, lastAction: 'Opened <shop>'});
+assert.match(html, /aria-label="What players did last on level 5"/);
+assert.match(html,
+  /data-last-action="0" aria-pressed="false">Failed level 5<span class="drill-count">6/);
+assert.match(html, /data-last-action="1" aria-pressed="true">Opened &lt;shop>/);
+assert.equal(lastActionsHTML(5, {group: 'kept_going', lastActions, lastAction: null}), '',
+  'Players who carried on did not leave');
+assert.equal(lastActionsHTML(5, {group: 'left', lastActions: [], lastAction: null}), '');
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=helpers + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_level_by_level_keeps_one_level_open_and_counts_new_players_on_request():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/insights.js").read_text()
+    levels = script[script.index("async function renderLevels(") :]
+    # Opening a level closes the one open before it.
+    assert "open.clear();\n      open.add(level);" in levels
+    # The "Which players" switch reloads the table and the player lists with the scope.
+    assert 'aria-label="Which players"' in levels
+    assert "if (firstSession()) query.set('scope', 'first_session');" in levels
+    assert "const query = levelsQuery(chosen);" in levels
+    # A player opens at their last event on the level, also when browsing to the next one.
+    assert "focus: focusOf, load:" in levels
+    assert "label: `Last on level ${level}`" in levels
+    for gone in ("Missing progress", "Returning entrants", "History unavailable", "Stuck"):
+        assert gone not in levels
 
 
 def test_levels_page_shows_one_sub_page_at_a_time():

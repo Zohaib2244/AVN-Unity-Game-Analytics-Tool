@@ -901,10 +901,11 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         start: DateParam,
         end: DateParam,
         chosen: Filtered,
+        scope: Literal["all", "first_session"] = "all",
         tz_offset: TimezoneOffset = 0,
     ):
         return journeys.level_progress(
-            storage, str(game_id), *day_range(start, end, tz_offset), chosen
+            storage, str(game_id), *day_range(start, end, tz_offset), chosen, scope
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/levels/funnel")
@@ -947,6 +948,8 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             "missing_history",
         ] = "total_drop",
         sort: Literal["exit_at", "tries", "fails"] = "exit_at",
+        scope: Literal["all", "first_session"] = "all",
+        last_action: Annotated[str | None, Query(max_length=500)] = None,
         offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
         limit: Annotated[int, Query(ge=1, le=2000)] = 50,
         tz_offset: TimezoneOffset = 0,
@@ -961,6 +964,8 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             offset=offset,
             limit=limit,
             sort=sort,
+            scope=scope,
+            last_action=last_action,
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/players")

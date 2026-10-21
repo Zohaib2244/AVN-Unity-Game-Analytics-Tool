@@ -1900,6 +1900,162 @@ def test_level_players_show_the_last_level_session_duration(backend, reported, e
     assert data["players"][0]["came_back"] is True
 
 
+def _played(player, session, moment, name, params=None, **extra):
+    return event(
+        name=name,
+        device_id=player,
+        session_id=session,
+        client_ts=f"2026-10-{moment}Z",
+        params=params or {},
+        **extra,
+    )
+
+
+def test_levels_nobody_started_are_not_rows(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = [
+        # A menu ad sent with LEVEL=0 and a finish without any start: neither is a played level.
+        _played("p1", "s1", "04T09:00:00", "AD_ANALYSIS", {"FORMAT": "Banner", "LEVEL": 0}),
+        _played("p1", "s1", "04T09:01:00", "level_started", {"level": 1}),
+        _played("p1", "s1", "04T09:02:00", "level_completed", {"level": 1}),
+        _played("p1", "s1", "04T09:03:00", "level_completed", {"level": 7}),
+    ]
+    assert send(ingest, game, records).is_success
+    levels = admin.get(
+        f"/v1/games/{game['id']}/insights/levels",
+        params={"start": "2026-10-04", "end": "2026-10-04"},
+    ).json()["levels"]
+    assert [row["level"] for row in levels] == [1]
+
+
+def test_level_players_came_back_counts_a_later_session_the_same_day(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = [
+        _played("again", "a1", "04T09:00:00", "level_started", {"level": 1}),
+        _played("again", "a2", "04T11:00:00", "MM_ANALYSIS", {"STATUS": "OPENED"}),
+        _played("stayed", "b1", "04T09:00:00", "level_started", {"level": 1}),
+        _played("stayed", "b1", "04T09:20:00", "MM_ANALYSIS", {"STATUS": "OPENED"}),
+    ]
+    assert send(ingest, game, records).is_success
+    rows = {row["player"]: row for row in _level_players(admin, game, 1, "left")["players"]}
+    assert rows["again"]["came_back"] is True  # reopened two hours later, same day
+    assert rows["stayed"]["came_back"] is False  # still the same session
+
+
+def test_level_players_say_what_players_did_last_on_the_level(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = [
+        _played("ad", "s-ad", "04T09:00:00", "level_started", {"level": 1}),
+        _played("ad", "s-ad", "04T09:01:00", "level_failed", {"level": 1}),
+        _played("ad", "s-ad", "04T09:02:00", "AD_ANALYSIS", {"FORMAT": "Interstitial"}),
+        _played("ad", "s-ad", "04T09:03:00", "APP_ANALYSIS", {"STATE": "Background"}),
+        _played("ad", "s-ad", "04T09:03:00", "session_end", {"duration_seconds": 180}),
+        _played("menu", "s-menu", "04T09:00:00", "level_started", {"level": 1}),
+        _played(
+            "menu",
+            "s-menu",
+            "04T09:01:00",
+            "SCREEN_ANALYSIS",
+            {"SCREEN": "settings_menu", "STATE": "Opened"},
+        ),
+        # A later session is not what they did on the level.
+        _played("menu", "s-menu-2", "05T09:00:00", "MM_ANALYSIS", {"STATUS": "OPENED"}),
+    ]
+    for player in ("fail-1", "fail-2"):
+        records += [
+            _played(player, f"s-{player}", "04T09:00:00", "level_started", {"level": 1}),
+            _played(player, f"s-{player}", "04T09:01:00", "level_failed", {"level": 1}),
+        ]
+    assert send(ingest, game, records).is_success
+    data = _level_players(admin, game, 1, "left")
+    assert data["last_actions"] == [
+        {"text": "Failed level 1", "players": 2},
+        {"text": "Interstitial ad", "players": 1},
+        {"text": "Opened settings menu", "players": 1},
+    ]
+    rows = {row["player"]: row for row in data["players"]}
+    assert rows["ad"]["last_action"] == "Interstitial ad"
+    assert rows["menu"]["last_action"] == "Opened settings menu"
+    assert rows["fail-1"]["last_action"] == "Failed level 1"
+    # The player's last event on the level, for jumping to it in their timeline.
+    assert rows["menu"]["exit_event"] == records[5]["event_id"]
+    assert rows["ad"]["exit_event"] == records[1]["event_id"]
+    failed = _level_players(admin, game, 1, "left", last_action="Failed level 1")
+    assert sorted(row["player"] for row in failed["players"]) == ["fail-1", "fail-2"]
+    assert failed["total"] == 2 and failed["counts"]["left"] == 4
+    assert failed["last_actions"] == data["last_actions"]
+
+
+def test_levels_for_new_players_count_only_their_first_session(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = [
+        # new-1 quits level 2 in their first session and plays on in a second one.
+        _played("new-1", "n1-a", "04T09:00:00", "session_start"),
+        _played("new-1", "n1-a", "04T09:01:00", "level_started", {"level": 1}),
+        _played("new-1", "n1-a", "04T09:02:00", "level_completed", {"level": 1}),
+        _played("new-1", "n1-a", "04T09:03:00", "level_started", {"level": 2}),
+        _played("new-1", "n1-a", "04T09:04:00", "level_failed", {"level": 2}),
+        _played("new-1", "n1-b", "04T15:00:00", "level_started", {"level": 2}),
+        _played("new-1", "n1-b", "04T15:01:00", "level_completed", {"level": 2}),
+        _played("new-1", "n1-b", "04T15:02:00", "level_started", {"level": 3}),
+        # new-2 wins level 1 and their first session ends.
+        _played("new-2", "n2-a", "04T10:00:00", "level_started", {"level": 1}),
+        _played("new-2", "n2-a", "04T10:01:00", "level_completed", {"level": 1}),
+        # A returning player and a new player outside the filters are not counted.
+        _played("old", "o-a", "01T10:00:00", "MM_ANALYSIS", {"STATUS": "OPENED"}),
+        _played("old", "o-b", "04T10:00:00", "level_started", {"level": 1}),
+        _played("other", "x-a", "04T10:00:00", "level_started", {"level": 1}, app_version="2.0"),
+    ]
+    assert send(ingest, game, records).is_success
+    url = f"/v1/games/{game['id']}/insights/levels"
+    params = {"start": "2026-10-04", "end": "2026-10-04", "version": "1.0"}
+    everyone = {row["level"]: row for row in admin.get(url, params=params).json()["levels"]}
+    assert everyone[1]["started"] == 3 and everyone[2]["transition"]["total_drop"] == 0
+    data = admin.get(url, params={**params, "scope": "first_session"}).json()
+    assert data["context"]["scope"] == "first_session"
+    rows = {row["level"]: row for row in data["levels"]}
+    assert sorted(rows) == [1, 2]
+    assert (rows[1]["started"], rows[1]["completed"]) == (2, 2)
+    assert rows[1]["transition"]["kept_going"] == 1
+    assert rows[1]["transition"]["finished_stopped"] == 1
+    assert (rows[2]["started"], rows[2]["completed"], rows[2]["fails"]) == (1, 0, 1)
+    assert rows[2]["transition"]["left"] == 1 and rows[2]["quit"] == 1
+    scoped = {**params, "scope": "first_session"}
+    quit_level_2 = _level_players(admin, game, 2, "left", **scoped)
+    (row,) = quit_level_2["players"]
+    assert row["player"] == "new-1" and row["came_back"] is True
+    assert row["session_seconds"] == 240 and row["last_action"] == "Failed level 2"
+    after_win = _level_players(admin, game, 1, "finished_stopped", **scoped)
+    assert [row["player"] for row in after_win["players"]] == ["new-2"]
+    assert after_win["players"][0]["came_back"] is False
+    assert admin.get(url, params={**params, "scope": "bogus"}).status_code == 400
+    players_url = f"/v1/games/{game['id']}/insights/levels/players"
+    bogus = admin.get(players_url, params={**params, "level": 1, "scope": "bogus"})
+    assert bogus.status_code == 400
+
+
+def test_journey_events_carry_their_id_and_level_number(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = [
+        _played("p1", "s1", "04T09:00:00", "level_started", {"level": 4}),
+        _played("p1", "s1", "04T09:01:00", "MM_ANALYSIS", {"STATUS": "OPENED"}),
+    ]
+    assert send(ingest, game, records).is_success
+    events = admin.get(
+        f"/v1/games/{game['id']}/insights/journey",
+        params={"player": "p1", "start": "2026-10-04", "end": "2026-10-04"},
+    ).json()["events"]
+    assert [(item["event_id"], item["level"]) for item in events] == [
+        (records[0]["event_id"], 4),
+        (records[1]["event_id"], None),
+    ]
+
+
 def test_dictionary_labels_and_hidden_events(backend):
     admin, game = _journey_game(backend)
     url = f"/v1/games/{game['id']}/dictionary"

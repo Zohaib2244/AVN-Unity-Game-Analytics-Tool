@@ -324,6 +324,51 @@ def shape_label(self, name, params, app_version=None):
 Labeler.shape = shape_label
 
 
+def _param_text(params, key):
+    value = _lookup(params, key)
+    return None if value is None else str(value)
+
+
+def _words(value):
+    """settings_menu -> settings menu, DoubleReward -> double reward."""
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", value).replace("_", " ").lower()
+
+
+def standard_text(name, params):
+    """Plain words for a screen, ad or level event of the AVN events standard, else None."""
+    state = _param_text(params, "STATE")
+    screen, action = _param_text(params, "SCREEN"), _param_text(params, "ACTION")
+    ad, reason = _param_text(params, "FORMAT"), _param_text(params, "REASON")
+    if name == "SCREEN_ANALYSIS" and screen:
+        if state == "Opened":
+            return f"Opened {_words(screen)}"
+        if state == "Closed":
+            return f"Closed {_words(screen)}"
+        if state == "Interaction":
+            return f"Tapped {_words(action)} on {_words(screen)}" if action else "Tapped a button"
+    if name == "AD_ANALYSIS" and ad:
+        return f"{_words(ad).capitalize()} ad{' failed' if state == 'Failed' else ''}"
+    if name == "LEVEL_ANALYSIS":
+        if state == "Left":
+            return f"Left the level ({_words(reason)})" if reason else "Left the level"
+        if state == "Choice" and action:
+            return f"Chose {_words(action)}"
+    return None
+
+
+def action_text(labeler, name, params, app_version=None):
+    """What a player did, in a few steady words that add up across players ("Failed level 5")."""
+    params = {key: value for key, value in params.items() if key not in HIDDEN_PARAMS}
+    info = labeler.level_info(name, params, app_version)
+    if info:
+        return f"{VERB_TEXT[info[0]]} level {info[1]}"
+    if not parse_rules((labeler.definitions.get(name) or {}).get("labels", "")):
+        text = standard_text(name, params)
+        if text:
+            return text
+    return labeler.shape(name, params, app_version)
+
+
 def default_label_rules(observed):
     """Suggested dictionary label rules for an event, from the params it has been seen with."""
     lines = []

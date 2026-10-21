@@ -845,8 +845,12 @@ def players(
 
 
 def journey(storage, game_id, player, start, end, offset=0, snapshot=None):
-    """Every event of one player in the range, in game-time order (filters don't apply)."""
+    """Every event of one player in the range, in game-time order (filters don't apply).
+
+    level is the level number of level start/complete/fail/restart events, else None.
+    """
     storage.get_game(game_id)
+    labeler = stories.Labeler(storage.get_dictionary(game_id))
     condition, args = where(start, end)
     with storage.connect(storage.game_path(game_id)) as connection:
         if snapshot is None:
@@ -854,7 +858,8 @@ def journey(storage, game_id, player, start, end, offset=0, snapshot=None):
                 0
             ]
         rows = connection.execute(
-            f"""SELECT name, client_ts, server_ts, payload, {ENVIRONMENT} AS environment
+            f"""SELECT event_id, name, client_ts, server_ts, payload,
+                       {ENVIRONMENT} AS environment
                 FROM events WHERE {condition} AND {PLAYER}=? AND rowid<=?
                 ORDER BY client_ts, event_id LIMIT ? OFFSET ?""",
             (*args, player, snapshot, MAX_JOURNEY_EVENTS + 1, offset),
@@ -867,8 +872,13 @@ def journey(storage, game_id, player, start, end, offset=0, snapshot=None):
             for key, value in (payload.get("params") or {}).items()
             if key not in HIDDEN_PARAMS
         }
+        level = labeler.level_info(
+            row["name"], payload.get("params") or {}, payload.get("app_version")
+        )
         events.append(
             {
+                "event_id": row["event_id"],
+                "level": level[1] if level else None,
                 "name": row["name"],
                 "client_ts": row["client_ts"],
                 "server_ts": row["server_ts"],

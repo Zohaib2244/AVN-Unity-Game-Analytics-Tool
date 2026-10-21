@@ -120,7 +120,7 @@ function mountLevelTools(container, game, restore) {
     bindForm('#save-level-view', async (form, values) => {
       const name = values.name.trim();
       if (!name) throw new Error('Enter a name for this view.');
-      storeSet(viewKey, {...(storeGet(viewKey) || {}), [name]: {filters: structuredClone(selected), tools: {...prefs}, sort: document.querySelector('#levels-sort').value, pageSize: document.querySelector('#levels-page-size').value}});
+      storeSet(viewKey, {...(storeGet(viewKey) || {}), [name]: {filters: structuredClone(selected), tools: {...prefs}, sort: document.querySelector('#levels-sort').value, pageSize: document.querySelector('#levels-page-size').value, scope: document.querySelector('[data-levels-scope][aria-pressed="true"]')?.dataset.levelsScope || 'all'}});
       storeSet(activeViewKey, name);
       await dismissModal(); drawViews(); toast('Level view saved.');
     });
