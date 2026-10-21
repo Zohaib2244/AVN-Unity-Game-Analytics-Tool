@@ -9,6 +9,7 @@ import re
 import threading
 import time
 from collections import Counter
+from datetime import datetime
 from statistics import median
 
 from fastapi import HTTPException
@@ -19,6 +20,7 @@ from .insights import (
     IDENTIFIED,
     MAX_FUNNEL_EVENTS,
     PLAYER,
+    SDK_EVENTS,
     SESSION,
     _AverageSessionLength,
     matches,
@@ -554,6 +556,37 @@ def _last_action(events, index, labeler):
     return stories.action_text(labeler, row["name"], params, row["app_version"])
 
 
+def _moment(row):
+    return datetime.fromisoformat(row["client_ts"]).timestamp()
+
+
+def _last_event(events, index):
+    """The last event sent in the session of events[index], and how long after the one before it.
+
+    Session start and end are written by the SDK around the session, so they are skipped. Returns
+    {"text", "gap", "after"}: gap is in seconds and after names the event before it (both None
+    when it was the first event they sent).
+    """
+    session = events[index][0]["session_id"]
+    end = index
+    while end + 1 < len(events) and events[end + 1][0]["session_id"] == session:
+        end += 1
+    while end > index and events[end][0]["name"] in SDK_EVENTS:
+        end -= 1
+
+    def read(position):
+        row = events[position][0]
+        return row, json.loads(row["params"]) if row["params"] else {}
+
+    row, params = read(end)
+    last = {"text": stories.event_text(row["name"], params), "gap": None, "after": None}
+    if end and events[end - 1][0]["session_id"] == session:
+        before, before_params = read(end - 1)
+        last["gap"] = round(max(0.0, _moment(row) - _moment(before)), 1)
+        last["after"] = stories.event_text(before["name"], before_params)
+    return last
+
+
 def _level_transitions(storage, game_id, start, end, filters, scope="all"):
     """Match selected starters to subsequent progress, retaining historical entry context.
 
@@ -610,6 +643,7 @@ def _level_transitions(storage, game_id, start, end, filters, scope="all"):
                 "exit_at": last["client_ts"],
                 "exit_event": last["event_id"],
                 "last_action": _last_action(events, last_index, labeler),
+                "last_event": _last_event(events, last_index),
                 "session_seconds": round(session_lengths[last["session_id"]].finalize(), 1),
                 "last_seen": latest["client_ts"],
                 # Any later session counts, even the same day.

@@ -356,6 +356,18 @@ def standard_text(name, params):
     return None
 
 
+def event_text(name, params):
+    """An event as the game sent it, in few words: NAME · State (screen/format/action/cause)."""
+    state = param_text(params, "STATE")
+    detail = "/".join(
+        value
+        for key in ("SCREEN", "FORMAT", "ACTION", "REASON", "CAUSE")
+        if (value := param_text(params, key))
+    )
+    text = f"{name} · {state}" if state else name
+    return f"{text} ({detail})" if detail else text
+
+
 def action_text(labeler, name, params, app_version=None):
     """What a player did, in a few steady words that add up across players ("Failed level 5")."""
     params = {key: value for key, value in params.items() if key not in HIDDEN_PARAMS}

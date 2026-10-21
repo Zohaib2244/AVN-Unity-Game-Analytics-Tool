@@ -388,6 +388,14 @@ assert.match(html, /data-last-action="1" aria-pressed="true">Opened &lt;shop>/);
 assert.equal(lastActionsHTML(5, {group: 'kept_going', lastActions, lastAction: null}), '',
   'Players who carried on did not leave');
 assert.equal(lastActionsHTML(5, {group: 'left', lastActions: [], lastAction: null}), '');
+// The last event sent, with how long after the one before it.
+const duration = seconds => `${Math.round(seconds)}s`;
+html = lastEventHTML({text: 'LEVEL_ANALYSIS · Started', gap: 0.4, after: 'AD_ANALYSIS · Show <x>'});
+assert.match(html, /<span class="mono">LEVEL_ANALYSIS · Started<\/span>/);
+assert.match(html, /<span class="muted">0s after AD_ANALYSIS · Show &lt;x><\/span>/);
+html = lastEventHTML({text: 'LEVEL_ANALYSIS · Started', gap: null, after: null});
+assert.doesNotMatch(html, /after/, 'the first event they sent has nothing before it');
+assert.match(lastEventHTML(null), /—/);
 """
     result = subprocess.run(
         [shutil.which("node"), "--input-type=module"],

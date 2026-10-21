@@ -1453,6 +1453,8 @@ main{padding-bottom:calc(28px + env(safe-area-inset-bottom))}
 @media(max-width:640px){.level-explore .panel-header .quiet-actions{width:100%}}
 
 /* Levels: what players did last on a level, and a player timeline's sessions and exit event. */
+.last-event span{display:block}
+.last-event .mono{color:var(--text-primary)}
 .last-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:14px 0 6px}
 .last-actions-label{margin-right:4px;font-size:var(--fs-sm);color:var(--text-muted)}
 .last-action,.session-chip{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:4px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg-card);color:var(--text-muted);font-family:var(--font-ui);font-size:var(--fs-sm);text-align:left;cursor:pointer}

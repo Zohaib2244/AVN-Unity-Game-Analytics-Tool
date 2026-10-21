@@ -2059,6 +2059,71 @@ def test_level_players_blame_the_ad_that_sent_the_app_to_the_background(backend)
     }
 
 
+def test_level_players_show_the_last_event_sent_and_how_long_after_the_one_before(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+
+    def level(player, moment, state, number):
+        params = {"STATE": state, "LEVEL_NUMBER": number}
+        return _played(player, f"s-{player}", moment, "LEVEL_ANALYSIS", params)
+
+    records = [
+        # The interstitial, then the level start, then nothing: the session end is not an event.
+        level("ad", "04T09:00:40", "Completed", 1),
+        _played(
+            "ad",
+            "s-ad",
+            "04T09:00:44",
+            "AD_ANALYSIS",
+            {"FORMAT": "Interstitial", "STATE": "Show", "LEVEL_NUMBER": 2},
+        ),
+        level("ad", "04T09:00:45", "Started", 2),
+        _played("ad", "s-ad", "04T09:00:50", "session_end", {"duration_seconds": 50}),
+        # An ad took the app to the background after the level start.
+        level("away", "04T09:00:45", "Started", 2),
+        _played(
+            "away",
+            "s-away",
+            "04T09:00:46",
+            "APP_ANALYSIS",
+            {"STATE": "Background", "CAUSE": "Ad", "LEVEL_NUMBER": 2},
+        ),
+        # The level start is the very first event they sent, and a later session is not counted.
+        level("first", "04T09:00:45", "Started", 2),
+        _played("first", "s-first-2", "05T09:00:00", "MM_ANALYSIS", {"STATUS": "OPENED"}),
+        # An event without a state or details is shown by its name.
+        level("plain", "04T09:00:45", "Started", 2),
+        _played("plain", "s-plain", "04T09:02:00", "level_gate"),
+    ]
+    assert send(ingest, game, records).is_success
+    rows = {row["player"]: row for row in _level_players(admin, game, 2, "left")["players"]}
+    assert rows["ad"]["last_event"] == {
+        "text": "LEVEL_ANALYSIS · Started",
+        "gap": 1.0,
+        "after": "AD_ANALYSIS · Show (Interstitial)",
+    }
+    assert rows["away"]["last_event"] == {
+        "text": "APP_ANALYSIS · Background (Ad)",
+        "gap": 1.0,
+        "after": "LEVEL_ANALYSIS · Started",
+    }
+    assert rows["first"]["last_event"] == {
+        "text": "LEVEL_ANALYSIS · Started",
+        "gap": None,
+        "after": None,
+    }
+    assert rows["plain"]["last_event"] == {
+        "text": "level_gate",
+        "gap": 75.0,
+        "after": "LEVEL_ANALYSIS · Started",
+    }
+    # The same for new players within their first session.
+    first = _level_players(admin, game, 2, "left", scope="first_session")
+    assert {row["player"]: row["last_event"]["text"] for row in first["players"]}["ad"] == (
+        "LEVEL_ANALYSIS · Started"
+    )
+
+
 def test_levels_for_new_players_count_only_their_first_session(backend):
     admin, ingest, _ = backend
     game = register(admin)
