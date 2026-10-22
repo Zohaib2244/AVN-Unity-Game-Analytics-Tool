@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from . import analytics, insights
+from . import analytics, insights, materialize
 from .config import Settings
 from .models import Batch, EventDefinition, GameCreate, GameUpdate, timestamp
 from .readcache import ReadCache
@@ -109,6 +109,7 @@ class Storage:
             ):
                 if column not in game_columns:
                     connection.execute(f"ALTER TABLE games ADD COLUMN {column} INTEGER")
+            materialize.install_control(connection, self.settings.analytics_worker_default_enabled)
             game_ids = [row["id"] for row in connection.execute("SELECT id FROM games")]
         for game_id in game_ids:
             if self.game_path(game_id).exists():

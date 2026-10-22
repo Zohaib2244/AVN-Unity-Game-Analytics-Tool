@@ -28,6 +28,7 @@ services:
     <<: *service
     environment:
       AVN_DATA_DIR: /data
+      AVN_ANALYTICS_WORKER_DEFAULT_ENABLED: ${AVN_ANALYTICS_WORKER_DEFAULT_ENABLED:-true}
       SQLITE_TMPDIR: ${SQLITE_TMPDIR:-/data/sqlite-tmp}
       AVN_REQUESTS_PER_MINUTE: ${AVN_REQUESTS_PER_MINUTE:-120}
     ports:
@@ -44,11 +45,13 @@ services:
     <<: *service
     environment:
       AVN_DATA_DIR: /data
+      AVN_ANALYTICS_WORKER_DEFAULT_ENABLED: ${AVN_ANALYTICS_WORKER_DEFAULT_ENABLED:-true}
       SQLITE_TMPDIR: ${SQLITE_TMPDIR:-/data/sqlite-tmp}
       AVN_ADMIN_TOKEN: ${AVN_ADMIN_TOKEN:?Set AVN_ADMIN_TOKEN in .env}
       AVN_MAX_EXPORT_BYTES: ${AVN_MAX_EXPORT_BYTES:-268435456}
       AVN_READ_CACHE_SECONDS: ${AVN_READ_CACHE_SECONDS:-60}
       AVN_ANALYTICS_READ_MODE: ${AVN_ANALYTICS_READ_MODE:-legacy}
+      AVN_ANALYTICS_FRESHNESS_SECONDS: ${AVN_ANALYTICS_FRESHNESS_SECONDS:-60}
       AVN_PUBLIC_INGEST_URL: ${AVN_PUBLIC_INGEST_URL:-}
       # NutBot (see README): which agent CLI to use and how it signs in
       AVN_NUTBOT: ${AVN_NUTBOT:-true}
@@ -80,3 +83,26 @@ services:
       retries: 3
     mem_limit: 512m
     cpus: 1.0
+
+  # The analytics worker (see docs/analytics-pipeline.md): copies and checks analytics facts and
+  # keeps prepared answers fresh. Admins start and stop it on the Settings page; while it is
+  # stopped (or this container is down) events are still collected and dashboards still work.
+  worker:
+    <<: *service
+    environment:
+      AVN_DATA_DIR: /data
+      SQLITE_TMPDIR: ${SQLITE_TMPDIR:-/data/sqlite-tmp}
+      AVN_ANALYTICS_WORKER_DEFAULT_ENABLED: ${AVN_ANALYTICS_WORKER_DEFAULT_ENABLED:-true}
+      AVN_ANALYTICS_BATCH_ROWS: ${AVN_ANALYTICS_BATCH_ROWS:-5000}
+      AVN_ANALYTICS_REFRESH_SECONDS: ${AVN_ANALYTICS_REFRESH_SECONDS:-10}
+      AVN_ANALYTICS_FRESHNESS_SECONDS: ${AVN_ANALYTICS_FRESHNESS_SECONDS:-60}
+    command: [python, -m, avn_analytics.materialize]
+    stop_grace_period: 20s
+    healthcheck:
+      test: [CMD, python, -m, avn_analytics.materialize, health]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    mem_limit: 512m
+    cpus: 0.5

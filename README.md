@@ -508,6 +508,10 @@ Environment variables (see `.env.example`):
 | `AVN_REQUESTS_PER_MINUTE` | `120` | Per-key rate limit |
 | `AVN_READ_CACHE_SECONDS` | `60` | How long a slow dashboard answer (Overview, Players, Levels, Funnels and the filter menus) is reused, so coming back to a page is instant. New events appear once it has passed; a change to the event dictionary, an environment fix or the analysis thresholds shows at once. `0` turns it off |
 | `AVN_ANALYTICS_READ_MODE` | `legacy` | Where the dashboards read events. `legacy`: the raw events' JSON. `facts`: the [analytics facts](docs/analytics-pipeline.md), for each game whose facts are complete and checked (the others keep reading raw events); the same answers, several times faster. Switch back to `legacy` at any time |
+| `AVN_ANALYTICS_WORKER_DEFAULT_ENABLED` | `true` | Initial processing choice only; the stored administrator Start/Stop choice wins on all later starts. Pass the same setting to all services |
+| `AVN_ANALYTICS_BATCH_ROWS` | `5000` | Historical events copied per worker transaction (100–100000) |
+| `AVN_ANALYTICS_REFRESH_SECONDS` | `10` | Worker refresh interval for prepared answers (1–3600 seconds) |
+| `AVN_ANALYTICS_FRESHNESS_SECONDS` | `60` | Maximum prepared-answer age before live fallback (5–86400 seconds); configure admin and worker identically |
 | `AVN_MAX_BODY_BYTES` | `1048576` | Largest accepted request body |
 | `AVN_HOST_DATA_DIR` | `./data` | Host folder holding all data |
 | `AVN_UID` / `AVN_GID` | `1000` | User that owns the data folder |

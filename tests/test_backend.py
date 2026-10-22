@@ -3581,3 +3581,29 @@ def test_player_actions_have_readable_names():
     # A story label from the event dictionary wins over the standard's wording.
     labeled = Labeler({"AD_ANALYSIS": {"labels": "* => Watched an ad"}})
     assert action_text(labeled, "AD_ANALYSIS", {"FORMAT": "Interstitial"}) == "Watched an ad"
+
+
+def test_only_global_admins_see_and_change_analytics_processing(team):
+    client, as_user, _ = team
+    boss = as_user(ADMIN_EMAIL)
+    workspace = client.get("/v1/workspaces", headers=boss).json()[0]
+    for email, role in (("lead@example.com", "lead"), ("dev@example.com", "member")):
+        body = {"email": email, "role": role, "workspace_id": workspace["id"]}
+        assert client.post("/v1/team", headers=boss, json=body).status_code == 201
+    url = "/v1/admin/analytics-worker"
+    for email in ("lead@example.com", "dev@example.com"):
+        assert client.get(url, headers=as_user(email)).status_code == 403
+        stop = client.put(url, headers=as_user(email), json={"desired": "stopped"})
+        assert stop.status_code == 403
+    status = client.get(url, headers=boss)
+    assert status.status_code == 200 and status.headers["Cache-Control"] == "no-store"
+    assert status.json()["desired"] == "running" and status.json()["state"] == "unavailable"
+    assert client.put(url, headers=boss, json={"desired": "paused"}).status_code == 400
+    stopped = client.put(url, headers=boss, json={"desired": "stopped"}).json()
+    assert (stopped["desired"], stopped["changed_by"]) == ("stopped", ADMIN_EMAIL)
+    again = client.put(url, headers=boss, json={"desired": "stopped"}).json()
+    assert again["revision"] == stopped["revision"]  # the same request twice is one change
+    assert client.put(url, headers=boss, json={"desired": "running"}).json()["desired"] == "running"
+    actions = [item["action"] for item in client.get("/v1/audit", headers=boss).json()]
+    assert actions[:2] == ["analytics.start", "analytics.stop"]
+    assert actions.count("analytics.stop") == 1

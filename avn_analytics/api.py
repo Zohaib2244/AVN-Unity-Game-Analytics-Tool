@@ -34,6 +34,7 @@ from . import (
     events,
     insights,
     journeys,
+    materialize,
     sdk_package,
 )
 from .auth import AccessVerifier, Accounts, Principal
@@ -67,6 +68,7 @@ from .models import (
     SavedFunnel,
     TeamAdd,
     TeamUpdate,
+    WorkerControl,
     WorkspaceCreate,
     WorkspaceMove,
     WorkspaceNutBot,
@@ -1082,6 +1084,21 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     @admin_api.get("/v1/audit")
     def audit_log(principal: TeamAdmin):
         return accounts.audit_log()
+
+    # The analytics worker serves every game and workspace: only global admins see or change it.
+    @admin_api.get("/v1/admin/analytics-worker")
+    def analytics_worker(response: Response, principal: TeamAdmin):
+        response.headers["Cache-Control"] = "no-store"
+        return materialize.describe(storage)
+
+    @admin_api.put("/v1/admin/analytics-worker")
+    def set_analytics_worker(body: WorkerControl, response: Response, principal: TeamAdmin):
+        response.headers["Cache-Control"] = "no-store"
+        control = materialize.set_desired(storage, body.desired, principal.email)
+        if control["changed"]:
+            action = "analytics.start" if body.desired == "running" else "analytics.stop"
+            accounts.audit(principal, action, None, f"control revision {control['revision']}")
+        return materialize.describe(storage)
 
     app.include_router(admin_api)
     return app
