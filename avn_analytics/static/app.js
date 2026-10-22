@@ -215,6 +215,7 @@ function requestActivity(change) {
 // Any write clears it; event counts (/health) are always fetched live.
 const cache = new Map();
 const CACHE_MS = 30000;
+const STALE_MS = 10 * 60 * 1000; // how long an old answer may be shown while a new one loads
 let overviewStale = true;
 const cacheable = path => !path.includes('/health') && !path.includes('/export');
 
@@ -292,10 +293,23 @@ function cachedRequest(path, options = {}) {
   cache.delete(key); cache.set(key, entry);
   // Bound retained queries, including large player histories, in long-running tabs.
   while (cache.size > 60) cache.delete(cache.keys().next().value);
-  entry.promise.then(() => { entry.time = Date.now(); entry.settled = true; }, () => {
+  entry.promise.then(value => { entry.time = Date.now(); entry.settled = true; entry.value = value; }, () => {
     if (cache.get(key) === entry) cache.delete(key);
   });
   return entry.promise;
+}
+
+// Like api(), but a page that was open a few minutes ago shows its last answer at once and updates
+// when the new one arrives. show(data, old) runs first with the old answer (old is true), then with
+// the new one if it differs. Writes clear the cache, so an answer is never older than the last change.
+async function apiShowing(path, show, options = {}) {
+  const key = (options.method || 'GET').toUpperCase() === 'GET' ? path : `${path}\n${options.body || ''}`;
+  const hit = cache.get(key);
+  const old = hit?.settled && Date.now() - hit.time < STALE_MS ? hit.value : undefined;
+  if (old !== undefined) { await null; show(old, true); } // after the caller has finished mounting
+  const fresh = await api(path, options);
+  if (old === undefined || (fresh !== old && JSON.stringify(fresh) !== JSON.stringify(old))) show(fresh, false);
+  return {data: fresh, hadOld: old !== undefined};
 }
 
 function spinner(label = 'Loading…') {

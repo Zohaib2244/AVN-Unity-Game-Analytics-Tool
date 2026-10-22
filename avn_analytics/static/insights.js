@@ -1409,6 +1409,8 @@ function lastActionsHTML(level, state) {
   return `<div class="last-actions" role="group" aria-label="What players did last on level ${level}"><span class="last-actions-label">What they did last</span>${state.lastActions.map((item, index) => `<button type="button" class="last-action" data-last-action="${index}" aria-pressed="${state.lastAction === item.text}">${escapeHTML(item.text)}<span class="drill-count">${number(item.players)}</span></button>`).join('')}</div>`;
 }
 
+// Where the Levels list was left when a level page was opened, so Back finds it as it was.
+let levelsReturn = null;
 async function renderLevels() {
   const game = currentGame;
   const navKey = `avn-level-nav-${game.id}`;
@@ -1536,11 +1538,17 @@ async function renderLevels() {
     state.loading = true; state.error = null;
     if (!more) { state.players = []; state.total = 0; }
     drawDrill(level);
+    let shown = false;
     try {
-      const result = await api(`${gameURL(game)}/insights/levels/players?${drillQuery(level, state, {offset: more ? state.players.length : 0, limit: 50})}`);
-      if (ticket !== state.ticket || !tableBox.isConnected) return;
-      state.players = more ? [...state.players, ...result.players] : result.players; state.total = result.total; state.counts = result.counts; state.lastActions = result.last_actions;
-    } catch (error) { if (ticket === state.ticket) state.error = error; }
+      const url = `${gameURL(game)}/insights/levels/players?${drillQuery(level, state, {offset: more ? state.players.length : 0, limit: 50})}`;
+      const apply = (result, old) => {
+        if (ticket !== state.ticket || !tableBox.isConnected) return;
+        state.players = more ? [...state.players, ...result.players] : result.players; state.total = result.total; state.counts = result.counts; state.lastActions = result.last_actions;
+        if (old) { shown = true; drawDrill(level); }
+      };
+      // The first page of a group shows what was loaded before, if anything, while the new list loads.
+      if (more) apply(await api(url), false); else await apiShowing(url, apply);
+    } catch (error) { if (ticket === state.ticket && !shown) state.error = error; }
     if (ticket === state.ticket) { state.loading = false; drawDrill(level); }
   };
   const drawLevelPage = () => {
@@ -1560,7 +1568,15 @@ async function renderLevels() {
   };
   tableBox.addEventListener('click', event => {
     const row = event.target.closest('[data-level-row]');
-    if (row && !event.target.closest('a[href]')) navigate(levelURL(Number(row.dataset.levelRow)));
+    if (row && !event.target.closest('a[href]')) { levelsReturn = {game: game.id, page, scroll: window.scrollY}; navigate(levelURL(Number(row.dataset.levelRow))); }
+  });
+  // The players of a level start loading when the pointer reaches its row.
+  tableBox.addEventListener('pointerover', event => {
+    const row = event.target.closest('[data-level-row]');
+    const item = row && data?.levels.find(entry => entry.level === Number(row.dataset.levelRow));
+    if (!item || event.pointerType !== 'mouse') return;
+    const query = drillQuery(item.level, {group: levelDrillGroup(item), sort: 'exit_at', lastAction: null}, {offset: 0, limit: 50});
+    api(`${gameURL(game)}/insights/levels/players?${query}`).catch(() => {});
   });
   const ensureDrill = level => {
     if (!drill.has(level)) drill.set(level, {group: levelDrillGroup(data.levels.find(row => row.level === level)), sort: 'exit_at', lastAction: null, lastActions: [], players: [], total: 0, counts: null, loading: false, error: null, ticket: 0});
@@ -1664,6 +1680,15 @@ async function renderLevels() {
     box.innerHTML = `<div class="table-wrap level-scroll levels-scroll" tabindex="0" role="region" aria-label="Level results"><table class="levels-grid"><thead><tr><th>Level</th><th class="num">Start</th><th class="num">Finish</th><th class="num" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">Drop · start → start</th><th class="num">Tries / player</th><th class="num">Fails</th><th class="num">Median time</th></tr></thead><tbody>${visible.map(row => `<tr data-level-row="${row.level}" class="${highlighted === row.level ? 'level-highlight ' : ''}${row.completion != null && !row.low_sample && row.completion < 60 ? 'level-hard' : ''}"><td class="level-number-cell"><button type="button" class="level-toggle" data-level-toggle="${row.level}" aria-label="Open the players behind level ${row.level}">${icon('chevron', 14)}</button><strong>${row.level}</strong>${row.low_sample ? ` <span class="level-sample-marker" role="img" aria-label="Small sample: ${number(row.started)} of ${number(minimum)} players" title="Small sample: ${number(row.started)} players started; threshold is ${number(minimum)}">·</span>` : ''}</td><td class="num">${number(row.started)}</td><td class="num">${number(row.completed)}</td><td class="num">${levelTransitionCell(row)}</td><td class="num">${row.tries_per_player ?? '—'}</td><td class="num">${number(row.fails)}${row.restarts ? ` <span class="muted small">· ${row.restarts} restart${row.restarts === 1 ? '' : 's'}</span>` : ''}</td><td class="num">${duration(row.median_seconds)}</td></tr>`).join('')}</tbody></table></div>
       `;
   };
+  // Back from a level page: the same page of levels, scrolled to where it was left.
+  const restoreList = () => {
+    const back = levelsReturn;
+    if (pageLevel != null) return;
+    levelsReturn = null;
+    if (!back || back.game !== game.id) return;
+    page = back.page; draw();
+    requestAnimationFrame(() => window.scrollTo(0, back.scroll));
+  };
   const load = async state => {
     chosen = structuredClone(state); page = 0; data = null; const ticket = ++latest;
     drill.forEach(state => { state.ticket++; });
@@ -1673,8 +1698,22 @@ async function renderLevels() {
     document.querySelector('#levels-next-page').disabled = true;
     const finishSummary = beginLoading(document.querySelector('#levels-summary'), skeleton('stats'));
     const finishTable = beginLoading(tableBox, skeleton('table', 8, 7));
-    try { const result = await api(`${gameURL(game)}/insights/levels?${levelsQuery(state)}`); if (ticket === latest && tableBox.isConnected) { data = result; levelsFilters.setContext({anonymous_events: result.context.anonymous_events}); drill.clear(); draw(); drawLevelPage(); } }
-    catch (error) { if (ticket === latest && tableBox.isConnected) { document.querySelector('#levels-summary').innerHTML = ''; tableBox.innerHTML = loadError(error); } }
+    // Coming back to a list seen a few minutes ago draws it at once and updates it if anything changed.
+    const showLevels = result => {
+      if (ticket !== latest || !tableBox.isConnected) return;
+      const first = data === null;
+      data = result; levelsFilters.setContext({anonymous_events: result.context.anonymous_events});
+      if (first) drill.clear();
+      draw();
+      if (first) restoreList();
+      if (first || !pageBox.querySelector('.has-pane')) drawLevelPage();
+    };
+    try { await apiShowing(`${gameURL(game)}/insights/levels?${levelsQuery(state)}`, showLevels); }
+    catch (error) {
+      if (ticket !== latest || !tableBox.isConnected) return;
+      if (data) toastError(error);
+      else { document.querySelector('#levels-summary').innerHTML = ''; tableBox.innerHTML = loadError(error); }
+    }
     finally { finishSummary(); finishTable(); }
   };
   const jumpTo = level => {

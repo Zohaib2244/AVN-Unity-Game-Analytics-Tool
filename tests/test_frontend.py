@@ -433,6 +433,13 @@ def test_levels_open_a_page_per_level_and_count_new_players_on_request():
     levels = script[script.index("async function renderLevels(") :]
     # A level row opens that level's players on a page of its own (?level=N), not inside the table.
     assert "navigate(levelURL(Number(row.dataset.levelRow)))" in levels
+    # Coming back shows the earlier list and players at once, then updates them, and Back
+    # returns to the same page of levels and scroll position.
+    assert "apiShowing(`${gameURL(game)}/insights/levels?" in levels
+    assert "apiShowing(url, apply)" in levels
+    assert "levelsReturn = {game: game.id, page, scroll: window.scrollY}" in levels
+    assert "window.scrollTo(0, back.scroll)" in levels
+    assert "api(`${gameURL(game)}/insights/levels/players?${query}`).catch" in levels
     assert "data-level-detail" not in levels
     assert "new URLSearchParams({level})" in levels
     # On a wide page the timeline opens beside the list; otherwise it stays the dialog.
@@ -503,6 +510,54 @@ assert.equal(cache.size, 60);
 const a = api('/read/signaled', {signal: new AbortController().signal});
 const b = api('/read/signaled', {signal: new AbortController().signal});
 assert.notEqual(a, b);
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=source + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_an_answer_seen_before_is_shown_at_once_while_the_new_one_loads():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/app.js").read_text()
+    source = script[script.index("function analyticsRead(") : script.index("function spinner(")]
+    checks = """
+import assert from 'node:assert/strict';
+const cache = new Map(); const CACHE_MS = 30000; const STALE_MS = 600000; let overviewStale = false;
+const cacheable = () => true;
+let finish; let calls = 0;
+const request = () => { calls++; return new Promise(resolve => { finish = resolve; }); };
+const shown = [];
+const show = (data, old) => shown.push([data.n, old]);
+const path = '/v1/games/g/insights/levels?x=1';
+// Nothing seen before: nothing to show until the answer arrives.
+const first = apiShowing(path, show);
+await null; assert.deepEqual(shown, []);
+finish({n: 1}); assert.deepEqual((await first), {data: {n: 1}, hadOld: false});
+assert.deepEqual(shown, [[1, false]]);
+// Seen a minute ago, past the 30s a request is reused: old answer first, then the new one.
+cache.get(path).time -= 60000;
+const second = apiShowing(path, show);
+await null; await null; assert.deepEqual(shown, [[1, false], [1, true]]);
+assert.equal(calls, 2);
+finish({n: 2}); await second;
+assert.deepEqual(shown, [[1, false], [1, true], [2, false]]);
+// An answer that did not change is not drawn twice.
+cache.get(path).time -= 60000;
+const third = apiShowing(path, show); await null; await null;
+finish({n: 2}); await third;
+assert.deepEqual(shown.slice(3), [[2, true]]);
+// Answers older than the stale window are not shown; a change to anything clears them.
+cache.get(path).time -= 700000;
+const fourth = apiShowing(path, show); await null;
+assert.equal(shown.length, 4); finish({n: 3}); await fourth;
+assert.deepEqual(shown[4], [3, false]);
+const write = api('/v1/games/g/insights/funnels', {method: 'POST', body: '{}'});
+finish({}); await write; assert.equal(cache.size, 0);
 """
     result = subprocess.run(
         [shutil.which("node"), "--input-type=module"],
