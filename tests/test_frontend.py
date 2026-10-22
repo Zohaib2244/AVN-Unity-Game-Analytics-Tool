@@ -435,7 +435,7 @@ def test_levels_open_a_page_per_level_and_count_new_players_on_request():
     assert "navigate(levelURL(Number(row.dataset.levelRow)))" in levels
     # Coming back shows the earlier list and players at once, then updates them, and Back
     # returns to the same page of levels and scroll position.
-    assert "apiShowing(`${gameURL(game)}/insights/levels?" in levels
+    assert "apiShowing(levelsPath(state), showLevels)" in levels
     assert "apiShowing(url, apply)" in levels
     assert "levelsReturn = {game: game.id, page, scroll: window.scrollY}" in levels
     assert "window.scrollTo(0, back.scroll)" in levels
@@ -567,6 +567,48 @@ finish({}); await write; assert.equal(cache.size, 0);
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_a_slow_load_says_what_is_happening_and_remembers_how_long_it_took():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/app.js").read_text()
+    source = script[script.index("const SLOW_MS") : script.index("function skeleton(")]
+    checks = """
+import assert from 'node:assert/strict';
+const store = new Map();
+const localStorage = {
+  getItem: key => store.get(key) ?? null, setItem: (key, value) => store.set(key, value)};
+// Fast answers say nothing about the next cold one, so they are not kept.
+rememberSlow('/v1/games/abc/insights/levels?start=1', 40);
+assert.equal(usualWait('/v1/games/zzz/insights/levels'), null);
+rememberSlow('/v1/games/abc/insights/levels?start=1', 6200);
+assert.equal(usualWait('/v1/games/zzz/insights/levels?end=2'), 6200);  // any game, any query
+assert.equal(usualWait('/v1/games/abc/insights/summary'), null);
+assert.equal(slowLoadMessage(1), '');  // nothing until it has been a couple of seconds
+assert.match(slowLoadMessage(2), /Reading your events.*opens instantly/);
+assert.doesNotMatch(slowLoadMessage(2), /Last time/);
+assert.match(slowLoadMessage(3, 6200), /Last time it took about 6 s\./);
+assert.match(slowLoadMessage(12), /Still working.*fewer days/);
+assert.match(slowLoadMessage(45), /longer than usual.*stops after a minute/);
+for (const seconds of [2, 12, 45]) assert.doesNotMatch(slowLoadMessage(seconds, 6200), /%/);
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=source + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    # The wait is shown inside the placeholder and counted by a timer that stops with the load.
+    assert "slowLoadMessage(seconds, path ? usualWait(path) : null)" in script
+    assert "clearInterval(ticker)" in script
+    insights = (Path(__file__).parents[1] / "avn_analytics/static/insights.js").read_text()
+    assert "beginLoading(tableBox, skeleton('table', 8, 7), {path: levelsPath(state)})" in insights
+    # Pointing at the Levels link, once it has rested, starts the scan the page will ask for.
+    assert "function levelsPrefetchPath(game)" in insights
+    assert "hoverIntent = setTimeout(() => prefetch(url.href), 200)" in script
+    assert "clearTimeout(hoverIntent)" in script
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")

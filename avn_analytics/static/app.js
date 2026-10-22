@@ -226,6 +226,7 @@ async function request(path, options = {}) {
   const timeout = AbortSignal.timeout(60000);
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
   if (typeof requestActivity === 'function') requestActivity(1);
+  const began = performance.now();
   try {
     let response;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -248,9 +249,30 @@ async function request(path, options = {}) {
       throw Object.assign(new Error(details || messages[response.status] || (typeof error.detail === 'string' ? error.detail : 'Please check your details and try again.')), {status: response.status});
     }
     if (response.status === 204) return null;
+    if (readOnly) rememberSlow(path, performance.now() - began);
     try { return await response.json(); }
     catch { throw Object.assign(new Error(timeout.aborted ? timeoutMessage : 'The server returned an unreadable response. Reload or try again.'), {status: timeout.aborted ? 408 : response.status}); }
   } finally { if (typeof requestActivity === 'function') requestActivity(-1); }
+}
+
+// How long a slow read took last time, so the wait can be named ("last time about 6 s"). Only reads that
+// took a while are kept: a fast answer from a warm server says nothing about the next cold one.
+const SLOW_MS = 1500;
+const endpointKey = path => `avn-slow:${path.split('?')[0].replace(/\/games\/[^/]+/, '/games/*')}`;
+function rememberSlow(path, ms) {
+  if (ms < SLOW_MS) return;
+  try { localStorage.setItem(endpointKey(path), String(Math.round(ms))); } catch { /* storage unavailable */ }
+}
+function usualWait(path) {
+  try { return Number(localStorage.getItem(endpointKey(path))) || null; } catch { return null; }
+}
+// What to tell someone who has waited this long. Never a percentage: there is no way to know one.
+function slowLoadMessage(seconds, usual = null) {
+  if (seconds < 2) return '';
+  const last = usual ? ` Last time it took about ${Math.max(1, Math.round(usual / 1000))} s.` : '';
+  if (seconds < 10) return `Reading your events. The first load takes a few seconds, then this page opens instantly for a while.${last}`;
+  if (seconds < 30) return `Still working. This range has a lot of events; fewer days load faster.${last}`;
+  return 'This is taking longer than usual. It stops after a minute and lets you try again, or pick fewer days.';
 }
 
 function skeleton(kind = 'table', rows = 5, columns = 5) {
@@ -318,21 +340,42 @@ function spinner(label = 'Loading…') {
 
 // A short wait keeps cache hits from flashing a placeholder. Existing rows remain visibly stale.
 const regionLoads = new WeakMap();
-function beginLoading(element, placeholder) {
+function beginLoading(element, placeholder, {path = null} = {}) {
   const previous = regionLoads.get(element); if (previous) previous();
   element.setAttribute('aria-busy', 'true');
-  let status = null;
+  const began = Date.now();
+  let status = null; let ticker = null; let stage = '';
+  // Past a couple of seconds the placeholder says what is happening and counts up, so a long first
+  // load doesn't look stuck. The sentence changes only at a threshold (it is announced); the count is visual.
+  const tick = () => {
+    const holder = element.querySelector('.loading-placeholder');
+    if (!element.isConnected) { clearInterval(ticker); return; }
+    if (!holder) return;
+    const seconds = Math.floor((Date.now() - began) / 1000);
+    const message = slowLoadMessage(seconds, path ? usualWait(path) : null);
+    if (!message) return;
+    let note = holder.querySelector('.loading-note');
+    if (!note) {
+      note = document.createElement('p'); note.className = 'loading-note';
+      note.innerHTML = `${spinner('')}<span data-note-text role="status"></span><span class="loading-elapsed" aria-hidden="true"></span>`;
+      holder.prepend(note);
+    }
+    if (message !== stage) { stage = message; note.querySelector('[data-note-text]').textContent = message; }
+    note.querySelector('.loading-elapsed').textContent = `${seconds} s`;
+  };
   const timer = setTimeout(() => {
     if (!element.isConnected) return;
-    if (!element.textContent.trim() || element.querySelector('.loading-placeholder,.load-error')) element.innerHTML = placeholder;
-    else {
+    if (!element.textContent.trim() || element.querySelector('.loading-placeholder,.load-error')) {
+      element.innerHTML = placeholder;
+      ticker = setInterval(tick, 1000);
+    } else {
       status = document.createElement('div'); status.className = 'refresh-status';
       status.innerHTML = spinner('Updating… Showing previous results.'); element.prepend(status);
     }
     element.setAttribute('aria-busy', 'true');
   }, 150);
   const finish = () => {
-    clearTimeout(timer); status?.remove();
+    clearTimeout(timer); clearInterval(ticker); status?.remove();
     if (regionLoads.get(element) === finish) { element.removeAttribute('aria-busy'); regionLoads.delete(element); }
   };
   regionLoads.set(element, finish); return finish;
@@ -840,6 +883,10 @@ function prefetch(url) {
   const match = gameRoute(pathname);
   if (!match || match[1] === 'new') return Promise.resolve();
   const game = {id: decodeURIComponent(match[1])};
+  if (match[2] === 'levels' && typeof levelsPrefetchPath === 'function') {
+    const levels = levelsPrefetchPath(game);
+    return levels ? api(levels).catch(() => {}) : Promise.resolve();
+  }
   const path = match[2] === 'keys' ? `${gameURL(game)}/keys` : match[2] === 'dictionary' ? `${gameURL(game)}/dictionary` : match[2] === 'settings' ? gameURL(game) : null;
   return path ? api(path).catch(() => {}) : Promise.resolve();
 }
@@ -919,12 +966,18 @@ document.addEventListener('click', event => {
   if (url.href !== location.href) navigate(url.pathname + url.search); else go(location.href, false);
 });
 // Start fetching as soon as the pointer heads for a link; by the click the data is usually here.
+// The level scan is the costly one, so a pointer has to rest on its link for a moment first.
+let hoverIntent = null;
 for (const type of ['pointerover', 'focusin', 'touchstart']) {
   document.addEventListener(type, event => {
     const url = internal(event.target.closest?.('a[href]'));
-    if (url && url.href !== location.href) prefetch(url.href);
+    if (!url || url.href === location.href) return;
+    clearTimeout(hoverIntent);
+    if (type === 'pointerover' && gameRoute(url.pathname)?.[2] === 'levels') hoverIntent = setTimeout(() => prefetch(url.href), 200);
+    else prefetch(url.href);
   }, {passive: true});
 }
+document.addEventListener('pointerout', () => clearTimeout(hoverIntent), {passive: true});
 window.addEventListener('popstate', () => go(location.href, false));
 
 // Scrollable tables and charts need a keyboard stop so their overflow can be reached without a mouse.

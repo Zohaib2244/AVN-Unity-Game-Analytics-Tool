@@ -1534,3 +1534,8 @@ body:has(.level-page-split.has-pane) main{max-width:1800px}
 @keyframes request-slide{from{transform:translateX(-100%)}to{transform:translateX(440%)}}
 @media(prefers-reduced-motion:reduce){.loading-spinner,#request-activity>span:first-child{animation:none}#request-activity>span:first-child{width:100%}}
 #notice:not(:empty){width:min(560px,calc(100vw - 32px));max-width:calc(100vw - 32px)}
+
+/* A long first load says what is happening and counts up; it never shows a percentage. */
+.loading-note{display:flex;align-items:center;gap:10px;margin:0 0 14px;padding:10px 12px;background:var(--bg-nested);color:var(--text-muted);border:1px solid var(--line);border-radius:8px;font-size:var(--fs-label)}
+.loading-note [data-note-text]{flex:1;min-width:0}
+.loading-elapsed{flex:none;font-variant-numeric:tabular-nums}

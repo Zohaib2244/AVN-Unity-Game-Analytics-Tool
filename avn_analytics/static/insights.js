@@ -1409,6 +1409,19 @@ function lastActionsHTML(level, state) {
   return `<div class="last-actions" role="group" aria-label="What players did last on level ${level}"><span class="last-actions-label">What they did last</span>${state.lastActions.map((item, index) => `<button type="button" class="last-action" data-last-action="${index}" aria-pressed="${state.lastAction === item.text}">${escapeHTML(item.text)}<span class="drill-count">${number(item.players)}</span></button>`).join('')}</div>`;
 }
 
+// The address the Levels page asks for first, worked out the way the page does, so pointing at the
+// Levels link can start the scan before the page opens. Null when the page would open Compare releases.
+function levelsPrefetchPath(game) {
+  if (['compare', 'explore'].includes(storeGet(`avn-levels-view-${game.id}`))) return null;
+  const state = filterState(game);
+  const found = presets.find(([key]) => key === (state.range?.preset || '30'));
+  const [from, to] = found && state.range?.preset !== 'custom' ? found[2]()
+    : state.range ? [state.range.from, state.range.to] : presets.find(([key]) => key === '7')[2]();
+  const query = filterQuery({...state, range: {from, to}});
+  if ((storeGet(`avn-level-nav-${game.id}`) || {}).scope === 'first_session') query.set('scope', 'first_session');
+  return `${gameURL(game)}/insights/levels?${query}`;
+}
+
 // Where the Levels list was left when a level page was opened, so Back finds it as it was.
 let levelsReturn = null;
 async function renderLevels() {
@@ -1433,6 +1446,7 @@ async function renderLevels() {
   const showScope = () => document.querySelectorAll('[data-levels-scope]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.levelsScope === navigation.scope)));
   const firstSession = () => navigation.scope === 'first_session';
   const levelsQuery = state => { const query = filterQuery(state); if (firstSession()) query.set('scope', 'first_session'); return query; };
+  const levelsPath = state => `${gameURL(game)}/insights/levels?${levelsQuery(state)}`;
   // Two sub pages: the level table, or Compare releases. Only the open one is shown, and the
   // comparison only queries while open. "explore" is the old name of the comparison page.
   const viewKey = `avn-levels-view-${game.id}`;
@@ -1697,7 +1711,7 @@ async function renderLevels() {
     document.querySelector('#levels-previous-page').disabled = true;
     document.querySelector('#levels-next-page').disabled = true;
     const finishSummary = beginLoading(document.querySelector('#levels-summary'), skeleton('stats'));
-    const finishTable = beginLoading(tableBox, skeleton('table', 8, 7));
+    const finishTable = beginLoading(tableBox, skeleton('table', 8, 7), {path: levelsPath(state)});
     // Coming back to a list seen a few minutes ago draws it at once and updates it if anything changed.
     const showLevels = result => {
       if (ticket !== latest || !tableBox.isConnected) return;
@@ -1708,7 +1722,7 @@ async function renderLevels() {
       if (first) restoreList();
       if (first || !pageBox.querySelector('.has-pane')) drawLevelPage();
     };
-    try { await apiShowing(`${gameURL(game)}/insights/levels?${levelsQuery(state)}`, showLevels); }
+    try { await apiShowing(levelsPath(state), showLevels); }
     catch (error) {
       if (ticket !== latest || !tableBox.isConnected) return;
       if (data) toastError(error);
