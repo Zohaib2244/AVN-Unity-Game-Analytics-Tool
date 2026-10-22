@@ -894,13 +894,26 @@ function playerInformation(data, timezone, fetchedDevice = null) {
 }
 
 async function renderJourney(game, player, options = {}) {
-  const container = options.overlay ? modal : document;
+  const container = options.pane || (options.overlay ? modal : document);
+  const embedded = Boolean(options.overlay || options.pane);  // not a page of its own
   const returnScroll = {left: window.scrollX, top: window.scrollY, behavior: 'instant'};
   const content = `<a class="back-link" href="${gamePath(game, 'players')}">← Back to players</a>` + heading('Player', player) +
     `<div class="filter-bar"><div id="story-range"></div><div class="segmented timezone-toggle" role="group" aria-label="Player event time zone"><button type="button" data-story-timezone="local">Local</button><button type="button" data-story-timezone="utc">UTC</button></div></div><div class="analysis-context" id="story-context"></div><div id="story-metrics"></div>
     <div class="range-modes route-tabs" role="group" aria-label="View"><button type="button" data-story-view="raw">Raw events</button><button type="button" data-story-view="info">Player info</button></div>
     <div id="story-body"></div>`;
-  if (options.overlay) {
+  if (options.pane) {
+    const pane = options.pane;
+    pane.querySelector('[data-range-picker]')?._flatpickr?.destroy();
+    pane.innerHTML = '<div class="player-pane-head"><h2 id="pane-title">Player timeline</h2><button type="button" class="button small-button" data-close-player aria-label="Close player timeline">Close ×</button></div>' + content;
+    pane.querySelector('.back-link').remove();
+    pane.querySelector('[data-close-player]').addEventListener('click', () => options.onClose?.());
+    if (options.browse) {
+      const controls = document.createElement('div');
+      controls.className = 'player-browse';
+      controls.innerHTML = '<button type="button" class="button small-button" data-player-previous>← Previous</button><span data-player-position aria-live="polite"></span><button type="button" class="button small-button" data-player-next>Next →</button>';
+      pane.querySelector('.player-pane-head').insertBefore(controls, pane.querySelector('[data-close-player]'));
+    }
+  } else if (options.overlay) {
     modal.classList.add('player-dialog');
     modal.innerHTML = '<div class="player-dialog-head"><h2 id="dialog-title">Player details</h2><button type="button" class="button" data-close-player aria-label="Close player details">Close ×</button></div>' + content;
     modal.querySelector('.back-link').remove();
@@ -933,11 +946,12 @@ async function renderJourney(game, player, options = {}) {
   } else {
     shell('Player', content);
   }
-  let view = (options.overlay ? storeGet(`avn-story-view-${game.id}`) : new URLSearchParams(location.search).get('view') || storeGet(`avn-story-view-${game.id}`)) === 'info' ? 'info' : 'raw';
+  let view = (embedded ? storeGet(`avn-story-view-${game.id}`) : new URLSearchParams(location.search).get('view') || storeGet(`avn-story-view-${game.id}`)) === 'info' ? 'info' : 'raw';
   const saved = options.filters || filterState(game);
   let latest = 0;
   let range = null; let timezone = saved.timezone; let fetchedDevice = null;
   const body = container.querySelector('#story-body');
+  const isOpen = () => options.pane ? body.isConnected : modal.open;
   let playerIndex = options.browse?.index ?? 0;
   let browsing = false;
   // Opened from a level: the timeline starts at the player's last event on it.
@@ -956,15 +970,16 @@ async function renderJourney(game, player, options = {}) {
     const ticket = ++latest;
     try {
       const next = await options.browse.load(index);
-      if (ticket !== latest || !body.isConnected || !modal.open) return;
+      if (ticket !== latest || !body.isConnected || !isOpen()) return;
       if (!next) throw new Error('This player list changed. Close and reopen the group to refresh it.');
       player = next.player; playerIndex = index; fetchedDevice = null;
       focus = options.browse.focus ? options.browse.focus(next) : null;
       container.querySelector('.page-heading p').textContent = player;
       container.querySelector('#story-metrics').innerHTML = '';
+      options.onPlayer?.(player);
       draw();
-      modal.scrollTop = 0;
-    } catch (error) { if (body.isConnected && modal.open) toastError(error); }
+      (options.pane || modal).scrollTop = 0;
+    } catch (error) { if (body.isConnected && isOpen()) toastError(error); }
     finally { browsing = false; syncBrowse(); }
   };
   container.querySelector('[data-player-previous]')?.addEventListener('click', () => changePlayer(-1));
@@ -1015,7 +1030,7 @@ async function renderJourney(game, player, options = {}) {
     const tab = event.target.closest('[data-story-view]');
     if (tab && range) {
       view = tab.dataset.storyView; storeSet(`avn-story-view-${game.id}`, view);
-      if (!options.overlay) { const url = new URL(location.href); view === 'info' ? url.searchParams.set('view', 'info') : url.searchParams.delete('view'); history.replaceState(null, '', url); }
+      if (!embedded) { const url = new URL(location.href); view === 'info' ? url.searchParams.set('view', 'info') : url.searchParams.delete('view'); history.replaceState(null, '', url); }
       // Cross-fade between the two views where the browser can.
       document.startViewTransition ? document.startViewTransition(() => draw()) : draw();
     }
@@ -1024,7 +1039,7 @@ async function renderJourney(game, player, options = {}) {
     const button = event.target.closest('[data-story-timezone]');
     if (!button || button.dataset.storyTimezone === timezone) return;
     timezone = button.dataset.storyTimezone;
-    if (!options.overlay) saveFilters(game, {...filterState(game), timezone});
+    if (!embedded) saveFilters(game, {...filterState(game), timezone});
     if (range) draw();
   });
   const rangeBox = container.querySelector('#story-range');
@@ -1326,10 +1341,12 @@ function levelTransitionCell(row) {
   const transition = row.transition;
   if (!transition?.available) return '<span class="muted" title="No starters here or no observed start for the next numbered level. The next level may not exist or may be unlogged.">— Not enough data</span>';
   const net = transition.net_change;
-  return `<button type="button" class="level-drop-button" data-level-toggle="${row.level}" aria-expanded="false" title="Players who started this level but have no later start of level ${transition.next_level} by the end of these dates"><span class="pill ${transition.total_drop ? 'bad' : 'good'}">↓ ${percent(transition.drop_percent)} drop · ${number(transition.total_drop)}</span></button><small class="level-net ${net > 0 ? 'gain' : net < 0 ? 'loss' : ''}" title="Separate comparison of filtered starter totals; includes players entering midway">${net > 0 ? '↑ Net gain +' : net < 0 ? '↓ Net loss ' : 'No net change '}${net ? number(Math.abs(net)) : ''}</small>`;
+  return `<button type="button" class="level-drop-button" data-level-toggle="${row.level}" title="Players who started this level but have no later start of level ${transition.next_level} by the end of these dates"><span class="pill ${transition.total_drop ? 'bad' : 'good'}">↓ ${percent(transition.drop_percent)} drop · ${number(transition.total_drop)}</span></button><small class="level-net ${net > 0 ? 'gain' : net < 0 ? 'loss' : ''}" title="Separate comparison of filtered starter totals; includes players entering midway">${net > 0 ? '↑ Net gain +' : net < 0 ? '↓ Net loss ' : 'No net change '}${net ? number(Math.abs(net)) : ''}</small>`;
 }
 
 // Who is counted: everyone active in the dates, or new players within their first session.
+// A level page shows a player's timeline beside the list when the list area is at least this wide (px).
+const PLAYER_PANE_MIN_WIDTH = 1040;
 const LEVEL_SCOPES = {all: 'Everyone', first_session: 'New players · first session'};
 // The players behind a level: where the drop splits, and who carried on.
 const LEVEL_DRILL_GROUPS = [['left', 'Quit during level'], ['finished_stopped', 'Quit after finishing'], ['kept_going', 'Reached next level']];
@@ -1398,10 +1415,11 @@ async function renderLevels() {
   shell('Levels', heading('Levels', 'Follow the same players from one level’s start to the next, with a breakdown of where progress stops.') +
     `<div id="filters"></div><div class="range-modes route-tabs levels-views" role="group" aria-label="Levels view"><button type="button" data-levels-view="table">Level by level</button><button type="button" data-levels-view="compare">Compare releases</button></div>
     <div id="level-tools" hidden></div><div id="levels-by-level"><div id="levels-summary"></div>
-    <section class="panel levels-panel"><div class="panel-header"><div><h2>Level by level</h2><p id="levels-note">Counted from level start, complete, fail and restart events.</p></div><div class="quiet-actions"><div class="segmented" role="group" aria-label="Which players">${Object.entries(LEVEL_SCOPES).map(([key, label]) => `<button type="button" data-levels-scope="${key}">${label}</button>`).join('')}</div><label class="inline-field">Sort<select id="levels-sort"><option value="level">Level order</option><option value="drop">Highest total drop</option><option value="completion">Lowest completion</option><option value="tries">Most tries per player</option><option value="time">Slowest</option></select></label></div></div><div class="levels-navigation"><form id="levels-jump-form"><label for="levels-jump">Jump to level</label><input id="levels-jump" type="number" min="0" max="1000000" required placeholder="e.g. 120"><button type="submit" class="button small-button">Go</button></form><label class="inline-field">Rows<select id="levels-page-size"><option value="25">25</option><option value="50">50</option><option value="100">100</option><option value="all">All</option></select></label><div class="quiet-actions"><button type="button" class="button small-button" id="levels-previous-page">← Previous</button><span id="levels-page-info" class="small muted" aria-live="polite"></span><button type="button" class="button small-button" id="levels-next-page">Next →</button></div></div><div id="levels-table"></div></section></div>`);
+    <section class="panel levels-panel"><div class="panel-header"><div><h2>Level by level</h2><p id="levels-note">Counted from level start, complete, fail and restart events.</p></div><div class="quiet-actions"><div class="segmented" role="group" aria-label="Which players">${Object.entries(LEVEL_SCOPES).map(([key, label]) => `<button type="button" data-levels-scope="${key}">${label}</button>`).join('')}</div><label class="inline-field">Sort<select id="levels-sort"><option value="level">Level order</option><option value="drop">Highest total drop</option><option value="completion">Lowest completion</option><option value="tries">Most tries per player</option><option value="time">Slowest</option></select></label></div></div><div class="levels-navigation"><form id="levels-jump-form"><label for="levels-jump">Jump to level</label><input id="levels-jump" type="number" min="0" max="1000000" required placeholder="e.g. 120"><button type="submit" class="button small-button">Go</button></form><label class="inline-field">Rows<select id="levels-page-size"><option value="25">25</option><option value="50">50</option><option value="100">100</option><option value="all">All</option></select></label><div class="quiet-actions"><button type="button" class="button small-button" id="levels-previous-page">← Previous</button><span id="levels-page-info" class="small muted" aria-live="polite"></span><button type="button" class="button small-button" id="levels-next-page">Next →</button></div></div><div id="levels-table"></div></section></div><div id="level-page" hidden></div>`);
   let data = null; let chosen = null; let latest = 0;
   const tableBox = document.querySelector('#levels-table');
-  const open = new Set(); const drill = new Map();
+  const pageBox = document.querySelector('#level-page');
+  const drill = new Map();
   document.querySelector('#levels-sort').value = navigation.sort;
   document.querySelector('#levels-page-size').value = navigation.pageSize;
   const rememberNavigation = () => storeSet(navKey, {sort: document.querySelector('#levels-sort').value, pageSize: document.querySelector('#levels-page-size').value, scope: navigation.scope});
@@ -1411,17 +1429,25 @@ async function renderLevels() {
   // Two sub pages: the level table, or Compare releases. Only the open one is shown, and the
   // comparison only queries while open. "explore" is the old name of the comparison page.
   const viewKey = `avn-levels-view-${game.id}`;
-  let levelsView = ['compare', 'explore'].includes(new URLSearchParams(location.search).get('view') || storeGet(viewKey)) ? 'compare' : 'table';
+  // ?level=12 opens the players of that level on a page of their own.
+  const levelParam = new URLSearchParams(location.search).get('level');
+  let pageLevel = levelParam !== null && Number.isInteger(Number(levelParam)) ? Number(levelParam) : null;
+  const listURL = () => gamePath(game, 'levels');
+  const levelURL = level => `${listURL()}?${new URLSearchParams({level})}`;
+  let levelsView = pageLevel == null && ['compare', 'explore'].includes(new URLSearchParams(location.search).get('view') || storeGet(viewKey)) ? 'compare' : 'table';
   const showView = () => {
     document.querySelectorAll('[data-levels-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.levelsView === levelsView)));
-    document.querySelector('#levels-by-level').hidden = levelsView !== 'table';
+    document.querySelector('#levels-by-level').hidden = levelsView !== 'table' || pageLevel != null;
+    document.querySelector('#level-page').hidden = levelsView !== 'table' || pageLevel == null;
     document.querySelector('#level-tools').hidden = levelsView !== 'compare';
   };
   const chooseView = async next => {
+    if (next === 'table' && pageLevel != null) { navigate(listURL()); return; }
     if (next === levelsView) return;
     levelsView = next; storeSet(viewKey, next);
+    if (next === 'compare') pageLevel = null;
     const url = new URL(location.href);
-    if (next === 'compare') url.searchParams.set('view', 'compare'); else url.searchParams.delete('view');
+    if (next === 'compare') { url.searchParams.set('view', 'compare'); url.searchParams.delete('level'); } else url.searchParams.delete('view');
     history.replaceState(null, '', url);
     showView();
     if (next === 'compare' && chosen) toolsPanel.update(chosen);
@@ -1444,9 +1470,6 @@ async function renderLevels() {
     for (const [key, value] of Object.entries(extra)) query.set(key, value);
     return query;
   };
-  // The panel is as wide as the visible part of the table and stays in view when the table scrolls sideways.
-  const fitDrill = level => { const box = document.querySelector(`[data-level-drill="${level}"]`); const wrap = box?.closest('.table-wrap'); if (wrap) box.style.width = `${wrap.clientWidth}px`; };
-  let fitObserver = null;
   // Hover or keyboard focus previews the last event; a click keeps it open until Escape or a click elsewhere.
   let didButton = null; let didPinned = false;
   const hideLastDid = () => {
@@ -1458,7 +1481,7 @@ async function renderLevels() {
   const showLastDid = (button, pin) => {
     const level = Number(button.closest('[data-level-drill]')?.dataset.levelDrill);
     const row = drill.get(level)?.players[Number(button.dataset.lastDid)];
-    if (!row || !tableBox.isConnected) return;
+    if (!row || !pageBox.isConnected) return;
     didButton?.setAttribute('aria-expanded', 'false');
     const pop = lastDidPopover();
     pop.innerHTML = lastDidDetailsHTML(row, level);
@@ -1469,34 +1492,33 @@ async function renderLevels() {
     didButton = button; didPinned = pin;
   };
   const closeLastDid = event => {
-    if (!tableBox.isConnected) { hideLastDid(); stopWatching(); return; }
+    if (!pageBox.isConnected) { hideLastDid(); stopWatching(); return; }
     if (event.type === 'keydown' ? event.key === 'Escape' : event.type !== 'click' || !event.target.closest('.last-did, #last-did-pop')) hideLastDid();
   };
   const watching = [['keydown', document], ['click', document], ['scroll', window], ['resize', window]];
   const stopWatching = () => watching.forEach(([type, target]) => target.removeEventListener(type, closeLastDid, true));
   watching.forEach(([type, target]) => target.addEventListener(type, closeLastDid, true));
-  tableBox.addEventListener('pointerover', event => {
+  pageBox.addEventListener('pointerover', event => {
     const button = event.target.closest('.last-did');
     if (button && event.pointerType === 'mouse' && !didPinned) showLastDid(button, false);
   });
-  tableBox.addEventListener('pointerout', event => {
+  pageBox.addEventListener('pointerout', event => {
     if (event.pointerType === 'mouse' && !didPinned && event.target.closest('.last-did')) hideLastDid();
   });
-  tableBox.addEventListener('focusin', event => {
+  pageBox.addEventListener('focusin', event => {
     const button = event.target.closest('.last-did');
     if (button && !didPinned && button.matches(':focus-visible')) showLastDid(button, false);
   });
-  tableBox.addEventListener('focusout', event => { if (!didPinned && event.target.closest('.last-did')) hideLastDid(); });
+  pageBox.addEventListener('focusout', event => { if (!didPinned && event.target.closest('.last-did')) hideLastDid(); });
   const drawDrill = level => {
     if (!tableBox.isConnected || !data) return;
     const box = document.querySelector(`[data-level-drill="${level}"]`); const state = drill.get(level);
     if (!box || !state) return;
     hideLastDid();
-    fitDrill(level);
     const counts = state.counts || data.levels.find(row => row.level === level)?.transition;
     const quitting = state.group !== 'kept_going';
     const skipped = counts?.unknown_progress ? `<p class="help">${number(counts.unknown_progress)} more ${counts.unknown_progress === 1 ? 'player' : 'players'} in the drop started a later level without a start of level ${level + 1}.</p>` : '';
-    const table = state.error ? loadError(state.error, 'data-retry-drill') : state.loading && !state.players.length ? skeleton('table', 5, 8) : !state.players.length ? '<p class="help">Nobody is in this group in the selected days and filters.</p>' : `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Player</th>${quitting ? '<th title="Hover or click one to see the exact last event">What they did last</th>' : ''}<th class="num">Tries</th><th class="num">Fails</th><th>Last on this level</th><th>Opened the game later</th><th>Version</th><th class="num">Session length</th></tr></thead><tbody>${state.players.map((row, index) => `<tr><td><a class="row-title" href="${playerHref(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a></td>${quitting ? `<td class="small">${lastDidHTML(row, index)}</td>` : ''}<td class="num">${number(row.tries)}</td><td class="num">${number(row.fails)}</td><td class="small muted">${analysisDate(row.exit_at, chosen.timezone)}</td><td>${row.came_back ? '<span class="pill good">came back</span>' : '<span class="small muted">—</span>'}</td><td class="small">${escapeHTML(row.app_version || '—')}</td><td class="num">${duration(row.session_seconds)}</td></tr>`).join('')}</tbody></table></div><div class="pager"><span class="small muted">${number(state.players.length)} of ${number(state.total)}</span>${state.players.length < state.total ? `<button type="button" class="button" data-drill-more ${state.loading ? 'disabled aria-busy="true"' : ''}>${state.loading ? spinner('Loading…') : 'Show more'}</button>` : ''}</div><p class="help">Session length is the whole session they were last on this level in, not only the time on the level. “Came back” means any later session by the end date. Hover or click what they did last to see the last event the game logged in that session (session start and end aside), when it came, and what they did right after the level. Open a player to start at their last event on this level.</p>`;
+    const table = state.error ? loadError(state.error, 'data-retry-drill') : state.loading && !state.players.length ? skeleton('table', 5, 8) : !state.players.length ? '<p class="help">Nobody is in this group in the selected days and filters.</p>' : `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Player</th>${quitting ? '<th title="Hover or click one to see the exact last event">What they did last</th>' : ''}<th class="num">Tries</th><th class="num">Fails</th><th>Last on this level</th><th class="col-secondary">Opened the game later</th><th class="col-secondary">Version</th><th class="num">Session length</th></tr></thead><tbody>${state.players.map((row, index) => `<tr data-player="${escapeHTML(row.player)}"${row.player === state.selected ? ' class="is-selected" aria-current="true"' : ''}><td><a class="row-title" href="${playerHref(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a></td>${quitting ? `<td class="small">${lastDidHTML(row, index)}</td>` : ''}<td class="num">${number(row.tries)}</td><td class="num">${number(row.fails)}</td><td class="small muted">${analysisDate(row.exit_at, chosen.timezone)}</td><td class="col-secondary">${row.came_back ? '<span class="pill good">came back</span>' : '<span class="small muted">—</span>'}</td><td class="small col-secondary">${escapeHTML(row.app_version || '—')}</td><td class="num">${duration(row.session_seconds)}</td></tr>`).join('')}</tbody></table></div><div class="pager"><span class="small muted">${number(state.players.length)} of ${number(state.total)}</span>${state.players.length < state.total ? `<button type="button" class="button" data-drill-more ${state.loading ? 'disabled aria-busy="true"' : ''}>${state.loading ? spinner('Loading…') : 'Show more'}</button>` : ''}</div><p class="help">Session length is the whole session they were last on this level in, not only the time on the level. “Came back” means any later session by the end date. Hover or click what they did last to see the last event the game logged in that session (session start and end aside), when it came, and what they did right after the level. Open a player to start at their last event on this level.</p>`;
     box.innerHTML = `<div class="level-drill-head"><div class="segmented" role="group" aria-label="Players on level ${level}">${LEVEL_DRILL_GROUPS.map(([key, label]) => `<button type="button" data-drill-group="${key}" aria-pressed="${state.group === key}">${label}${counts ? ` <span class="drill-count">${number(counts[key])}</span>` : ''}</button>`).join('')}</div>
       <div class="quiet-actions"><label class="inline-field">Sort<select data-drill-sort><option value="exit_at">Latest on this level</option><option value="tries">Most tries</option><option value="fails">Most fails</option></select></label><button type="button" class="button" data-drill-csv>${icon('export', 14)} CSV</button></div></div>
       ${skipped}${lastActionsHTML(level, state)}${table}`;
@@ -1514,11 +1536,30 @@ async function renderLevels() {
     } catch (error) { if (ticket === state.ticket) state.error = error; }
     if (ticket === state.ticket) { state.loading = false; drawDrill(level); }
   };
+  const drawLevelPage = () => {
+    if (pageLevel == null || !data || !pageBox.isConnected) return;
+    const row = data.levels.find(item => item.level === pageLevel);
+    if (!row) { pageBox.innerHTML = `<section class="panel"><div class="panel-body"><a class="back-link" href="${listURL()}">← All levels</a><p class="help">Nobody started level ${pageLevel} in the selected days and filters.</p></div></section>`; return; }
+    const numbers = data.levels.map(item => item.level).sort((first, second) => first - second);
+    const at = numbers.indexOf(pageLevel);
+    const step = (target, label) => target == null ? '' : `<a class="button small-button" href="${levelURL(target)}">${label}</a>`;
+    const drop = row.transition;
+    const summary = [`<span><strong>${number(row.started)}</strong> started</span>`, `<span><strong>${number(row.completed)}</strong> finished${row.completion != null ? ` · ${percent(row.completion)}` : ''}</span>`,
+      drop?.available ? `<span><strong>${percent(drop.drop_percent)}</strong> dropped · ${number(drop.total_drop)} did not start level ${drop.next_level}</span>` : '<span class="muted">drop: not enough data</span>',
+      `<span><strong>${row.tries_per_player ?? '—'}</strong> tries / player</span>`, `<span>median <strong>${duration(row.median_seconds)}</strong></span>`].join('');
+    pageBox.innerHTML = `<section class="panel level-page"><div class="panel-header"><div><a class="back-link" href="${listURL()}">← All levels</a><h2>Level ${row.level}</h2><div class="level-page-summary">${summary}</div></div><div class="quiet-actions">${step(numbers[at - 1], `← Level ${numbers[at - 1]}`)}${step(numbers[at + 1], `Level ${numbers[at + 1]} →`)}</div></div>
+      <div class="panel-body"><div class="level-page-split"><div class="level-drill level-page-list" data-level-drill="${row.level}"></div><aside class="player-pane" id="level-pane" aria-label="Player timeline" hidden></aside></div></div></section>`;
+    ensureDrill(row.level);
+  };
+  tableBox.addEventListener('click', event => {
+    const row = event.target.closest('[data-level-row]');
+    if (row && !event.target.closest('a[href]')) navigate(levelURL(Number(row.dataset.levelRow)));
+  });
   const ensureDrill = level => {
     if (!drill.has(level)) drill.set(level, {group: levelDrillGroup(data.levels.find(row => row.level === level)), sort: 'exit_at', lastAction: null, lastActions: [], players: [], total: 0, counts: null, loading: false, error: null, ticket: 0});
     fetchDrill(level);
   };
-  document.querySelector('#levels-table').addEventListener('click', async event => {
+  pageBox.addEventListener('click', async event => {
     const playerLink = event.target.closest('.level-drill a[href]');
     if (playerLink && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey && event.button === 0) {
       const query = new URL(playerLink.href).searchParams;
@@ -1540,23 +1581,24 @@ async function renderLevels() {
           }
           return players[index];
         }};
-        renderJourney(game, query.get('player'), {overlay: true, filters: chosen, trigger: playerLink, browse, focus: players[browse.index] ? focusOf(players[browse.index]) : null});
+        const options = {filters: chosen, trigger: playerLink, browse, focus: players[browse.index] ? focusOf(players[browse.index]) : null};
+        const split = pageBox.querySelector('.level-page-split');
+        if (split && split.clientWidth >= PLAYER_PANE_MIN_WIDTH) {
+          // Wide enough: the timeline opens beside the list, which stays in view for Previous / Next.
+          const select = chosenPlayer => {
+            state.selected = chosenPlayer;
+            split.querySelectorAll('tr[data-player]').forEach(row => { const on = row.dataset.player === chosenPlayer; row.classList.toggle('is-selected', on); if (on) row.setAttribute('aria-current', 'true'); else row.removeAttribute('aria-current'); });
+          };
+          split.classList.add('has-pane'); split.querySelector('#level-pane').hidden = false;
+          select(query.get('player'));
+          renderJourney(game, query.get('player'), {...options, pane: split.querySelector('#level-pane'), onPlayer: select, onClose: () => { state.selected = null; select(null); split.classList.remove('has-pane'); split.querySelector('#level-pane').hidden = true; split.querySelector('#level-pane').innerHTML = ''; playerLink.focus({preventScroll: true}); }});
+        } else renderJourney(game, query.get('player'), {...options, overlay: true});
         return;
       }
     }
     const did = event.target.closest('[data-last-did]');
     if (did) {
       if (didButton === did && didPinned) hideLastDid(); else showLastDid(did, true);
-      return;
-    }
-    const toggle = event.target.closest('[data-level-toggle]');
-    if (toggle) {
-      const level = Number(toggle.dataset.levelToggle); const row = document.querySelector(`[data-level-detail="${level}"]`);
-      if (open.has(level)) { open.delete(level); row.hidden = true; document.querySelectorAll(`[data-level-toggle="${level}"]`).forEach(button => button.setAttribute('aria-expanded', 'false')); return; }
-      open.forEach(other => { document.querySelector(`[data-level-detail="${other}"]`)?.setAttribute('hidden', ''); document.querySelectorAll(`[data-level-toggle="${other}"]`).forEach(button => button.setAttribute('aria-expanded', 'false')); });
-      open.clear();
-      open.add(level); row.hidden = false; document.querySelectorAll(`[data-level-toggle="${level}"]`).forEach(button => button.setAttribute('aria-expanded', 'true'));
-      if (!drill.has(level)) ensureDrill(level);
       return;
     }
     const panel = event.target.closest('[data-level-drill]'); if (!panel) return;
@@ -1577,7 +1619,7 @@ async function renderLevels() {
       } catch (error) { toastError(error); }
     }
   });
-  document.querySelector('#levels-table').addEventListener('change', event => {
+  pageBox.addEventListener('change', event => {
     const select = event.target.closest('[data-drill-sort]'); if (!select) return;
     const level = Number(select.closest('[data-level-drill]').dataset.levelDrill); const state = drill.get(level);
     state.sort = select.value; fetchDrill(level);
@@ -1588,7 +1630,7 @@ async function renderLevels() {
     const keys = {drop: row => -(row.transition?.drop_percent ?? -1), completion: row => row.completion ?? 101, tries: row => -(row.tries_per_player ?? -1), time: row => -(row.median_seconds ?? -1)};
     return sort === 'level' ? list : list.sort((a, b) => keys[sort](a) - keys[sort](b));
   };
-  const levelsNote = () => firstSession() ? 'New players only, within their first session. A drop is a first session that ended on the level.' : 'Counted from level start, complete, fail and restart events.';
+  const levelsNote = () => (firstSession() ? 'New players only, within their first session. A drop is a first session that ended on the level.' : 'Counted from level start, complete, fail and restart events.') + ' Click a level to see the players behind it.';
   const draw = () => {
     const box = document.querySelector('#levels-table');
     document.querySelector('#levels-note').textContent = levelsNote();
@@ -1608,24 +1650,19 @@ async function renderLevels() {
     document.querySelector('#levels-page-info').textContent = `${page * size + 1}–${Math.min((page + 1) * size, sorted.length)} of ${number(sorted.length)} levels`;
     document.querySelector('#levels-previous-page').disabled = page === 0;
     document.querySelector('#levels-next-page').disabled = (page + 1) * size >= sorted.length;
-    box.innerHTML = `<div class="table-wrap level-scroll levels-scroll" tabindex="0" role="region" aria-label="Level results"><table class="levels-grid"><thead><tr><th>Level</th><th class="num">Start</th><th class="num">Finish</th><th class="num" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">Drop · start → start</th><th class="num">Tries / player</th><th class="num">Fails</th><th class="num">Median time</th></tr></thead><tbody>${visible.map(row => `<tr data-level-row="${row.level}" class="${highlighted === row.level ? 'level-highlight ' : ''}${row.completion != null && !row.low_sample && row.completion < 60 ? 'level-hard' : ''}"><td class="level-number-cell"><button type="button" class="level-toggle" data-level-toggle="${row.level}" aria-expanded="${open.has(row.level)}" aria-label="Show the players behind level ${row.level}">${icon('chevron', 14)}</button><strong>${row.level}</strong>${row.low_sample ? ` <span class="level-sample-marker" role="img" aria-label="Small sample: ${number(row.started)} of ${number(minimum)} players" title="Small sample: ${number(row.started)} players started; threshold is ${number(minimum)}">·</span>` : ''}</td><td class="num">${number(row.started)}</td><td class="num">${number(row.completed)}</td><td class="num">${levelTransitionCell(row)}</td><td class="num">${row.tries_per_player ?? '—'}</td><td class="num">${number(row.fails)}${row.restarts ? ` <span class="muted small">· ${row.restarts} restart${row.restarts === 1 ? '' : 's'}</span>` : ''}</td><td class="num">${duration(row.median_seconds)}</td></tr><tr class="level-detail" data-level-detail="${row.level}" ${open.has(row.level) ? '' : 'hidden'}><td colspan="7"><div class="level-drill" data-level-drill="${row.level}"></div></td></tr>`).join('')}</tbody></table></div>
+    box.innerHTML = `<div class="table-wrap level-scroll levels-scroll" tabindex="0" role="region" aria-label="Level results"><table class="levels-grid"><thead><tr><th>Level</th><th class="num">Start</th><th class="num">Finish</th><th class="num" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">Drop · start → start</th><th class="num">Tries / player</th><th class="num">Fails</th><th class="num">Median time</th></tr></thead><tbody>${visible.map(row => `<tr data-level-row="${row.level}" class="${highlighted === row.level ? 'level-highlight ' : ''}${row.completion != null && !row.low_sample && row.completion < 60 ? 'level-hard' : ''}"><td class="level-number-cell"><button type="button" class="level-toggle" data-level-toggle="${row.level}" aria-label="Open the players behind level ${row.level}">${icon('chevron', 14)}</button><strong>${row.level}</strong>${row.low_sample ? ` <span class="level-sample-marker" role="img" aria-label="Small sample: ${number(row.started)} of ${number(minimum)} players" title="Small sample: ${number(row.started)} players started; threshold is ${number(minimum)}">·</span>` : ''}</td><td class="num">${number(row.started)}</td><td class="num">${number(row.completed)}</td><td class="num">${levelTransitionCell(row)}</td><td class="num">${row.tries_per_player ?? '—'}</td><td class="num">${number(row.fails)}${row.restarts ? ` <span class="muted small">· ${row.restarts} restart${row.restarts === 1 ? '' : 's'}</span>` : ''}</td><td class="num">${duration(row.median_seconds)}</td></tr>`).join('')}</tbody></table></div>
       `;
-    open.forEach(level => { document.querySelectorAll(`[data-level-toggle="${level}"]`).forEach(button => button.setAttribute('aria-expanded', 'true')); drawDrill(level); });
-    fitObserver?.disconnect();
-    const wrap = box.querySelector('.table-wrap');
-    if (wrap && window.ResizeObserver) { fitObserver = new ResizeObserver(() => open.forEach(fitDrill)); fitObserver.observe(wrap); }
   };
   const load = async state => {
     chosen = structuredClone(state); page = 0; data = null; const ticket = ++latest;
     drill.forEach(state => { state.ticket++; });
-    fitObserver?.disconnect();
     if (levelsView === 'compare') { toolsPanel.update(chosen); return; }
     document.querySelector('#levels-page-info').textContent = '';
     document.querySelector('#levels-previous-page').disabled = true;
     document.querySelector('#levels-next-page').disabled = true;
     const finishSummary = beginLoading(document.querySelector('#levels-summary'), skeleton('stats'));
     const finishTable = beginLoading(tableBox, skeleton('table', 8, 7));
-    try { const result = await api(`${gameURL(game)}/insights/levels?${levelsQuery(state)}`); if (ticket === latest && tableBox.isConnected) { data = result; levelsFilters.setContext({anonymous_events: result.context.anonymous_events}); drill.clear(); draw(); open.forEach(ensureDrill); } }
+    try { const result = await api(`${gameURL(game)}/insights/levels?${levelsQuery(state)}`); if (ticket === latest && tableBox.isConnected) { data = result; levelsFilters.setContext({anonymous_events: result.context.anonymous_events}); drill.clear(); draw(); drawLevelPage(); } }
     catch (error) { if (ticket === latest && tableBox.isConnected) { document.querySelector('#levels-summary').innerHTML = ''; tableBox.innerHTML = loadError(error); } }
     finally { finishSummary(); finishTable(); }
   };
@@ -1648,7 +1685,7 @@ async function renderLevels() {
   document.querySelector('[aria-label="Which players"]').addEventListener('click', event => {
     const button = event.target.closest('[data-levels-scope]');
     if (!button || button.dataset.levelsScope === navigation.scope) return;
-    navigation.scope = button.dataset.levelsScope; open.clear(); rememberNavigation(); showScope();
+    navigation.scope = button.dataset.levelsScope; rememberNavigation(); showScope();
     if (chosen) load(chosen);
   });
   showScope();

@@ -1485,6 +1485,32 @@ main{padding-bottom:calc(28px + env(safe-area-inset-bottom))}
 .journey-events li.timeline-focus{box-shadow:inset 4px 0 var(--accent-orange);padding-left:10px;background:color-mix(in srgb,var(--accent-orange) 9%,var(--bg-card));scroll-margin:80px}
 @media (pointer:coarse),(max-width:850px){.last-action,.session-chip,.last-did{min-height:44px}}
 
+/* Levels: a page per level; on wide screens the player timeline opens beside the list. */
+.levels-grid>tbody>tr[data-level-row]{cursor:pointer}
+.levels-grid>tbody>tr[data-level-row]:hover>td{background:color-mix(in srgb,var(--accent-orange) 6%,var(--bg-card))}
+.level-page .panel-header{align-items:flex-start}
+.level-page .back-link{display:inline-block;margin-bottom:10px}
+.level-page h2{font-size:1.35rem;margin-bottom:6px}
+.level-page-summary{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:var(--fs-sm);color:var(--text-muted)}
+.level-page-summary strong{font-size:var(--fs-md);color:var(--text-primary)}
+.level-page-split.has-pane{display:grid;grid-template-columns:minmax(0,1fr) minmax(400px,46%);gap:20px;align-items:start}
+.level-page-split.has-pane .col-secondary{display:none}
+.level-page-list.level-drill{position:static;min-width:0;padding:0;contain:none}
+.level-drill tr.is-selected>td{background:color-mix(in srgb,var(--accent-orange) 9%,var(--bg-card))}
+.level-drill tr.is-selected>td:first-child{box-shadow:inset 3px 0 var(--accent-orange)}
+.player-pane{position:sticky;top:16px;max-height:calc(100dvh - 32px);overflow:auto;padding:0 18px 18px;border:1px solid var(--line-strong);border-radius:12px;background:var(--bg-card);overscroll-behavior:contain}
+.player-pane[hidden]{display:none}
+.player-pane-head{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;background:var(--bg-card);border-bottom:1px solid var(--line);margin-bottom:14px}
+.player-pane-head h2{margin:0;font-size:var(--fs-md);text-transform:none;letter-spacing:0}
+.player-pane .page-heading h1{font-size:1.15rem}
+.player-pane .page-heading p{overflow-wrap:anywhere}
+.player-pane .highlight-navigation{top:53px;padding:12px 0}
+.player-pane .journey-events li{grid-template-columns:70px 56px minmax(0,1fr)}
+.player-pane .journey-params{grid-column:1/-1}
+body:has(.level-page-split.has-pane) main{max-width:1800px}
+/* NutBot pushes the page aside instead of covering it, when there is room. */
+@media (min-width:1100px){body:has(#nutbot-root.open) .workspace{margin-right:440px}}
+
 /* Shared request and action feedback: indeterminate activity never implies a percentage. */
 #request-activity{position:fixed;inset:0 0 auto;height:3px;overflow:hidden;z-index:100;background:var(--bg-nested);pointer-events:none}
 #request-activity[hidden]{display:none}

@@ -428,11 +428,17 @@ assert.doesNotMatch(html, /Right after/, 'the same thing twice is said once');
     assert result.returncode == 0, result.stderr
 
 
-def test_level_by_level_keeps_one_level_open_and_counts_new_players_on_request():
+def test_levels_open_a_page_per_level_and_count_new_players_on_request():
     script = (Path(__file__).parents[1] / "avn_analytics/static/insights.js").read_text()
     levels = script[script.index("async function renderLevels(") :]
-    # Opening a level closes the one open before it.
-    assert "open.clear();\n      open.add(level);" in levels
+    # A level row opens that level's players on a page of its own (?level=N), not inside the table.
+    assert "navigate(levelURL(Number(row.dataset.levelRow)))" in levels
+    assert "data-level-detail" not in levels
+    assert "new URLSearchParams({level})" in levels
+    # On a wide page the timeline opens beside the list; otherwise it stays the dialog.
+    assert "split.clientWidth >= PLAYER_PANE_MIN_WIDTH" in levels
+    assert "pane: split.querySelector('#level-pane')" in levels
+    assert "{...options, overlay: true}" in levels
     # The "Which players" switch reloads the table and the player lists with the scope.
     assert 'aria-label="Which players"' in levels
     assert "if (firstSession()) query.set('scope', 'first_session');" in levels
