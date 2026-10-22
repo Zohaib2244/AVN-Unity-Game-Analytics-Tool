@@ -484,7 +484,7 @@ def _histories(connection, start, end, filters, source):
 LEVEL_BATCH = 200  # players whose facts are read per query
 
 
-def scanned_players(connection, start, end, filters, scope, until=None):
+def scanned_players(connection, start, end, filters, scope, until=None, max_players=None):
     """The players a facts level scan covers, in player order (before deciding who counts).
 
     scope "all": players with an identified event in the range that passes the filters.
@@ -504,10 +504,18 @@ def scanned_players(connection, start, end, filters, scope, until=None):
         query = f"""SELECT DISTINCT player FROM analytics_facts
                     WHERE {condition} AND player IS NOT NULL {limit} ORDER BY player"""
         args = [*args, *limit_args]
-    return [row[0] for row in connection.execute(query, args)]
+    if max_players is not None:
+        query += " LIMIT ?"
+        args = [*args, max_players + 1]
+    players = [row[0] for row in connection.execute(query, args)]
+    if max_players is not None and len(players) > max_players:
+        raise ValueError("Prepared Levels exceeds the bounded player budget")
+    return players
 
 
-def player_rows(connection, players, start, end, filters, until=None):
+def player_rows(
+    connection, players, start, end, filters, until=None, check=None, max_rows=None, max_bytes=None
+):
     """(player, rows) for these players, read from their facts, in player order.
 
     rows are a player's events up to the range end that pass the history filters, in time order,
@@ -519,6 +527,8 @@ def player_rows(connection, players, start, end, filters, until=None):
     condition, args = where(start, end, filters, source=FACTS)
     history, history_args = where("0001-01-01", end, _history_filters(filters), source=FACTS)
     limit, limit_args = ("AND id<=?", [until]) if until is not None else ("", [])
+    read = 0
+    used_bytes = 0
     for offset in range(0, len(players), LEVEL_BATCH):
         batch = players[offset : offset + LEVEL_BATCH]
         rows = connection.execute(
@@ -530,6 +540,17 @@ def player_rows(connection, players, start, end, filters, until=None):
         )
         player, events = None, []
         for row in rows:
+            read += 1
+            if check and read % 1024 == 0:
+                check()
+            if max_rows is not None and read > max_rows:
+                raise ValueError("A player batch exceeds the prepared history memory budget")
+            if max_bytes is not None:
+                used_bytes += 1024 + sum(
+                    len(value.encode()) for value in row if isinstance(value, str)
+                )
+                if used_bytes > max_bytes:
+                    raise ValueError("A player batch exceeds the prepared history memory budget")
             if row["player"] != player:
                 if events:
                     yield player, events
@@ -779,6 +800,16 @@ def _level_scan(storage, game_id, start, end, filters, scope):
     changed.
     """
     definitions = _definitions(storage, game_id)
+    if storage.settings.analytics_read_mode == "prepared":
+        from . import views
+
+        return views.answer(
+            storage,
+            game_id,
+            "levels",
+            (start, end, filters, scope),
+            lambda: _scan_levels(storage, game_id, start, end, filters, scope, definitions),
+        )
     return storage.scans.get(
         storage,
         game_id,

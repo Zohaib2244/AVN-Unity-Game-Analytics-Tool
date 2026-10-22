@@ -17,7 +17,7 @@ function processingWaiting(status) {
   const parts = [];
   if (pending.facts_remaining) parts.push(`${number(pending.facts_remaining)} older events to copy or check`);
   if (pending.views_waiting) parts.push(`${number(pending.views_waiting)} answers to bring up to date`);
-  if (pending.lag_seconds) parts.push(`newest unprocessed change ${Math.round(pending.lag_seconds)} s old`);
+  if (pending.lag_seconds) parts.push(`oldest prepared answer ${Math.round(pending.lag_seconds)} s old`);
   return parts.length ? parts.join(' · ') : 'Nothing';
 }
 

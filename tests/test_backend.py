@@ -3607,3 +3607,35 @@ def test_only_global_admins_see_and_change_analytics_processing(team):
     actions = [item["action"] for item in client.get("/v1/audit", headers=boss).json()]
     assert actions[:2] == ["analytics.start", "analytics.stop"]
     assert actions.count("analytics.stop") == 1
+
+
+def test_processing_hint_is_game_scoped_and_contains_no_global_details(team):
+    client, as_user, _ = team
+    boss = as_user(ADMIN_EMAIL)
+    workspace = client.get("/v1/workspaces", headers=boss).json()[0]
+    game = client.post(
+        "/v1/games", headers=boss, json={**GAME, "workspace_id": workspace["id"]}
+    ).json()["id"]
+    client.post(
+        "/v1/team",
+        headers=boss,
+        json={
+            "email": "reader@example.com",
+            "role": "member",
+            "workspace_id": workspace["id"],
+            "game_ids": [game],
+        },
+    )
+    reader = as_user("reader@example.com")
+    path = f"/v1/games/{game}/insights/processing"
+    assert client.get(path, headers=reader).json() == {"paused": False}
+    client.put("/v1/admin/analytics-worker", headers=boss, json={"desired": "stopped"})
+    assert client.get(path, headers=reader).json() == {"paused": True}
+    assert client.get("/v1/admin/analytics-worker", headers=reader).status_code == 403
+    other = client.post("/v1/workspaces", headers=boss, json={"name": "Other"}).json()
+    hidden = client.post(
+        "/v1/games",
+        headers=boss,
+        json={**GAME, "bundle_id": "com.avn.hidden", "workspace_id": other["id"]},
+    ).json()["id"]
+    assert client.get(f"/v1/games/{hidden}/insights/processing", headers=reader).status_code == 404

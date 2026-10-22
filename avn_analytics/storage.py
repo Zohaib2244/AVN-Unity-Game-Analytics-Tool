@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from . import analytics, insights, materialize
+from . import analytics, insights, materialize, views
 from .config import Settings
 from .models import Batch, EventDefinition, GameCreate, GameUpdate, timestamp
 from .readcache import ReadCache
@@ -187,6 +187,7 @@ class Storage:
                 ORDER BY client_ts
             """)
         analytics.install(connection)
+        views.install(connection)
 
     def game_path(self, game_id):
         return self.root / "games" / f"{game_id}.sqlite3"

@@ -473,6 +473,8 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Retention cohorts | `GET /v1/games/{id}/insights/retention?start=…&end=…` (accepts the filter parameters) |
 | Level progress | `GET /v1/games/{id}/insights/levels?start=…&end=…` (`scope=all` or `first_session`; accepts the filter parameters) |
 | Player information, device specs | `GET /v1/games/{id}/insights/device-specs?player=…` (contacts Wikipedia; only when called) |
+| Analytics processing (global admin) | `GET` / `PUT /v1/admin/analytics-worker`; PUT `{"desired": "running"}` or `{"desired": "stopped"}`; status separates desired, acknowledged state, heartbeat, progress and errors |
+| Slow-read hint for an authorized game | `GET /v1/games/{id}/insights/processing` returns only `{paused}` |
 | Analysis confidence thresholds | `GET` / `PATCH /v1/workspaces/{id}/analytics-thresholds` (admin), `PATCH /v1/games/{id}/analytics-thresholds` (lead, admin; `null` inherits) |
 | Players behind a level | `GET /v1/games/{id}/insights/levels/players?start=…&end=…&level=20&group=left` (`total_drop`, `left`, `finished_stopped`, `unknown_progress`, `kept_going`, `returning`, `missing_history`, `stuck`, `started`; also `scope`, `last_action` (one of the returned `last_actions`), `sort`, `offset`, `limit`, and the filter parameters) |
 | Environment fixes (lead, admin) | `GET` / `POST /v1/games/{id}/environment-fixes`, `DELETE /v1/games/{id}/environment-fixes/{fix_id}`: count what a build reported as `development` as `production`, without touching stored events |
@@ -507,11 +509,13 @@ Environment variables (see `.env.example`):
 | `AVN_DATA_DIR` | `./data` | Where databases are stored |
 | `AVN_REQUESTS_PER_MINUTE` | `120` | Per-key rate limit |
 | `AVN_READ_CACHE_SECONDS` | `60` | How long a slow dashboard answer (Overview, Players, Levels, Funnels and the filter menus) is reused, so coming back to a page is instant. New events appear once it has passed; a change to the event dictionary, an environment fix or the analysis thresholds shows at once. `0` turns it off |
-| `AVN_ANALYTICS_READ_MODE` | `legacy` | Where the dashboards read events. `legacy`: the raw events' JSON. `facts`: the [analytics facts](docs/analytics-pipeline.md), for each game whose facts are complete and checked (the others keep reading raw events); the same answers, several times faster. Switch back to `legacy` at any time |
+| `AVN_ANALYTICS_READ_MODE` | `legacy` | Where the dashboards read events. `legacy`: the raw events' JSON. `facts`: the [analytics facts](docs/analytics-pipeline.md), for each game whose facts are complete and checked (the others keep reading raw events); the same answers, several times faster. `prepared`: reuse exact Overview and Levels answers prepared by the worker, with live facts fallback when no eligible answer exists. Switch back to `legacy` at any time |
 | `AVN_ANALYTICS_WORKER_DEFAULT_ENABLED` | `true` | Initial processing choice only; the stored administrator Start/Stop choice wins on all later starts. Pass the same setting to all services |
 | `AVN_ANALYTICS_BATCH_ROWS` | `5000` | Historical events copied per worker transaction (100–100000) |
 | `AVN_ANALYTICS_REFRESH_SECONDS` | `10` | Worker refresh interval for prepared answers (1–3600 seconds) |
 | `AVN_ANALYTICS_FRESHNESS_SECONDS` | `60` | Maximum prepared-answer age before live fallback (5–86400 seconds); configure admin and worker identically |
+| `AVN_ANALYTICS_ACTIVE_VIEWS` | `12` | Maximum retained prepared specifications per game (1–100); unused specifications expire after 24 hours |
+| `AVN_ANALYTICS_STORAGE_BYTES` | `268435456` | Global logical budget for prepared answers and player contributions (1 MiB–10 GiB); raw events and stable facts are outside this derived-answer budget |
 | `AVN_MAX_BODY_BYTES` | `1048576` | Largest accepted request body |
 | `AVN_HOST_DATA_DIR` | `./data` | Host folder holding all data |
 | `AVN_UID` / `AVN_GID` | `1000` | User that owns the data folder |

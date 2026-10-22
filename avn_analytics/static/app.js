@@ -344,7 +344,8 @@ function beginLoading(element, placeholder, {path = null, note = true} = {}) {
   const previous = regionLoads.get(element); if (previous) previous();
   element.setAttribute('aria-busy', 'true');
   const began = Date.now();
-  let status = null; let ticker = null; let stage = '';
+  let status = null; let ticker = null; let stage = ''; let processingNote = '';
+  let processingAsked = false;
   // Past a couple of seconds the placeholder says what is happening and counts up, so a long first
   // load doesn't look stuck. The sentence changes only at a threshold (it is announced); the count is visual.
   const tick = () => {
@@ -352,7 +353,14 @@ function beginLoading(element, placeholder, {path = null, note = true} = {}) {
     if (!element.isConnected) { clearInterval(ticker); return; }
     if (!holder) return;
     const seconds = Math.floor((Date.now() - began) / 1000);
-    const message = slowLoadMessage(seconds, path ? usualWait(path) : null);
+    if (seconds >= 2 && path && !processingAsked) {
+      processingAsked = true;
+      const gamePath = path.match(/^(\/v1\/games\/[^/]+)\/insights\//)?.[1];
+      if (gamePath) request(`${gamePath}/insights/processing`).then(state => {
+        if (state.paused) processingNote = 'Background processing is paused. Calculating from collected events…';
+      }).catch(() => {});
+    }
+    const message = processingNote || slowLoadMessage(seconds, path ? usualWait(path) : null);
     if (!message) return;
     let note = holder.querySelector('.loading-note');
     if (!note) {

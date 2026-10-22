@@ -153,6 +153,13 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
 
     def cached(game_id, kind, parts, compute):
         """The slow dashboard reads, kept for AVN_READ_CACHE_SECONDS (see readcache.py)."""
+        if settings.analytics_read_mode == "prepared":
+            from . import views
+
+            if kind == "summary":
+                return views.answer(storage, str(game_id), kind, parts, compute)
+            # Never let the response cache extend a prepared generation's freshness.
+            return compute()
         return storage.reads.get(storage, str(game_id), (kind, parts), compute)
 
     verifier = (
@@ -720,6 +727,15 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             headers={"Cache-Control": "no-store"},
             background=BackgroundTask(output.unlink, missing_ok=True),
         )
+
+    @admin_api.get("/v1/games/{game_id}/insights/processing")
+    def insights_processing(game_id: UUID):
+        # Scoped game authorization is inherited from the router. Do not expose global jobs,
+        # control revisions, identities, or errors to ordinary game readers.
+        storage.get_game(str(game_id))
+        with storage.connect(storage.root / "registry.sqlite3") as connection:
+            desired = materialize.read_control(connection)["desired"]
+        return {"paused": desired == "stopped"}
 
     @admin_api.get("/v1/games/{game_id}/insights/facets")
     def insights_facets(

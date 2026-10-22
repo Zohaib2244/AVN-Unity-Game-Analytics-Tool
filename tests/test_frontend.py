@@ -705,7 +705,7 @@ assert.equal(processingWaiting({pending: {}}), 'Nothing');
 assert.equal(
   processingWaiting({pending: {facts_remaining: 1200, views_waiting: 2, lag_seconds: 41.6}}),
   '1200 older events to copy or check · 2 answers to bring up to date'
-    + ' · newest unprocessed change 42 s old');
+    + ' · oldest prepared answer 42 s old');
 assert.equal(processingFacts({facts: {ready: true}}), 'Ready');
 assert.equal(processingFacts({facts: {ready: false, phase: 'backfill', done: 50, total: 200}}),
   'Copying older events · 25% of this step');
