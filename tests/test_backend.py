@@ -2267,6 +2267,61 @@ def test_simultaneous_level_requests_wait_for_one_scan(backend, monkeypatch):
     assert calls == {"progress": 1, "transitions": 1}
 
 
+def test_slow_dashboard_reads_are_kept_briefly_and_start_over_when_what_they_use_changes(
+    backend, monkeypatch
+):
+    from avn_analytics import insights
+
+    admin, game = _two_level_game(backend)
+    calls = {"summary": 0}
+    real = insights.summary
+
+    def counting(*args, **kwargs):
+        calls["summary"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(insights, "summary", counting)
+    url = f"/v1/games/{game['id']}/insights/summary"
+    first = admin.get(url, params=DAY)
+    assert first.status_code == 200
+    assert admin.get(url, params=DAY).json() == first.json() and calls["summary"] == 1
+    # Another range or filter is another answer.
+    assert admin.get(url, params={**DAY, "end": "2026-10-06"}).status_code == 200
+    assert admin.get(url, params={**DAY, "not_env": "editor"}).status_code == 200
+    assert calls["summary"] == 3
+    # A dictionary change starts over at once, without waiting for the time to pass.
+    definition = {"description": "Done", "params": {}}
+    assert (
+        admin.put(f"/v1/games/{game['id']}/dictionary/level_x", json=definition).status_code == 200
+    )
+    assert admin.get(url, params=DAY).status_code == 200 and calls["summary"] == 4
+
+
+def test_a_game_that_does_not_exist_is_refused_even_when_reads_are_cached(backend):
+    admin, _ = _two_level_game(backend)
+    missing = "00000000-0000-4000-8000-000000000000"
+    for path in ("insights/summary", "insights/facets", "insights/players"):
+        assert admin.get(f"/v1/games/{missing}/{path}", params=DAY).status_code == 404
+
+
+def test_the_read_cache_can_be_turned_off(backend, monkeypatch):
+    from avn_analytics import insights
+
+    _, ingest, settings = backend
+    with TestClient(create_app(replace(settings, read_cache_seconds=0), admin=True)) as admin:
+        game = register(admin, "com.avn.cache-off")
+        calls = []
+        real = insights.summary
+        monkeypatch.setattr(insights, "summary", lambda *a, **k: calls.append(1) or real(*a, **k))
+        for _ in range(2):
+            assert (
+                admin.get(f"/v1/games/{game['id']}/insights/summary", params=DAY).status_code == 200
+            )
+        assert len(calls) == 2
+    with pytest.raises(ValueError, match="AVN_READ_CACHE_SECONDS"):
+        replace(settings, read_cache_seconds=-1)
+
+
 def test_levels_for_new_players_count_only_their_first_session(backend):
     admin, ingest, _ = backend
     game = register(admin)

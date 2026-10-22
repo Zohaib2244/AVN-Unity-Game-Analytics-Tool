@@ -148,6 +148,11 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     if admin and len(settings.admin_token) < 32:
         raise ValueError("Set AVN_ADMIN_TOKEN to a random token of at least 32 characters")
     storage = Storage(settings)
+
+    def cached(game_id, kind, parts, compute):
+        """The slow dashboard reads, kept for AVN_READ_CACHE_SECONDS (see readcache.py)."""
+        return storage.reads.get(storage, str(game_id), (kind, parts), compute)
+
     verifier = (
         AccessVerifier(settings.access_team_domain, settings.access_audience, access_keys)
         if settings.access_enabled
@@ -492,6 +497,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
 
     @admin_api.get("/v1/games/{game_id}/mappings/status")
     def get_mapping_status(game_id: UUID):
+        # Not cached: Event setup uses it to tell whether the events someone just sent have arrived.
         return events.mapping_status(storage, str(game_id))
 
     @admin_api.post("/v1/games/{game_id}/mappings/preview")
@@ -717,7 +723,10 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     def insights_facets(
         game_id: UUID, start: DateParam, end: DateParam, tz_offset: TimezoneOffset = 0
     ):
-        return insights.facets(storage, str(game_id), *day_range(start, end, tz_offset))
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id, "facets", days, lambda: insights.facets(storage, str(game_id), *days)
+        )
 
     @admin_api.get("/v1/games/{game_id}/insights/summary")
     def insights_summary(
@@ -727,8 +736,12 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         chosen: Filtered,
         tz_offset: TimezoneOffset = 0,
     ):
-        return insights.summary(
-            storage, str(game_id), *day_range(start, end, tz_offset), chosen, tz_offset
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "summary",
+            (days, chosen, tz_offset),
+            lambda: insights.summary(storage, str(game_id), *days, chosen, tz_offset),
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/retention")
@@ -739,8 +752,12 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         chosen: Filtered,
         tz_offset: TimezoneOffset = 0,
     ):
-        return insights.retention(
-            storage, str(game_id), *day_range(start, end, tz_offset), chosen, tz_offset
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "retention",
+            (days, chosen, tz_offset),
+            lambda: insights.retention(storage, str(game_id), *days, chosen, tz_offset),
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/catalog")
@@ -751,33 +768,45 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         chosen: Filtered,
         tz_offset: TimezoneOffset = 0,
     ):
-        return insights.catalog(storage, str(game_id), *day_range(start, end, tz_offset), chosen)
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "catalog",
+            (days, chosen),
+            lambda: insights.catalog(storage, str(game_id), *days, chosen),
+        )
 
     @admin_api.post("/v1/games/{game_id}/insights/funnel")
     def insights_funnel(game_id: UUID, query: FunnelQuery):
-        return insights.funnel(
-            storage,
-            str(game_id),
-            *day_range(query.start, query.end, query.timezone_offset_minutes),
-            query.model_dump(),
+        days = day_range(query.start, query.end, query.timezone_offset_minutes)
+        body = query.model_dump()
+        return cached(
+            game_id,
+            "funnel",
+            (days, body),
+            lambda: insights.funnel(storage, str(game_id), *days, body),
         )
 
     @admin_api.post("/v1/games/{game_id}/insights/journeys")
     def insights_journeys(game_id: UUID, query: JourneyQuery):
-        return journeys.journeys(
-            storage,
-            str(game_id),
-            *day_range(query.start, query.end, query.timezone_offset_minutes),
-            query.model_dump(),
+        days = day_range(query.start, query.end, query.timezone_offset_minutes)
+        body = query.model_dump()
+        return cached(
+            game_id,
+            "journeys",
+            (days, body),
+            lambda: journeys.journeys(storage, str(game_id), *days, body),
         )
 
     @admin_api.post("/v1/games/{game_id}/insights/journeys/players")
     def insights_journey_players(game_id: UUID, query: JourneyPlayersQuery):
-        return journeys.journey_players(
-            storage,
-            str(game_id),
-            *day_range(query.start, query.end, query.timezone_offset_minutes),
-            query.model_dump(),
+        days = day_range(query.start, query.end, query.timezone_offset_minutes)
+        body = query.model_dump()
+        return cached(
+            game_id,
+            "journey_players",
+            (days, body),
+            lambda: journeys.journey_players(storage, str(game_id), *days, body),
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/story")
@@ -817,8 +846,12 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         chosen: Filtered,
         tz_offset: TimezoneOffset = 0,
     ):
-        return events.overview(
-            storage, str(game_id), *day_range(start, end, tz_offset), chosen, tz_offset
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "events",
+            (days, chosen, tz_offset),
+            lambda: events.overview(storage, str(game_id), *days, chosen, tz_offset),
         )
 
     @admin_api.post("/v1/games/{game_id}/insights/events/activity")
@@ -842,8 +875,12 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         chosen: Filtered,
         tz_offset: TimezoneOffset = 0,
     ):
-        return events.detail(
-            storage, str(game_id), name, *day_range(start, end, tz_offset), chosen, tz_offset
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "event_detail",
+            (name, days, chosen, tz_offset),
+            lambda: events.detail(storage, str(game_id), name, *days, chosen, tz_offset),
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/levels")
@@ -915,17 +952,25 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             parsed = PlayerRules.model_validate_json(rules) if rules else PlayerRules()
         except ValueError as error:
             raise HTTPException(400, "Those player rules aren't valid") from error
-        return insights.players(
-            storage,
-            str(game_id),
-            *day_range(start, end, tz_offset),
-            chosen,
-            search=search,
-            offset=offset,
-            sort=sort,
-            order=order,
-            conditions=[item.model_dump() for item in parsed.conditions],
-            metrics=[item.model_dump() for item in parsed.metrics],
+        days = day_range(start, end, tz_offset)
+        conditions = [item.model_dump() for item in parsed.conditions]
+        metrics = [item.model_dump() for item in parsed.metrics]
+        return cached(
+            game_id,
+            "players",
+            (days, chosen, search, offset, sort, order, conditions, metrics),
+            lambda: insights.players(
+                storage,
+                str(game_id),
+                *days,
+                chosen,
+                search=search,
+                offset=offset,
+                sort=sort,
+                order=order,
+                conditions=conditions,
+                metrics=metrics,
+            ),
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/journey")

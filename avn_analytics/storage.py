@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from . import insights
 from .config import Settings
 from .models import Batch, EventDefinition, GameCreate, GameUpdate, timestamp
+from .readcache import ReadCache
 
 # Normalizes a stored environment string (production, Editor, DEVELOPMENT...) to lower case.
 ENVIRONMENT_VALUE = "lower(substr(trim({column}), 1, 64))"
@@ -25,6 +26,9 @@ class Storage:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.root = settings.data_dir
+        # Slow dashboard reads, and the larger scans behind the level pages (see readcache.py).
+        self.reads = ReadCache(settings.read_cache_seconds, 300)
+        self.scans = ReadCache(settings.read_cache_seconds, 12)
 
     @contextmanager
     def connect(self, path):

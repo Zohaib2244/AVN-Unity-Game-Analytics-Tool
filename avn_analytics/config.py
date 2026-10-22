@@ -21,6 +21,7 @@ class Settings:
     max_body_bytes: int = 1_048_576
     requests_per_minute: int = 120
     max_export_bytes: int = 268_435_456
+    read_cache_seconds: int = 60  # how long a slow dashboard answer is reused; 0 turns it off
     public_ingest_url: str = ""
     # Team access. Enabled when both the Cloudflare Access team domain and the application's
     # audience tag are set; otherwise every request is an admin (the original single-user mode).
@@ -46,6 +47,8 @@ class Settings:
     def __post_init__(self):
         if self.max_body_bytes < 1 or self.requests_per_minute < 1 or self.max_export_bytes < 1:
             raise ValueError("Invalid storage or request limits")
+        if not 0 <= self.read_cache_seconds <= 3600:
+            raise ValueError("AVN_READ_CACHE_SECONDS must be between 0 and 3600")
 
     @property
     def nutbot_home(self):
@@ -63,6 +66,7 @@ class Settings:
             max_body_bytes=int(os.environ.get("AVN_MAX_BODY_BYTES", "1048576")),
             requests_per_minute=int(os.environ.get("AVN_REQUESTS_PER_MINUTE", "120")),
             max_export_bytes=int(os.environ.get("AVN_MAX_EXPORT_BYTES", "268435456")),
+            read_cache_seconds=int(os.environ.get("AVN_READ_CACHE_SECONDS", "60")),
             public_ingest_url=os.environ.get("AVN_PUBLIC_INGEST_URL", "").rstrip("/"),
             access_team_domain=os.environ.get("AVN_ACCESS_TEAM_DOMAIN", "")
             .strip()

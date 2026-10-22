@@ -6,8 +6,6 @@ Built on the same live event queries as insights.py, but everything is named in 
 
 import json
 import re
-import threading
-import time
 from collections import Counter
 from datetime import datetime
 from statistics import median
@@ -58,71 +56,6 @@ NOT_AN_ACTION = {"session_start", "session_end", "first_open", "APP_ANALYSIS"}
 AD_EVENT = re.compile(r"^ads?(_|$)", re.I)
 # The filters that decide whether a player's earlier history counts (the rest pick the cohort).
 HISTORY_FILTERS = ("environments", "exclude_environments", "platforms")
-LEVEL_CACHE_SECONDS = 60
-LEVEL_CACHE_ENTRIES = 12
-_level_cache = {}
-_level_cache_lock = threading.Lock()
-_level_cache_building = {}
-
-
-def clear_level_cache():
-    with _level_cache_lock:
-        _level_cache.clear()
-
-
-def _level_cached(kind, storage, game_id, start, end, filters, scope, definitions, compute):
-    """compute() once per game, days, filters and scope, then reuse it for a minute.
-
-    The level table and every level's player list read the same events, so they share one scan.
-    Two requests for the same scan wait for one computation instead of each running their own.
-    Changing the event dictionary or an environment fix starts a new scan. New events show up
-    when the minute is over.
-    """
-    with storage.connect(storage.game_path(game_id)) as connection:
-        fixes = [
-            tuple(row)
-            for row in connection.execute(
-                "SELECT id, from_environment, to_environment, app_version, build "
-                "FROM environment_fixes ORDER BY id"
-            )
-        ]
-    key = (
-        kind,
-        str(storage.game_path(game_id)),
-        start,
-        end,
-        json.dumps(filters or {}, sort_keys=True),
-        scope,
-        hash(json.dumps(definitions, sort_keys=True, default=str)),
-        tuple(fixes),
-    )
-
-    def fresh():
-        hit = _level_cache.get(key)
-        return hit[1] if hit and time.monotonic() - hit[0] <= LEVEL_CACHE_SECONDS else None
-
-    with _level_cache_lock:
-        value = fresh()
-        if value is not None:
-            return value
-        building = _level_cache_building.setdefault(key, threading.Lock())
-    with building:
-        with _level_cache_lock:
-            value = fresh()
-        if value is not None:
-            return value
-        try:
-            value = compute()
-        finally:
-            with _level_cache_lock:
-                _level_cache_building.pop(key, None)
-        with _level_cache_lock:
-            _level_cache[key] = (time.monotonic(), value)
-            for stale in sorted(_level_cache, key=lambda item: _level_cache[item][0])[
-                : max(0, len(_level_cache) - LEVEL_CACHE_ENTRIES)
-            ]:
-                _level_cache.pop(stale, None)
-        return value
 
 
 def _level_reader(labeler):
@@ -548,15 +481,10 @@ def level_progress(storage, game_id, start, end, filters=None, scope="all"):
     storage.get_game(game_id)
     _check_scope(scope)
     definitions = _definitions(storage, game_id)
-    levels, anonymous_events = _level_cached(
-        "progress",
+    levels, anonymous_events = storage.scans.get(
         storage,
         game_id,
-        start,
-        end,
-        filters,
-        scope,
-        definitions,
+        ("progress", start, end, filters, scope),
         lambda: _scan_progress(storage, game_id, start, end, filters, scope, definitions),
     )
     transitions = _level_transitions(storage, game_id, start, end, filters, scope)
@@ -707,18 +635,14 @@ def _level_transitions(storage, game_id, start, end, filters, scope="all"):
     """Match selected starters to subsequent progress, retaining historical entry context.
 
     scope "first_session" follows new players within their first session only. The result is
-    shared by the level table and every level's player list, and must not be changed.
+    shared by the level table and every level's player list (see readcache.py), and must not be
+    changed.
     """
     definitions = _definitions(storage, game_id)
-    return _level_cached(
-        "transitions",
+    return storage.scans.get(
         storage,
         game_id,
-        start,
-        end,
-        filters,
-        scope,
-        definitions,
+        ("transitions", start, end, filters, scope),
         lambda: _scan_transitions(storage, game_id, start, end, filters, scope, definitions),
     )
 
