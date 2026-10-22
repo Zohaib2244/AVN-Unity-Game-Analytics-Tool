@@ -1145,7 +1145,12 @@ async function renderRawEvents(game, player, range, timezone, container = docume
     if (target) target.closest('.journey-session').open = true;
     disclosures.remember();
     target?.classList.add('timeline-current', 'jump-pulse'); setTimeout(() => target?.classList.remove('jump-pulse'), 800);
-    target?.focus({preventScroll: true}); target?.scrollIntoView({block: 'center', behavior: 'instant'}); updateNavigation();
+    target?.focus({preventScroll: true});
+    // Centre it in its own scroll area; in the level page's pane only the pane moves, not the page.
+    const pane = root.closest?.('.player-pane');
+    if (target && pane) { const at = target.getBoundingClientRect(); const area = pane.getBoundingClientRect(); pane.scrollTop += at.top - area.top - (pane.clientHeight - at.height) / 2; }
+    else target?.scrollIntoView({block: 'center', behavior: 'instant'});
+    updateNavigation();
   };
   const rowFor = (item, run = null) => {
           const hits = mode === 'highlight' ? highlights.flatMap((rule, index) => matches(item, rule) ? [{...rule, index}] : []) : [];
@@ -1519,10 +1524,12 @@ async function renderLevels() {
     const quitting = state.group !== 'kept_going';
     const skipped = counts?.unknown_progress ? `<p class="help">${number(counts.unknown_progress)} more ${counts.unknown_progress === 1 ? 'player' : 'players'} in the drop started a later level without a start of level ${level + 1}.</p>` : '';
     const table = state.error ? loadError(state.error, 'data-retry-drill') : state.loading && !state.players.length ? skeleton('table', 5, 8) : !state.players.length ? '<p class="help">Nobody is in this group in the selected days and filters.</p>' : `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Player</th>${quitting ? '<th title="Hover or click one to see the exact last event">What they did last</th>' : ''}<th class="num">Tries</th><th class="num">Fails</th><th>Last on this level</th><th class="col-secondary">Opened the game later</th><th class="col-secondary">Version</th><th class="num">Session length</th></tr></thead><tbody>${state.players.map((row, index) => `<tr data-player="${escapeHTML(row.player)}"${row.player === state.selected ? ' class="is-selected" aria-current="true"' : ''}><td><a class="row-title" href="${playerHref(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a></td>${quitting ? `<td class="small">${lastDidHTML(row, index)}</td>` : ''}<td class="num">${number(row.tries)}</td><td class="num">${number(row.fails)}</td><td class="small muted">${analysisDate(row.exit_at, chosen.timezone)}</td><td class="col-secondary">${row.came_back ? '<span class="pill good">came back</span>' : '<span class="small muted">—</span>'}</td><td class="small col-secondary">${escapeHTML(row.app_version || '—')}</td><td class="num">${duration(row.session_seconds)}</td></tr>`).join('')}</tbody></table></div><div class="pager"><span class="small muted">${number(state.players.length)} of ${number(state.total)}</span>${state.players.length < state.total ? `<button type="button" class="button" data-drill-more ${state.loading ? 'disabled aria-busy="true"' : ''}>${state.loading ? spinner('Loading…') : 'Show more'}</button>` : ''}</div><p class="help">Session length is the whole session they were last on this level in, not only the time on the level. “Came back” means any later session by the end date. Hover or click what they did last to see the last event the game logged in that session (session start and end aside), when it came, and what they did right after the level. Open a player to start at their last event on this level.</p>`;
+    const listScroll = box.querySelector('.table-wrap')?.scrollTop;
     box.innerHTML = `<div class="level-drill-head"><div class="segmented" role="group" aria-label="Players on level ${level}">${LEVEL_DRILL_GROUPS.map(([key, label]) => `<button type="button" data-drill-group="${key}" aria-pressed="${state.group === key}">${label}${counts ? ` <span class="drill-count">${number(counts[key])}</span>` : ''}</button>`).join('')}</div>
       <div class="quiet-actions"><label class="inline-field">Sort<select data-drill-sort><option value="exit_at">Latest on this level</option><option value="tries">Most tries</option><option value="fails">Most fails</option></select></label><button type="button" class="button" data-drill-csv>${icon('export', 14)} CSV</button></div></div>
       ${skipped}${lastActionsHTML(level, state)}${table}`;
     box.querySelector('[data-drill-sort]').value = state.sort;
+    if (listScroll) box.querySelector('.table-wrap').scrollTop = listScroll;
   };
   const fetchDrill = async (level, more = false) => {
     const state = drill.get(level); const ticket = ++state.ticket;
@@ -1589,7 +1596,11 @@ async function renderLevels() {
             state.selected = chosenPlayer;
             split.querySelectorAll('tr[data-player]').forEach(row => { const on = row.dataset.player === chosenPlayer; row.classList.toggle('is-selected', on); if (on) row.setAttribute('aria-current', 'true'); else row.removeAttribute('aria-current'); });
           };
-          split.classList.add('has-pane'); split.querySelector('#level-pane').hidden = false;
+          if (!split.classList.contains('has-pane')) {
+            split.classList.add('has-pane');
+            split.scrollIntoView({block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'});
+          }
+          split.querySelector('#level-pane').hidden = false;
           select(query.get('player'));
           renderJourney(game, query.get('player'), {...options, pane: split.querySelector('#level-pane'), onPlayer: select, onClose: () => { state.selected = null; select(null); split.classList.remove('has-pane'); split.querySelector('#level-pane').hidden = true; split.querySelector('#level-pane').innerHTML = ''; playerLink.focus({preventScroll: true}); }});
         } else renderJourney(game, query.get('player'), {...options, overlay: true});

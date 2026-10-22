@@ -439,6 +439,9 @@ def test_levels_open_a_page_per_level_and_count_new_players_on_request():
     assert "split.clientWidth >= PLAYER_PANE_MIN_WIDTH" in levels
     assert "pane: split.querySelector('#level-pane')" in levels
     assert "{...options, overlay: true}" in levels
+    # The list keeps its place when it redraws (Show more), and a pane never scrolls the page.
+    assert "listScroll" in levels
+    assert "root.closest?.('.player-pane')" in script
     # The "Which players" switch reloads the table and the player lists with the scope.
     assert 'aria-label="Which players"' in levels
     assert "if (firstSession()) query.set('scope', 'first_session');" in levels

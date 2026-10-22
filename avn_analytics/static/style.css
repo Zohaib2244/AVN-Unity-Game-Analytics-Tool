@@ -1495,6 +1495,14 @@ main{padding-bottom:calc(28px + env(safe-area-inset-bottom))}
 .level-page-summary strong{font-size:var(--fs-md);color:var(--text-primary)}
 .level-page-split.has-pane{display:grid;grid-template-columns:minmax(0,1fr) minmax(400px,46%);gap:20px;align-items:start}
 .level-page-split.has-pane .col-secondary{display:none}
+/* With the pane open, the list and the pane fill the window and scroll on their own. */
+.level-page-split.has-pane{height:calc(100dvh - 32px);min-height:420px;scroll-margin-top:16px}
+.level-page-split.has-pane .level-page-list{display:flex;flex-direction:column;height:100%;overflow:auto}
+.level-page-split.has-pane .level-page-list>*{flex:none}
+.level-page-split.has-pane .level-page-list>.table-wrap{flex:1 1 240px;min-height:200px;overflow:auto}
+.level-page-split.has-pane .level-page-list>.help{display:none}
+.level-page-split.has-pane .level-page-list thead th{position:sticky;top:0;z-index:2;background:var(--bg-card)}
+.level-page-split.has-pane .player-pane{position:static;height:100%;max-height:none}
 .level-page-list.level-drill{position:static;min-width:0;padding:0;contain:none}
 .level-drill tr.is-selected>td{background:color-mix(in srgb,var(--accent-orange) 9%,var(--bg-card))}
 .level-drill tr.is-selected>td:first-child{box-shadow:inset 3px 0 var(--accent-orange)}
