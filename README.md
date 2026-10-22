@@ -154,9 +154,19 @@ Everything is computed live from the game's event database, in game time (`clien
 
 ### Timeline highlights and conditional activity
 
+The player's **Event Analysis** tab lists every unique event name and its call count, session count,
+and first/last occurrence in the selected dates. Choose one session or all sessions, expand an event,
+and select parameter values to narrow it down. Filters combine: for example, an ad type plus a
+`shown` action separates ad shows from load requests. **Show in raw events** opens the exact call
+in the timeline; **Highlight these events** turns the selection into an editable highlight.
+Counts use all automatically loaded timeline pages from one snapshot and are marked incomplete
+until loading finishes. Unique mapped levels count distinct level numbers, not attempts or wins.
+
 In a player's **Raw events**, choose **Highlight timeline** and add named, colored highlights.
-Each highlight combines event-name and parameter conditions in nested **all (AND)** or
-**any (OR)** groups, for example `AD_ANALYSIS AND STAGE = Shown AND (LEVEL >= 5 OR PLACEMENT = Rewarded)`.
+The simple editor starts with an event name and optional parameter details, all of which must match.
+A sentence previews the rule, and its match count follows the chosen session. **Advanced groups**
+supports nested **all (AND)** or **any (OR)** conditions, for example
+`AD_ANALYSIS AND STAGE = Shown AND (LEVEL >= 5 OR PLACEMENT = Rewarded)`.
 Comparisons include equals, not equals, contains, numeric comparisons, exists and is missing.
 Names and values are case-sensitive for equality; contains ignores ASCII case. Numeric comparisons
 accept numbers and valid JSON numeric strings. A missing parameter does not satisfy not-equals;
@@ -168,6 +178,12 @@ through one highlight or all matching events, including across sessions. All cou
 selected date range; the browser loads additional pages automatically and labels incomplete
 counts while loading. **Filter timeline** retains the simple text filter. Up to 20 highlights
 are remembered per game in the current browser.
+
+**Save rule** stores a named highlight in the game's database, shared with everyone who can access
+the game. **Saved rules → Use rule** adds it to the active timeline highlights for any player,
+including in another browser. Existing local highlights remain available and can be saved too.
+Saved rules can be updated, saved under a new name, or deleted with confirmation; removing an
+active highlight does not delete its saved rule. Up to 100 saved rules are allowed per game.
 
 In **Event dictionary → an event → Activity**, use the same condition editor and **Apply conditions**
 to get matching events, matching players, a daily chart and two averages: events per matching player,
@@ -470,6 +486,7 @@ curl --fail-with-body http://127.0.0.1:8100/v1/events \
 | Run a funnel | `POST /v1/games/{id}/insights/funnel` (steps, `scope`, `window_hours`, `breakdown`, `filters`) |
 | Players / one player's events | `GET /v1/games/{id}/insights/players?start=…&end=…`, `GET /v1/games/{id}/insights/journey?player=…&start=…&end=…&offset=0` (each event carries its `event_id` and, for level events, its `level`; up to 5,000 events per page; when `truncated` is true, advance `offset` by the number returned and pass the response's `snapshot` on subsequent pages so incoming events cannot shift the results) |
 | Saved funnels | `GET` / `POST /v1/games/{id}/insights/funnels`, `PUT` / `DELETE /v1/games/{id}/insights/funnels/{funnel_id}` |
+| Saved timeline highlights | `GET` / `POST /v1/games/{id}/insights/highlights`, `PUT` / `DELETE /v1/games/{id}/insights/highlights/{rule_id}` (`name`, `color`, `conditions`; game access required) |
 | Retention cohorts | `GET /v1/games/{id}/insights/retention?start=…&end=…` (accepts the filter parameters) |
 | Level progress | `GET /v1/games/{id}/insights/levels?start=…&end=…` (`scope=all` or `first_session`; accepts the filter parameters) |
 | Player information, device specs | `GET /v1/games/{id}/insights/device-specs?player=…` (contacts Wikipedia; only when called) |

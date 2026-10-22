@@ -1515,6 +1515,68 @@ main{padding-bottom:calc(28px + env(safe-area-inset-bottom))}
 .player-pane .highlight-navigation{top:53px;padding:12px 0}
 .player-pane .journey-events li{grid-template-columns:70px 56px minmax(0,1fr)}
 .player-pane .journey-params{grid-column:1/-1}
+
+/* Player event counts and reusable highlights use the same Calm layer in panes and dialogs. */
+.analysis-totals{font-size:var(--fs-md);font-weight:600;margin:16px 0}
+[data-story-view]{min-height:44px}
+.analysis-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.analysis-toolbar .analysis-search{flex:1 1 180px;margin:8px 0 16px;max-width:260px}
+.analysis-filter-chips{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.compact-session-picker{display:none}
+.analysis-search,.analysis-parameter{display:flex;flex-direction:column;gap:6px;margin:16px 0;max-width:420px}
+.event-analysis-table{width:100%}
+.event-analysis-table td:first-child{min-width:160px}
+.event-analysis-name{background:none;border:0;color:var(--accent-ink);font:inherit;text-align:left;overflow-wrap:anywhere;padding:6px 0;min-height:44px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.event-analysis-name[aria-expanded="true"]{font-weight:600}
+.analysis-event-detail{margin-top:20px;border-top:1px solid var(--line-strong)}
+.analysis-event-detail .panel-header{padding-left:0;padding-right:0}
+.analysis-values{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.analysis-value{display:flex;align-items:center;gap:16px;min-height:44px;max-width:100%;padding:8px 12px;border:1px solid var(--line-strong);border-radius:6px;background:var(--bg-nested);color:var(--text-primary);cursor:pointer}
+.analysis-value code{overflow-wrap:anywhere}
+.analysis-value strong,.analysis-totals{font-variant-numeric:tabular-nums}
+.analysis-value[aria-pressed="true"]{border-color:var(--accent-orange);box-shadow:inset 0 -2px var(--accent-orange)}
+.analysis-occurrence-head,.highlight-library-head,.highlight-library-controls,.highlight-editor-mode{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:16px 0}
+.analysis-occurrence-head h3{margin:0;flex:1 1 220px;overflow-wrap:anywhere}
+.analysis-occurrence{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 0;border-top:1px solid var(--line)}
+.analysis-occurrence>div{min-width:0;flex:1}
+.analysis-occurrence strong,.analysis-occurrence span{display:block;overflow-wrap:anywhere}
+.analysis-occurrence strong{font-size:var(--fs-body);font-weight:500}
+.analysis-occurrence .button{flex-shrink:0}
+.highlight-library{padding:0 0 12px;margin:12px 0 20px;border-bottom:1px solid var(--line)}
+.highlight-library-head{margin:0}
+.highlight-library-controls{justify-content:flex-start;align-items:flex-end}
+.highlight-library-controls label{display:flex;flex:1 1 220px;flex-direction:column;gap:6px;margin:0}
+.highlight-rule-preview{overflow-wrap:anywhere;color:var(--text-muted)}
+.highlight-editor-mode{justify-content:flex-start;margin-top:12px}
+.highlight-editor-mode .button{margin-left:auto}
+.simple-highlight-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;margin:12px 0}
+.simple-highlight-row label{display:flex;flex:1 1 120px;flex-direction:column;gap:6px;margin:0}
+.simple-highlight-row :is(input,select){width:100%;min-width:0}
+:is(.raw-timeline,.highlight-library) :is(.button,input:not([type="checkbox"]),select){min-height:44px}
+.raw-timeline .highlight-settings{align-items:flex-end}
+.raw-timeline .button{box-shadow:none}
+.raw-timeline .highlight-rule{border-width:1px;box-shadow:none}
+.raw-timeline .highlight-settings>label:first-child{flex:2 1 240px}
+.raw-timeline :is(.highlight-settings,.simple-highlight-row,[data-highlight-fields]) label{font-size:var(--fs-sm)}
+.raw-timeline :is(.highlight-rule-preview,.highlight-setup-body>.help){font-size:var(--fs-sm)}
+.raw-timeline .highlight-settings .check-row{min-height:44px}
+@media(max-width:600px){
+  .compact-session-picker{display:flex;flex:1;flex-direction:column;gap:6px;margin:0;min-width:0}
+  .raw-timeline .session-picker :is(.session-chips,.session-picker-label){display:none}
+  .event-analysis-table,.event-analysis-table tbody{display:block}
+  .event-analysis-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+  .event-analysis-table tr{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;border-top:1px solid var(--line);padding:8px 0}
+  .event-analysis-table td{border:0;padding:4px 8px}
+  .event-analysis-table td:first-child{min-width:0;padding-left:0}
+  .event-analysis-table td:nth-child(2)::before{content:"Calls ";font-size:var(--fs-label);color:var(--text-muted)}
+  .event-analysis-table td:nth-child(3)::before{content:"Sessions ";font-size:var(--fs-label);color:var(--text-muted)}
+  .event-analysis-table td:last-child{grid-column:1/-1;padding:0 0 8px}
+  .event-analysis-table td:last-child::before{content:"First / last call: ";color:var(--text-muted)}
+  .analysis-occurrence{align-items:flex-start;flex-direction:column;gap:8px}
+  .analysis-occurrence .button{align-self:flex-end}
+  .simple-highlight-row label{flex-basis:100%}
+  .highlight-editor-mode .button{margin-left:0}
+}
 body:has(.level-page-split.has-pane) main{max-width:1800px}
 /* NutBot pushes the page aside instead of covering it, when there is room. */
 @media (min-width:1100px){body:has(#nutbot-root.open) .workspace{margin-right:440px}}

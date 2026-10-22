@@ -909,7 +909,7 @@ async function renderJourney(game, player, options = {}) {
   const returnScroll = {left: window.scrollX, top: window.scrollY, behavior: 'instant'};
   const content = `<a class="back-link" href="${gamePath(game, 'players')}">← Back to players</a>` + heading('Player', player) +
     `<div class="filter-bar"><div id="story-range"></div><div class="segmented timezone-toggle" role="group" aria-label="Player event time zone"><button type="button" data-story-timezone="local">Local</button><button type="button" data-story-timezone="utc">UTC</button></div></div><div class="analysis-context" id="story-context"></div><div id="story-metrics"></div>
-    <div class="range-modes route-tabs" role="group" aria-label="View"><button type="button" data-story-view="raw">Raw events</button><button type="button" data-story-view="info">Player info</button></div>
+    <div class="range-modes route-tabs" role="group" aria-label="View"><button type="button" data-story-view="raw">Raw events</button><button type="button" data-story-view="analysis">Event Analysis</button><button type="button" data-story-view="info">Player info</button></div>
     <div id="story-body"></div>`;
   if (options.pane) {
     const pane = options.pane;
@@ -956,7 +956,9 @@ async function renderJourney(game, player, options = {}) {
   } else {
     shell('Player', content);
   }
-  let view = (embedded ? storeGet(`avn-story-view-${game.id}`) : new URLSearchParams(location.search).get('view') || storeGet(`avn-story-view-${game.id}`)) === 'info' ? 'info' : 'raw';
+  const preferredView = embedded ? storeGet(`avn-story-view-${game.id}`) : new URLSearchParams(location.search).get('view') || storeGet(`avn-story-view-${game.id}`);
+  let view = ['info', 'analysis'].includes(preferredView) ? preferredView : 'raw';
+  let timelineController = null;
   const saved = options.filters || filterState(game);
   let latest = 0;
   let range = null; let timezone = saved.timezone; let fetchedDevice = null;
@@ -996,15 +998,20 @@ async function renderJourney(game, player, options = {}) {
   container.querySelector('[data-player-next]')?.addEventListener('click', () => changePlayer(1));
   syncBrowse();
   const tabs = () => container.querySelectorAll('[data-story-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.storyView === view)));
+  const rememberView = next => {
+    view = next; storeSet(`avn-story-view-${game.id}`, view); tabs();
+    if (!embedded) { const url = new URL(location.href); view === 'raw' ? url.searchParams.delete('view') : url.searchParams.set('view', view); history.replaceState(null, '', url); }
+  };
   container.addEventListener('click', event => { if (event.target.closest('[data-retry-story]')) { cache.clear(); draw(); } });
   const draw = async () => {
     const ticket = ++latest;
+    timelineController = null;
     tabs();
     container.querySelectorAll('[data-story-timezone]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.storyTimezone === timezone)));
     container.querySelector('#story-context').textContent = `${timezone === 'utc' ? 'UTC' : 'Local time'} · player ID = user_id, otherwise device_id`;
     container.querySelector('#story-metrics').innerHTML = skeleton('stats');
     body.innerHTML = skeleton('table', 5, 2);
-    const rawPromise = view === 'info' ? null : renderRawEvents(game, player, range, timezone, container, focus).catch(error => {
+    const rawPromise = view === 'info' ? null : renderRawEvents(game, player, range, timezone, container, focus, {view, onView: rememberView, onReady: controller => {if (ticket === latest) timelineController = controller;}}).catch(error => {
       if (ticket === latest && body.isConnected) body.innerHTML = loadError(error, 'data-retry-story');
     });
     try {
@@ -1039,9 +1046,10 @@ async function renderJourney(game, player, options = {}) {
   container.querySelector('[aria-label="View"]').addEventListener('click', event => {
     const tab = event.target.closest('[data-story-view]');
     if (tab && range) {
-      view = tab.dataset.storyView; storeSet(`avn-story-view-${game.id}`, view);
-      if (!embedded) { const url = new URL(location.href); view === 'info' ? url.searchParams.set('view', 'info') : url.searchParams.delete('view'); history.replaceState(null, '', url); }
-      // Cross-fade between the two views where the browser can.
+      const reuseTimeline = timelineController && tab.dataset.storyView !== 'info' && view !== 'info';
+      rememberView(tab.dataset.storyView);
+      if (reuseTimeline) {timelineController.setView(view); return;}
+      // Cross-fade between views where the browser can.
       document.startViewTransition ? document.startViewTransition(() => draw()) : draw();
     }
   });
@@ -1083,10 +1091,10 @@ function sessionPickerHTML(sessions, chosen, timezone, focus) {
     const quit = focus && session.items.some(item => item.event_id === focus.event);
     return `<button type="button" class="session-chip" data-session-pick="${index}" aria-pressed="${chosen === String(index)}"><strong>Session ${index + 1}${quit ? ` <span class="pill">${escapeHTML(focus.label)}</span>` : ''}</strong><span>${analysisDate(first, timezone)} · ${duration((Date.parse(last) - Date.parse(first)) / 1000)} · ${levels(session)}</span></button>`;
   }).join('');
-  return `<span class="session-picker-label" id="session-picker-label">Sessions</span><div class="session-chips" role="group" aria-labelledby="session-picker-label"><button type="button" class="session-chip" data-session-pick="all" aria-pressed="${chosen === 'all'}"><strong>All sessions</strong><span>${number(sessions.length)} sessions</span></button>${chips}</div>`;
+  return `<label class="compact-session-picker">Session<select data-session-select><option value="all" ${chosen === 'all' ? 'selected' : ''}>All ${number(sessions.length)} sessions</option>${sessions.map((session, index) => `<option value="${index}" ${chosen === String(index) ? 'selected' : ''}>Session ${index + 1} · ${analysisDate(session.items[0].client_ts, timezone)}</option>`).join('')}</select></label><span class="session-picker-label" id="session-picker-label">Sessions</span><div class="session-chips" role="group" aria-labelledby="session-picker-label"><button type="button" class="session-chip" data-session-pick="all" aria-pressed="${chosen === 'all'}"><strong>All sessions</strong><span>${number(sessions.length)} sessions</span></button>${chips}</div>`;
 }
 
-async function renderRawEvents(game, player, range, timezone, container = document, focus = null) {
+async function renderRawEvents(game, player, range, timezone, container = document, focus = null, options = {}) {
   const saved = storeGet(`avn-highlights-${game.id}`) || {};
   const highlights = saved.rules || [];
   let mode = saved.mode || 'highlight';
@@ -1094,23 +1102,24 @@ async function renderRawEvents(game, player, range, timezone, container = docume
   let freshRule = -1; // a rule you just added opens for editing; the rest stay folded
   let events = []; let current = -1; let complete = false; let loadFailure = '';
   let sessions = []; let shownSession = 'all'; let focusIndex = -1;
+  let analysisView = options.view === 'analysis'; let library = null;
   const visible = index => shownSession === 'all' || events[index]?.session === Number(shownSession);
   const persist = () => storeSet(`avn-highlights-${game.id}`, {rules: highlights, mode});
   // Parameters you never read (random IDs, counters) can be hidden; keys are matched case-insensitively.
   const paramState = {hidden: ['seq', 'attempt_id'], showAll: false, group: false, ...(storeGet(`avn-timeline-params-${game.id}`) || {})};
   const hiddenParams = new Set(paramState.hidden);
   const saveParams = () => storeSet(`avn-timeline-params-${game.id}`, {hidden: [...hiddenParams], showAll: paramState.showAll, group: paramState.group});
-  container.querySelector('#story-body').innerHTML = `<section class="panel raw-timeline"><div class="panel-header"><div><h2>Timeline</h2><p>Every event, grouped by session · times in ${timezone === 'utc' ? 'UTC' : 'your local time'} · the gap is the time since the previous event</p></div>
+  container.querySelector('#story-body').innerHTML = `<section class="panel raw-timeline"><div class="panel-header"><div><h2 id="player-events-title">Timeline</h2><p id="player-events-description">Every event, grouped by session · times in ${timezone === 'utc' ? 'UTC' : 'your local time'} · the gap is the time since the previous event</p></div>
     <div class="segmented" role="group" aria-label="Timeline mode"><button type="button" data-timeline-mode="highlight">Highlight timeline</button><button type="button" data-timeline-mode="filter">Filter timeline</button></div></div>
     <p class="timeline-focus-note panel-body" id="timeline-focus" role="status" hidden></p>
     <div class="session-picker panel-body" id="session-picker" hidden></div>
-    <div class="param-bar panel-body"><div class="segmented" role="group" aria-label="Parameters shown"><button type="button" data-param-view="clean">Hide noise</button><button type="button" data-param-view="all">Show all</button></div><details class="param-chooser" data-disclosure="param-chooser"><summary>Choose parameters <span class="small muted" id="param-summary"></span></summary><div class="param-list" id="param-list"></div></details><label class="check-row" for="group-repeats"><input type="checkbox" id="group-repeats"> Group repeated events</label></div>
+    <div class="param-bar panel-body" id="timeline-parameters"><div class="segmented" role="group" aria-label="Parameters shown"><button type="button" data-param-view="clean">Hide noise</button><button type="button" data-param-view="all">Show all</button></div><details class="param-chooser" data-disclosure="param-chooser"><summary>Choose parameters <span class="small muted" id="param-summary"></span></summary><div class="param-list" id="param-list"></div></details><label class="check-row" for="group-repeats"><input type="checkbox" id="group-repeats"> Group repeated events</label></div>
     <div class="highlight-actions panel-body" id="highlight-actions"><div class="highlight-add-row"><button type="button" class="button small-button" id="highlight-add">+ Highlight</button><span class="small muted">Quick:</span>${HIGHLIGHT_PRESETS.map(([key, label]) => `<button type="button" class="button small-button" data-highlight-preset="${key}">+ ${label}</button>`).join('')}</div></div>
     <div class="highlight-summary panel-body" id="highlight-summary" hidden></div>
-    <details class="panel-body highlight-setup" id="timeline-highlights" data-disclosure="highlight-setup"><summary>Highlight rules <span class="small muted" id="highlight-rule-summary"></span></summary><div class="highlight-setup-body"><p class="help">Keep the full timeline. Give each highlight a color and combine conditions with AND / OR groups. Rules are remembered for this game in this browser.</p><div id="highlight-rules"></div></div></details>
+    <details class="panel-body highlight-setup" id="timeline-highlights" data-disclosure="highlight-setup"><summary>Highlight rules <span class="small muted" id="highlight-rule-summary"></span></summary><div class="highlight-setup-body"><p class="help">1. Choose an event. 2. Add parameters if you want a specific type or action. 3. Save the rule to reuse it. For example: AD_ANALYSIS with AD_TYPE = interstitial and STAGE = shown. Use the parameter names and values your game actually sends.</p><div class="highlight-library" id="highlight-library"></div><div id="highlight-rules"></div></div></details>
     <div class="highlight-navigation" hidden><label for="highlight-selection">Navigate</label><div class="highlight-navigation-controls"><select id="highlight-selection"><option value="all">All highlights</option></select><div class="highlight-navigation-buttons" role="group" aria-label="Navigate matching events"><button type="button" class="button" id="highlight-previous" title="Shortcut: K">← Previous</button><button type="button" class="button" id="highlight-next" title="Shortcut: J">Next →</button></div><span id="highlight-position" role="status" aria-live="polite"></span><span class="small muted">Keys: J next · K previous</span></div></div>
     <div class="toolbar" id="timeline-search"><div class="search">${icon('search',16)}<input id="journey-filter" type="search" aria-label="Filter events" placeholder="Filter by event or parameter…"></div></div>
-    <p class="help panel-body" id="timeline-load" role="status"></p><div class="panel-body" id="journey">${skeleton('table', 6, 3)}</div></section>`;
+    <p class="help panel-body" id="timeline-load" role="status"></p><div class="panel-body" id="event-analysis" hidden></div><div class="panel-body" id="journey">${skeleton('table', 6, 3)}</div></section>`;
   const root = container.querySelector('#story-body');
   const disclosures = mountDisclosures(root, `avn-raw-disclosures-${game.id}-${player}`);
   const box = root.querySelector('#journey'); const search = root.querySelector('#journey-filter');
@@ -1128,20 +1137,21 @@ async function renderRawEvents(game, player, range, timezone, container = docume
   let summaryPainted = false;
   const drawSummary = () => {
     const active = highlights.map((rule, index) => ({rule, index})).filter(({rule}) => rule.enabled !== false && !conditionError(rule.conditions));
+    const scoped = events.flatMap((event, index) => visible(index) ? [{event, index}] : []);
     const summary = root.querySelector('#highlight-summary');
-    summary.hidden = mode !== 'highlight' || !active.length || !events.length;
+    summary.hidden = analysisView || mode !== 'highlight' || !active.length || !scoped.length;
     if (summary.hidden) return;
     summary.classList.toggle('settled', summaryPainted); summaryPainted = true;
-    const sessionIds = new Set(events.map(event => event.session_id));
+    const sessionIds = new Set(scoped.map(({event}) => event.session_id));
     const cards = active.map(({rule, index}) => {
-      const hits = events.filter(event => matches(event, rule));
+      const hits = scoped.map(({event}) => event).filter(event => matches(event, rule));
       const inSessions = new Set(hits.map(event => event.session_id)).size;
-      const share = 100 * hits.length / events.length;
-      return `<div class="highlight-card highlight-${rule.color}"><div class="highlight-card-head"><span class="highlight-dot" aria-hidden="true"></span><span class="highlight-card-name">${escapeHTML(rule.label || `Highlight ${index + 1}`)}</span><strong>${number(hits.length)}</strong></div><div class="highlight-bar" aria-hidden="true"><i data-width="${Math.max(share, hits.length ? 1.5 : 0)}"></i></div><span class="small muted">${percent(share)} of ${number(events.length)} events · in ${number(inSessions)} of ${number(sessionIds.size)} session${sessionIds.size === 1 ? '' : 's'}</span></div>`;
+      const share = 100 * hits.length / scoped.length;
+      return `<div class="highlight-card highlight-${rule.color}"><div class="highlight-card-head"><span class="highlight-dot" aria-hidden="true"></span><span class="highlight-card-name">${escapeHTML(rule.label || `Highlight ${index + 1}`)}</span><strong>${number(hits.length)}</strong></div><div class="highlight-bar" aria-hidden="true"><i data-width="${Math.max(share, hits.length ? 1.5 : 0)}"></i></div><span class="small muted">${percent(share)} of ${number(scoped.length)} events · in ${number(inSessions)} of ${number(sessionIds.size)} session${sessionIds.size === 1 ? '' : 's'}</span></div>`;
     }).join('');
-    const ticks = events.flatMap((event, index) => {
+    const ticks = scoped.flatMap(({event, index}, position) => {
       const rule = active.find(({rule}) => matches(event, rule))?.rule;
-      return rule ? [`<button type="button" class="highlight-tick highlight-${rule.color}" data-left="${events.length > 1 ? 100 * index / (events.length - 1) : 0}" data-timeline-jump="${index}" aria-label="Go to ${escapeHTML(event.name)}, event ${index + 1}" title="${escapeHTML(event.name)} · event ${index + 1}"></button>`] : [];
+      return rule ? [`<button type="button" class="highlight-tick highlight-${rule.color}" data-left="${scoped.length > 1 ? 100 * position / (scoped.length - 1) : 0}" data-timeline-jump="${index}" aria-label="Go to ${escapeHTML(event.name)}, event ${index + 1}" title="${escapeHTML(event.name)} · event ${index + 1}"></button>`] : [];
     }).slice(0, 3000).join('');
     summary.innerHTML = `<div class="highlight-cards">${cards}</div><div class="highlight-map" role="group" aria-label="Where highlights fall in this player's timeline"><span class="small muted">Start</span><div class="highlight-track">${ticks}</div><span class="small muted">Latest</span></div>`;
     setWidths(summary);
@@ -1162,6 +1172,19 @@ async function renderRawEvents(game, player, range, timezone, container = docume
     else target?.scrollIntoView({block: 'center', behavior: 'instant'});
     updateNavigation();
   };
+  const analysis = mountPlayerEventAnalysis(root.querySelector('#event-analysis'), {timezone,
+    onJump: index => {
+      analysisView = false; mode = 'highlight';
+      focus = {event: events[index].event_id, label: 'Selected from Event Analysis'}; focusIndex = index;
+      options.onView?.('raw'); persist(); draw(); jumpTo(index);
+    },
+    onHighlight: rule => {
+      if (highlights.length >= 20) {toast('Use at most 20 highlights.'); return;}
+      highlights.push(rule); freshRule = highlights.length - 1;
+      analysisView = false; mode = 'highlight'; options.onView?.('raw');
+      persist(); drawRules(); draw(); root.querySelector('#timeline-highlights').open = true;
+    },
+  });
   const rowFor = (item, run = null) => {
           const hits = mode === 'highlight' ? highlights.flatMap((rule, index) => matches(item, rule) ? [{...rule, index}] : []) : [];
           const lit = new Set(hits.flatMap(rule => matchingConditionParams(item, rule.conditions)));
@@ -1199,28 +1222,40 @@ async function renderRawEvents(game, player, range, timezone, container = docume
   const draw = () => {
     if (!box.isConnected) return;
     disclosures.remember();
-    root.querySelector('#highlight-actions').hidden = mode !== 'highlight';
+    root.querySelector('#player-events-title').textContent = analysisView ? 'Event Analysis' : 'Timeline';
+    root.querySelector('#player-events-description').textContent = analysisView ? 'What this player called, and how often · counts follow the session selected below' : `Every event, grouped by session · times in ${timezone === 'utc' ? 'UTC' : 'your local time'} · the gap is the time since the previous event`;
+    root.querySelector('[aria-label="Timeline mode"]').hidden = analysisView;
+    root.querySelector('#timeline-parameters').hidden = analysisView;
+    root.querySelector('#event-analysis').hidden = !analysisView;
+    box.hidden = analysisView;
+    root.querySelector('#highlight-actions').hidden = analysisView || mode !== 'highlight';
     root.querySelector('#group-repeats').checked = Boolean(paramState.group);
-    root.querySelector('#timeline-highlights').hidden = mode !== 'highlight';
-    root.querySelector('.highlight-navigation').hidden = mode !== 'highlight' || !highlights.some(rule => rule.enabled !== false && !conditionError(rule.conditions));
-    root.querySelector('#timeline-search').hidden = mode !== 'filter';
+    root.querySelector('#timeline-highlights').hidden = analysisView || mode !== 'highlight';
+    root.querySelector('.highlight-navigation').hidden = analysisView || mode !== 'highlight' || !highlights.some(rule => rule.enabled !== false && !conditionError(rule.conditions));
+    root.querySelector('#timeline-search').hidden = analysisView || mode !== 'filter';
+    root.querySelector('#timeline-load').hidden = analysisView;
     root.querySelectorAll('[data-param-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.paramView === (paramState.showAll ? 'all' : 'clean'))));
     root.querySelectorAll('[data-timeline-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.timelineMode === mode)));
     root.querySelector('#timeline-load').textContent = loadFailure || `${number(events.length)} events ${complete ? 'in the full selected date range' : 'loaded · loading the rest of the timeline…'}`;
     root.querySelector('#timeline-load').classList.toggle('error', Boolean(loadFailure));
     highlights.forEach((rule, index) => {
       const count = rulesBox.querySelector(`[data-highlight-count="${index}"]`);
-      if (count) count.textContent = `${number(events.filter(event => matches(event, rule)).length)} matches${complete ? '' : ' so far'}`;
+      const valid = !conditionError(rule.conditions);
+      const matching = valid ? events.filter((event, index) => visible(index) && eventMatchesCondition(event, rule.conditions)).length : 0;
+      if (count) count.textContent = `${rule.enabled === false ? 'Off · ' : ''}${number(matching)} matches${complete ? '' : ' so far'}`;
       const error = rulesBox.querySelector(`[data-highlight-error="${index}"]`);
       if (error) error.textContent = conditionError(rule.conditions);
+      const preview = rulesBox.querySelector(`[data-highlight-preview="${index}"]`);
+      if (preview) preview.textContent = `Highlights when ${describeHighlight(rule.conditions)}.`;
     });
     const query = mode === 'filter' ? search.value.trim().toLowerCase() : '';
     const picker = root.querySelector('#session-picker');
     picker.innerHTML = sessionPickerHTML(sessions, shownSession, timezone, focus);
     picker.hidden = sessions.length < 2;
     const focusNote = root.querySelector('#timeline-focus');
-    focusNote.hidden = !focus;
+    focusNote.hidden = analysisView || !focus;
     if (focus) focusNote.innerHTML = focusIndex >= 0 ? `<span>${escapeHTML(focus.label)} is marked in the timeline.</span><button type="button" class="button small-button" data-timeline-jump="${focusIndex}">Go to it</button>` : `<span>${complete ? `${escapeHTML(focus.label)} is not in these dates.` : `Finding ${escapeHTML(focus.label.toLowerCase())}…`}</span>`;
+    if (analysisView) {analysis.update(events, shownSession, complete, loadFailure); root.querySelector('#highlight-summary').hidden = true; disclosures.refresh(); return;}
     let shownSessions = 0;
     box.innerHTML = sessions.map((session, index) => {
       if (shownSession !== 'all' && index !== Number(shownSession)) return '';
@@ -1244,12 +1279,13 @@ async function renderRawEvents(game, player, range, timezone, container = docume
     root.querySelector('#param-list').innerHTML = `<p class="help">Untick parameters you never read. Clicking a parameter name in the timeline hides it too. Remembered for this game in this browser; a parameter used by a highlight stays visible.</p><div class="param-grid">${keys.map(key => `<label class="check-row"><input type="checkbox" data-param-toggle="${escapeHTML(key)}" ${hiddenParams.has(key) ? '' : 'checked'}> <code>${escapeHTML(counts.get(key)?.key || key)}</code> <span class="small muted">${number(counts.get(key)?.count || 0)}</span></label>`).join('')}</div><button type="button" class="button small-button" data-param-reset>Reset to default</button>`;
   };
   const drawRules = () => {
+    if (!rulesBox.isConnected) return;
     disclosures.remember();
     const selected = selection.value;
     selection.innerHTML = '<option value="all">All highlights</option>' + highlights.map((rule, index) => `<option value="${index}">${escapeHTML(rule.label || `Highlight ${index + 1}`)}</option>`).join('');
     selection.value = [...selection.options].some(option => option.value === selected) ? selected : 'all';
-    rulesBox.innerHTML = highlights.map((rule, index) => `<details class="highlight-rule highlight-${rule.color}" data-highlight="${index}" data-disclosure="highlight-${index}" ${index === freshRule ? 'open' : ''}><summary><span class="highlight-dot" aria-hidden="true"></span> ${escapeHTML(rule.label || `Highlight ${index + 1}`)} <span class="small muted" data-highlight-count="${index}"></span></summary><div class="highlight-settings"><label>Name<input data-highlight-field="label" value="${escapeHTML(rule.label)}" maxlength="80"></label><label>Color<select data-highlight-field="color">${HIGHLIGHT_COLORS.map(([key, label]) => `<option value="${key}" ${key === rule.color ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label class="check-row"><input type="checkbox" data-highlight-field="enabled" ${rule.enabled !== false ? 'checked' : ''}> Enabled</label><button type="button" class="button small-button" data-highlight-remove>Remove highlight</button></div><div data-highlight-editor></div><p class="error" data-highlight-error="${index}" role="alert"></p></details>`).join('');
-    rulesBox.querySelectorAll('[data-highlight-editor]').forEach((editor, index) => mountConditionEditor({container: editor, tree: highlights[index].conditions, catalog: () => catalog, onChange: () => {current = -1; persist(); draw();}}));
+    rulesBox.innerHTML = highlights.map((rule, index) => `<details class="highlight-rule highlight-${rule.color}" data-highlight="${index}" data-disclosure="highlight-${index}" ${index === freshRule ? 'open' : ''}><summary><span class="highlight-dot" aria-hidden="true"></span> ${escapeHTML(rule.label || `Highlight ${index + 1}`)} <span class="small muted" data-highlight-count="${index}"></span></summary><div class="highlight-settings"><label>Name<input data-highlight-field="label" value="${escapeHTML(rule.label)}" maxlength="80"></label><label>Color<select data-highlight-field="color">${HIGHLIGHT_COLORS.map(([key, label]) => `<option value="${key}" ${key === rule.color ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label class="check-row"><input type="checkbox" data-highlight-field="enabled" ${rule.enabled !== false ? 'checked' : ''}> Enabled</label><button type="button" class="button small-button" data-highlight-save>${rule.savedId ? 'Update saved rule' : 'Save rule'}</button>${rule.savedId ? '<button type="button" class="button small-button" data-highlight-copy>Save as new rule</button>' : ''}<button type="button" class="button small-button" data-highlight-remove>Remove from timeline</button></div><p class="highlight-rule-preview help" data-highlight-preview="${index}"></p><div data-highlight-editor></div><p class="error" data-highlight-error="${index}" role="alert"></p></details>`).join('');
+    rulesBox.querySelectorAll('[data-highlight-editor]').forEach((editor, index) => mountHighlightEditor({container: editor, tree: highlights[index].conditions, catalog: () => catalog, onChange: () => {current = -1; persist(); draw();}}));
     root.querySelector('#highlight-add').disabled = highlights.length >= 20;
     root.querySelector('#highlight-rule-summary').textContent = `${number(highlights.length)} highlights`;
     disclosures.refresh();
@@ -1284,10 +1320,13 @@ async function renderRawEvents(game, player, range, timezone, container = docume
       }
     }
     if (event.target.closest('#highlight-add')) {
+      if (highlights.length >= 20) return;
       highlights.push({label: `Highlight ${highlights.length + 1}`, color: HIGHLIGHT_COLORS[highlights.length % HIGHLIGHT_COLORS.length][0], enabled: true, conditions: conditionGroup([eventCondition(catalog.events[0]?.name)])});
       freshRule = highlights.length - 1; root.querySelector('#timeline-highlights').open = true; current = -1; persist(); drawRules(); draw();
     }
     if (event.target.closest('[data-highlight-remove]')) {highlights.splice(Number(event.target.closest('[data-highlight]').dataset.highlight), 1); current = -1; persist(); drawRules(); draw();}
+    const saveRule = event.target.closest('[data-highlight-save], [data-highlight-copy]');
+    if (saveRule) library.save(highlights[Number(saveRule.closest('[data-highlight]').dataset.highlight)], saveRule.hasAttribute('data-highlight-copy'));
     const nav = event.target.closest('#highlight-next, #highlight-previous');
     if (nav) {
       const indices = selectedMatches(); if (!indices.length) return;
@@ -1299,9 +1338,10 @@ async function renderRawEvents(game, player, range, timezone, container = docume
     const field = event.target.dataset.highlightField; if (!field) return;
     const rule = highlights[Number(event.target.closest('[data-highlight]').dataset.highlight)];
     rule[field] = field === 'enabled' ? event.target.checked : event.target.value;
-    current = -1; persist(); drawRules(); draw();
+    current = -1; persist(); if (field !== 'label') drawRules(); draw();
   });
   root.addEventListener('change', event => {
+    if (event.target.hasAttribute('data-session-select')) {shownSession = event.target.value; if (!visible(current)) current = -1; draw(); root.querySelector('[data-session-select]')?.focus(); return;}
     if (event.target.id === 'group-repeats') { paramState.group = event.target.checked; saveParams(); draw(); return; }
     const toggle = event.target.closest('[data-param-toggle]'); if (!toggle) return;
     toggle.checked ? hiddenParams.delete(toggle.dataset.paramToggle) : hiddenParams.add(toggle.dataset.paramToggle);
@@ -1312,6 +1352,7 @@ async function renderRawEvents(game, player, range, timezone, container = docume
   const onKey = event => {
     if (!box.isConnected) { document.removeEventListener('keydown', onKey); return; }
     if (event.ctrlKey || event.metaKey || event.altKey || document.querySelector('dialog[open]:not(.player-dialog)')) return;
+    if (analysisView) return;
     if (/^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName) || event.target.isContentEditable) return;
     if (event.key === '/' && mode === 'filter') { event.preventDefault(); search.focus(); return; }
     if (mode !== 'highlight' || !['j', 'k'].includes(event.key)) return;
@@ -1320,6 +1361,16 @@ async function renderRawEvents(game, player, range, timezone, container = docume
   };
   document.addEventListener('keydown', onKey);
   search.addEventListener('input', draw);
+  library = mountHighlightLibrary({container: root.querySelector('#highlight-library'), game,
+    onSaved: () => {persist(); drawRules(); draw();},
+    onUse: rule => {
+      const existing = highlights.find(item => item.savedId === rule.savedId);
+      if (existing) {existing.enabled = true; freshRule = highlights.indexOf(existing);}
+      else {if (highlights.length >= 20) {toast('Use at most 20 highlights.'); return;} highlights.push(rule); freshRule = highlights.length - 1;}
+      current = -1; persist(); drawRules(); draw();
+    },
+  });
+  options.onReady?.({setView(next) {analysisView = next === 'analysis'; draw();}});
   drawRules(); drawParams(); draw();
   try {
     let more = true; let snapshot = null;
@@ -1345,7 +1396,7 @@ async function renderRawEvents(game, player, range, timezone, container = docume
       if (found >= 0) focusIndex = found;
       draw();
       // Jump once the whole timeline is in, so later pages can't push the event out of view.
-      if (complete && focusIndex >= 0) jumpTo(focusIndex);
+      if (complete && focusIndex >= 0 && !analysisView) jumpTo(focusIndex);
     }
   } catch (error) {if (box.isConnected) {loadFailure = `${error.message} · ${number(events.length)} events loaded; counts are incomplete. Reopen Raw events to retry.`; draw();}}
 }

@@ -32,6 +32,7 @@ from . import (
     device_specs,
     dictionary_import,
     events,
+    highlights,
     insights,
     journeys,
     sdk_package,
@@ -65,6 +66,7 @@ from .models import (
     NutBotChat,
     PlayerRules,
     SavedFunnel,
+    SavedHighlight,
     TeamAdd,
     TeamUpdate,
     WorkspaceCreate,
@@ -991,6 +993,22 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             offset=offset,
             snapshot=snapshot,
         )
+
+    @admin_api.get("/v1/games/{game_id}/insights/highlights")
+    def list_highlights(game_id: UUID):
+        return highlights.list_rules(storage, str(game_id))
+
+    @admin_api.post("/v1/games/{game_id}/insights/highlights", status_code=201)
+    def create_highlight(game_id: UUID, saved: SavedHighlight):
+        return highlights.save_rule(storage, str(game_id), None, saved.model_dump())
+
+    @admin_api.put("/v1/games/{game_id}/insights/highlights/{rule_id}")
+    def update_highlight(game_id: UUID, rule_id: UUID, saved: SavedHighlight):
+        return highlights.save_rule(storage, str(game_id), str(rule_id), saved.model_dump())
+
+    @admin_api.delete("/v1/games/{game_id}/insights/highlights/{rule_id}", status_code=204)
+    def delete_highlight(game_id: UUID, rule_id: UUID):
+        highlights.delete_rule(storage, str(game_id), str(rule_id))
 
     @admin_api.get("/v1/games/{game_id}/insights/funnels")
     def list_funnels(game_id: UUID):

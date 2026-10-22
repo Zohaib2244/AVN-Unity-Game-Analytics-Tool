@@ -171,6 +171,12 @@ class Storage:
                 note TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS highlight_rules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                definition TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
         """)
         if connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0:
             declared = ENVIRONMENT_VALUE.format(

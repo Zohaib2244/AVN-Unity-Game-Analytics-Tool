@@ -52,6 +52,60 @@ function highlightNavigationIndex(indices, current, next = true) {
   return next ? indices.find(index => index > current) ?? indices[0] : [...indices].reverse().find(index => index < current) ?? indices.at(-1);
 }
 
+function simpleHighlightTree(tree) {
+  return tree.match === 'all' && Array.isArray(tree.conditions) && tree.conditions[0]?.field === 'event' && tree.conditions[0].op === 'eq' && tree.conditions.slice(1).every(test => !test.conditions && test.field === 'param');
+}
+
+function describeHighlight(tree) {
+  if (tree.conditions) return '(' + tree.conditions.map(describeHighlight).join(tree.match === 'any' ? ' OR ' : ' AND ') + ')';
+  const field = tree.field === 'event' ? 'Event' : tree.param || 'Choose a parameter';
+  const op = CONDITION_OPS.find(([key]) => key === tree.op)?.[1] || tree.op;
+  return `${field} ${op}${['exists', 'missing'].includes(tree.op) ? '' : ` “${tree.value}”`}`;
+}
+
+// Most highlights are one event, optionally narrowed by a few parameters. Keep grouping optional.
+function mountHighlightEditor({container, tree, catalog, onChange}) {
+  let advanced = !simpleHighlightTree(tree);
+  const id = `simple-highlight-${++conditionEditorId}`;
+  const draw = () => {
+    const simple = simpleHighlightTree(tree);
+    container.innerHTML = `<div class="highlight-editor-mode"><span class="small muted">${advanced ? 'Advanced: combine conditions with AND / OR groups.' : 'Choose an event, then add details to narrow it down.'}</span><button type="button" class="button small-button" data-highlight-advanced ${advanced && !simple ? 'disabled title="This rule uses groups. Keep the advanced editor to preserve them."' : ''}>${advanced ? 'Simple editor' : 'Advanced groups'}</button></div><div data-highlight-fields></div>`;
+    const fields = container.querySelector('[data-highlight-fields]');
+    if (advanced) {mountConditionEditor({container: fields, tree, catalog, onChange}); return;}
+    const event = tree.conditions[0];
+    const events = catalog().events || [];
+    const params = events.find(item => item.name === event.value)?.params || [];
+    fields.innerHTML = `<label>Event name<input data-simple-event value="${escapeHTML(event.value)}" list="${id}-events" maxlength="200"><datalist id="${id}-events">${events.map(item => `<option value="${escapeHTML(item.name)}">`).join('')}</datalist></label>
+      ${tree.conditions.length > 1 ? '<p class="help">Only highlight calls where all these details match:</p>' : '<p class="help">Every call of this event will be highlighted. Add a parameter to pick a type, action or level.</p>'}
+      ${tree.conditions.slice(1).map((test, index) => {
+        const values = params.find(param => param.key === test.param)?.values || [];
+        const keys = [...new Set([test.param, ...params.map(param => param.key)].filter(Boolean))];
+        return `<div class="simple-highlight-row" data-simple-test="${index + 1}"><label>Parameter<select data-simple-field="param"><option value="">Choose a parameter…</option>${keys.map(key => `<option value="${escapeHTML(key)}" ${key === test.param ? 'selected' : ''}>${escapeHTML(key)}</option>`).join('')}</select></label><label>Comparison<select data-simple-field="op">${CONDITION_OPS.map(([key, label]) => `<option value="${key}" ${key === test.op ? 'selected' : ''}>${label}</option>`).join('')}</select></label>${!['exists', 'missing'].includes(test.op) ? `<label>Value<input data-simple-field="value" value="${escapeHTML(test.value)}" list="${id}-${index}-values" maxlength="200"><datalist id="${id}-${index}-values">${values.map(value => `<option value="${escapeHTML(value)}">`).join('')}</datalist></label>` : ''}<button type="button" class="button small-button" data-simple-remove>Remove detail</button></div>`;
+      }).join('')}<button type="button" class="button small-button" data-simple-add ${tree.conditions.length >= 50 ? 'disabled' : ''}>+ Add parameter</button>`;
+    fields.addEventListener('change', event => {
+      if (event.target.hasAttribute('data-simple-event')) {tree.conditions[0].value = event.target.value; draw(); container.querySelector('[data-simple-event]')?.focus(); onChange(); return;}
+      const field = event.target.dataset.simpleField;
+      if (!field) return;
+      const index = event.target.closest('[data-simple-test]').dataset.simpleTest;
+      const test = tree.conditions[Number(index)];
+      test[field] = event.target.value;
+      if (field === 'param') test.value = String(params.find(param => param.key === test.param)?.values?.[0] ?? '');
+      if (['exists', 'missing'].includes(test.op)) test.value = '';
+      if (field !== 'value') {draw(); container.querySelector(`[data-simple-test="${index}"] [data-simple-field="${field}"]`)?.focus();}
+      onChange();
+    });
+    fields.addEventListener('click', event => {
+      if (event.target.closest('[data-simple-add]') && tree.conditions.length < 50) {
+        tree.conditions.push(paramCondition('')); draw(); onChange();
+      }
+      const remove = event.target.closest('[data-simple-remove]');
+      if (remove) {tree.conditions.splice(Number(remove.closest('[data-simple-test]').dataset.simpleTest), 1); draw(); onChange();}
+    });
+  };
+  container.addEventListener('click', event => {if (event.target.closest('[data-highlight-advanced]')) {advanced = !advanced; draw();}});
+  draw();
+}
+
 let conditionEditorId = 0;
 function mountConditionEditor({container, tree, catalog = () => ({events: []}), onChange = () => {}}) {
   const id = `condition-${++conditionEditorId}`;

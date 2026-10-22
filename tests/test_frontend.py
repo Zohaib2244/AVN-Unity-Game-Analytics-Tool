@@ -150,10 +150,12 @@ const nodes = new Map();
 function node(key) {
   if (!nodes.has(key)) nodes.set(key, {
     isConnected:true, hidden:false, disabled:false, value:'', textContent:'', dataset:{},
-    classList:{toggle() {}}, handlers:{},
+    classList:{toggle() {}, add() {}, remove() {}}, handlers:{},
+    closest(selector) {return selector === '.journey-session' ? node('session') : null;},
+    focus() {}, scrollIntoView() {},
     addEventListener(type, callback) {this.handlers[type] = callback;},
     contains() {return false;},
-    querySelector() {return null;},
+    querySelector(selector) {return node(selector);},
     querySelectorAll() {return [];},
     set innerHTML(value) {
       this.html = value;
@@ -257,11 +259,45 @@ await renderRawEvents({id:'test'},'player',dates,'utc',container,
   {event:'gone', label:'Last on level 9'});
 assert.match(node('#timeline-focus').innerHTML, /Last on level 9 is not in these dates/);
 assert.doesNotMatch(node('#journey').innerHTML, /timeline-focus/);
+
+// Analysis loads every page of the same snapshot, then links to original timeline indices.
+let controller; let selectedView;
+const pages = [];
+api = async path => {
+  const query = new URLSearchParams(path.split('?')[1]);
+  pages.push([query.get('offset'), query.get('snapshot')]);
+  if (pages.length === 1) return {events:leveled.slice(0,2),truncated:true,snapshot:99};
+  assert.match(node('.analysis-totals').textContent, /partial/);
+  return {events:leveled.slice(2),truncated:false,snapshot:99};
+};
+await renderRawEvents({id:'test'},'player',dates,'utc',container,null,
+  {view:'analysis',onReady:value => {controller = value;},
+    onView:value => {selectedView = value;}});
+assert.deepEqual(pages, [['0',null],['2','99']]);
+assert.equal(node('#journey').hidden, true);
+assert.equal(node('#event-analysis').hidden, false);
+assert.match(node('.analysis-totals').textContent, /5 calls/);
+assert.doesNotMatch(node('.analysis-totals').textContent, /partial/);
+click({'[data-session-pick]':{dataset:{sessionPick:'1'}}});
+assert.match(node('.analysis-totals').textContent, /2 calls/);
+node('#event-analysis').handlers.click({target:{closest:selector =>
+  selector === '[data-analysis-jump]' ? {dataset:{analysisJump:'2'}} : null}});
+assert.equal(selectedView, 'raw');
+assert.equal(node('#journey').hidden, false);
+assert.match(node('#journey').innerHTML, /focus-tag">Selected from Event Analysis/);
+assert.match(node('#journey').innerHTML, /data-timeline-index="2"/);
+controller.setView('analysis');
+assert.match(node('.analysis-totals').textContent, /2 calls/,
+  'Switching tabs preserves the selected session without fetching again');
+assert.equal(pages.length, 2);
 """
     )
     result = subprocess.run(
         [shutil.which("node"), "--input-type=module"],
-        input=(assets / "conditions.js").read_text() + raw_events + checks,
+        input=(assets / "conditions.js").read_text()
+        + (assets / "player-events.js").read_text()
+        + raw_events
+        + checks,
         text=True,
         capture_output=True,
         timeout=10,

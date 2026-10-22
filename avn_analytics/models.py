@@ -505,6 +505,12 @@ class EventActivityQuery(StrictModel):
     conditions: EventConditionGroup | None = None
 
 
+class SavedHighlight(StrictModel):
+    name: Annotated[str, Field(min_length=1, max_length=80)]
+    color: Literal["orange", "cyan", "green", "pink", "violet", "gold"] = "gold"
+    conditions: EventConditionGroup
+
+
 class PlayerCondition(StrictModel):
     """Keep only players who did (or never did) an event, optionally with a parameter test."""
 
