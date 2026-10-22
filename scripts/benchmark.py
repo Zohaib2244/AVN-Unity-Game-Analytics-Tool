@@ -5,6 +5,7 @@ Everything happens in a scratch directory this script creates (never a real data
     scripts/benchmark.py generate --events 250000 --dir ~/temp/scratch/avn-bench/250k
     scripts/benchmark.py measure  --dir ~/temp/scratch/avn-bench/250k [--mode facts] [--json out]
     scripts/benchmark.py ingest   --dir ~/temp/scratch/avn-bench/250k --seconds 20
+    scripts/benchmark.py facts    --dir ~/temp/scratch/avn-bench/250k
     scripts/benchmark.py plans    --dir ~/temp/scratch/avn-bench/250k
     scripts/benchmark.py compare  --dir ~/temp/scratch/avn-bench/250k [--mode facts]
 
@@ -19,6 +20,9 @@ and repeated. Each process reports its peak memory. --mode picks the dashboards'
 
 ingest measures event ingestion (throughput and latency) alone and while another process keeps
 the dashboards busy, and checks that every accepted event was stored exactly once.
+
+facts copies a game written before analytics facts existed into its facts (timing the backfill
+and verification) and reports how much larger the compacted database becomes.
 
 plans prints SQLite's query plan for every statement the pages run. compare asks the frozen
 reference (tests/reference) and the current code the same questions and lists any differences.
@@ -58,6 +62,7 @@ def storage_for(directory, **options):
     from avn_analytics.config import Settings
     from avn_analytics.storage import Storage
 
+    options.setdefault("analytics_read_mode", os.environ.get("AVN_ANALYTICS_READ_MODE", "legacy"))
     settings = Settings(data_dir=Path(directory), admin_token="b" * 40, **options)
     storage = Storage(settings)
     storage.initialize()
@@ -264,7 +269,9 @@ def http_timings(directory, page, days, mode, repeats):
     from avn_analytics.api import create_app
     from avn_analytics.config import Settings
 
-    settings = Settings(data_dir=directory, admin_token="b" * 40, read_cache_seconds=60)
+    settings = Settings(
+        data_dir=directory, admin_token="b" * 40, read_cache_seconds=60, analytics_read_mode=mode
+    )
     storage = storage_for(directory)
     game_id = game_of(storage)
     first_day = (ANCHOR - timedelta(days=days)).date().isoformat()
@@ -480,6 +487,65 @@ def ingest_into(directory, options):
         Path(options.json).write_text(json.dumps(report, indent=2) + "\n")
 
 
+# ---- analytics facts: backfill time and disk cost
+
+
+def vacuumed_bytes(path):
+    """The database's size once compacted (VACUUM INTO a scratch copy; the original is kept)."""
+    import sqlite3
+
+    target = path.with_name(path.name + ".vacuumed")
+    target.unlink(missing_ok=True)
+    with sqlite3.connect(path) as connection:
+        connection.execute("VACUUM INTO ?", (str(target),))
+    size = target.stat().st_size
+    target.unlink()
+    return size
+
+
+def command_facts(options):
+    """Backfill and verify the facts of the benchmark game, timing it and measuring the disk."""
+    import sqlite3
+
+    from avn_analytics import analytics
+
+    directory = checked(options.dir)
+    storage = storage_for(directory)
+    game_id = game_of(storage)
+    path = storage.game_path(game_id)
+    with storage.connect(path) as connection:
+        state = analytics.progress(connection)
+    report = {"events": events_count(storage, game_id)}
+    if not state["ready"]:
+        with sqlite3.connect(path) as connection:  # the size without facts: drop a copy's
+            target = path.with_name(path.name + ".without")
+            target.unlink(missing_ok=True)
+            connection.execute("VACUUM INTO ?", (str(target),))
+        with sqlite3.connect(target) as connection:
+            for kind, name in analytics.DERIVED:
+                connection.execute(f"DROP {kind} IF EXISTS {name}")
+        report["bytes_without_facts"] = vacuumed_bytes(target)
+        target.unlink()
+        began = time.perf_counter()
+        phases = {}
+        while not state["ready"]:
+            moment = time.perf_counter()
+            with storage.connect(path) as connection:
+                phase = analytics.progress(connection)["phase"]
+                state = analytics.step(connection)
+            phases[phase] = phases.get(phase, 0) + time.perf_counter() - moment
+        report["prepare_seconds"] = round(time.perf_counter() - began, 1)
+        report["phase_seconds"] = {key: round(value, 1) for key, value in phases.items()}
+    report["bytes_with_facts"] = vacuumed_bytes(path)
+    if "bytes_without_facts" in report:
+        report["growth_percent"] = round(
+            100 * (report["bytes_with_facts"] / report["bytes_without_facts"] - 1), 1
+        )
+    print(json.dumps(report, indent=2))
+    if options.json:
+        Path(options.json).write_text(json.dumps(report, indent=2) + "\n")
+
+
 # ---- query plans and answer comparison
 
 
@@ -558,7 +624,7 @@ def main():
     generate_parser.add_argument("--dir", required=True)
     generate_parser.add_argument("--seed", type=int, default=1)
     generate_parser.add_argument("--days", type=int, default=120)
-    for name in ("measure", "ingest", "plans", "compare", "_load", "_one", "_http"):
+    for name in ("measure", "ingest", "facts", "plans", "compare", "_load", "_one", "_http"):
         sub = commands.add_parser(name)
         sub.add_argument("--dir", required=True)
         sub.add_argument("--mode", default=os.environ.get("AVN_ANALYTICS_READ_MODE", "legacy"))
@@ -575,6 +641,7 @@ def main():
         "generate": command_generate,
         "measure": command_measure,
         "ingest": command_ingest,
+        "facts": command_facts,
         "plans": command_plans,
         "compare": command_compare,
         "_load": command_dashboard_load,

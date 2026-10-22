@@ -526,6 +526,7 @@ Environment variables (see `.env.example`):
 data/
   registry.sqlite3       games, API keys, rate-limit counters, workspaces, team, game access, activity log
   games/<uuid>.sqlite3   raw events, dictionary (with unconfirmed AI drafts and import history), session environments, environment fixes and saved funnels for one game
+                         plus derived analytics tables (analytics_*: per-event facts and their progress), rebuilt from the raw events, never the other way round
   icons/<uuid>.png       game icons
   exports/               temporary downloads
   sqlite-tmp/            SQLite query scratch files (container startup creates this directory)
@@ -533,7 +534,7 @@ data/
   nutbot/                NutBot's agent CLI sign-in and chat sessions (only if NutBot is used)
 ```
 
-Raw events are kept indefinitely; there is no retention job or deletion endpoint yet, so watch your disk space. To move or back up the data, stop both services and copy the **whole** directory (SQLite may hold committed data in `-wal` sidecar files). Keep the data on a local filesystem, not SMB or NFS. Clients simply queue events during the downtime.
+Raw events are kept indefinitely; there is no retention job or deletion endpoint yet, so watch your disk space. The analytics facts add about half again to a game's database (54% on the synthetic benchmark games, see `docs/analytics-pipeline.md`). To move or back up the data, stop both services and copy the **whole** directory (SQLite may hold committed data in `-wal` sidecar files). Keep the data on a local filesystem, not SMB or NFS. Clients simply queue events during the downtime.
 
 SQLite sorting, grouping and distinct counts can spill to temporary files. The container entrypoint
 sets `SQLITE_TMPDIR` on the writable data mount, so these queries use disk capacity instead of the
