@@ -32,6 +32,7 @@ scripts/check.sh   # ruff check + ruff format --check + pytest — must pass bef
 scripts/dev.sh     # admin website on 127.0.0.1:${PORT:-8201} with a throwaway ./data
 scripts/release.sh # (owner) run the gate, tag main vX.Y.Z, push
 scripts/deploy.sh  # (owner) deploy the newest tag on the server, health-checked, auto-rollback
+docker compose exec -T admin python - < scripts/measure_speed.py  # (owner) read-only: events per game and how long each page takes
 ```
 
 The app refuses to run on SQLite older than 3.51.3 (WAL-reset fix). When the
