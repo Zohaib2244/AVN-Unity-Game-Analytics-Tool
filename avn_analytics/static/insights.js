@@ -1342,11 +1342,43 @@ function levelDrillGroup(row) {
   return value.kept_going ? 'kept_going' : 'left';
 }
 
-// The last event a player sent in that session, and how long after the event before it.
-function lastEventHTML(last) {
-  if (!last) return '<span class="muted">—</span>';
-  const after = last.after ? `<span class="muted">${duration(last.gap)} after ${escapeHTML(last.after)}</span>` : '';
-  return `<span class="mono">${escapeHTML(last.text)}</span>${after}`;
+// "What they did last" is a short label; hovering or clicking it opens the exact last event above it.
+function lastDidHTML(row, index) {
+  return `<button type="button" class="last-did" data-last-did="${index}" aria-haspopup="dialog" aria-expanded="false">${escapeHTML(row.last_action || '—')}</button>`;
+}
+
+// The popover: the last event sent in that session, when it came, and what they did right after the level.
+function lastDidDetailsHTML(row, level) {
+  const last = row.last_event;
+  const line = (label, body) => `<div><dt>${label}</dt><dd>${body}</dd></div>`;
+  const lines = [];
+  if (last) {
+    const before = last.after ? `<span class="muted">${duration(last.gap)} after ${escapeHTML(last.after)}</span>` : '';
+    lines.push(line('Last event in that session', `<span class="mono">${escapeHTML(last.text)}</span>${before}`));
+    lines.push(line('When', last.after_level == null ? `It was their last event on level ${level}` : `${duration(last.after_level)} after their last event on level ${level}`));
+  }
+  if (row.next_action && row.next_action !== row.last_action) lines.push(line(`Right after level ${level}`, escapeHTML(row.next_action)));
+  return `<h3>${escapeHTML(row.last_action || 'Unknown')}</h3><dl>${lines.join('')}</dl>`;
+}
+
+// One shared popover for those labels, in the top layer so a scrolling table cannot clip it.
+function lastDidPopover() {
+  let pop = document.querySelector('#last-did-pop');
+  if (!pop) {
+    pop = document.createElement('div');
+    pop.id = 'last-did-pop'; pop.className = 'last-did-pop'; pop.setAttribute('popover', 'manual');
+    pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', 'Last event details');
+    document.body.append(pop);
+  }
+  return pop;
+}
+
+// Above the label when there is room, else below it; always inside the window.
+function placePopover(pop, anchor) {
+  const box = anchor.getBoundingClientRect();
+  const above = box.top - pop.offsetHeight - 8 >= 8;
+  pop.style.top = `${Math.round(above ? box.top - pop.offsetHeight - 8 : box.bottom + 8)}px`;
+  pop.style.left = `${Math.round(Math.max(8, Math.min(box.left, window.innerWidth - pop.offsetWidth - 8)))}px`;
 }
 
 // What the group's players did last on the level; pick one to list only those players.
@@ -1415,15 +1447,56 @@ async function renderLevels() {
   // The panel is as wide as the visible part of the table and stays in view when the table scrolls sideways.
   const fitDrill = level => { const box = document.querySelector(`[data-level-drill="${level}"]`); const wrap = box?.closest('.table-wrap'); if (wrap) box.style.width = `${wrap.clientWidth}px`; };
   let fitObserver = null;
+  // Hover or keyboard focus previews the last event; a click keeps it open until Escape or a click elsewhere.
+  let didButton = null; let didPinned = false;
+  const hideLastDid = () => {
+    const pop = document.querySelector('#last-did-pop');
+    if (pop?.matches(':popover-open')) pop.hidePopover();
+    didButton?.setAttribute('aria-expanded', 'false');
+    didButton = null; didPinned = false;
+  };
+  const showLastDid = (button, pin) => {
+    const level = Number(button.closest('[data-level-drill]')?.dataset.levelDrill);
+    const row = drill.get(level)?.players[Number(button.dataset.lastDid)];
+    if (!row || !tableBox.isConnected) return;
+    didButton?.setAttribute('aria-expanded', 'false');
+    const pop = lastDidPopover();
+    pop.innerHTML = lastDidDetailsHTML(row, level);
+    pop.toggleAttribute('data-pinned', pin);
+    if (!pop.matches(':popover-open')) pop.showPopover();
+    placePopover(pop, button);
+    button.setAttribute('aria-expanded', 'true');
+    didButton = button; didPinned = pin;
+  };
+  const closeLastDid = event => {
+    if (!tableBox.isConnected) { hideLastDid(); stopWatching(); return; }
+    if (event.type === 'keydown' ? event.key === 'Escape' : event.type !== 'click' || !event.target.closest('.last-did, #last-did-pop')) hideLastDid();
+  };
+  const watching = [['keydown', document], ['click', document], ['scroll', window], ['resize', window]];
+  const stopWatching = () => watching.forEach(([type, target]) => target.removeEventListener(type, closeLastDid, true));
+  watching.forEach(([type, target]) => target.addEventListener(type, closeLastDid, true));
+  tableBox.addEventListener('pointerover', event => {
+    const button = event.target.closest('.last-did');
+    if (button && event.pointerType === 'mouse' && !didPinned) showLastDid(button, false);
+  });
+  tableBox.addEventListener('pointerout', event => {
+    if (event.pointerType === 'mouse' && !didPinned && event.target.closest('.last-did')) hideLastDid();
+  });
+  tableBox.addEventListener('focusin', event => {
+    const button = event.target.closest('.last-did');
+    if (button && !didPinned && button.matches(':focus-visible')) showLastDid(button, false);
+  });
+  tableBox.addEventListener('focusout', event => { if (!didPinned && event.target.closest('.last-did')) hideLastDid(); });
   const drawDrill = level => {
     if (!tableBox.isConnected || !data) return;
     const box = document.querySelector(`[data-level-drill="${level}"]`); const state = drill.get(level);
     if (!box || !state) return;
+    hideLastDid();
     fitDrill(level);
     const counts = state.counts || data.levels.find(row => row.level === level)?.transition;
     const quitting = state.group !== 'kept_going';
     const skipped = counts?.unknown_progress ? `<p class="help">${number(counts.unknown_progress)} more ${counts.unknown_progress === 1 ? 'player' : 'players'} in the drop started a later level without a start of level ${level + 1}.</p>` : '';
-    const table = state.error ? loadError(state.error, 'data-retry-drill') : state.loading && !state.players.length ? skeleton('table', 5, 8) : !state.players.length ? '<p class="help">Nobody is in this group in the selected days and filters.</p>' : `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Player</th>${quitting ? '<th>What they did last</th><th title="The last event the game sent in that session, and how long after the event before it">Last event sent</th>' : ''}<th class="num">Tries</th><th class="num">Fails</th><th>Last on this level</th><th>Opened the game later</th><th>Version</th><th class="num">Session length</th></tr></thead><tbody>${state.players.map(row => `<tr><td><a class="row-title" href="${playerHref(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a></td>${quitting ? `<td class="small">${escapeHTML(row.last_action || '—')}</td><td class="small last-event">${lastEventHTML(row.last_event)}</td>` : ''}<td class="num">${number(row.tries)}</td><td class="num">${number(row.fails)}</td><td class="small muted">${analysisDate(row.exit_at, chosen.timezone)}</td><td>${row.came_back ? '<span class="pill good">came back</span>' : '<span class="small muted">—</span>'}</td><td class="small">${escapeHTML(row.app_version || '—')}</td><td class="num">${duration(row.session_seconds)}</td></tr>`).join('')}</tbody></table></div><div class="pager"><span class="small muted">${number(state.players.length)} of ${number(state.total)}</span>${state.players.length < state.total ? `<button type="button" class="button" data-drill-more ${state.loading ? 'disabled aria-busy="true"' : ''}>${state.loading ? spinner('Loading…') : 'Show more'}</button>` : ''}</div><p class="help">Session length is the whole session they were last on this level in, not only the time on the level. “Came back” means any later session by the end date. “Last event sent” is the last thing the game logged in that session (session start and end aside), with the time since the event before it. Open a player to start at their last event on this level.</p>`;
+    const table = state.error ? loadError(state.error, 'data-retry-drill') : state.loading && !state.players.length ? skeleton('table', 5, 8) : !state.players.length ? '<p class="help">Nobody is in this group in the selected days and filters.</p>' : `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Player</th>${quitting ? '<th title="Hover or click one to see the exact last event">What they did last</th>' : ''}<th class="num">Tries</th><th class="num">Fails</th><th>Last on this level</th><th>Opened the game later</th><th>Version</th><th class="num">Session length</th></tr></thead><tbody>${state.players.map((row, index) => `<tr><td><a class="row-title" href="${playerHref(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a></td>${quitting ? `<td class="small">${lastDidHTML(row, index)}</td>` : ''}<td class="num">${number(row.tries)}</td><td class="num">${number(row.fails)}</td><td class="small muted">${analysisDate(row.exit_at, chosen.timezone)}</td><td>${row.came_back ? '<span class="pill good">came back</span>' : '<span class="small muted">—</span>'}</td><td class="small">${escapeHTML(row.app_version || '—')}</td><td class="num">${duration(row.session_seconds)}</td></tr>`).join('')}</tbody></table></div><div class="pager"><span class="small muted">${number(state.players.length)} of ${number(state.total)}</span>${state.players.length < state.total ? `<button type="button" class="button" data-drill-more ${state.loading ? 'disabled aria-busy="true"' : ''}>${state.loading ? spinner('Loading…') : 'Show more'}</button>` : ''}</div><p class="help">Session length is the whole session they were last on this level in, not only the time on the level. “Came back” means any later session by the end date. Hover or click what they did last to see the last event the game logged in that session (session start and end aside), when it came, and what they did right after the level. Open a player to start at their last event on this level.</p>`;
     box.innerHTML = `<div class="level-drill-head"><div class="segmented" role="group" aria-label="Players on level ${level}">${LEVEL_DRILL_GROUPS.map(([key, label]) => `<button type="button" data-drill-group="${key}" aria-pressed="${state.group === key}">${label}${counts ? ` <span class="drill-count">${number(counts[key])}</span>` : ''}</button>`).join('')}</div>
       <div class="quiet-actions"><label class="inline-field">Sort<select data-drill-sort><option value="exit_at">Latest on this level</option><option value="tries">Most tries</option><option value="fails">Most fails</option></select></label><button type="button" class="button" data-drill-csv>${icon('export', 14)} CSV</button></div></div>
       ${skipped}${lastActionsHTML(level, state)}${table}`;
@@ -1471,6 +1544,11 @@ async function renderLevels() {
         return;
       }
     }
+    const did = event.target.closest('[data-last-did]');
+    if (did) {
+      if (didButton === did && didPinned) hideLastDid(); else showLastDid(did, true);
+      return;
+    }
     const toggle = event.target.closest('[data-level-toggle]');
     if (toggle) {
       const level = Number(toggle.dataset.levelToggle); const row = document.querySelector(`[data-level-detail="${level}"]`);
@@ -1495,7 +1573,7 @@ async function renderLevels() {
     if (event.target.closest('[data-drill-csv]')) {
       try {
         const all = await api(`${gameURL(game)}/insights/levels/players?${drillQuery(level, state, {offset: 0, limit: 2000})}`);
-        downloadCSV(`${game.name}-${platformLabel(game.platform)}-level-${level}-${state.group}-${chosen.range.from}_${chosen.range.to}.csv`, [['player', 'last_action', 'last_event', 'last_event_after', 'last_event_gap_seconds', 'tries', 'fails', 'finished_level', 'last_on_level_utc', 'last_seen_utc', 'opened_game_later', 'app_version', 'session_seconds'], ...all.players.map(row => [row.player, row.last_action, row.last_event?.text, row.last_event?.after, row.last_event?.gap, row.tries, row.fails, row.completed, row.exit_at, row.last_seen, row.came_back, row.app_version, row.session_seconds])]);
+        downloadCSV(`${game.name}-${platformLabel(game.platform)}-level-${level}-${state.group}-${chosen.range.from}_${chosen.range.to}.csv`, [['player', 'last_action', 'next_action', 'last_event', 'last_event_after', 'last_event_gap_seconds', 'last_event_after_level_seconds', 'tries', 'fails', 'finished_level', 'last_on_level_utc', 'last_seen_utc', 'opened_game_later', 'app_version', 'session_seconds'], ...all.players.map(row => [row.player, row.last_action, row.next_action, row.last_event?.text, row.last_event?.after, row.last_event?.gap, row.last_event?.after_level, row.tries, row.fails, row.completed, row.exit_at, row.last_seen, row.came_back, row.app_version, row.session_seconds])]);
       } catch (error) { toastError(error); }
     }
   });

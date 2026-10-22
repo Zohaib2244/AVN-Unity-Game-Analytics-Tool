@@ -560,12 +560,26 @@ def _moment(row):
     return datetime.fromisoformat(row["client_ts"]).timestamp()
 
 
+def _next_action(events, index, labeler):
+    """What the player did first after events[index], in its session; None when nothing followed."""
+    session = events[index][0]["session_id"]
+    for position in range(index + 1, len(events)):
+        row = events[position][0]
+        if row["session_id"] != session:
+            break
+        if row["name"] not in NOT_AN_ACTION and not labeler.hidden(row["name"]):
+            params = json.loads(row["params"]) if row["params"] else {}
+            return stories.action_text(labeler, row["name"], params, row["app_version"])
+    return None
+
+
 def _last_event(events, index):
     """The last event sent in the session of events[index], and how long after the one before it.
 
     Session start and end are written by the SDK around the session, so they are skipped. Returns
-    {"text", "gap", "after"}: gap is in seconds and after names the event before it (both None
-    when it was the first event they sent).
+    {"text", "gap", "after", "after_level"}: gap is in seconds and after names the event before it
+    (both None when it was the first event they sent); after_level is the seconds from events[index]
+    to this event, None when this is events[index] itself.
     """
     session = events[index][0]["session_id"]
     end = index
@@ -579,7 +593,14 @@ def _last_event(events, index):
         return row, json.loads(row["params"]) if row["params"] else {}
 
     row, params = read(end)
-    last = {"text": stories.event_text(row["name"], params), "gap": None, "after": None}
+    last = {
+        "text": stories.event_text(row["name"], params),
+        "gap": None,
+        "after": None,
+        "after_level": round(max(0.0, _moment(row) - _moment(events[index][0])), 1)
+        if end > index
+        else None,
+    }
     if end and events[end - 1][0]["session_id"] == session:
         before, before_params = read(end - 1)
         last["gap"] = round(max(0.0, _moment(row) - _moment(before)), 1)
@@ -643,6 +664,7 @@ def _level_transitions(storage, game_id, start, end, filters, scope="all"):
                 "exit_at": last["client_ts"],
                 "exit_event": last["event_id"],
                 "last_action": _last_action(events, last_index, labeler),
+                "next_action": _next_action(events, last_index, labeler),
                 "last_event": _last_event(events, last_index),
                 "session_seconds": round(session_lengths[last["session_id"]].finalize(), 1),
                 "last_seen": latest["client_ts"],

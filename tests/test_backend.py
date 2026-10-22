@@ -2101,27 +2101,86 @@ def test_level_players_show_the_last_event_sent_and_how_long_after_the_one_befor
         "text": "LEVEL_ANALYSIS · Started",
         "gap": 1.0,
         "after": "AD_ANALYSIS · Show (Interstitial)",
+        "after_level": None,
     }
     assert rows["away"]["last_event"] == {
         "text": "APP_ANALYSIS · Background (Ad)",
         "gap": 1.0,
         "after": "LEVEL_ANALYSIS · Started",
+        "after_level": 1.0,
     }
     assert rows["first"]["last_event"] == {
         "text": "LEVEL_ANALYSIS · Started",
         "gap": None,
         "after": None,
+        "after_level": None,
     }
     assert rows["plain"]["last_event"] == {
         "text": "level_gate",
         "gap": 75.0,
         "after": "LEVEL_ANALYSIS · Started",
+        "after_level": 75.0,
     }
     # The same for new players within their first session.
     first = _level_players(admin, game, 2, "left", scope="first_session")
     assert {row["player"]: row["last_event"]["text"] for row in first["players"]}["ad"] == (
         "LEVEL_ANALYSIS · Started"
     )
+
+
+def test_level_players_tell_the_last_event_apart_from_what_came_right_after_the_level(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    shop = {"SCREEN": "shop", "STATE": "Opened"}
+    reward = {"FORMAT": "Rewarded", "STATE": "Closed"}
+    records = [
+        _played(
+            "shop",
+            "s-shop",
+            "04T09:00:00",
+            "LEVEL_ANALYSIS",
+            {"STATE": "Started", "LEVEL_NUMBER": 1},
+        ),
+        _played(
+            "shop",
+            "s-shop",
+            "04T09:00:40",
+            "LEVEL_ANALYSIS",
+            {"STATE": "Completed", "LEVEL_NUMBER": 1},
+        ),
+        # They open the shop right after the level, and watch a rewarded ad 17 minutes later.
+        _played("shop", "s-shop", "04T09:00:50", "SCREEN_ANALYSIS", shop),
+        _played(
+            "shop", "s-shop", "04T09:17:44", "APP_ANALYSIS", {"STATE": "Foreground", "CAUSE": "Ad"}
+        ),
+        _played("shop", "s-shop", "04T09:17:44", "AD_ANALYSIS", reward),
+        _played("shop", "s-shop", "04T09:20:00", "session_end", {"duration_seconds": 1200}),
+        # Nothing at all after the level.
+        _played(
+            "quiet",
+            "s-quiet",
+            "04T09:00:00",
+            "LEVEL_ANALYSIS",
+            {"STATE": "Started", "LEVEL_NUMBER": 1},
+        ),
+        _played(
+            "quiet",
+            "s-quiet",
+            "04T09:00:40",
+            "LEVEL_ANALYSIS",
+            {"STATE": "Completed", "LEVEL_NUMBER": 1},
+        ),
+    ]
+    assert send(ingest, game, records).is_success
+    rows = {
+        row["player"]: row for row in _level_players(admin, game, 1, "finished_stopped")["players"]
+    }
+    assert rows["shop"]["last_action"] == "Rewarded ad"
+    assert rows["shop"]["next_action"] == "Opened shop"
+    assert rows["shop"]["last_event"]["after_level"] == 1024.0
+    assert rows["quiet"]["last_action"] == "Completed level 1"
+    assert rows["quiet"]["next_action"] is None
+    assert rows["quiet"]["last_event"]["after_level"] is None
 
 
 def test_levels_for_new_players_count_only_their_first_session(backend):

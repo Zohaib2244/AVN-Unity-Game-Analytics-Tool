@@ -388,14 +388,35 @@ assert.match(html, /data-last-action="1" aria-pressed="true">Opened &lt;shop>/);
 assert.equal(lastActionsHTML(5, {group: 'kept_going', lastActions, lastAction: null}), '',
   'Players who carried on did not leave');
 assert.equal(lastActionsHTML(5, {group: 'left', lastActions: [], lastAction: null}), '');
-// The last event sent, with how long after the one before it.
+// One short label per player; the popover holds the exact last event and where it sits.
 const duration = seconds => `${Math.round(seconds)}s`;
-html = lastEventHTML({text: 'LEVEL_ANALYSIS · Started', gap: 0.4, after: 'AD_ANALYSIS · Show <x>'});
-assert.match(html, /<span class="mono">LEVEL_ANALYSIS · Started<\/span>/);
-assert.match(html, /<span class="muted">0s after AD_ANALYSIS · Show &lt;x><\/span>/);
-html = lastEventHTML({text: 'LEVEL_ANALYSIS · Started', gap: null, after: null});
-assert.doesNotMatch(html, /after/, 'the first event they sent has nothing before it');
-assert.match(lastEventHTML(null), /—/);
+assert.match(lastDidHTML({last_action: 'Rewarded <ad>'}, 3),
+  /class="last-did" data-last-did="3" aria-haspopup="dialog"/);
+assert.match(lastDidHTML({last_action: 'Rewarded <ad>'}, 3),
+  /aria-expanded="false">Rewarded &lt;ad>/);
+assert.match(lastDidHTML({last_action: null}, 0), />—<\\/button>/);
+const shop = {
+  last_action: 'Rewarded ad', next_action: 'Opened shop',
+  last_event: {
+    text: 'AD_ANALYSIS · Closed (Rewarded)', gap: 0.4,
+    after: 'APP_ANALYSIS · Foreground <Ad>', after_level: 1024,
+  },
+};
+html = lastDidDetailsHTML(shop, 1);
+assert.match(html, /<h3>Rewarded ad<\\/h3>/);
+assert.match(html, /Last event in that session<\\/dt>/);
+assert.match(html, /<span class="mono">AD_ANALYSIS · Closed \\(Rewarded\\)<\\/span>/);
+assert.match(html,
+  /<span class="muted">0s after APP_ANALYSIS · Foreground &lt;Ad><\\/span>/);
+assert.match(html, /1024s after their last event on level 1/);
+assert.match(html, /Right after level 1<\\/dt><dd>Opened shop/);
+html = lastDidDetailsHTML({last_action: 'Completed level 1', next_action: null,
+  last_event: {text: 'LEVEL_ANALYSIS · Completed', gap: null, after: null, after_level: null}}, 1);
+assert.doesNotMatch(html, /Right after/, 'nothing came after the level');
+assert.doesNotMatch(html, /muted/, 'the first event they sent has nothing before it');
+assert.match(html, /It was their last event on level 1/);
+html = lastDidDetailsHTML({...shop, next_action: 'Rewarded ad'}, 1);
+assert.doesNotMatch(html, /Right after/, 'the same thing twice is said once');
 """
     result = subprocess.run(
         [shutil.which("node"), "--input-type=module"],

@@ -1453,8 +1453,16 @@ main{padding-bottom:calc(28px + env(safe-area-inset-bottom))}
 @media(max-width:640px){.level-explore .panel-header .quiet-actions{width:100%}}
 
 /* Levels: what players did last on a level, and a player timeline's sessions and exit event. */
-.last-event span{display:block}
-.last-event .mono{color:var(--text-primary)}
+.last-did{display:inline-flex;align-items:center;min-height:36px;margin:-6px -8px;padding:6px 8px;border:0;border-radius:6px;background:none;color:var(--text-primary);font:inherit;text-align:left;text-decoration:underline dotted var(--text-muted-dim);text-underline-offset:4px;cursor:pointer}
+.last-did:hover,.last-did[aria-expanded="true"]{background:color-mix(in srgb,var(--accent-orange) 10%,transparent);text-decoration-color:var(--accent-orange)}
+.last-did:focus-visible{outline:2px solid var(--accent-orange);outline-offset:1px}
+.last-did-pop{inset:auto;margin:0;width:max-content;max-width:min(380px,calc(100vw - 16px));padding:12px 14px;border:1px solid var(--line-strong);border-radius:8px;background:var(--bg-card);color:var(--text-primary);box-shadow:0 8px 24px color-mix(in srgb,var(--shadow) 55%,transparent);pointer-events:none}
+.last-did-pop[data-pinned]{pointer-events:auto}
+.last-did-pop h3{margin:0 0 8px;font-size:var(--fs-md)}
+.last-did-pop dl{display:grid;gap:8px;margin:0}
+.last-did-pop dt{font-size:var(--fs-label);color:var(--text-muted)}
+.last-did-pop dd{margin:0;font-size:var(--fs-sm);overflow-wrap:anywhere}
+.last-did-pop dd .muted{display:block}
 .last-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:14px 0 6px}
 .last-actions-label{margin-right:4px;font-size:var(--fs-sm);color:var(--text-muted)}
 .last-action,.session-chip{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:4px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg-card);color:var(--text-muted);font-family:var(--font-ui);font-size:var(--fs-sm);text-align:left;cursor:pointer}
@@ -1475,7 +1483,7 @@ main{padding-bottom:calc(28px + env(safe-area-inset-bottom))}
 .timeline-focus-note .button{margin:0}
 .focus-tag{--highlight-color:var(--accent-orange);font-weight:600}
 .journey-events li.timeline-focus{box-shadow:inset 4px 0 var(--accent-orange);padding-left:10px;background:color-mix(in srgb,var(--accent-orange) 9%,var(--bg-card));scroll-margin:80px}
-@media (pointer:coarse),(max-width:850px){.last-action,.session-chip{min-height:44px}}
+@media (pointer:coarse),(max-width:850px){.last-action,.session-chip,.last-did{min-height:44px}}
 
 /* Shared request and action feedback: indeterminate activity never implies a percentage. */
 #request-activity{position:fixed;inset:0 0 auto;height:3px;overflow:hidden;z-index:100;background:var(--bg-nested);pointer-events:none}
