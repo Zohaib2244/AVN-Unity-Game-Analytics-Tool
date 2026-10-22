@@ -62,6 +62,85 @@ LEVEL_CACHE_SECONDS = 60
 LEVEL_CACHE_ENTRIES = 12
 _level_cache = {}
 _level_cache_lock = threading.Lock()
+_level_cache_building = {}
+
+
+def clear_level_cache():
+    with _level_cache_lock:
+        _level_cache.clear()
+
+
+def _level_cached(kind, storage, game_id, start, end, filters, scope, definitions, compute):
+    """compute() once per game, days, filters and scope, then reuse it for a minute.
+
+    The level table and every level's player list read the same events, so they share one scan.
+    Two requests for the same scan wait for one computation instead of each running their own.
+    Changing the event dictionary or an environment fix starts a new scan. New events show up
+    when the minute is over.
+    """
+    with storage.connect(storage.game_path(game_id)) as connection:
+        fixes = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT id, from_environment, to_environment, app_version, build "
+                "FROM environment_fixes ORDER BY id"
+            )
+        ]
+    key = (
+        kind,
+        str(storage.game_path(game_id)),
+        start,
+        end,
+        json.dumps(filters or {}, sort_keys=True),
+        scope,
+        hash(json.dumps(definitions, sort_keys=True, default=str)),
+        tuple(fixes),
+    )
+
+    def fresh():
+        hit = _level_cache.get(key)
+        return hit[1] if hit and time.monotonic() - hit[0] <= LEVEL_CACHE_SECONDS else None
+
+    with _level_cache_lock:
+        value = fresh()
+        if value is not None:
+            return value
+        building = _level_cache_building.setdefault(key, threading.Lock())
+    with building:
+        with _level_cache_lock:
+            value = fresh()
+        if value is not None:
+            return value
+        try:
+            value = compute()
+        finally:
+            with _level_cache_lock:
+                _level_cache_building.pop(key, None)
+        with _level_cache_lock:
+            _level_cache[key] = (time.monotonic(), value)
+            for stale in sorted(_level_cache, key=lambda item: _level_cache[item][0])[
+                : max(0, len(_level_cache) - LEVEL_CACHE_ENTRIES)
+            ]:
+                _level_cache.pop(stale, None)
+        return value
+
+
+def _level_reader(labeler):
+    """read(name, raw_params, app_version) -> (params, level_info), remembered per distinct event.
+
+    Most events repeat the same name and parameters, so the label lookup runs once for each kind.
+    """
+    seen = {}
+
+    def read(name, raw_params, app_version):
+        key = (name, raw_params, app_version)
+        found = seen.get(key)
+        if found is None:
+            params = json.loads(raw_params) if raw_params else {}
+            found = seen[key] = (params, labeler.level_info(name, params, app_version))
+        return found
+
+    return read
 
 
 def _definitions(storage, game_id):
@@ -370,14 +449,9 @@ def _check_scope(scope):
         raise HTTPException(400, "Unknown scope")
 
 
-def level_progress(storage, game_id, start, end, filters=None, scope="all"):
-    """Per level: who started, who finished, tries, fails, time, power-ups, where players quit.
-
-    scope "first_session" counts only new players, within their first session.
-    """
-    storage.get_game(game_id)
-    _check_scope(scope)
-    labeler = stories.Labeler(_definitions(storage, game_id))
+def _scan_progress(storage, game_id, start, end, filters, scope, definitions):
+    labeler = stories.Labeler(definitions)
+    read = _level_reader(labeler)
     condition, args = where(start, end, filters)
     levels = {}
 
@@ -434,8 +508,7 @@ def level_progress(storage, game_id, start, end, filters=None, scope="all"):
             if row["player"] != player:
                 close_player()
                 player, opened, last_level = row["player"], {}, None
-            params = json.loads(row["params"]) if row["params"] else {}
-            info = labeler.level_info(row["name"], params, row["app_version"])
+            params, info = read(row["name"], row["params"], row["app_version"])
             if info is None:
                 for key, value in params.items():
                     number = stories._int(value) if stories.LEVELISH_KEY.search(key) else None
@@ -464,6 +537,28 @@ def level_progress(storage, game_id, start, end, filters=None, scope="all"):
             elif verb == "failed":
                 item["fails"] += 1
         close_player()
+    return levels, anonymous_events
+
+
+def level_progress(storage, game_id, start, end, filters=None, scope="all"):
+    """Per level: who started, who finished, tries, fails, time, power-ups, where players quit.
+
+    scope "first_session" counts only new players, within their first session.
+    """
+    storage.get_game(game_id)
+    _check_scope(scope)
+    definitions = _definitions(storage, game_id)
+    levels, anonymous_events = _level_cached(
+        "progress",
+        storage,
+        game_id,
+        start,
+        end,
+        filters,
+        scope,
+        definitions,
+        lambda: _scan_progress(storage, game_id, start, end, filters, scope, definitions),
+    )
     transitions = _level_transitions(storage, game_id, start, end, filters, scope)
     result = []
     threshold = storage.analytics_thresholds(game_id)["levels_min_players"]
@@ -611,9 +706,26 @@ def _last_event(events, index):
 def _level_transitions(storage, game_id, start, end, filters, scope="all"):
     """Match selected starters to subsequent progress, retaining historical entry context.
 
-    scope "first_session" follows new players within their first session only.
+    scope "first_session" follows new players within their first session only. The result is
+    shared by the level table and every level's player list, and must not be changed.
     """
-    labeler = stories.Labeler(_definitions(storage, game_id))
+    definitions = _definitions(storage, game_id)
+    return _level_cached(
+        "transitions",
+        storage,
+        game_id,
+        start,
+        end,
+        filters,
+        scope,
+        definitions,
+        lambda: _scan_transitions(storage, game_id, start, end, filters, scope, definitions),
+    )
+
+
+def _scan_transitions(storage, game_id, start, end, filters, scope, definitions):
+    labeler = stories.Labeler(definitions)
+    read_level = _level_reader(labeler)
     condition, args = where(start, end, filters)
     history_condition, history_args = where("0001-01-01", end, _history_filters(filters))
     levels = {}
@@ -719,8 +831,7 @@ def _level_transitions(storage, game_id, start, end, filters, scope="all"):
             entry(number - 1)[category].append(entrant)
 
     def read(row):
-        params = json.loads(row["params"]) if row["params"] else {}
-        return row, labeler.level_info(row["name"], params, row["app_version"])
+        return row, read_level(row["name"], row["params"], row["app_version"])[1]
 
     with storage.connect(storage.game_path(game_id)) as connection:
         if scope == "first_session":
@@ -807,8 +918,8 @@ def level_players(
     """The players in one group of one level (see _scan_level), plus the size of every group.
 
     last_actions counts what the group's players did last on the level; last_action keeps only
-    the players whose last action was that one. The scan is cached for a minute so switching
-    groups, pages or last actions doesn't read the events again.
+    the players whose last action was that one. The scan is shared with the level table and cached
+    for a minute, so switching groups, pages, levels or last actions doesn't read the events again.
     """
     storage.get_game(game_id)
     if group not in LEVEL_GROUPS:
@@ -816,27 +927,7 @@ def level_players(
     if sort not in LEVEL_PLAYER_SORTS:
         raise HTTPException(400, "Unknown sort")
     _check_scope(scope)
-    key = (
-        str(storage.game_path(game_id)),
-        start,
-        end,
-        json.dumps(filters or {}, sort_keys=True),
-        level,
-        scope,
-    )
-    now = time.monotonic()
-    with _level_cache_lock:
-        cached = _level_cache.get(key)
-    if cached is None or now - cached[0] > LEVEL_CACHE_SECONDS:
-        groups = _scan_level(storage, game_id, start, end, filters, level, scope)
-        with _level_cache_lock:
-            _level_cache[key] = (now, groups)
-            for stale in sorted(_level_cache, key=lambda item: _level_cache[item][0])[
-                : max(0, len(_level_cache) - LEVEL_CACHE_ENTRIES)
-            ]:
-                _level_cache.pop(stale, None)
-    else:
-        groups = cached[1]
+    groups = _scan_level(storage, game_id, start, end, filters, level, scope)
     members = groups[group]
     last_actions = Counter(item["last_action"] for item in members)
     if last_action is not None:

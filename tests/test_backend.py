@@ -2183,6 +2183,90 @@ def test_level_players_tell_the_last_event_apart_from_what_came_right_after_the_
     assert rows["quiet"]["last_event"]["after_level"] is None
 
 
+DAY = {"start": "2026-10-04", "end": "2026-10-05"}
+
+
+def _scan_counter(monkeypatch, delay=0.0):
+    """Count how often the level scans read the events (they are the slow part)."""
+    import time
+
+    from avn_analytics import journeys
+
+    calls = {"progress": 0, "transitions": 0}
+
+    def counted(kind, scan):
+        def wrapper(*args, **kwargs):
+            calls[kind] += 1
+            time.sleep(delay)
+            return scan(*args, **kwargs)
+
+        return wrapper
+
+    monkeypatch.setattr(journeys, "_scan_progress", counted("progress", journeys._scan_progress))
+    monkeypatch.setattr(
+        journeys, "_scan_transitions", counted("transitions", journeys._scan_transitions)
+    )
+    return calls
+
+
+def _two_level_game(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = [
+        _played("a", "s-a", "04T09:00:00", "level_started", {"level": 1}),
+        _played("a", "s-a", "04T09:01:00", "level_completed", {"level": 1}),
+        _played("a", "s-a", "04T09:02:00", "level_started", {"level": 2}),
+        _played("b", "s-b", "04T09:00:00", "level_started", {"level": 1}),
+    ]
+    assert send(ingest, game, records).is_success
+    return admin, game
+
+
+def test_level_scans_are_shared_by_the_table_and_every_levels_players(backend, monkeypatch):
+    admin, game = _two_level_game(backend)
+    calls = _scan_counter(monkeypatch)
+    table = admin.get(f"/v1/games/{game['id']}/insights/levels", params=DAY)
+    assert table.status_code == 200
+    for level in (1, 2, 1):
+        assert _level_players(admin, game, level, "started").get("players") is not None
+    assert admin.get(f"/v1/games/{game['id']}/insights/levels", params=DAY).json() == table.json()
+    # One read of the events for the table and one for the players of all levels, however often
+    # the page is opened or the level changes.
+    assert calls == {"progress": 1, "transitions": 1}
+    other = admin.get(
+        f"/v1/games/{game['id']}/insights/levels", params={**DAY, "scope": "first_session"}
+    )
+    assert other.status_code == 200 and calls == {"progress": 2, "transitions": 2}
+
+
+def test_level_scans_start_over_when_the_dictionary_or_an_environment_fix_changes(
+    backend, monkeypatch
+):
+    admin, game = _two_level_game(backend)
+    calls = _scan_counter(monkeypatch)
+    url = f"/v1/games/{game['id']}/insights/levels"
+    assert admin.get(url, params=DAY).status_code == 200
+    assert admin.get(url, params=DAY).status_code == 200 and calls["progress"] == 1
+    definition = {"description": "Done", "params": {}}
+    assert (
+        admin.put(f"/v1/games/{game['id']}/dictionary/level_x", json=definition).status_code == 200
+    )
+    assert admin.get(url, params=DAY).status_code == 200 and calls["progress"] == 2
+    fix = {"from_environment": "development", "to_environment": "production", "note": "wrong mode"}
+    assert admin.post(f"/v1/games/{game['id']}/environment-fixes", json=fix).status_code == 201
+    assert admin.get(url, params=DAY).status_code == 200 and calls["progress"] == 3
+
+
+def test_simultaneous_level_requests_wait_for_one_scan(backend, monkeypatch):
+    admin, game = _two_level_game(backend)
+    calls = _scan_counter(monkeypatch, delay=0.3)
+    url = f"/v1/games/{game['id']}/insights/levels"
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        responses = list(executor.map(lambda _: admin.get(url, params=DAY), range(4)))
+    assert all(response.status_code == 200 for response in responses)
+    assert calls == {"progress": 1, "transitions": 1}
+
+
 def test_levels_for_new_players_count_only_their_first_session(backend):
     admin, ingest, _ = backend
     game = register(admin)
