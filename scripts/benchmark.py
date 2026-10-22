@@ -38,6 +38,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -439,13 +440,10 @@ def ingest_round(client, key, seconds, seed):
 def command_ingest(options):
     original = checked(options.dir)
     # Work on a copy, so the measured game stays the same size for every later run.
-    directory = original.with_name(original.name + "-ingest-copy")
-    shutil.rmtree(directory, ignore_errors=True)
-    shutil.copytree(original, directory)
-    try:
+    with tempfile.TemporaryDirectory(prefix="avn-ingest-", dir=original.parent) as scratch:
+        directory = Path(scratch) / "fixture"
+        shutil.copytree(original, directory)
         ingest_into(directory, options)
-    finally:
-        shutil.rmtree(directory, ignore_errors=True)
 
 
 def ingest_into(directory, options):

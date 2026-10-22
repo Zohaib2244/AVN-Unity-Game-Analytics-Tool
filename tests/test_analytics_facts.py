@@ -333,3 +333,38 @@ def backend_app(tmp_path):
             GameCreate(name="Ingest", bundle_id="com.avn.ingest", platform="android")
         )
         yield client, storage, game
+
+
+def test_cli_status_and_dry_run_do_not_install_or_modify_older_databases(
+    tmp_path, monkeypatch, capsys
+):
+    import hashlib
+
+    from parity import make_storage
+
+    storage = make_storage(tmp_path)
+    game = storage.register_game(
+        GameCreate(name="Old", bundle_id="com.avn.old", platform="android")
+    )["id"]
+    with storage.connect(storage.game_path(game)) as db:
+        for kind, name in analytics.DERIVED:
+            db.execute(f"DROP {kind} IF EXISTS {name}")
+    paths = [storage.root / "registry.sqlite3", storage.game_path(game)]
+    before = {path: hashlib.sha256(path.read_bytes()).digest() for path in paths}
+    monkeypatch.setenv("AVN_DATA_DIR", str(storage.root))
+    for arguments in (["status"], ["prepare", "--dry-run"]):
+        assert analytics.main(arguments) == 0
+        assert '"phase": "not_installed"' in capsys.readouterr().out
+        with storage.connect(storage.game_path(game)) as db:
+            assert (
+                db.execute("SELECT 1 FROM sqlite_master WHERE name='analytics_meta'").fetchone()
+                is None
+            )
+        assert {path: hashlib.sha256(path.read_bytes()).digest() for path in paths} == before
+
+
+def test_cli_dry_run_does_not_create_a_missing_data_directory(tmp_path, monkeypatch):
+    path = tmp_path / "not-an-installation"
+    monkeypatch.setenv("AVN_DATA_DIR", str(path))
+    assert analytics.main(["prepare", "--dry-run"]) == 1
+    assert not path.exists()

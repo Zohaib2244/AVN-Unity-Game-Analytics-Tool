@@ -26,6 +26,7 @@ import argparse
 import json
 import sqlite3
 import sys
+from contextlib import contextmanager
 
 from .models import timestamp
 
@@ -310,12 +311,47 @@ def main(arguments=None):
     parser.add_argument("--game", help="one game's id (default: every game)")
     parser.add_argument("--dry-run", action="store_true", help="count, change nothing")
     options = parser.parse_args(arguments)
-    storage = Storage(Settings.from_env())
-    storage.initialize()
+
+    class ReadOnlyStorage(Storage):
+        @contextmanager
+        def connect(self, path):
+            connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+            connection.row_factory = sqlite3.Row
+            try:
+                connection.execute("PRAGMA query_only=ON")
+                yield connection
+            finally:
+                connection.close()
+
+    report_only = options.command == "status" or options.dry_run
+    storage = (ReadOnlyStorage if report_only else Storage)(Settings.from_env())
+    if report_only:
+        if not (storage.root / "registry.sqlite3").is_file():
+            print(
+                "Registry not found; status/dry-run does not create an installation",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        storage.initialize()
     games = [game for game in storage.list_games() if options.game in (None, game["id"])]
     for game in games:
-        if options.command == "status" or options.dry_run:
-            result = prepare_all(storage, game["id"], dry_run=True)
+        if report_only:
+            with storage.connect(storage.game_path(game["id"])) as connection:
+                installed = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='analytics_meta'"
+                ).fetchone()
+                if installed:
+                    result = prepare_all(storage, game["id"], dry_run=True)
+                else:
+                    total = connection.execute("SELECT count(*) FROM events").fetchone()[0]
+                    result = {
+                        "phase": "not_installed",
+                        "ready": False,
+                        "done": 0,
+                        "total": total,
+                        "events_without_facts": total,
+                    }
         else:
             result = prepare_all(storage, game["id"])
         print(json.dumps({"game": game["id"], "name": game["name"], **result}))

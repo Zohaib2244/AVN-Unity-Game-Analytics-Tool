@@ -3639,3 +3639,26 @@ def test_processing_hint_is_game_scoped_and_contains_no_global_details(team):
         json={**GAME, "bundle_id": "com.avn.hidden", "workspace_id": other["id"]},
     ).json()["id"]
     assert client.get(f"/v1/games/{hidden}/insights/processing", headers=reader).status_code == 404
+
+
+@pytest.mark.parametrize("kind,expected_calls", [("summary", 2), ("players", 1), ("facets", 1)])
+def test_prepared_mode_keeps_the_cache_for_other_dashboard_families(
+    backend, monkeypatch, kind, expected_calls
+):
+    from avn_analytics import insights
+
+    _, _, settings = backend
+    with TestClient(
+        create_app(replace(settings, analytics_read_mode="prepared"), admin=True)
+    ) as admin:
+        game = register(admin, "com.avn.prepared-cache")
+        calls = []
+        original = getattr(insights, kind)
+        monkeypatch.setattr(
+            insights, kind, lambda *args, **kw: calls.append(1) or original(*args, **kw)
+        )
+        for _ in range(2):
+            assert (
+                admin.get(f"/v1/games/{game['id']}/insights/{kind}", params=DAY).status_code == 200
+            )
+        assert len(calls) == expected_calls

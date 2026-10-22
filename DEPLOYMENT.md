@@ -40,7 +40,7 @@ Edit `.env`:
 | `SQLITE_TMPDIR` | SQLite query scratch directory **inside** the containers. Defaults to `/data/sqlite-tmp` on the disk-backed data mount; startup creates and write-checks it. If changed, mount a writable local disk at that location too. |
 | `AVN_REQUESTS_PER_MINUTE` | Per-API-key rate limit. Default 120; raise it if many players share one key. |
 | `AVN_READ_CACHE_SECONDS` | How long the dashboard reuses a slow answer. Default 60; `0` turns it off. New events appear once it has passed. |
-| `AVN_ANALYTICS_READ_MODE` | `legacy` (default) reads the raw events; `facts` reads the analytics facts of each game whose facts are complete, with the same answers, faster. See [the analytics pipeline](docs/analytics-pipeline.md) for the rollout. |
+| `AVN_ANALYTICS_READ_MODE` | `legacy` (default) reads the raw events; `facts` reads the analytics facts of each game whose facts are complete, with the same answers, faster; `prepared` also reuses fresh exact worker answers. See [the analytics pipeline](docs/analytics-pipeline.md) for the rollout. |
 | `AVN_BIND_HOST` | Address the ports bind to. Default `127.0.0.1` (this machine only); use `0.0.0.0` to listen on all interfaces, for example when a proxy on another host forwards to it. |
 | `AVN_INGEST_PORT` / `AVN_ADMIN_PORT` | Host ports. Defaults 8100 and 8101. |
 | `AVN_MAX_EXPORT_BYTES` | Largest raw export. Default 256 MiB. |
@@ -285,3 +285,46 @@ export AVN_DATA_DIR=/var/lib/avn-analytics AVN_ADMIN_TOKEN='your-long-random-tok
 ```
 
 Run each as a systemd service (one `ExecStart=` line per unit, `Restart=on-failure`, a dedicated user that owns the data directory) so they survive reboots. Keep the admin service at **one worker** so the one-export-at-a-time limit stays effective.
+
+### Analytics worker
+
+The `worker` Compose service has its own 512 MB memory and 0.5 CPU limit. It shares the
+data mount, but has no Docker socket or published port. Global administrators use
+Settings → Analytics processing to request Start or Stop; the container stays running
+to acknowledge controls. Events continue to be collected while processing is stopped.
+An absent heartbeat is shown as Unavailable, never as an acknowledged Stop.
+
+Set `AVN_ANALYTICS_WORKER_DEFAULT_ENABLED` consistently on all services: it initializes
+the choice once, and cannot override a stored Stop. `AVN_ANALYTICS_BATCH_ROWS` bounds
+backfill transactions; `AVN_ANALYTICS_REFRESH_SECONDS` controls prepared refreshes and
+`AVN_ANALYTICS_FRESHNESS_SECONDS` bounds freshness (use the same value on admin and worker).
+See the README Configuration table for defaults and valid ranges.
+
+#### Staged rollout and rollback
+
+1. Stop the application services and use the existing whole-data-directory backup procedure,
+   including SQLite sidecars. Restore that backup to an isolated location and verify it before
+   proceeding. Do not copy individual open `.sqlite3` files or remove WAL files.
+2. Start the new version with `AVN_ANALYTICS_READ_MODE=legacy`. Schema installation is additive;
+   historical facts backfill runs in the worker, never in API startup. Use Settings to Stop
+   processing if catch-up needs to wait; event ingestion remains available.
+3. Check `python -m avn_analytics.analytics status` inside the worker. Facts must be ready and
+   checked before relying on their read path. `prepare --dry-run` reports without backfilling.
+4. Select `facts` reads, then `prepared` after synthetic parity and the operating-cost review.
+   Restart admin when changing its read mode. The first specification is computed live while
+   its generation builds; a restart can reuse a fresh published generation.
+5. Exercise Stop while work is active, ingest synthetic events, restart with Off still stored,
+   Start, and check that it catches up. Observe errors, pending work and the last successful update.
+
+`AVN_ANALYTICS_ACTIVE_VIEWS` bounds recently used specifications per game;
+`AVN_ANALYTICS_STORAGE_BYTES` bounds logical prepared rows globally. Pass both to admin and worker.
+See [the implementation record](docs/analytics-pipeline.md) for memory limits, measured latency,
+disk expansion, the ingest regression, and the currently unvalidated capacity/freshness targets.
+The current measurements do **not** constitute an unconditional production rollout recommendation.
+
+On a problem, request Stop and switch admin back to `facts` or `legacy`. Retain the raw data,
+additive schema and sidecars; do not run a destructive down migration or restore an old backup over
+newly accepted events. The additive triggers continue to populate facts when a compatible older
+binary inserts raw events. Before re-enabling prepared reads after any older binary, verify coverage
+and extraction and let the worker rebuild; do not assume all historical application versions have
+identical context behavior. Release and live deployment commands remain owner operations.

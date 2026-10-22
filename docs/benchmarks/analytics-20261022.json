@@ -1,0 +1,159 @@
+{
+  "fixture": "Deterministic synthetic Unity event fixture; no production data",
+  "prepared_250k_cpu_0_5_memory_512m": {
+    "prepare_seconds": 24.716,
+    "ticks": 134,
+    "timings": {
+      "overview": {
+        "p50_ms": 4.83,
+        "p95_ms": 7.69
+      },
+      "levels": {
+        "p50_ms": 423.02,
+        "p95_ms": 446.28
+      },
+      "levels_first": {
+        "p50_ms": 200.68,
+        "p95_ms": 209.93
+      },
+      "level_players": {
+        "p50_ms": 399.13,
+        "p95_ms": 445.02
+      }
+    },
+    "peak_mb": 115.5,
+    "derived_bytes": 5100956,
+    "exact": true
+  },
+  "prepared_1m_unrestricted": {
+    "prepare_seconds": 54.701,
+    "ticks": 518,
+    "timings": {
+      "overview": {
+        "p50_ms": 3.56,
+        "p95_ms": 6.91
+      },
+      "levels": {
+        "p50_ms": 616.14,
+        "p95_ms": 807.02
+      },
+      "levels_first": {
+        "p50_ms": 308.27,
+        "p95_ms": 323.38
+      },
+      "level_players": {
+        "p50_ms": 619.9,
+        "p95_ms": 633.6
+      }
+    },
+    "peak_mb": 277.7,
+    "derived_bytes": 20292607,
+    "exact": true
+  },
+  "freshness_250k_unrestricted": {
+    "accepted": 1165,
+    "ingest_seconds": 20,
+    "events_per_second": 58.2,
+    "max_commit_to_all_views_seconds": 17.2,
+    "catchup_seconds": 12.36,
+    "exact": true
+  },
+  "ingest_baseline_repeat": {
+    "alone": {
+      "requests": 597,
+      "events_per_second": 3140,
+      "p50_ms": 13.3,
+      "p95_ms": 26.8,
+      "p99_ms": 40.7,
+      "sent": 31455,
+      "accepted": 31455,
+      "duplicates": 3306,
+      "expected_duplicates": 3306
+    },
+    "with_dashboards": {
+      "requests": 666,
+      "events_per_second": 3439,
+      "p50_ms": 13.5,
+      "p95_ms": 23.7,
+      "p99_ms": 40.3,
+      "sent": 34442,
+      "accepted": 34442,
+      "duplicates": 3873,
+      "expected_duplicates": 3873
+    },
+    "alone_again": {
+      "requests": 524,
+      "events_per_second": 2740,
+      "p50_ms": 15.9,
+      "p95_ms": 31.0,
+      "p99_ms": 49.6,
+      "sent": 27427,
+      "accepted": 27427,
+      "duplicates": 3081,
+      "expected_duplicates": 3081
+    },
+    "stored": 93324,
+    "exact": true
+  },
+  "ingest_facts_repeat": {
+    "alone": {
+      "requests": 426,
+      "events_per_second": 2220,
+      "p50_ms": 17.5,
+      "p95_ms": 40.1,
+      "p99_ms": 47.6,
+      "sent": 22252,
+      "accepted": 22252,
+      "duplicates": 2376,
+      "expected_duplicates": 2376
+    },
+    "with_dashboards": {
+      "requests": 464,
+      "events_per_second": 2419,
+      "p50_ms": 17.3,
+      "p95_ms": 38.7,
+      "p99_ms": 99.5,
+      "sent": 24206,
+      "accepted": 24206,
+      "duplicates": 2694,
+      "expected_duplicates": 2694
+    },
+    "alone_again": {
+      "requests": 387,
+      "events_per_second": 2003,
+      "p50_ms": 17.9,
+      "p95_ms": 45.7,
+      "p99_ms": 81.8,
+      "sent": 20033,
+      "accepted": 20033,
+      "duplicates": 2213,
+      "expected_duplicates": 2213
+    },
+    "stored": 66491,
+    "exact": true
+  },
+  "clickhouse_engine_probe": {
+    "image": "clickhouse/clickhouse-server@sha256:bdb5c911a23d92fd364e246ab20b5a0a485f00112f3663fa626b083fb46c146b",
+    "available": true,
+    "totals": {
+      "version": "26.9.19.9",
+      "events": 250013,
+      "players": 5518,
+      "median": 535.9
+    },
+    "exact": true,
+    "query_seconds": [
+      0.20742549,
+      0.130984816
+    ],
+    "startup_export_load_query_seconds": 5.842,
+    "bytes": 82343936
+  },
+  "limitations": [
+    "Prepared timings measure computation paths with process caches empty, not end-to-end HTTP.",
+    "Ten samples per answer; reported p95 is the maximum sample.",
+    "10M capacity was not validated because of scratch disk reserve.",
+    "Ingest p95 regression exceeds the 20% target in these local repeated runs.",
+    "ClickHouse probe is not a full AVN backend, delivery or correction/rebuild parity test."
+  ]
+}

@@ -153,13 +153,12 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
 
     def cached(game_id, kind, parts, compute):
         """The slow dashboard reads, kept for AVN_READ_CACHE_SECONDS (see readcache.py)."""
-        if settings.analytics_read_mode == "prepared":
+        if settings.analytics_read_mode == "prepared" and kind == "summary":
             from . import views
 
-            if kind == "summary":
-                return views.answer(storage, str(game_id), kind, parts, compute)
-            # Never let the response cache extend a prepared generation's freshness.
-            return compute()
+            # Prepared answers enforce their own source freshness. Other dashboard families
+            # still benefit from the response cache; Levels handles its shared scan directly.
+            return views.answer(storage, str(game_id), kind, parts, compute)
         return storage.reads.get(storage, str(game_id), (kind, parts), compute)
 
     verifier = (

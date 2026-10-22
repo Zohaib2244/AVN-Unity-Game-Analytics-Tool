@@ -17,6 +17,8 @@ full picture; `DEPLOYMENT.md` for self-hosting.
 - `avn_analytics/insights.py`, `journeys.py`, `stories.py`, `rules.py` — dashboard computations
 - `avn_analytics/analytics.py` — analytics facts: plain per-event columns beside the raw events, written by a trigger on `events` and backfilled/verified in short steps (`python -m avn_analytics.analytics status|prepare`). Derived only: never change raw events from here
 - `avn_analytics/readcache.py` — short-lived cache for the slow dashboard reads (`AVN_READ_CACHE_SECONDS`). Slow reads that count events should read them once (`insights.scope_events` copies the days and filters into a temporary table of plain columns) rather than re-deriving each value from the JSON for every count
+- `avn_analytics/analytics.py` — stable per-event facts and resumable verification; raw events remain authoritative. Bump `SCHEMA_VERSION` when changing the extracted facts format.
+- `avn_analytics/materialize.py` + `views.py` — worker lifecycle and exact prepared answers. Bump `views.VERSION` when changing reducer/interpretation semantics so old generations cannot be reused. Staging and publication must be fenced by source revisions, control cancellation and worker lease ownership.
 - `avn_analytics/website.py` + `avn_analytics/static/` — admin website (vanilla JS/CSS, no build step)
 - `avn_analytics/exports.py` — export ZIPs (Parquet, JSONL, `events.md`, `ANALYSIS.md`)
 - `avn_analytics/nutbot.py` — NutBot assistant (shells out to agent CLIs)
