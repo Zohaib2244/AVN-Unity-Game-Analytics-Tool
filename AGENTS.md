@@ -22,7 +22,7 @@ full picture; `DEPLOYMENT.md` for self-hosting.
 - `avn_analytics/skill/` — the analysis skill shipped inside exports
 - `avn_analytics/avn_events_standard.py` + `avn_analytics/avn_events_standard/` — the AVN events standard (spec, guide, setup prompt) served by the website
 - `avn_analytics/sdk/` — the built Unity SDK package (`AVNAnalytics.unitypackage`, made in Unity; the C# source is not kept in this repo)
-- `tests/` — pytest suite
+- `tests/` — pytest suite. `tests/reference/` is a frozen copy of the dashboard queries from before the analytics pipeline work; `tests/parity.py` asks it and the current code the same questions (`tests/test_parity.py`), and `tests/synthetic.py` generates the deterministic games both it and `scripts/benchmark.py` use
 
 ## Commands
 
@@ -33,6 +33,7 @@ scripts/dev.sh     # admin website on 127.0.0.1:${PORT:-8201} with a throwaway .
 scripts/release.sh # (owner) run the gate, tag main vX.Y.Z, push
 scripts/deploy.sh  # (owner) deploy the newest tag on the server, health-checked, auto-rollback
 docker compose exec -T admin python - < scripts/measure_speed.py  # (owner) read-only: events per game and how long each page takes
+scripts/benchmark.py generate|measure|ingest|plans|compare --dir <scratch dir>  # synthetic benchmark (never a real data dir)
 ```
 
 The app refuses to run on SQLite older than 3.51.3 (WAL-reset fix). When the
