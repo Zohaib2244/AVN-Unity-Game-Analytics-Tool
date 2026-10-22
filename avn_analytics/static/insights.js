@@ -288,13 +288,16 @@ async function renderGameOverview() {
   });
   const filters = mountFilters(document.querySelector('#filters'), game, async state => {
     const ticket = ++latest;
+    const summaryPath = `${gameURL(game)}/insights/summary?${filterQuery(state)}`;
     const finishLoading = [
       ['totals', skeleton('stats')], ['daily', skeleton('chart')],
       ['breakdowns', skeleton('table', 5, 3)], ['top-events', skeleton('table', 5, 3)],
-    ].map(([id, placeholder]) => beginLoading(document.querySelector(`#${id}`), placeholder));
-    try {
-      const data = await api(`${gameURL(game)}/insights/summary?${filterQuery(state)}`);
+    ].map(([id, placeholder]) => beginLoading(document.querySelector(`#${id}`), placeholder, id === 'totals' ? {path: summaryPath} : {note: false}));
+    // Coming back to a page seen a few minutes ago draws it at once, then updates it if anything changed.
+    let shownOld = false;
+    const showSummary = (data, old) => {
       if (ticket !== latest || !notice.isConnected) return;
+      if (old) shownOld = true;
       summary = data;
       filters.setContext({...data.context, players: data.players});
       document.querySelector('#totals').innerHTML = stats([['Players', number(data.players), `${number(data.new_players)} new · unique player IDs`], ['Sessions', number(data.sessions), data.players ? `${(data.sessions / data.players).toFixed(1)} per player` : 'with a player ID'], ['Events', number(data.events), `${number(data.context.identified_events)} player-linked · ${number(data.context.anonymous_events)} without an ID`]]);
@@ -302,7 +305,10 @@ async function renderGameOverview() {
       document.querySelector('#active').innerHTML = data.events ? activeUsers(data.active) : '';
       drawDaily(); drawBreakdown();
       document.querySelector('#top-events').innerHTML = data.top_events.length ? `<table class="compact-table"><thead><tr><th>Event</th><th class="num">Events</th><th class="num">Players</th></tr></thead><tbody>${data.top_events.slice(0, 10).map(row => `<tr><td class="mono">${escapeHTML(row.name)}</td><td class="num">${number(row.events)}</td><td class="num">${number(row.players)}</td></tr>`).join('')}</tbody></table>` : '<p class="help panel-body">No events.</p>';
-    } catch (error) { if (ticket === latest && notice.isConnected) {
+    };
+    try { await apiShowing(summaryPath, showSummary); }
+    catch (error) { if (ticket === latest && notice.isConnected) {
+      if (shownOld) { toastError(error); return; }
       for (const id of ['totals', 'breakdowns', 'top-events']) document.querySelector(`#${id}`).innerHTML = '';
       summary = null;
       document.querySelector('#anomalies').innerHTML = '';
@@ -793,11 +799,13 @@ async function renderPlayers() {
     const body = rulesBody();
     lastMetrics = body.metrics;
     drawControls();
-    const finishLoading = beginLoading(list, skeleton('table', 8, 7));
-    try {
-      const query = `${filterQuery(chosen)}&${new URLSearchParams({search, offset, sort: view.sort, order: view.order, ...(body.conditions.length || body.metrics.length ? {rules: JSON.stringify(body)} : {})})}`;
-      const data = await api(`${gameURL(game)}/insights/players?${query}`);
+    const finishLoading = beginLoading(list, skeleton('table', 8, 7), {path: `${gameURL(game)}/insights/players`});
+    const playersPath = `${gameURL(game)}/insights/players?${filterQuery(chosen)}&${new URLSearchParams({search, offset, sort: view.sort, order: view.order, ...(body.conditions.length || body.metrics.length ? {rules: JSON.stringify(body)} : {})})}`;
+    // Coming back to a list seen a few minutes ago draws it at once, then updates it if anything changed.
+    let shownOld = false;
+    const showPlayers = (data, old) => {
       if (ticket !== latest) return;
+      if (old) shownOld = true;
       filtersControl?.setContext(data.context || {});
       document.querySelector('#player-count').textContent = number(data.total);
       if (!data.players.length) { list.innerHTML = empty(search || body.conditions.length ? 'No matching players' : 'No players', search || body.conditions.length ? 'Try another ID, or loosen the event rules.' : 'Pick other days or filters, or check that your game is sending events.', '', 'users'); return; }
@@ -805,7 +813,9 @@ async function renderPlayers() {
       const head = (key, label, extra = '') => `<th class="${extra} sortable ${view.sort === key ? 'sorted' : ''}" data-sort="${key}" aria-sort="${view.sort === key ? (view.order === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button">${escapeHTML(label)}<span class="sort-arrow">${view.sort === key ? (view.order === 'asc' ? '▲' : '▼') : ''}</span></button></th>`;
       list.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Player</th>${head('events', 'Events', 'num')}${head('sessions', 'Sessions', 'num')}${head('session_length', 'Avg session', 'num')}${head('playtime', 'Total playtime', 'num')}${head('last_seen', 'Last active')}${body.metrics.map((metric, position) => head(`metric${position}`, metricLabel(metric), 'num metric')).join('')}${head('version', 'Version')}<th>Env</th><th>Country</th></tr></thead><tbody>${data.players.map(row => `<tr><td><a class="row-title" href="${link(row)}"><span class="mono">${escapeHTML(shortId(row.player))}</span></a><p class="small muted">${row.has_user_id ? 'User ID' : 'Install ID'} · ${platformLabel(row.platform || '—')}</p></td><td class="num">${number(row.events)}</td><td class="num">${number(row.sessions)}</td><td class="num">${duration(row.avg_session_seconds)}</td><td class="num">${duration(row.total_play_seconds)}</td><td class="small muted">${analysisDate(row.last_seen, chosen.timezone)}</td>${body.metrics.map((metric, position) => `<td class="num metric">${metricValue(metric, row.metrics[position], chosen.timezone)}</td>`).join('')}<td class="small">${escapeHTML(row.app_version || '—')}</td><td><span class="pill ${TEST_ENVIRONMENTS.includes(row.environment) ? '' : 'good'}">${escapeHTML(row.environment || '—')}</span></td><td class="small">${countryTag(row.country)}</td></tr>`).join('')}</tbody></table></div>
         <div class="pager"><span class="small muted">${number(offset + 1)}–${number(offset + data.players.length)} of ${number(data.total)}</span><span><button class="button" data-page="-1" ${offset ? '' : 'disabled'}>Previous</button> <button class="button" data-page="1" ${offset + data.players.length < data.total ? '' : 'disabled'}>Next</button></span></div>`;
-    } catch (error) { if (ticket === latest) list.innerHTML = loadError(error); }
+    };
+    try { await apiShowing(playersPath, showPlayers); }
+    catch (error) { if (ticket === latest) { if (shownOld) toastError(error); else list.innerHTML = loadError(error); } }
     finally { finishLoading(); }
   };
   list.addEventListener('click', event => {
@@ -820,8 +830,8 @@ async function renderPlayers() {
   let filtersControl;
   filtersControl = mountFilters(document.querySelector('#filters'), game, async state => {
     chosen = state; offset = 0;
-    try { catalog = await api(`${gameURL(game)}/insights/catalog?${filterQuery(state)}`); conditionList.redraw(); metricList.redraw(); } catch { catalog = {events: []}; }
-    load();
+    try { catalog = await api(`${gameURL(game)}/insights/catalog?${filterQuery(state)}`); if (!list.isConnected) return; conditionList.redraw(); metricList.redraw(); } catch { catalog = {events: []}; }
+    if (list.isConnected) load();
   });
 }
 
@@ -1411,16 +1421,21 @@ function lastActionsHTML(level, state) {
 
 // The address the Levels page asks for first, worked out the way the page does, so pointing at the
 // Levels link can start the scan before the page opens. Null when the page would open Compare releases.
-function levelsPrefetchPath(game) {
-  if (['compare', 'explore'].includes(storeGet(`avn-levels-view-${game.id}`))) return null;
+function resolvedFilters(game) {
   const state = filterState(game);
   const found = presets.find(([key]) => key === (state.range?.preset || '30'));
   const [from, to] = found && state.range?.preset !== 'custom' ? found[2]()
     : state.range ? [state.range.from, state.range.to] : presets.find(([key]) => key === '7')[2]();
-  const query = filterQuery({...state, range: {from, to}});
+  return {...state, range: {from, to}};
+}
+function levelsPrefetchPath(game) {
+  if (['compare', 'explore'].includes(storeGet(`avn-levels-view-${game.id}`))) return null;
+  const query = filterQuery(resolvedFilters(game));
   if ((storeGet(`avn-level-nav-${game.id}`) || {}).scope === 'first_session') query.set('scope', 'first_session');
   return `${gameURL(game)}/insights/levels?${query}`;
 }
+// The Overview's first request, for the same early start.
+const overviewPrefetchPath = game => `${gameURL(game)}/insights/summary?${filterQuery(resolvedFilters(game))}`;
 
 // Where the Levels list was left when a level page was opened, so Back finds it as it was.
 let levelsReturn = null;

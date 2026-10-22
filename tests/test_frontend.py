@@ -609,6 +609,11 @@ for (const seconds of [2, 12, 45]) assert.doesNotMatch(slowLoadMessage(seconds, 
     assert "function levelsPrefetchPath(game)" in insights
     assert "hoverIntent = setTimeout(() => prefetch(url.href), 200)" in script
     assert "clearTimeout(hoverIntent)" in script
+    # Overview and Players also draw the earlier answer first, and Overview warms up on hover.
+    assert "apiShowing(summaryPath, showSummary)" in insights
+    assert "apiShowing(playersPath, showPlayers)" in insights
+    assert "const overviewPrefetchPath" in insights
+    assert "{path: summaryPath} : {note: false}" in insights  # one note, not four
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")

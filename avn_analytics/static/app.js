@@ -340,7 +340,7 @@ function spinner(label = 'Loading…') {
 
 // A short wait keeps cache hits from flashing a placeholder. Existing rows remain visibly stale.
 const regionLoads = new WeakMap();
-function beginLoading(element, placeholder, {path = null} = {}) {
+function beginLoading(element, placeholder, {path = null, note = true} = {}) {
   const previous = regionLoads.get(element); if (previous) previous();
   element.setAttribute('aria-busy', 'true');
   const began = Date.now();
@@ -367,7 +367,7 @@ function beginLoading(element, placeholder, {path = null} = {}) {
     if (!element.isConnected) return;
     if (!element.textContent.trim() || element.querySelector('.loading-placeholder,.load-error')) {
       element.innerHTML = placeholder;
-      ticker = setInterval(tick, 1000);
+      if (note) ticker = setInterval(tick, 1000);
     } else {
       status = document.createElement('div'); status.className = 'refresh-status';
       status.innerHTML = spinner('Updating… Showing previous results.'); element.prepend(status);
@@ -883,9 +883,11 @@ function prefetch(url) {
   const match = gameRoute(pathname);
   if (!match || match[1] === 'new') return Promise.resolve();
   const game = {id: decodeURIComponent(match[1])};
-  if (match[2] === 'levels' && typeof levelsPrefetchPath === 'function') {
-    const levels = levelsPrefetchPath(game);
-    return levels ? api(levels).catch(() => {}) : Promise.resolve();
+  // The two pages that count events from scratch start their first request early.
+  const slow = {levels: typeof levelsPrefetchPath === 'function' && levelsPrefetchPath, overview: typeof overviewPrefetchPath === 'function' && overviewPrefetchPath}[match[2] || 'overview'];
+  if (slow) {
+    const first = slow(game);
+    return first ? api(first).catch(() => {}) : Promise.resolve();
   }
   const path = match[2] === 'keys' ? `${gameURL(game)}/keys` : match[2] === 'dictionary' ? `${gameURL(game)}/dictionary` : match[2] === 'settings' ? gameURL(game) : null;
   return path ? api(path).catch(() => {}) : Promise.resolve();
@@ -966,14 +968,14 @@ document.addEventListener('click', event => {
   if (url.href !== location.href) navigate(url.pathname + url.search); else go(location.href, false);
 });
 // Start fetching as soon as the pointer heads for a link; by the click the data is usually here.
-// The level scan is the costly one, so a pointer has to rest on its link for a moment first.
+// Those two scans are the costly ones, so a pointer has to rest on their link for a moment first.
 let hoverIntent = null;
 for (const type of ['pointerover', 'focusin', 'touchstart']) {
   document.addEventListener(type, event => {
     const url = internal(event.target.closest?.('a[href]'));
     if (!url || url.href === location.href) return;
     clearTimeout(hoverIntent);
-    if (type === 'pointerover' && gameRoute(url.pathname)?.[2] === 'levels') hoverIntent = setTimeout(() => prefetch(url.href), 200);
+    if (type === 'pointerover' && ['levels', undefined, 'overview'].includes(gameRoute(url.pathname)?.[2])) hoverIntent = setTimeout(() => prefetch(url.href), 200);
     else prefetch(url.href);
   }, {passive: true});
 }
