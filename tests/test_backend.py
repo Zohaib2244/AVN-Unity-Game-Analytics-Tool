@@ -2322,6 +2322,46 @@ def test_the_read_cache_can_be_turned_off(backend, monkeypatch):
         replace(settings, read_cache_seconds=-1)
 
 
+def test_scope_events_copies_the_days_and_filters_into_a_temporary_table(backend):
+    from avn_analytics import insights
+
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = [
+        event(
+            device_id="a", name="level_started", session_id="s1", client_ts="2026-10-04T09:00:00Z"
+        ),
+        event(
+            device_id="a", name="level_started", session_id="s1", client_ts="2026-10-04T09:05:00Z"
+        ),
+        event(device_id="b", name="shop_open", session_id="s2", client_ts="2026-10-04T10:00:00Z"),
+        event(
+            device_id="c", name="level_started", session_id="s3", client_ts="2026-10-09T10:00:00Z"
+        ),
+    ]
+    assert send(ingest, game, records).is_success
+    storage = admin.app.state.storage
+    start, end = "2026-10-04T00:00:00.000000+00:00", "2026-10-05T00:00:00.000000+00:00"
+    with storage.connect(storage.game_path(game["id"])) as connection:
+        scoped = insights.scope_events(connection, start, end)
+        rows = connection.execute(f"SELECT * FROM {scoped} ORDER BY client_ts").fetchall()
+        assert [row["player"] for row in rows] == ["a", "a", "b"]  # c is another day
+        assert {"client_ts", "name", "player", "session_id", "environment", "app_version"} <= set(
+            rows[0].keys()
+        )
+        only = insights.scope_events(connection, start, end, only="shop_open", table="shop")
+        assert [row["player"] for row in connection.execute(f"SELECT * FROM {only}")] == ["b"]
+        filtered = insights.scope_events(connection, start, end, {"app_versions": ["9.9"]})
+        assert connection.execute(f"SELECT count(*) FROM {filtered}").fetchone()[0] == 0
+        # Asking again starts the table over rather than adding to it.
+        again = insights.scope_events(connection, start, end)
+        assert connection.execute(f"SELECT count(*) FROM {again}").fetchone()[0] == 3
+    # Nothing is written to the game's database: the table lived with the connection.
+    with storage.connect(storage.game_path(game["id"])) as connection:
+        names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master")}
+    assert not names & {"scoped", "shop"}
+
+
 def test_levels_for_new_players_count_only_their_first_session(backend):
     admin, ingest, _ = backend
     game = register(admin)

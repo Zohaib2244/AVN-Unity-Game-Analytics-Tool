@@ -8,6 +8,7 @@ Filters narrow every query to an environment, app version, build, country or pla
 import json
 import re
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from statistics import median
 from uuid import uuid4
 
@@ -84,23 +85,51 @@ def where(start, end, filters=None, column="client_ts"):
     return " AND ".join(clauses), args
 
 
+def scope_events(connection, start, end, filters=None, only=None, table="scoped"):
+    """Copy the events of these days and filters into a temporary table of plain columns.
+
+    Every number on a dashboard page needs the same few values out of each event's JSON (who, which
+    session, which environment, version, build, country, platform), and deriving them again for
+    each count is most of what a page costs. This reads the raw events once; the page's counts then
+    read this narrow table, which lives only as long as the connection. Nothing is stored. `only`
+    keeps one event name.
+    """
+    condition, args = where(start, end, filters)
+    if only is not None:
+        condition, args = f"name=? AND {condition}", [only, *args]
+    connection.execute(f"DROP TABLE IF EXISTS temp.{table}")
+    connection.execute(
+        f"""CREATE TEMP TABLE {table} AS
+            SELECT client_ts, name, {PLAYER} AS player, {SESSION} AS session_id,
+                   {ENVIRONMENT} AS environment, {DIMENSIONS["app_version"]} AS app_version,
+                   {DIMENSIONS["build"]} AS build, {DIMENSIONS["country"]} AS country,
+                   {DIMENSIONS["platform"]} AS platform
+            FROM events WHERE {condition}""",
+        args,
+    )
+    return table
+
+
+# The dimensions are columns of scope_events' table under their own names.
+SCOPED_DIMENSIONS = tuple(DIMENSIONS)
+
+
 def facets(storage, game_id, start, end):
     """Every value of each filterable dimension in the range, unfiltered, for the filter menus.
 
     Each value carries its distinct players (what the menu shows) and its event count.
     """
     storage.get_game(game_id)
-    condition, args = where(start, end)
     result = {}
     with storage.connect(storage.game_path(game_id)) as connection:
-        for dimension, expression in DIMENSIONS.items():
-            result[dimension] = [
+        scoped = scope_events(connection, start, end)
+        for column in SCOPED_DIMENSIONS:
+            result[column] = [
                 dict(row)
                 for row in connection.execute(
-                    f"SELECT {expression} AS value, count(DISTINCT {PLAYER}) AS players, "
-                    f"count(*) AS events FROM events WHERE {condition} GROUP BY value "
-                    "ORDER BY players DESC, events DESC LIMIT 100",
-                    args,
+                    f"SELECT {column} AS value, count(DISTINCT player) AS players, "
+                    f"count(*) AS events FROM {scoped} GROUP BY value "
+                    "ORDER BY players DESC, events DESC LIMIT 100"
                 )
             ]
     return result
@@ -119,28 +148,30 @@ def day_expression(timezone_offset_minutes=0):
     return f"substr(datetime(client_ts, '{modifier}'), 1, 10)"
 
 
-def active_users(connection, end, filters, timezone_offset_minutes=0):
-    """DAU, WAU, MAU and stickiness, counted back from the last day before `end` (exclusive)."""
+def active_users(connection, scoped, end, timezone_offset_minutes=0):
+    """DAU, WAU, MAU and stickiness, counted back from the last day before `end` (exclusive).
+
+    scoped is scope_events' table, covering at least the 30 days before `end`.
+    """
     end_moment = datetime.fromisoformat(end)
-    month_condition, month_args = where(_day_start(end_moment - timedelta(days=30)), end, filters)
-    week_condition, week_args = where(_day_start(end_moment - timedelta(days=7)), end, filters)
+    month, week = (_day_start(end_moment - timedelta(days=days)) for days in (30, 7))
     day_sql = day_expression(timezone_offset_minutes)
     daily = {
         row["day"]: row["players"]
         for row in connection.execute(
-            f"SELECT {day_sql} AS day, count(DISTINCT {PLAYER}) AS players "
-            f"FROM events WHERE {month_condition} AND {IDENTIFIED} GROUP BY day",
-            month_args,
+            f"SELECT {day_sql} AS day, count(DISTINCT player) AS players "
+            f"FROM {scoped} WHERE client_ts>=? AND client_ts<? AND player IS NOT NULL GROUP BY day",
+            (month, end),
         )
     }
-    mau = connection.execute(
-        f"SELECT count(DISTINCT {PLAYER}) FROM events WHERE {month_condition} AND {IDENTIFIED}",
-        month_args,
-    ).fetchone()[0]
-    wau = connection.execute(
-        f"SELECT count(DISTINCT {PLAYER}) FROM events WHERE {week_condition} AND {IDENTIFIED}",
-        week_args,
-    ).fetchone()[0]
+    mau, wau = (
+        connection.execute(
+            f"SELECT count(DISTINCT player) FROM {scoped} "
+            "WHERE client_ts>=? AND client_ts<? AND player IS NOT NULL",
+            (since, end),
+        ).fetchone()[0]
+        for since in (month, week)
+    )
     local_end = end_moment + timedelta(minutes=timezone_offset_minutes)
     days = [(local_end - timedelta(days=n + 1)).date().isoformat() for n in range(30)]
     average = sum(daily.get(day, 0) for day in days) / 30
@@ -159,21 +190,22 @@ def active_users(connection, end, filters, timezone_offset_minutes=0):
 def summary(storage, game_id, start, end, filters, timezone_offset_minutes=0):
     """Totals, a daily series and breakdowns for the game overview."""
     storage.get_game(game_id)
-    condition, args = where(start, end, filters)
     start_moment, end_moment = datetime.fromisoformat(start), datetime.fromisoformat(end)
-    previous_start = start_moment - (end_moment - start_moment)
-    previous_condition, previous_args = where(
-        timestamp(previous_start), timestamp(start_moment), filters
-    )
+    previous_start = timestamp(start_moment - (end_moment - start_moment))
+    # One copy of the events from the earliest day anything below reads (the period before this one
+    # or the 30 days active users look back over) to the end.
+    earliest = min(previous_start, _day_start(end_moment - timedelta(days=30)))
+    inside = "client_ts>=? AND client_ts<?"
     with storage.connect(storage.game_path(game_id)) as connection:
+        scoped = scope_events(connection, earliest, end, filters)
         totals = dict(
             connection.execute(
-                f"SELECT count(*) AS events, count(DISTINCT {PLAYER}) AS players, "
-                f"count(DISTINCT CASE WHEN {IDENTIFIED} THEN {SESSION} END) AS sessions, "
-                f"count(*) FILTER (WHERE {IDENTIFIED}) AS identified_events, "
-                f"count(*) FILTER (WHERE NOT ({IDENTIFIED})) AS anonymous_events "
-                f"FROM events WHERE {condition}",
-                args,
+                f"SELECT count(*) AS events, count(DISTINCT player) AS players, "
+                f"count(DISTINCT CASE WHEN player IS NOT NULL THEN session_id END) AS sessions, "
+                f"count(*) FILTER (WHERE player IS NOT NULL) AS identified_events, "
+                f"count(*) FILTER (WHERE player IS NULL) AS anonymous_events "
+                f"FROM {scoped} WHERE {inside}",
+                (start, end),
             ).fetchone()
         )
         raw_condition, raw_args = where(start, end)
@@ -182,49 +214,49 @@ def summary(storage, game_id, start, end, filters, timezone_offset_minutes=0):
         ).fetchone()[0]
         previous = dict(
             connection.execute(
-                f"SELECT count(*) AS events, count(DISTINCT {PLAYER}) AS players, "
-                f"count(DISTINCT CASE WHEN {IDENTIFIED} THEN {SESSION} END) AS sessions "
-                f"FROM events WHERE {previous_condition}",
-                previous_args,
+                f"SELECT count(*) AS events, count(DISTINCT player) AS players, "
+                f"count(DISTINCT CASE WHEN player IS NOT NULL THEN session_id END) AS sessions "
+                f"FROM {scoped} WHERE {inside}",
+                (previous_start, start),
             ).fetchone()
         )
         new_players = connection.execute(
-            f"SELECT count(DISTINCT {PLAYER}) FROM events "
-            f"WHERE {condition} AND {IDENTIFIED} AND name='first_open'",
-            args,
+            f"SELECT count(DISTINCT player) FROM {scoped} "
+            f"WHERE {inside} AND player IS NOT NULL AND name='first_open'",
+            (start, end),
         ).fetchone()[0]
         day_sql = day_expression(timezone_offset_minutes)
         days = [
             dict(row)
             for row in connection.execute(
                 f"SELECT {day_sql} AS day, count(*) AS events, "
-                f"count(DISTINCT {PLAYER}) AS players, "
-                f"count(DISTINCT CASE WHEN {IDENTIFIED} THEN {SESSION} END) AS sessions "
-                f"FROM events WHERE {condition} GROUP BY day ORDER BY day",
-                args,
+                f"count(DISTINCT player) AS players, "
+                f"count(DISTINCT CASE WHEN player IS NOT NULL THEN session_id END) AS sessions "
+                f"FROM {scoped} WHERE {inside} GROUP BY day ORDER BY day",
+                (start, end),
             )
         ]
         breakdowns = {
-            dimension: [
+            column: [
                 dict(row)
                 for row in connection.execute(
-                    f"SELECT {expression} AS value, count(*) AS events, "
-                    f"count(DISTINCT {PLAYER}) AS players FROM events WHERE {condition} "
+                    f"SELECT {column} AS value, count(*) AS events, "
+                    f"count(DISTINCT player) AS players FROM {scoped} WHERE {inside} "
                     "GROUP BY value ORDER BY players DESC, events DESC LIMIT 15",
-                    args,
+                    (start, end),
                 )
             ]
-            for dimension, expression in DIMENSIONS.items()
+            for column in SCOPED_DIMENSIONS
         }
         top_events = [
             dict(row)
             for row in connection.execute(
-                f"SELECT name, count(*) AS events, count(DISTINCT {PLAYER}) AS players "
-                f"FROM events WHERE {condition} GROUP BY name ORDER BY events DESC LIMIT 15",
-                args,
+                f"SELECT name, count(*) AS events, count(DISTINCT player) AS players "
+                f"FROM {scoped} WHERE {inside} GROUP BY name ORDER BY events DESC LIMIT 15",
+                (start, end),
             )
         ]
-        active = active_users(connection, end, filters, timezone_offset_minutes)
+        active = active_users(connection, scoped, end, timezone_offset_minutes)
     thresholds = storage.analytics_thresholds(game_id)
     span = max(1, (datetime.fromisoformat(end) - datetime.fromisoformat(start)).days)
     peak = max(days, key=lambda day: day["players"], default=None)
@@ -678,6 +710,7 @@ PLAYER_SORTS = {
 }
 
 
+@lru_cache(maxsize=4096)
 def version_key(value):
     """A string that sorts app versions the way people read them: 1.9 before 1.10.
 

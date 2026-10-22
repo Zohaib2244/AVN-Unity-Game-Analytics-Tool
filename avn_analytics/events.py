@@ -18,9 +18,9 @@ from .insights import (
     PARAM_TYPES,
     PLAYER,
     SDK_EVENTS,
-    SESSION,
     STALE_DAYS,
     day_expression,
+    scope_events,
     version_key,
     where,
 )
@@ -84,20 +84,18 @@ def overview(storage, game_id, start, end, filters, timezone_offset_minutes=0):
                     FROM events GROUP BY name"""
             )
         }
+        scoped = scope_events(connection, start, end, filters)
         ranged = {
             row["name"]: dict(row)
             for row in connection.execute(
-                f"""SELECT name, count(*) AS events, count(DISTINCT {PLAYER}) AS players,
-                           count(DISTINCT {SESSION}) AS sessions, max(client_ts) AS last_seen
-                    FROM events WHERE {condition} GROUP BY name""",
-                args,
+                f"""SELECT name, count(*) AS events, count(DISTINCT player) AS players,
+                           count(DISTINCT session_id) AS sessions, max(client_ts) AS last_seen
+                    FROM {scoped} GROUP BY name"""
             )
         }
         series = defaultdict(dict)
         for row in connection.execute(
-            f"""SELECT name, {day} AS day, count(*) AS events
-                FROM events WHERE {condition} GROUP BY name, day""",
-            args,
+            f"SELECT name, {day} AS day, count(*) AS events FROM {scoped} GROUP BY name, day"
         ):
             series[row["name"]][row["day"]] = row["events"]
         params = _observed_params(connection)
@@ -238,12 +236,12 @@ def detail(storage, game_id, name, start, end, filters, timezone_offset_minutes=
         if not connection.execute("SELECT 1 FROM events WHERE name=? LIMIT 1", (name,)).fetchone():
             if not definition:
                 raise HTTPException(404, "No such event")
+        scoped = scope_events(connection, start, end, filters, only=name)
         series = {
             row["day"]: dict(row)
             for row in connection.execute(
-                f"""SELECT {day} AS day, count(*) AS events, count(DISTINCT {PLAYER}) AS players
-                    FROM events WHERE {scope} GROUP BY day""",
-                base,
+                f"""SELECT {day} AS day, count(*) AS events, count(DISTINCT player) AS players
+                    FROM {scoped} GROUP BY day"""
             )
         }
         versions = [
@@ -266,19 +264,17 @@ def detail(storage, game_id, name, start, end, filters, timezone_offset_minutes=
         environments = [
             dict(row)
             for row in connection.execute(
-                f"""SELECT {ENVIRONMENT} AS value, count(*) AS events,
-                           count(DISTINCT {PLAYER}) AS players
-                    FROM events WHERE {scope} GROUP BY value ORDER BY events DESC""",
-                base,
+                f"""SELECT environment AS value, count(*) AS events,
+                           count(DISTINCT player) AS players
+                    FROM {scoped} GROUP BY value ORDER BY events DESC"""
             )
         ]
         countries = [
             dict(row)
             for row in connection.execute(
-                f"""SELECT coalesce(json_extract(payload, '$.country'), 'unknown') AS value,
-                           count(*) AS events, count(DISTINCT {PLAYER}) AS players
-                    FROM events WHERE {scope} GROUP BY value ORDER BY events DESC LIMIT 8""",
-                base,
+                f"""SELECT country AS value, count(*) AS events,
+                           count(DISTINCT player) AS players
+                    FROM {scoped} GROUP BY value ORDER BY events DESC LIMIT 8"""
             )
         ]
         params = {}
@@ -438,26 +434,43 @@ def mappings(storage, game_id, app_version=""):
                 ORDER BY client_ts DESC, event_id LIMIT {MAPPING_SCAN}""",
             scope_args,
         )
+        # What an event means depends only on its name, parameters and version, and most events
+        # repeat those, so it is worked out once per kind and only the player is counted per event.
+        meanings = {}
+
+        def meaning(name, raw_params, version):
+            values = json.loads(raw_params or "{}")
+            info = labeler.level_info(name, values, version)
+            matched = []
+            for index, rule in stories.active_mappings(definitions.get(name), version):
+                if stories._canonical_match(rule, values, version):
+                    number = info[1] if info and f"level_{info[0]}" == rule["action"] else None
+                    matched.append((index, rule["action"], number))
+            explicit = {action for _, action, _ in matched}
+            return {
+                "info": info,
+                "matched": matched,
+                "conflict": len({action for action in explicit if action.startswith("level_")}) > 1,
+                "session_start": name == "session_start" and "session_start" not in explicit,
+                "auto_level": info if info and f"level_{info[0]}" not in explicit else None,
+            }
+
         for row in rows:
             scanned += 1
-            values = json.loads(row["params"] or "{}")
             name, player = row["name"], row["player"]
-            info = labeler.level_info(name, values, row["app_version"])
-            explicit = set()
-            for index, rule in stories.active_mappings(definitions.get(name), row["app_version"]):
-                if not stories._canonical_match(rule, values, row["app_version"]):
-                    continue
-                explicit.add(rule["action"])
-                number = None
-                if info and f"level_{info[0]}" == rule["action"]:
-                    number = info[1]
-                _bump(table, (rule["action"], name, "mapped", index), player, number)
-            if len({action for action in explicit if action.startswith("level_")}) > 1:
+            kind = (name, row["params"], row["app_version"])
+            found = meanings.get(kind)
+            if found is None:
+                found = meanings[kind] = meaning(*kind)
+            for index, action, number in found["matched"]:
+                _bump(table, (action, name, "mapped", index), player, number)
+            if found["conflict"]:
                 conflicts[name] += 1
-            if name == "session_start" and "session_start" not in explicit:
+            if found["session_start"]:
                 _bump(table, ("session_start", name, "auto", None), player)
-            if info and f"level_{info[0]}" not in explicit:
-                _bump(table, (f"level_{info[0]}", name, "auto", None), player, info[1])
+            if found["auto_level"]:
+                verb, number = found["auto_level"]
+                _bump(table, (f"level_{verb}", name, "auto", None), player, number)
     concepts = []
     for concept in stories.CONCEPTS:
         sources = []
