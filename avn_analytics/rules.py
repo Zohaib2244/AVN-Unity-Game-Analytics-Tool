@@ -3,16 +3,20 @@
 The same small vocabulary is used wherever the dashboard asks "players who did X": a condition
 (did / didn't do an event, optionally with a parameter test) filters players, and a metric
 (how many times, highest/lowest/total of a parameter, first/last time) adds a column and a sort
-key. Everything works on the events table of one game (payload holds the event as JSON).
+key. Everything works on one game's events: the raw events (payload holds the event as JSON,
+parameters under $.params) or the analytics facts (params holds the parameters as JSON), picked
+with `document`: PAYLOAD or PARAMS.
 """
 
 NUMERIC_TYPES = "('integer', 'real')"
+PAYLOAD = ("payload", "$.params")  # (column, JSON path of the parameters in it)
+PARAMS = ("params", "$")
 
 
-def param_path(param):
+def param_path(param, document=PAYLOAD):
     if '"' in param or "\\" in param:
         raise ValueError("Parameter names can't contain quotes")
-    return f'$.params."{param}"'
+    return f'{document[1]}."{param}"'
 
 
 def _number(value):
@@ -30,10 +34,10 @@ def _is_number(expr):
     )
 
 
-def test_sql(param, op, value):
+def test_sql(param, op, value, document=PAYLOAD):
     """SQL and arguments for one parameter test (op: eq ne gt gte lt lte contains exists)."""
-    path = param_path(param)
-    expr = "json_extract(payload, ?)"
+    path = param_path(param, document)
+    expr = f"json_extract({document[0]}, ?)"
     if op == "exists":
         return f"{expr} IS NOT NULL", [path]
     number = _number(value)
@@ -61,23 +65,25 @@ def test_sql(param, op, value):
     raise ValueError(f"Unknown operator {op}")
 
 
-def condition_sql(rule):
+def condition_sql(rule, document=PAYLOAD):
     """SQL and arguments true for an event matching rule {event, param, op, value}."""
     clause, args = "name = ?", [rule["event"]]
     if rule.get("param"):
-        test, test_args = test_sql(rule["param"], rule.get("op") or "eq", rule.get("value", ""))
+        test, test_args = test_sql(
+            rule["param"], rule.get("op") or "eq", rule.get("value", ""), document
+        )
         clause, args = f"{clause} AND {test}", [*args, *test_args]
     return f"({clause})", args
 
 
-def count_sql(rule):
-    condition, args = condition_sql(rule)
+def count_sql(rule, document=PAYLOAD):
+    condition, args = condition_sql(rule, document)
     return f"sum(CASE WHEN {condition} THEN 1 ELSE 0 END)", args
 
 
-def metric_sql(metric):
+def metric_sql(metric, document=PAYLOAD):
     """SQL aggregate (per player) and arguments for a metric."""
-    condition, args = condition_sql(metric)
+    condition, args = condition_sql(metric, document)
     agg = metric.get("agg") or "count"
     if agg == "count":
         return f"sum(CASE WHEN {condition} THEN 1 ELSE 0 END)", args
@@ -87,9 +93,9 @@ def metric_sql(metric):
     of = metric.get("of") or metric.get("param")
     if agg not in ("max", "min", "sum") or not of:
         raise ValueError("Choose which parameter to total or compare")
-    expr = "json_extract(payload, ?)"
+    expr = f"json_extract({document[0]}, ?)"
     guard = _is_number(expr)
     return (
         f"{agg}(CASE WHEN {condition} AND {guard} THEN CAST({expr} AS REAL) END)",
-        [*args, *([param_path(of)] * (guard.count("?") + 1))],
+        [*args, *([param_path(of, document)] * (guard.count("?") + 1))],
     )

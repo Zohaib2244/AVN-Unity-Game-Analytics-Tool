@@ -224,6 +224,10 @@ def snapshot(storage, game_id, module, *, full=True):
             answers[key] = function(*args, **kwargs)
         except Exception as error:  # an error is an answer too: both sides must agree on it
             answers[key] = {"error": type(error).__name__, "detail": str(error)}
+        if function is module.insights.journey and "snapshot" in answers[key]:
+            # An opaque page token: raw events and facts number it differently (see
+            # insights.FACTS_SNAPSHOT); what it does is tested on its own.
+            answers[key] = {**answers[key], "snapshot": isinstance(answers[key]["snapshot"], int)}
         return answers[key]
 
     days = (storage, game_id)

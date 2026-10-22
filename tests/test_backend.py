@@ -2192,20 +2192,15 @@ def _scan_counter(monkeypatch, delay=0.0):
 
     from avn_analytics import journeys
 
-    calls = {"progress": 0, "transitions": 0}
+    calls = {"levels": 0}
+    scan = journeys._scan_levels
 
-    def counted(kind, scan):
-        def wrapper(*args, **kwargs):
-            calls[kind] += 1
-            time.sleep(delay)
-            return scan(*args, **kwargs)
+    def counted(*args, **kwargs):
+        calls["levels"] += 1
+        time.sleep(delay)
+        return scan(*args, **kwargs)
 
-        return wrapper
-
-    monkeypatch.setattr(journeys, "_scan_progress", counted("progress", journeys._scan_progress))
-    monkeypatch.setattr(
-        journeys, "_scan_transitions", counted("transitions", journeys._scan_transitions)
-    )
+    monkeypatch.setattr(journeys, "_scan_levels", counted)
     return calls
 
 
@@ -2230,13 +2225,13 @@ def test_level_scans_are_shared_by_the_table_and_every_levels_players(backend, m
     for level in (1, 2, 1):
         assert _level_players(admin, game, level, "started").get("players") is not None
     assert admin.get(f"/v1/games/{game['id']}/insights/levels", params=DAY).json() == table.json()
-    # One read of the events for the table and one for the players of all levels, however often
-    # the page is opened or the level changes.
-    assert calls == {"progress": 1, "transitions": 1}
+    # One read of the events for the table and the players of all levels, however often the
+    # page is opened or the level changes.
+    assert calls == {"levels": 1}
     other = admin.get(
         f"/v1/games/{game['id']}/insights/levels", params={**DAY, "scope": "first_session"}
     )
-    assert other.status_code == 200 and calls == {"progress": 2, "transitions": 2}
+    assert other.status_code == 200 and calls == {"levels": 2}
 
 
 def test_level_scans_start_over_when_the_dictionary_or_an_environment_fix_changes(
@@ -2246,15 +2241,15 @@ def test_level_scans_start_over_when_the_dictionary_or_an_environment_fix_change
     calls = _scan_counter(monkeypatch)
     url = f"/v1/games/{game['id']}/insights/levels"
     assert admin.get(url, params=DAY).status_code == 200
-    assert admin.get(url, params=DAY).status_code == 200 and calls["progress"] == 1
+    assert admin.get(url, params=DAY).status_code == 200 and calls["levels"] == 1
     definition = {"description": "Done", "params": {}}
     assert (
         admin.put(f"/v1/games/{game['id']}/dictionary/level_x", json=definition).status_code == 200
     )
-    assert admin.get(url, params=DAY).status_code == 200 and calls["progress"] == 2
+    assert admin.get(url, params=DAY).status_code == 200 and calls["levels"] == 2
     fix = {"from_environment": "development", "to_environment": "production", "note": "wrong mode"}
     assert admin.post(f"/v1/games/{game['id']}/environment-fixes", json=fix).status_code == 201
-    assert admin.get(url, params=DAY).status_code == 200 and calls["progress"] == 3
+    assert admin.get(url, params=DAY).status_code == 200 and calls["levels"] == 3
 
 
 def test_simultaneous_level_requests_wait_for_one_scan(backend, monkeypatch):
@@ -2264,7 +2259,7 @@ def test_simultaneous_level_requests_wait_for_one_scan(backend, monkeypatch):
     with ThreadPoolExecutor(max_workers=4) as executor:
         responses = list(executor.map(lambda _: admin.get(url, params=DAY), range(4)))
     assert all(response.status_code == 200 for response in responses)
-    assert calls == {"progress": 1, "transitions": 1}
+    assert calls == {"levels": 1}
 
 
 def test_slow_dashboard_reads_are_kept_briefly_and_start_over_when_what_they_use_changes(
@@ -3489,11 +3484,14 @@ def test_conditional_activity_bounds_nested_complexity(backend):
     assert _conditional_activity(admin, game, broad).status_code == 400
 
 
-def test_raw_event_paging_covers_entire_timeline_with_stable_ties(backend, monkeypatch):
+@pytest.mark.parametrize("mode", ["legacy", "facts"])
+def test_raw_event_paging_covers_entire_timeline_with_stable_ties(backend, monkeypatch, mode):
     from avn_analytics import insights
 
     monkeypatch.setattr(insights, "MAX_JOURNEY_EVENTS", 2)
-    admin, ingest, _ = backend
+    admin, ingest, settings = backend
+    storage = admin.app.state.storage
+    monkeypatch.setattr(storage, "settings", replace(settings, analytics_read_mode=mode))
     game = register(admin)
     rows = [event(name="AD_ANALYSIS", params={"index": index}) for index in range(5)]
     assert send(ingest, game, rows).status_code == 200
@@ -3534,6 +3532,26 @@ def test_raw_event_paging_covers_entire_timeline_with_stable_ties(backend, monke
     assert received == [
         row["params"]["index"] for row in sorted(rows, key=lambda row: row["event_id"])
     ]
+    # A page token from the other way of reading starts a fresh, complete timeline.
+    other = 2**62 + 1 if mode == "legacy" else 1
+    page = admin.get(
+        f"/v1/games/{game['id']}/insights/journey",
+        params={
+            "player": "anonymous-install-id",
+            "start": "2026-10-04",
+            "end": "2026-10-04",
+            "offset": 0,
+            "snapshot": other,
+        },
+    ).json()
+    assert page["snapshot"] != other and len(page["events"]) == 2
+
+
+def test_the_analytics_read_mode_must_be_known(tmp_path, monkeypatch):
+    monkeypatch.setenv("AVN_ANALYTICS_READ_MODE", "Facts")
+    assert Settings.from_env().analytics_read_mode == "facts"
+    with pytest.raises(ValueError, match="AVN_ANALYTICS_READ_MODE"):
+        Settings(data_dir=tmp_path, analytics_read_mode="fast")
 
 
 def test_player_actions_have_readable_names():

@@ -507,6 +507,7 @@ Environment variables (see `.env.example`):
 | `AVN_DATA_DIR` | `./data` | Where databases are stored |
 | `AVN_REQUESTS_PER_MINUTE` | `120` | Per-key rate limit |
 | `AVN_READ_CACHE_SECONDS` | `60` | How long a slow dashboard answer (Overview, Players, Levels, Funnels and the filter menus) is reused, so coming back to a page is instant. New events appear once it has passed; a change to the event dictionary, an environment fix or the analysis thresholds shows at once. `0` turns it off |
+| `AVN_ANALYTICS_READ_MODE` | `legacy` | Where the dashboards read events. `legacy`: the raw events' JSON. `facts`: the [analytics facts](docs/analytics-pipeline.md), for each game whose facts are complete and checked (the others keep reading raw events); the same answers, several times faster. Switch back to `legacy` at any time |
 | `AVN_MAX_BODY_BYTES` | `1048576` | Largest accepted request body |
 | `AVN_HOST_DATA_DIR` | `./data` | Host folder holding all data |
 | `AVN_UID` / `AVN_GID` | `1000` | User that owns the data folder |
