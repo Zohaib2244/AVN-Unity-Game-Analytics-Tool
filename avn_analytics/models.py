@@ -374,6 +374,12 @@ EnvironmentName = Annotated[
 ]
 
 
+class WorkerControl(StrictModel):
+    """Start or stop the analytics worker (materialize.py) for every game."""
+
+    desired: Literal["running", "stopped"]
+
+
 class EnvironmentFix(StrictModel):
     """Count events a build sent as `from_environment` as `to_environment` instead."""
 

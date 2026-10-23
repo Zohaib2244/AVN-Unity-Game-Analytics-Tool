@@ -13,13 +13,14 @@ from fastapi import HTTPException
 
 from . import conditions, stories
 from .insights import (
-    ENVIRONMENT,
     HIDDEN_PARAMS,
+    LEGACY,
     PARAM_TYPES,
     PLAYER,
     SDK_EVENTS,
     STALE_DAYS,
     day_expression,
+    read_source,
     scope_events,
     version_key,
     where,
@@ -36,13 +37,21 @@ def _kind(sql_type):
     return PARAM_TYPES.get(sql_type)
 
 
-def _observed_params(connection, app_version=""):
+def _each_param(source):
+    """FROM clause: every event joined with each of its parameters (p.key, p.value, p.type)."""
+    if source.facts:
+        return "analytics_facts, json_each(analytics_facts.params) AS p"
+    return "events, json_each(events.payload, '$.params') AS p"
+
+
+def _observed_params(connection, app_version="", source=LEGACY):
     """name -> key -> {types, count} for every parameter ever sent."""
     seen = defaultdict(dict)
+    version = source.envelope("app_version")
     for row in connection.execute(
-        """SELECT name, p.key AS key, p.type AS type, count(*) AS count
-           FROM events, json_each(events.payload, '$.params') AS p
-           WHERE (? = '' OR json_extract(payload, '$.app_version') = ?)
+        f"""SELECT name, p.key AS key, p.type AS type, count(*) AS count
+           FROM {_each_param(source)}
+           WHERE (? = '' OR {version} = ?)
            GROUP BY name, p.key, p.type""",
         (app_version, app_version),
     ):
@@ -73,18 +82,18 @@ def overview(storage, game_id, start, end, filters, timezone_offset_minutes=0):
     storage.get_game(game_id)
     definitions = storage.get_dictionary(game_id)
     drafts = storage.get_drafts(game_id)
-    condition, args = where(start, end, filters)
     day = day_expression(timezone_offset_minutes)
     with storage.connect(storage.game_path(game_id)) as connection:
+        source = read_source(storage, connection)
         ever = {
             row["name"]: dict(row)
             for row in connection.execute(
-                f"""SELECT name, count(*) AS events, count(DISTINCT {PLAYER}) AS players,
+                f"""SELECT name, count(*) AS events, count(DISTINCT {source.player}) AS players,
                            min(client_ts) AS first_seen, max(client_ts) AS last_seen
-                    FROM events GROUP BY name"""
+                    FROM {source.table} GROUP BY name"""
             )
         }
-        scoped = scope_events(connection, start, end, filters)
+        scoped = scope_events(connection, start, end, filters, source=source)
         ranged = {
             row["name"]: dict(row)
             for row in connection.execute(
@@ -98,7 +107,7 @@ def overview(storage, game_id, start, end, filters, timezone_offset_minutes=0):
             f"SELECT name, {day} AS day, count(*) AS events FROM {scoped} GROUP BY name, day"
         ):
             series[row["name"]][row["day"]] = row["events"]
-        params = _observed_params(connection)
+        params = _observed_params(connection, source=source)
     days = _days(start, end, timezone_offset_minutes)
     now = datetime.now(UTC)
     similar = defaultdict(list)
@@ -228,15 +237,17 @@ def detail(storage, game_id, name, start, end, filters, timezone_offset_minutes=
     storage.get_game(game_id)
     definition = storage.get_dictionary(game_id).get(name) or {}
     drafts = storage.get_drafts(game_id).get(name, {})
-    condition, args = where(start, end, filters)
     day = day_expression(timezone_offset_minutes)
-    scope = f"name=? AND {condition}"
-    base = (name, *args)
     with storage.connect(storage.game_path(game_id)) as connection:
+        source = read_source(storage, connection)
+        table, version = source.table, source.envelope("app_version")
+        condition, args = where(start, end, filters, source=source)
+        scope = f"name=? AND {condition}"
+        base = (name, *args)
         if not connection.execute("SELECT 1 FROM events WHERE name=? LIMIT 1", (name,)).fetchone():
             if not definition:
                 raise HTTPException(404, "No such event")
-        scoped = scope_events(connection, start, end, filters, only=name)
+        scoped = scope_events(connection, start, end, filters, only=name, source=source)
         series = {
             row["day"]: dict(row)
             for row in connection.execute(
@@ -247,18 +258,17 @@ def detail(storage, game_id, name, start, end, filters, timezone_offset_minutes=
         versions = [
             dict(row)
             for row in connection.execute(
-                f"""SELECT coalesce(json_extract(payload, '$.app_version'), 'unknown') AS version,
-                           count(*) AS events, count(DISTINCT {PLAYER}) AS players,
+                f"""SELECT coalesce({version}, 'unknown') AS version,
+                           count(*) AS events, count(DISTINCT {source.player}) AS players,
                            max(client_ts) AS last_seen
-                    FROM events WHERE name=? GROUP BY version""",
+                    FROM {table} WHERE name=? GROUP BY version""",
                 (name,),
             )
         ]
         every_version = [
             row["version"]
             for row in connection.execute(
-                """SELECT DISTINCT coalesce(json_extract(payload, '$.app_version'), 'unknown')
-                          AS version FROM events"""
+                f"SELECT DISTINCT coalesce({version}, 'unknown') AS version FROM {table}"
             )
         ]
         environments = [
@@ -281,7 +291,7 @@ def detail(storage, game_id, name, start, end, filters, timezone_offset_minutes=
         for row in connection.execute(
             f"""SELECT p.key AS key, p.type AS type, count(*) AS count,
                        count(DISTINCT p.value) AS distinct_values
-                FROM events, json_each(events.payload, '$.params') AS p
+                FROM {_each_param(source)}
                 WHERE {scope} GROUP BY p.key, p.type""",
             base,
         ):
@@ -299,7 +309,7 @@ def detail(storage, game_id, name, start, end, filters, timezone_offset_minutes=
         values = defaultdict(list)
         for row in connection.execute(
             f"""SELECT p.key AS key, p.value AS value, count(*) AS count
-                FROM events, json_each(events.payload, '$.params') AS p
+                FROM {_each_param(source)}
                 WHERE {scope} GROUP BY p.key, p.value ORDER BY count DESC LIMIT 600""",
             base,
         ):
@@ -316,10 +326,9 @@ def detail(storage, game_id, name, start, end, filters, timezone_offset_minutes=
                 "params": json.loads(row["params"] or "{}"),
             }
             for row in connection.execute(
-                f"""SELECT client_ts, json_extract(payload, '$.app_version') AS version,
-                           {ENVIRONMENT} AS environment,
-                           json_extract(payload, '$.params') AS params
-                    FROM events WHERE {scope} ORDER BY client_ts DESC, event_id LIMIT ?""",
+                f"""SELECT client_ts, {version} AS version,
+                           {source.environment} AS environment, {source.params} AS params
+                    FROM {table} WHERE {scope} ORDER BY client_ts DESC, event_id LIMIT ?""",
                 (*base, SAMPLES),
             )
         ]
@@ -398,29 +407,30 @@ def mappings(storage, game_id, app_version=""):
     table = {}
     conflicts = defaultdict(int)
     scanned = 0
-    scope = "(? = '' OR json_extract(payload, '$.app_version') = ?)"
     scope_args = (app_version, app_version)
     with storage.connect(storage.game_path(game_id)) as connection:
+        source = read_source(storage, connection)
+        rows_from, version = source.table, source.envelope("app_version")
+        scope = f"(? = '' OR {version} = ?)"
         versions = [
             row[0]
             for row in connection.execute(
-                "SELECT DISTINCT json_extract(payload, '$.app_version') FROM events "
-                "WHERE json_extract(payload, '$.app_version') IS NOT NULL"
+                f"SELECT DISTINCT {version} FROM {rows_from} WHERE {version} IS NOT NULL"
             )
         ]
         observed = {
             row["name"]: dict(row)
             for row in connection.execute(
                 "SELECT name, count(*) AS events, max(client_ts) AS last_seen "
-                f"FROM events WHERE {scope} GROUP BY name",
+                f"FROM {rows_from} WHERE {scope} GROUP BY name",
                 scope_args,
             )
         }
-        params = _observed_params(connection, app_version)
+        params = _observed_params(connection, app_version, source)
         examples = defaultdict(lambda: defaultdict(list))
         for row in connection.execute(
             f"""SELECT name, p.key AS key, p.value AS value, count(*) AS count
-               FROM events, json_each(events.payload, '$.params') AS p
+               FROM {_each_param(source)}
                WHERE {scope} AND p.type IN ('text', 'integer', 'real')
                GROUP BY name, p.key, p.value ORDER BY count DESC LIMIT 4000""",
             scope_args,
@@ -428,9 +438,9 @@ def mappings(storage, game_id, app_version=""):
             if row["key"] not in HIDDEN_PARAMS and len(examples[row["name"]][row["key"]]) < 6:
                 examples[row["name"]][row["key"]].append(str(row["value"])[:60])
         rows = connection.execute(
-            f"""SELECT name, json_extract(payload, '$.params') AS params, {PLAYER} AS player,
-                       json_extract(payload, '$.app_version') AS app_version
-                FROM events WHERE {scope}
+            f"""SELECT name, {source.params} AS params, {source.player} AS player,
+                       {version} AS app_version
+                FROM {rows_from} WHERE {scope}
                 ORDER BY client_ts DESC, event_id LIMIT {MAPPING_SCAN}""",
             scope_args,
         )

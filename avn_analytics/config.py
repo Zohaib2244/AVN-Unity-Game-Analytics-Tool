@@ -22,6 +22,20 @@ class Settings:
     requests_per_minute: int = 120
     max_export_bytes: int = 268_435_456
     read_cache_seconds: int = 60  # how long a slow dashboard answer is reused; 0 turns it off
+    # Where dashboards read events (see analytics.py): legacy = the raw events' JSON; facts = the
+    # analytics facts of games whose facts are complete (others stay on legacy); prepared = also
+    # answers the analytics worker prepared in advance, when they are fresh.
+    analytics_read_mode: str = "legacy"
+    # The analytics worker (materialize.py). Whether a new installation starts it (afterwards the
+    # admin's Start/Stop on the website wins), how many events it copies per transaction, how
+    # often it brings prepared answers up to date, and how old (in seconds of new events) a
+    # prepared answer may be and still be served.
+    analytics_worker_default_enabled: bool = True
+    analytics_batch_rows: int = 5000
+    analytics_refresh_seconds: int = 10
+    analytics_freshness_seconds: int = 60
+    analytics_active_views: int = 12
+    analytics_storage_bytes: int = 268_435_456
     public_ingest_url: str = ""
     # Team access. Enabled when both the Cloudflare Access team domain and the application's
     # audience tag are set; otherwise every request is an admin (the original single-user mode).
@@ -49,6 +63,17 @@ class Settings:
             raise ValueError("Invalid storage or request limits")
         if not 0 <= self.read_cache_seconds <= 3600:
             raise ValueError("AVN_READ_CACHE_SECONDS must be between 0 and 3600")
+        if self.analytics_read_mode not in ("legacy", "facts", "prepared"):
+            raise ValueError("AVN_ANALYTICS_READ_MODE must be legacy, facts or prepared")
+        for name, low, high in (
+            ("analytics_batch_rows", 100, 100_000),
+            ("analytics_active_views", 1, 100),
+            ("analytics_storage_bytes", 1_048_576, 10_737_418_240),
+            ("analytics_refresh_seconds", 1, 3600),
+            ("analytics_freshness_seconds", 5, 86_400),
+        ):
+            if not low <= getattr(self, name) <= high:
+                raise ValueError(f"AVN_{name.upper()} must be between {low} and {high}")
 
     @property
     def nutbot_home(self):
@@ -67,6 +92,13 @@ class Settings:
             requests_per_minute=int(os.environ.get("AVN_REQUESTS_PER_MINUTE", "120")),
             max_export_bytes=int(os.environ.get("AVN_MAX_EXPORT_BYTES", "268435456")),
             read_cache_seconds=int(os.environ.get("AVN_READ_CACHE_SECONDS", "60")),
+            analytics_read_mode=_text("AVN_ANALYTICS_READ_MODE", "legacy").lower(),
+            analytics_worker_default_enabled=_flag("AVN_ANALYTICS_WORKER_DEFAULT_ENABLED", True),
+            analytics_batch_rows=int(_text("AVN_ANALYTICS_BATCH_ROWS", "5000")),
+            analytics_refresh_seconds=int(_text("AVN_ANALYTICS_REFRESH_SECONDS", "10")),
+            analytics_freshness_seconds=int(_text("AVN_ANALYTICS_FRESHNESS_SECONDS", "60")),
+            analytics_active_views=int(_text("AVN_ANALYTICS_ACTIVE_VIEWS", "12")),
+            analytics_storage_bytes=int(_text("AVN_ANALYTICS_STORAGE_BYTES", "268435456")),
             public_ingest_url=os.environ.get("AVN_PUBLIC_INGEST_URL", "").rstrip("/"),
             access_team_domain=os.environ.get("AVN_ACCESS_TEAM_DOMAIN", "")
             .strip()

@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from . import insights
+from . import analytics, insights, materialize, views
 from .config import Settings
 from .models import Batch, EventDefinition, GameCreate, GameUpdate, timestamp
 from .readcache import ReadCache
@@ -109,6 +109,7 @@ class Storage:
             ):
                 if column not in game_columns:
                     connection.execute(f"ALTER TABLE games ADD COLUMN {column} INTEGER")
+            materialize.install_control(connection, self.settings.analytics_worker_default_enabled)
             game_ids = [row["id"] for row in connection.execute("SELECT id FROM games")]
         for game_id in game_ids:
             if self.game_path(game_id).exists():
@@ -191,6 +192,8 @@ class Storage:
                   AND json_type(payload, '$.params.environment')='text'
                 ORDER BY client_ts
             """)
+        analytics.install(connection)
+        views.install(connection)
 
     def game_path(self, game_id):
         return self.root / "games" / f"{game_id}.sqlite3"
@@ -526,11 +529,13 @@ class Storage:
             if declared and event.session_id:
                 environments[event.session_id] = declared.strip().lower()[:64]
         with self.connect(self.game_path(game_id)) as connection:
-            connection.executemany(
-                "INSERT INTO events VALUES (?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING",
+            # rowcount counts only the events this statement stored: not duplicates, and not the
+            # facts rows its trigger writes alongside them (see analytics.py).
+            accepted = connection.executemany(
+                "INSERT INTO events (event_id, name, client_ts, server_ts, payload)"
+                " VALUES (?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING",
                 rows,
-            )
-            accepted = connection.total_changes
+            ).rowcount
             connection.executemany(
                 "INSERT INTO sessions VALUES (?, ?) "
                 "ON CONFLICT(session_id) DO UPDATE SET environment=excluded.environment",

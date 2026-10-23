@@ -721,3 +721,46 @@ assert.equal(notices[0].removed,true);
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_analytics_processing_panel_names_every_state_and_what_is_waiting():
+    static = Path(__file__).parents[1] / "avn_analytics/static"
+    script = (static / "processing.js").read_text()
+    helpers = script[script.index("const PROCESSING_STATES") : script.index("async function")]
+    checks = """
+import assert from 'node:assert/strict';
+const number = value => String(value);
+for (const state of ['running', 'catching_up', 'starting', 'stopping', 'stopped', 'unavailable']) {
+  const [, label, explain] = PROCESSING_STATES[state];
+  assert.ok(label && explain, state);  // a word and a sentence, never colour alone
+}
+assert.match(PROCESSING_STATES.stopped[2], /still collected/);
+assert.match(PROCESSING_STATES.unavailable[2], /still collected/);
+assert.equal(processingWaiting({pending: {}}), 'Nothing');
+assert.equal(
+  processingWaiting({pending: {facts_remaining: 1200, views_waiting: 2, lag_seconds: 41.6}}),
+  '1200 older events to copy or check · 2 answers to bring up to date'
+    + ' · oldest prepared answer 42 s old');
+assert.equal(processingFacts({facts: {ready: true}}), 'Ready');
+assert.equal(processingFacts({facts: {ready: false, phase: 'backfill', done: 50, total: 200}}),
+  'Copying older events · 25% of this step');
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input="const PROCESSING_URL = '';\n" + helpers + checks,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    app = (static / "app.js").read_text()
+    index = (static / "index.html").read_text()
+    assert '<script src="/assets/processing.js" defer></script>' in index
+    assert index.index("processing.js") < index.index("app.js")
+    assert "if (me.can_manage_team) mountProcessingPanel(" in app
+    assert (
+        '${me.can_manage_team ? \'<section class="panel section-spacing" id="processing-panel">'
+        in app
+    )
+    # The status refresh rewrites text only (focus stays put) and pauses while a change is saved.
+    assert "root.isConnected" in script and "toggle.disabled) return" in script

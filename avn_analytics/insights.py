@@ -7,6 +7,7 @@ Filters narrow every query to an environment, app version, build, country or pla
 
 import json
 import re
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from statistics import median
@@ -14,7 +15,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from . import rules, stories
+from . import analytics, rules, stories
 from .models import timestamp
 
 PLAYER = "coalesce(json_extract(payload, '$.user_id'), json_extract(payload, '$.device_id'))"
@@ -47,6 +48,105 @@ DIMENSIONS = {
     "country": "coalesce(json_extract(payload, '$.country'), 'unknown')",
     "platform": "coalesce(json_extract(payload, '$.platform'), 'unknown')",
 }
+
+FACT_REPORTED_ENVIRONMENT = (
+    "coalesce(analytics_facts.environment,"
+    " (SELECT environment FROM sessions WHERE sessions.session_id=analytics_facts.session_id),"
+    " CASE WHEN analytics_facts.platform='editor' THEN 'editor' END, 'unknown')"
+)
+FACT_ENVIRONMENT = (
+    "coalesce((SELECT fix.to_environment FROM environment_fixes AS fix"
+    f" WHERE fix.from_environment = {FACT_REPORTED_ENVIRONMENT}"
+    "   AND (fix.app_version IS NULL OR fix.app_version = analytics_facts.app_version)"
+    "   AND (fix.build IS NULL OR fix.build = analytics_facts.build)"
+    f" ORDER BY fix.id LIMIT 1), {FACT_REPORTED_ENVIRONMENT})"
+)
+
+
+@dataclass(frozen=True)
+class Source:
+    """Where a dashboard query reads events, and the SQL for each value it needs.
+
+    LEGACY reads the raw events and takes every value out of their JSON; FACTS reads the analytics
+    facts (analytics.py), where those values are plain columns. Both give the same answers: the
+    environment still comes from the event, else its session, else the platform, with fixes
+    applied, and the parameters are the same JSON. Queries name the table without an alias, as
+    the environment's subqueries refer to it by name.
+    """
+
+    table: str
+    player: str
+    session: str
+    environment: str
+    dimensions: dict
+    params: str  # the event's parameters, as JSON text
+    fields: dict = field(default_factory=dict)  # envelope field -> SQL, when not json_extract
+    facts: bool = False
+
+    @property
+    def identified(self):
+        return f"{self.player} IS NOT NULL"
+
+    def envelope(self, name):
+        """A top-level envelope value: user_id, device_id, app_version, build, country..."""
+        return self.fields.get(name) or f"json_extract(payload, '$.{name}')"
+
+    def param(self, key):
+        """One parameter's value (key is a plain name)."""
+        if self.facts:
+            return f"json_extract(params, '$.{key}')"
+        return f"json_extract(payload, '$.params.{key}')"
+
+
+LEGACY = Source(
+    table="events",
+    player=PLAYER,
+    session=SESSION,
+    environment=ENVIRONMENT,
+    dimensions=DIMENSIONS,
+    params="json_extract(payload, '$.params')",
+)
+FACTS = Source(
+    table="analytics_facts",
+    player="player",
+    session="session_id",
+    environment=FACT_ENVIRONMENT,
+    dimensions={
+        "environment": FACT_ENVIRONMENT,
+        **{
+            name: f"coalesce({name}, 'unknown')"
+            for name in ("app_version", "build", "country", "platform")
+        },
+    },
+    params="params",
+    fields={
+        name: name
+        for name in (
+            "user_id",
+            "device_id",
+            "session_id",
+            "app_version",
+            "build",
+            "country",
+            "platform",
+        )
+    },
+    facts=True,
+)
+READ_MODES = ("legacy", "facts", "prepared")
+
+
+def read_source(storage, connection):
+    """FACTS when this server reads facts (AVN_ANALYTICS_READ_MODE) and the game's are complete.
+
+    A game whose facts are still being copied or checked is read from its raw events, for the
+    whole query: an answer never mixes the two.
+    """
+    if storage.settings.analytics_read_mode != "legacy" and analytics.facts_ready(connection):
+        return FACTS
+    return LEGACY
+
+
 FILTER_FIELDS = {
     "environments": "environment",
     "app_versions": "app_version",
@@ -66,45 +166,46 @@ BREAKDOWN_SEGMENTS = 12
 RETENTION_DAYS = (1, 3, 7, 14, 30)
 
 
-def where(start, end, filters=None, column="client_ts"):
+def where(start, end, filters=None, column="client_ts", source=LEGACY):
     """SQL condition and arguments for the day range plus any filters.
 
     column picks which timestamp bounds the range (client_ts by default; exports can use server_ts).
     """
     clauses, args = [f"{column}>=? AND {column}<?"], [start, end]
     filters = filters or {}
-    for field, dimension in FILTER_FIELDS.items():
-        values = filters.get(field) or []
+    for field_name, dimension in FILTER_FIELDS.items():
+        values = filters.get(field_name) or []
         if values:
-            clauses.append(f"{DIMENSIONS[dimension]} IN ({','.join('?' * len(values))})")
+            clauses.append(f"{source.dimensions[dimension]} IN ({','.join('?' * len(values))})")
             args += values
     excluded = filters.get("exclude_environments") or []
     if excluded:
-        clauses.append(f"{ENVIRONMENT} NOT IN ({','.join('?' * len(excluded))})")
+        clauses.append(f"{source.environment} NOT IN ({','.join('?' * len(excluded))})")
         args += excluded
     return " AND ".join(clauses), args
 
 
-def scope_events(connection, start, end, filters=None, only=None, table="scoped"):
+def scope_events(connection, start, end, filters=None, only=None, table="scoped", source=LEGACY):
     """Copy the events of these days and filters into a temporary table of plain columns.
 
-    Every number on a dashboard page needs the same few values out of each event's JSON (who, which
-    session, which environment, version, build, country, platform), and deriving them again for
-    each count is most of what a page costs. This reads the raw events once; the page's counts then
-    read this narrow table, which lives only as long as the connection. Nothing is stored. `only`
-    keeps one event name.
+    Every number on a dashboard page needs the same few values of each event (who, which session,
+    which environment, version, build, country, platform), and deriving them again for each count
+    is most of what a page costs. This reads them once; the page's counts then read this narrow
+    table, which lives only as long as the connection. Nothing is stored. `only` keeps one event
+    name.
     """
-    condition, args = where(start, end, filters)
+    condition, args = where(start, end, filters, source=source)
     if only is not None:
         condition, args = f"name=? AND {condition}", [only, *args]
+    dimensions = source.dimensions
     connection.execute(f"DROP TABLE IF EXISTS temp.{table}")
     connection.execute(
         f"""CREATE TEMP TABLE {table} AS
-            SELECT client_ts, name, {PLAYER} AS player, {SESSION} AS session_id,
-                   {ENVIRONMENT} AS environment, {DIMENSIONS["app_version"]} AS app_version,
-                   {DIMENSIONS["build"]} AS build, {DIMENSIONS["country"]} AS country,
-                   {DIMENSIONS["platform"]} AS platform
-            FROM events WHERE {condition}""",
+            SELECT client_ts, name, {source.player} AS player, {source.session} AS session_id,
+                   {source.environment} AS environment,
+                   {dimensions["app_version"]} AS app_version, {dimensions["build"]} AS build,
+                   {dimensions["country"]} AS country, {dimensions["platform"]} AS platform
+            FROM {source.table} WHERE {condition}""",
         args,
     )
     return table
@@ -122,7 +223,7 @@ def facets(storage, game_id, start, end):
     storage.get_game(game_id)
     result = {}
     with storage.connect(storage.game_path(game_id)) as connection:
-        scoped = scope_events(connection, start, end)
+        scoped = scope_events(connection, start, end, source=read_source(storage, connection))
         for column in SCOPED_DIMENSIONS:
             result[column] = [
                 dict(row)
@@ -197,7 +298,8 @@ def summary(storage, game_id, start, end, filters, timezone_offset_minutes=0):
     earliest = min(previous_start, _day_start(end_moment - timedelta(days=30)))
     inside = "client_ts>=? AND client_ts<?"
     with storage.connect(storage.game_path(game_id)) as connection:
-        scoped = scope_events(connection, earliest, end, filters)
+        source = read_source(storage, connection)
+        scoped = scope_events(connection, earliest, end, filters, source=source)
         totals = dict(
             connection.execute(
                 f"SELECT count(*) AS events, count(DISTINCT player) AS players, "
@@ -791,7 +893,6 @@ def players(
     See rules.py for what a condition and a metric are.
     """
     storage.get_game(game_id)
-    condition, args = where(start, end, filters)
     if sort in PLAYER_SORTS:
         order_by = PLAYER_SORTS[sort]
     elif sort.startswith("metric") and sort[6:].isdigit() and int(sort[6:]) < len(metrics):
@@ -799,60 +900,68 @@ def players(
     else:
         raise HTTPException(400, "Unknown sort")
     direction = "ASC" if order == "asc" else "DESC"
-    columns, column_args = [], []
-    for position, metric in enumerate(metrics):
-        try:
-            expr, expr_args = rules.metric_sql(metric)
-        except ValueError as error:
-            raise HTTPException(400, str(error)) from error
-        columns.append(f", {expr} AS m{position}")
-        column_args += expr_args
-    clauses, having_args = [], []
-    if search:
-        clauses.append("player LIKE ?")
-        having_args.append(f"%{search}%")
-    for rule in conditions:
-        try:
-            expr, expr_args = rules.count_sql(rule)
-        except ValueError as error:
-            raise HTTPException(400, str(error)) from error
-        if rule.get("does") == "didnt":
-            clauses.append(f"coalesce({expr}, 0) = 0")
-        else:
-            clauses.append(f"coalesce({expr}, 0) >= ?")
-            expr_args = [*expr_args, rule.get("min_times") or 1]
-        having_args += expr_args
-    having = f"HAVING {' AND '.join(clauses)}" if clauses else ""
     with storage.connect(storage.game_path(game_id)) as connection:
+        source = read_source(storage, connection)
+        document = rules.PARAMS if source.facts else rules.PAYLOAD
+        if sort == "version" and source.facts:
+            # The facts have an app_version column, which an ORDER BY expression would read
+            # instead of the result's app_version: sort by the aggregate itself.
+            order_by = "version_key(newest_version(app_version))"
+        condition, args = where(start, end, filters, source=source)
+        columns, column_args = [], []
+        for position, metric in enumerate(metrics):
+            try:
+                expr, expr_args = rules.metric_sql(metric, document)
+            except ValueError as error:
+                raise HTTPException(400, str(error)) from error
+            columns.append(f", {expr} AS m{position}")
+            column_args += expr_args
+        clauses, having_args = [], []
+        if search:
+            clauses.append("player LIKE ?")
+            having_args.append(f"%{search}%")
+        for rule in conditions:
+            try:
+                expr, expr_args = rules.count_sql(rule, document)
+            except ValueError as error:
+                raise HTTPException(400, str(error)) from error
+            if rule.get("does") == "didnt":
+                clauses.append(f"coalesce({expr}, 0) = 0")
+            else:
+                clauses.append(f"coalesce({expr}, 0) >= ?")
+                expr_args = [*expr_args, rule.get("min_times") or 1]
+            having_args += expr_args
+        having = f"HAVING {' AND '.join(clauses)}" if clauses else ""
+        table, player, session = source.table, source.player, source.session
         connection.create_function("version_key", 1, version_key, deterministic=True)
         connection.create_aggregate("newest_version", 1, _NewestVersion)
         connection.create_aggregate("average_session_length", 4, _AverageSessionLength)
         anonymous_events = connection.execute(
-            f"SELECT count(*) FROM events WHERE {condition} AND NOT ({IDENTIFIED})", args
+            f"SELECT count(*) FROM {table} WHERE {condition} AND NOT ({source.identified})", args
         ).fetchone()[0]
         total = connection.execute(
-            f"SELECT count(*) FROM (SELECT {PLAYER} AS player FROM events "
-            f"WHERE {condition} AND {IDENTIFIED} "
+            f"SELECT count(*) FROM (SELECT {player} AS player FROM {table} "
+            f"WHERE {condition} AND {source.identified} "
             f"GROUP BY player {having})",
             (*args, *having_args),
         ).fetchone()[0]
         session_length = (
-            f"average_session_length({SESSION}, name, "
-            "json_extract(payload, '$.params.duration_seconds'), client_ts)"
+            f"average_session_length({session}, name, "
+            f"{source.param('duration_seconds')}, client_ts)"
         )
         rows = connection.execute(
-            f"""SELECT {PLAYER} AS player, count(*) AS events,
-                       count(DISTINCT {SESSION}) AS sessions,
+            f"""SELECT {player} AS player, count(*) AS events,
+                       count(DISTINCT {session}) AS sessions,
                        {session_length} AS avg_session_seconds,
-                       {session_length} * count(DISTINCT {SESSION}) AS total_play_seconds,
+                       {session_length} * count(DISTINCT {session}) AS total_play_seconds,
                        min(client_ts) AS first_seen, max(client_ts) AS last_seen,
-                       max(json_extract(payload, '$.platform')) AS platform,
-                       newest_version(json_extract(payload, '$.app_version')) AS app_version,
-                       max(json_extract(payload, '$.country')) AS country,
-                       max({ENVIRONMENT}) AS environment,
-                       max(json_extract(payload, '$.user_id') IS NOT NULL) AS has_user_id
+                       max({source.envelope("platform")}) AS platform,
+                       newest_version({source.envelope("app_version")}) AS app_version,
+                       max({source.envelope("country")}) AS country,
+                       max({source.environment}) AS environment,
+                       max({source.envelope("user_id")} IS NOT NULL) AS has_user_id
                        {"".join(columns)}
-                FROM events WHERE {condition} AND {IDENTIFIED} GROUP BY player {having}
+                FROM {table} WHERE {condition} AND {source.identified} GROUP BY player {having}
                 ORDER BY {order_by} IS NULL, {order_by} {direction}, last_seen DESC, player
                 LIMIT ? OFFSET ?""",
             (*column_args, *args, *having_args, limit, offset),
@@ -877,6 +986,13 @@ def players(
         }
 
 
+# The envelope fields a timeline shows, as the facts hold them.
+ENVELOPE = ("session_id", "app_version", "build", "platform", "country")
+# Facts timelines number their pages from here, so a page link made while reading raw events
+# (whose snapshots are event row numbers, far below this) is never mistaken for a facts one.
+FACTS_SNAPSHOT = 2**62
+
+
 def journey(storage, game_id, player, start, end, offset=0, snapshot=None):
     """Every event of one player in the range, in game-time order (filters don't apply).
 
@@ -884,22 +1000,45 @@ def journey(storage, game_id, player, start, end, offset=0, snapshot=None):
     """
     storage.get_game(game_id)
     labeler = stories.Labeler(storage.get_dictionary(game_id))
-    condition, args = where(start, end)
     with storage.connect(storage.game_path(game_id)) as connection:
-        if snapshot is None:
-            snapshot = connection.execute("SELECT coalesce(max(rowid), 0) FROM events").fetchone()[
-                0
-            ]
-        rows = connection.execute(
-            f"""SELECT event_id, name, client_ts, server_ts, payload,
-                       {ENVIRONMENT} AS environment
-                FROM events WHERE {condition} AND {PLAYER}=? AND rowid<=?
-                ORDER BY client_ts, event_id LIMIT ? OFFSET ?""",
-            (*args, player, snapshot, MAX_JOURNEY_EVENTS + 1, offset),
-        ).fetchall()
+        source = read_source(storage, connection)
+        condition, args = where(start, end, source=source)
+        # snapshot pins the events the first page saw, so later pages don't shift as new ones
+        # arrive. Raw events count by row number, facts by their id plus FACTS_SNAPSHOT.
+        if source.facts:
+            if snapshot is None or snapshot < FACTS_SNAPSHOT:
+                snapshot = (
+                    FACTS_SNAPSHOT
+                    + connection.execute(
+                        "SELECT coalesce(max(id), 0) FROM analytics_facts"
+                    ).fetchone()[0]
+                )
+            rows = connection.execute(
+                f"""SELECT event_id, name, client_ts, server_ts, session_id, params, app_version,
+                           build, platform, country, {source.environment} AS environment
+                    FROM analytics_facts WHERE {condition} AND player=? AND id<=?
+                    ORDER BY client_ts, event_id LIMIT ? OFFSET ?""",
+                (*args, player, snapshot - FACTS_SNAPSHOT, MAX_JOURNEY_EVENTS + 1, offset),
+            ).fetchall()
+        else:
+            if snapshot is None or snapshot >= FACTS_SNAPSHOT:
+                snapshot = connection.execute(
+                    "SELECT coalesce(max(rowid), 0) FROM events"
+                ).fetchone()[0]
+            rows = connection.execute(
+                f"""SELECT event_id, name, client_ts, server_ts, payload,
+                           {ENVIRONMENT} AS environment
+                    FROM events WHERE {condition} AND {PLAYER}=? AND rowid<=?
+                    ORDER BY client_ts, event_id LIMIT ? OFFSET ?""",
+                (*args, player, snapshot, MAX_JOURNEY_EVENTS + 1, offset),
+            ).fetchall()
     events = []
     for row in rows[:MAX_JOURNEY_EVENTS]:
-        payload = json.loads(row["payload"])
+        if source.facts:
+            payload = {key: row[key] for key in ENVELOPE}
+            payload["params"] = json.loads(row["params"]) if row["params"] is not None else None
+        else:
+            payload = json.loads(row["payload"])
         params = {
             key: value
             for key, value in (payload.get("params") or {}).items()

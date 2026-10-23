@@ -1601,3 +1601,9 @@ body:has(.level-page-split.has-pane) main{max-width:1800px}
 .loading-note{display:flex;align-items:center;gap:10px;margin:0 0 14px;padding:10px 12px;background:var(--bg-nested);color:var(--text-muted);border:1px solid var(--line);border-radius:8px;font-size:var(--fs-label)}
 .loading-note [data-note-text]{flex:1;min-width:0}
 .loading-elapsed{flex:none;font-variant-numeric:tabular-nums}
+
+/* Analytics processing controls follow the Calm layer. */
+#processing-panel .button, #processing-panel summary { min-height: 44px; }
+#processing-panel summary { display: flex; align-items: center; cursor: pointer; }
+#processing-panel .status-list > li > span { text-transform: none; letter-spacing: normal; font-family: inherit; }
+#processing-panel .status-list strong { overflow-wrap: anywhere; }

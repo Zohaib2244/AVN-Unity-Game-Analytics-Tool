@@ -35,6 +35,7 @@ from . import (
     highlights,
     insights,
     journeys,
+    materialize,
     sdk_package,
 )
 from .auth import AccessVerifier, Accounts, Principal
@@ -69,6 +70,7 @@ from .models import (
     SavedHighlight,
     TeamAdd,
     TeamUpdate,
+    WorkerControl,
     WorkspaceCreate,
     WorkspaceMove,
     WorkspaceNutBot,
@@ -153,6 +155,12 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
 
     def cached(game_id, kind, parts, compute):
         """The slow dashboard reads, kept for AVN_READ_CACHE_SECONDS (see readcache.py)."""
+        if settings.analytics_read_mode == "prepared" and kind == "summary":
+            from . import views
+
+            # Prepared answers enforce their own source freshness. Other dashboard families
+            # still benefit from the response cache; Levels handles its shared scan directly.
+            return views.answer(storage, str(game_id), kind, parts, compute)
         return storage.reads.get(storage, str(game_id), (kind, parts), compute)
 
     verifier = (
@@ -721,6 +729,15 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             background=BackgroundTask(output.unlink, missing_ok=True),
         )
 
+    @admin_api.get("/v1/games/{game_id}/insights/processing")
+    def insights_processing(game_id: UUID):
+        # Scoped game authorization is inherited from the router. Do not expose global jobs,
+        # control revisions, identities, or errors to ordinary game readers.
+        storage.get_game(str(game_id))
+        with storage.connect(storage.root / "registry.sqlite3") as connection:
+            desired = materialize.read_control(connection)["desired"]
+        return {"paused": desired == "stopped"}
+
     @admin_api.get("/v1/games/{game_id}/insights/facets")
     def insights_facets(
         game_id: UUID, start: DateParam, end: DateParam, tz_offset: TimezoneOffset = 0
@@ -1100,6 +1117,21 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     @admin_api.get("/v1/audit")
     def audit_log(principal: TeamAdmin):
         return accounts.audit_log()
+
+    # The analytics worker serves every game and workspace: only global admins see or change it.
+    @admin_api.get("/v1/admin/analytics-worker")
+    def analytics_worker(response: Response, principal: TeamAdmin):
+        response.headers["Cache-Control"] = "no-store"
+        return materialize.describe(storage)
+
+    @admin_api.put("/v1/admin/analytics-worker")
+    def set_analytics_worker(body: WorkerControl, response: Response, principal: TeamAdmin):
+        response.headers["Cache-Control"] = "no-store"
+        control = materialize.set_desired(storage, body.desired, principal.email)
+        if control["changed"]:
+            action = "analytics.start" if body.desired == "running" else "analytics.stop"
+            accounts.audit(principal, action, None, f"control revision {control['revision']}")
+        return materialize.describe(storage)
 
     app.include_router(admin_api)
     return app
