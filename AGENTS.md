@@ -19,7 +19,8 @@ full picture; `DEPLOYMENT.md` for self-hosting.
 - `avn_analytics/readcache.py` — short-lived cache for the slow dashboard reads (`AVN_READ_CACHE_SECONDS`). Slow reads that count events should read them once (`insights.scope_events` copies the days and filters into a temporary table of plain columns) rather than re-deriving each value from the JSON for every count
 - `avn_analytics/analytics.py` — stable per-event facts and resumable verification; raw events remain authoritative. Bump `SCHEMA_VERSION` when changing the extracted facts format.
 - `avn_analytics/materialize.py` + `views.py` — worker lifecycle and exact prepared answers. Bump `views.VERSION` when changing reducer/interpretation semantics so old generations cannot be reused. Staging and publication must be fenced by source revisions, control cancellation and worker lease ownership.
-- `avn_analytics/website.py` + `avn_analytics/static/` — admin website (vanilla JS/CSS, no build step)
+- `avn_analytics/website.py` — serves the admin website: `index.html` for every page route and `/assets/*` from `avn_analytics/static/`, which is the **Vite build output of `web/`** (gitignored; `scripts/check.sh` and the Dockerfile build it)
+- `web/` — the admin website source: React 18 + TypeScript + Vite on `@avn/ui` (the shared components from AVN-Style), TanStack Query / Router / Table / Virtual, Motion, Radix. `web/src/app/` (providers, router, shell, session), `web/src/api/` (request contract, query layer), `web/src/lib/` (pure helpers: formats, filters, conditions), `web/src/components/` (feedback, filters, date range, editors), `web/src/pages/` (one folder or file per page), `web/src/styles/` (CSS layers), `web/e2e/` (Playwright self-check). `web/PORTING.md` is the map
 - `avn_analytics/exports.py` — export ZIPs (Parquet, JSONL, `events.md`, `ANALYSIS.md`)
 - `avn_analytics/nutbot.py` — NutBot assistant (shells out to agent CLIs)
 - `avn_analytics/skill/` — the analysis skill shipped inside exports
@@ -30,9 +31,11 @@ full picture; `DEPLOYMENT.md` for self-hosting.
 ## Commands
 
 ```bash
-scripts/setup.sh   # create .venv and install deps (run once per checkout/worktree)
-scripts/check.sh   # ruff check + ruff format --check + pytest — must pass before you finish
-scripts/dev.sh     # admin website on 127.0.0.1:${PORT:-8201} with a throwaway ./data
+scripts/setup.sh   # create .venv, install Python deps and `npm ci` in web/ (run once per checkout/worktree; needs Node 20+)
+scripts/check.sh   # web typecheck + Vitest + build, then ruff check + ruff format --check + pytest — must pass before you finish
+scripts/dev.sh     # admin website on 127.0.0.1:${PORT:-8201} with a throwaway ./data (serves the last web build)
+cd web && npm run dev   # live-reloading website on 127.0.0.1:5190, proxying /v1 to the server above
+cd web && npm run e2e   # Playwright screenshot self-check at three widths (needs scripts/dev.sh running)
 scripts/release.sh # (owner) run the gate, tag main vX.Y.Z, push
 scripts/deploy.sh  # (owner) deploy the newest tag on the server, health-checked, auto-rollback
 docker compose exec -T admin python - < scripts/measure_speed.py  # (owner) read-only: events per game and how long each page takes
@@ -54,9 +57,12 @@ tests through `scripts/check.sh` (or `. scripts/_env.sh` first); a bare
 - Never commit `.env`, anything under `data/`, API keys or tokens. Never read or modify real data directories.
 - Keep the repo generic: no hostnames, IPs, domains or personal deployment details. Per-server settings live outside git (`.env`, `compose.override.yaml`, both gitignored; commit only the `*.example`).
 - Releases and deploys are the owner's job: `scripts/release.sh` tags and pushes, `scripts/deploy.sh` updates the server. Agents never run them.
-- Design: follow AVN-Style (`SKILL.md` in the AVN-Style repo; the `avn-design` skill). UX: avn-ux · Style: avn-family. Read the skill before changing UI.
-  - The website is plain HTML/CSS/JS with no build step. Colours, fonts and shapes come from the contract roles in `static/avn-family-tokens.css` (`--bg`, `--panel`, `--text`, `--accent`, ...). The older names in `style.css` (`--bg-card`, `--text-muted`, ...) are aliases of those roles; new CSS uses the roles. Fonts are self-hosted in `static/fonts/` because the Content-Security-Policy only allows this origin.
-  - The app shell (sidebar, top bar, command palette, rail, tab bar) is `static/shell.js` + `static/avn-shell.css`. Shared UX tools (toasts and the notifications bell, popovers, the inspector drawer, definition tooltips, auto-refresh, shortcuts, entrance motion) are `static/ux.js`; animation is Motion (vendored in `static/vendor/motion.js`, MIT) wrapped by `static/motion-ui.js` as `mo.*`: page open/leave, count-ups, charts growing, overlays in and out, nav glide, press and lift. Animate only opacity and transform, play once, and call `mo.*` rather than the library directly so reduced motion is honoured in one place. Flavour (block piles, Dora, the mini PC, the boot screen) is `static/flavour.js` + `static/avn-flavour.css`. CSS layers load in this order: tokens, `style.css` (older page rules), `avn-shell.css`, `avn-ui.css` (skill components), `avn-briefing.css`, `avn-pages.css`, `avn-flavour.css`. No inline `style="…"` in markup (CSP): set styles from CSS classes.
-  - A page follows one pattern from the skill (briefing overview, list, settings, ...): summary before detail, one accent-filled button per area, every state has a word, three widths (wide, rail, phone tab bar), dark and light, two palettes checked.
+- Design: follow AVN-Style (`SKILL.md` in the AVN-Style repo; installed as the `avn-design` skill, with `avn-ux` for the UX rules). UX: avn-ux · Style: avn-family. Read the skill before changing UI.
+  - Stack (from `ux/references/stack.md`): React 18 + TypeScript (strict) + Vite, plain CSS, Motion (`motion/react`), `@avn/ui` for every shared component (shell, nav, drawer, dialogs, pickers, toasts, command palette, tags, KPIs, charts, rule editor, highlights, NutBot panel), TanStack Query for server data, TanStack Router for routes and URL state, TanStack Table/Virtual for dense tables, Radix through `@avn/ui`, Vitest + Testing Library for tests, Playwright for the three-width screenshot check. No Tailwind, no CSS-in-JS.
+  - `@avn/ui` is vendored as a tarball in `web/vendor/` (it is not on npm). To update it: clone AVN-Style, `npm install && npm run build`, `cd packages/ui && npm pack`, copy the `.tgz` over and `npm install` in `web/`.
+  - Colours, fonts and shapes come only from the contract roles (`--bg`, `--panel`, `--text`, `--accent`, ...) loaded from `@avn/ui/css/avn-family/tokens.css`; app CSS lives in `web/src/styles/` (`legacy.css` = the pre-React page rules, `pages.css`, `shell.css`, `briefing.css`, `flavour.css`, `app.css` for new rules) and uses roles only. Fonts are self-hosted in `web/public/fonts/` because the Content-Security-Policy only allows this origin; the CSP also forbids inline `<script>`/`<style>`/`style=""` in markup (React's `style={{}}` props are set through the CSSOM and are fine).
+  - Data: `useRead` (reads, shared cache, previous answer shown while a new one loads) and `write` (any change; clears the cache) in `web/src/api/`; never `fetch` directly except for binary downloads. Loading, errors, empty states, toasts (Undo for reversible actions), typed-name confirmations and definitions are in `web/src/components/feedback.tsx`. Animation goes through `motion/react` or `@avn/ui` components, opacity and transform only, once, honouring reduced motion.
+  - A page follows one pattern from the skill (briefing overview, list, settings, ...): summary before detail, one accent-filled button per area, every state has a word, three widths (wide, rail, phone tab bar), dark and light, two palettes checked (`npm run e2e` takes the screenshots).
+  - Pure browser logic that must agree with the server (`web/src/lib/conditions.ts`, `player-events.ts`) is written in erasable TypeScript so `tests/test_conditions.py` and `tests/test_player_events.py` can run it directly with Node.
 - Raw events are kept indefinitely and SQLite may hold committed data in `-wal` files: never "clean up" data files as part of a change.
 - Don't push, merge or open PRs yourself; leave the branch for review.

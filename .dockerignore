@@ -2,11 +2,14 @@
 !requirements.lock
 !avn_analytics/
 !avn_analytics/*.py
-!avn_analytics/static/
-!avn_analytics/static/*
 !avn_analytics/skill/
 !avn_analytics/skill/*
 !avn_analytics/avn_events_standard/
 !avn_analytics/avn_events_standard/*
 !avn_analytics/sdk/
 !avn_analytics/sdk/*
+!web/
+web/node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/

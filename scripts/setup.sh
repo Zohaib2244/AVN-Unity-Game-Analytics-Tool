@@ -25,4 +25,11 @@ if ! sqlite_ok; then
   sqlite_ok || { echo "setup: SQLite build did not take effect" >&2; exit 1; }
 fi
 
+if command -v npm >/dev/null; then
+  echo "setup: installing website dependencies (web/)"
+  (cd web && npm ci --no-audit --no-fund --silent)
+else
+  echo "setup: npm not found; the admin website needs Node 20+ (web/) to build" >&2
+fi
+
 echo "setup: ok ($(.venv/bin/python --version), SQLite $(.venv/bin/python -c 'import sqlite3; print(sqlite3.sqlite_version)'))"

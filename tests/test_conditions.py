@@ -11,6 +11,20 @@ import pytest
 from avn_analytics.conditions import condition_sql
 from avn_analytics.models import EventConditionGroup
 
+WEB = Path(__file__).parents[1] / "web" / "src" / "lib"
+
+
+def run_node(script: str) -> subprocess.CompletedProcess:
+    """Runs an ES module with Node; the browser modules are plain TypeScript Node can load."""
+    return subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=script,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        cwd=WEB,
+    )
+
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
 def test_nested_conditions_agree_in_browser_and_sql():
@@ -70,9 +84,10 @@ def test_nested_conditions_agree_in_browser_and_sql():
                     )
                 ]
             )
-    script = (Path(__file__).parents[1] / "avn_analytics/static/conditions.js").read_text()
     checks = f"""
 import assert from 'node:assert/strict';
+import {{conditionError, eventMatchesCondition, matchingConditionParams, conditionGroup,
+  paramCondition, highlightMatchIndices, highlightNavigationIndex}} from './conditions.ts';
 const events = {json.dumps(events)};
 const trees = {json.dumps(trees)};
 const expected = {json.dumps(expected)};
@@ -106,11 +121,5 @@ assert.equal(highlightNavigationIndex(indices, 0, false), 8);
 assert.equal(highlightNavigationIndex([], 0), -1);
 assert.deepEqual(events, originalEvents); // highlights never filter or mutate the timeline
 """
-    result = subprocess.run(
-        [shutil.which("node"), "--input-type=module"],
-        input=script + checks,
-        text=True,
-        capture_output=True,
-        timeout=10,
-    )
+    result = run_node(checks)
     assert result.returncode == 0, result.stderr

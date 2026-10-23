@@ -574,17 +574,18 @@ Any reverse proxy or tunnel works if it forwards only `POST /v1/events` to the i
 
 ## Development
 
-Python 3.12+ and a SQLite build with the WAL-reset fix (3.51.3+, or the 3.44.6 / 3.50.7 backports); the Docker image compiles a pinned version.
+Python 3.12+, Node 20+ (for the website) and a SQLite build with the WAL-reset fix (3.51.3+, or the 3.44.6 / 3.50.7 backports); the Docker image compiles a pinned version.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.lock
-.venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/python -m pytest -q
-.venv/bin/ruff check . && .venv/bin/ruff format --check .
+scripts/setup.sh      # .venv + Python deps, npm ci in web/
+scripts/check.sh      # website typecheck, tests and build; ruff; pytest
+scripts/dev.sh        # the admin website on http://127.0.0.1:8201 with a throwaway ./data
+cd web && npm run dev # live reload on http://127.0.0.1:5190 while editing the website
 ```
 
-The tests cover duplicate retries, concurrent writes, game isolation, key deletion, validation and limits, funnels, players, stories and journeys, levels and the players behind them, retention and time zones, DAU, environment filters and fixes, filtered exports, workspaces and roles, NutBot's tools, rate limiting across instances, export periods and timezones, storage failures, dictionary output, country handling and data-directory relocation.
+The website lives in `web/`: React + TypeScript + Vite on [AVN Style](https://github.com/Zohaib2244/AVN-Style)'s `@avn/ui` components (the `avn-ux` rules with the `avn-family` look), TanStack Query and Router, Motion. `npm run build` writes it to `avn_analytics/static/`, which FastAPI serves; the Dockerfile does this in a Node stage, so a deployment needs no Node on the server.
+
+The tests cover duplicate retries, concurrent writes, game isolation, key deletion, validation and limits, funnels, players, stories and journeys, levels and the players behind them, retention and time zones, DAU, environment filters and fixes, filtered exports, workspaces and roles, NutBot's tools, rate limiting across instances, export periods and timezones, storage failures, dictionary output, country handling and data-directory relocation. The website's own tests (Vitest) cover the request contract, the filter and condition models, the timeline, levels and funnel maths and the dialogs; `tests/test_conditions.py` runs the browser's condition matcher and the server's SQL over the same events.
 
 ## Roadmap
 

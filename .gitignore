@@ -9,6 +9,9 @@ compose.override.yml
 deploy.log
 
 .venv/
+# The admin website is built from web/ (Vite); never commit the output.
+avn_analytics/static/
+web/node_modules/
 data/
 __pycache__/
 *.egg-info/

@@ -274,9 +274,10 @@ To move to a new disk: stop, `rsync -a ./data/ /new/disk/avn-data/`, set `AVN_HO
 
 ## Running without Docker
 
-Needs Python 3.12+ and a patched SQLite (3.51.3+, or the 3.44.6 / 3.50.7 backports). Check with `python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'`; if it is too old, use the Docker image.
+Needs Python 3.12+, Node 20+ (only to build the website once) and a patched SQLite (3.51.3+, or the 3.44.6 / 3.50.7 backports). Check with `python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'`; if it is too old, use the Docker image.
 
 ```bash
+(cd web && npm ci && npm run build)      # writes the website to avn_analytics/static/
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.lock && .venv/bin/pip install -e .
 export AVN_DATA_DIR=/var/lib/avn-analytics AVN_ADMIN_TOKEN='your-long-random-token'

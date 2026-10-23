@@ -10,6 +10,14 @@ RUN curl -fsSLO https://www.sqlite.org/2026/sqlite-autoconf-3510300.tar.gz \
     && ./configure --prefix=/opt/sqlite --disable-static --disable-readline \
     && make -j2 && make install
 
+FROM node:22-alpine AS web-build
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+COPY web/vendor ./vendor
+RUN npm ci --no-audit --no-fund
+COPY web ./
+RUN npm run build
+
 FROM python:3.14-slim
 
 COPY --from=sqlite-build /opt/sqlite/lib/ /opt/sqlite/lib/
@@ -19,6 +27,7 @@ WORKDIR /app
 COPY requirements.lock ./
 RUN pip install --no-cache-dir -r requirements.lock
 COPY avn_analytics ./avn_analytics
+COPY --from=web-build /avn_analytics/static ./avn_analytics/static
 USER 1000:1000
 EXPOSE 8000
 ENTRYPOINT ["python", "-m", "avn_analytics.container"]

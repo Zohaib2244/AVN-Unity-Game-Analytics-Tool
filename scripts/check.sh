@@ -7,6 +7,11 @@ cd "$(dirname "$0")/.."
 
 [ -x .venv/bin/python ] || { echo "check: no .venv, run scripts/setup.sh first" >&2; exit 2; }
 
+if command -v npm >/dev/null; then
+  echo "== web: typecheck, tests, build"; (cd web && npm run --silent check)
+else
+  echo "check: npm not found; the admin website (web/) needs Node 20+" >&2; exit 2
+fi
 echo "== ruff check";  .venv/bin/ruff check .
 echo "== ruff format"; .venv/bin/ruff format --check .
 echo "== pytest";      .venv/bin/python -m pytest -q

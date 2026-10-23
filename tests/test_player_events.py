@@ -9,10 +9,13 @@ import pytest
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node exercises browser logic")
 def test_player_event_counts_scopes_parameters_and_simple_highlight_semantics():
-    assets = Path(__file__).parents[1] / "avn_analytics/static"
-    script = (assets / "conditions.js").read_text() + (assets / "player-events.js").read_text()
+    web = Path(__file__).parents[1] / "web" / "src" / "lib"
     checks = """
 import assert from 'node:assert/strict';
+import {conditionGroup, eventCondition, paramCondition, eventMatchesCondition, simpleHighlightTree,
+  describeHighlight} from './conditions.ts';
+import {analysisValueKey, analysisMatchesFilters, analysisParameterValues, playerEventAnalysis}
+  from './player-events.ts';
 const rows = [
   {event_id:'a',name:'AD_ANALYSIS',session:0,level:null,
     params:{AD_TYPE:'interstitial',STAGE:'shown',LEVEL:1}},
@@ -70,9 +73,10 @@ assert.equal(analysisMatchesFilters(rows[0], new Map([['missing',
 """
     result = subprocess.run(
         [shutil.which("node"), "--input-type=module"],
-        input=script + checks,
+        input=checks,
         text=True,
         capture_output=True,
-        timeout=10,
+        timeout=30,
+        cwd=web,
     )
     assert result.returncode == 0, result.stderr

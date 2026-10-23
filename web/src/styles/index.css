@@ -1,0 +1,10 @@
+/* Load order (avn-design): style tokens → ux components → the app's own layers → flavour. */
+@import '@avn/ui/css/avn-family/tokens.css';
+@import '@avn/ui/css/components.css';
+@import './legacy.css';
+@import './shell.css';
+@import './briefing.css';
+@import './pages.css';
+@import '@avn/ui/css/avn-family/flavour.css';
+@import './flavour.css';
+@import './app.css';
