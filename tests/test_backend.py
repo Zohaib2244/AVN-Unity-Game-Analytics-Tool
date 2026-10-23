@@ -3662,3 +3662,18 @@ def test_prepared_mode_keeps_the_cache_for_other_dashboard_families(
                 admin.get(f"/v1/games/{game['id']}/insights/{kind}", params=DAY).status_code == 200
             )
         assert len(calls) == expected_calls
+
+
+def test_latest_build_is_the_newest_published_version_not_a_test_build(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    # 1.9 and 1.10 are live (1.10 is newer, though "1.9" sorts later as text); 2.0 is editor-only
+    _send_as(ingest, game, "production", [event(device_id="a", app_version="1.9")])
+    _send_as(ingest, game, "production", [event(device_id="b", app_version="1.10")])
+    _send_as(ingest, game, "editor", [event(device_id="dev", app_version="2.0")])
+    base = f"/v1/games/{game['id']}/insights/facets"
+    days = {"start": "2026-10-04", "end": "2026-10-04"}
+    assert admin.get(base, headers=AUTH, params=days).json()["latest_app_version"] == "1.10"
+    # a range with no events has no latest build, and the dashboards then show every version
+    empty = {"start": "2026-10-10", "end": "2026-10-10"}
+    assert admin.get(base, headers=AUTH, params=empty).json()["latest_app_version"] is None

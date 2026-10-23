@@ -71,6 +71,12 @@ function restartToast(item) {
   item._timer = setTimeout(() => dismissToast(item), ms);
 }
 
+// A note in the bell without a toast: for things worth knowing that never need a reaction. Once per key per session.
+const quietNotes = new Set();
+function quietNote(title, msg, key) {
+  if (quietNotes.has(key)) return;
+  quietNotes.add(key); NOTES.push({kind: 'info', title, msg, time: Date.now(), read: false}); saveNotes(); updateBell();
+}
 function updateBell() {
   const unread = NOTES.filter(note => !note.read).length;
   const badge = document.querySelector('#bell-n'); if (!badge) return;

@@ -744,7 +744,13 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     ):
         days = day_range(start, end, tz_offset)
         return cached(
-            game_id, "facets", days, lambda: insights.facets(storage, str(game_id), *days)
+            game_id,
+            "facets",
+            days,
+            lambda: {
+                **insights.facets(storage, str(game_id), *days),
+                "latest_app_version": insights.latest_build(storage, str(game_id), *days),
+            },
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/summary")

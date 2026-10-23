@@ -16,7 +16,7 @@
   --accent-orange: var(--accent);
   --accent-cyan: var(--accent-text);
   --accent-warm: var(--text);
-  --badge-text: var(--accent-ink);
+  --badge-text: var(--accent-text);
   --accent-fill: var(--accent);
   --status-up: var(--ok);
   --status-down: var(--bad);
@@ -157,7 +157,7 @@ code{background:var(--bg-nested);border:1px solid var(--border);border-radius:5p
 .game-card{padding:20px;display:block}
 .game-card.archived{opacity:.7}
 .game-card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
-.game-avatar{width:42px;height:42px;border-radius:10px;background:var(--bg-nested);border:1.5px solid var(--border);box-shadow:2px 2px 0 var(--shadow);color:var(--accent-ink);display:grid;place-content:center;font-family:var(--font-label);font-size:1.15rem}
+.game-avatar{width:42px;height:42px;border-radius:10px;background:var(--bg-nested);border:1.5px solid var(--border);box-shadow:2px 2px 0 var(--shadow);color:var(--accent-text);display:grid;place-content:center;font-family:var(--font-label);font-size:1.15rem}
 .game-card h2{font-size:var(--fs-lead);margin-bottom:6px;color:var(--text-primary);letter-spacing:.03em}
 .game-card .mono{color:var(--text-muted-dim)}
 .game-notes{font-size:var(--fs-label);color:var(--text-muted);margin-top:10px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -895,7 +895,7 @@ tr.level-hard td{background:color-mix(in srgb,var(--status-down) 8%,transparent)
 .retention-cell.retention-3{background:color-mix(in srgb,var(--accent-cyan) 23%,transparent)}
 .retention-cell.retention-4{background:color-mix(in srgb,var(--accent-cyan) 31%,transparent)}
 .retention-table tfoot th{border-top:1px solid var(--line-strong);background:var(--bg-nested)}
-.sample-warning,.pill.sample{color:var(--accent-ink);border:1px solid color-mix(in srgb,var(--accent-orange) 60%,transparent);background:color-mix(in srgb,var(--accent-orange) 8%,transparent)}
+.sample-warning,.pill.sample{color:var(--accent-text);border:1px solid color-mix(in srgb,var(--accent-orange) 60%,transparent);background:color-mix(in srgb,var(--accent-orange) 8%,transparent)}
 .level-number-cell{white-space:nowrap}
 .level-sample-marker{display:inline-block;color:var(--text-muted);font-weight:700;font-size:1.15em;line-height:1;vertical-align:baseline}
 .level-sample-legend{display:inline-block;color:var(--text-muted);margin-left:8px}
@@ -952,7 +952,7 @@ tr.level-hard td{background:color-mix(in srgb,var(--status-down) 8%,transparent)
 th.sortable{padding:0}
 th.sortable button{display:inline-flex;gap:6px;align-items:center;width:100%;padding:12px 20px;border:0;background:transparent;color:inherit;font:inherit;text-transform:inherit;letter-spacing:inherit;cursor:pointer;white-space:nowrap}
 th.sortable.num button{justify-content:flex-end}
-th.sortable:hover button,th.sorted button{color:var(--accent-ink)}
+th.sortable:hover button,th.sorted button{color:var(--accent-text)}
 .sort-arrow{font-size:.7em;min-width:1em}
 th.metric,td.metric{background:color-mix(in srgb,var(--accent-cyan) 7%,transparent)}
 abbr.cc{text-decoration:underline dotted var(--text-muted-dim);text-underline-offset:3px;cursor:help}
@@ -1390,7 +1390,7 @@ p{text-wrap:pretty}
 .analysis-search,.analysis-parameter{display:flex;flex-direction:column;gap:6px;margin:16px 0;max-width:420px}
 .event-analysis-table{width:100%}
 .event-analysis-table td:first-child{min-width:160px}
-.event-analysis-name{background:none;border:0;color:var(--accent-ink);font:inherit;text-align:left;overflow-wrap:anywhere;padding:6px 0;min-height:44px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.event-analysis-name{background:none;border:0;color:var(--accent-text);font:inherit;text-align:left;overflow-wrap:anywhere;padding:6px 0;min-height:44px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 .event-analysis-name[aria-expanded="true"]{font-weight:600}
 .analysis-event-detail{margin-top:20px;border-top:1px solid var(--line-strong)}
 .analysis-event-detail .panel-header{padding-left:0;padding-right:0}

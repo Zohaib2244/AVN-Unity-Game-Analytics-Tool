@@ -857,3 +857,35 @@ def test_motion_is_vendored_loaded_first_and_respects_reduced_motion():
     assert "prefers-reduced-motion: reduce" in helper
     # Only opacity and transform properties are animated: nothing that forces layout.
     assert not re.search(r"(width|height|top|left)\s*:\s*\[", helper)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_dashboards_open_on_the_latest_build_unless_someone_chose_otherwise():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/insights.js").read_text()
+    start = script.index("function filterState(game)")
+    state_code = script[start : script.index("function saveFilters")]
+    checks = """
+import assert from 'node:assert/strict';
+let saved = null;
+const storeGet = () => saved;
+const game = {id: 'g'};
+assert.equal(filterState(game).versionMode, 'latest');
+saved = {range: null, app_version: []};
+assert.equal(filterState(game).versionMode, 'latest');
+saved = {app_version: ['1.2'], versionMode: 'custom'};
+assert.equal(filterState(game).versionMode, 'custom');
+saved = {app_version: ['1.2']};
+assert.equal(filterState(game).versionMode, 'custom');
+saved = {app_version: [], versionMode: 'all'};
+assert.equal(filterState(game).versionMode, 'all');
+saved = {versionMode: 'nonsense'};
+assert.equal(filterState(game).versionMode, 'latest');
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=state_code + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr

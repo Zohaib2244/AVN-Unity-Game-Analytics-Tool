@@ -236,6 +236,27 @@ def facets(storage, game_id, start, end):
     return result
 
 
+def latest_build(storage, game_id, start, end):
+    """The newest app version real players are on in the range, or None.
+
+    Editor, development and test builds never count as published. This is what dashboards open on
+    by default; the filter menu still lets anyone pick other builds or all of them.
+    """
+    storage.get_game(game_id)
+    with storage.connect(storage.game_path(game_id)) as connection:
+        scoped = scope_events(connection, start, end, source=read_source(storage, connection))
+        marks = ",".join("?" for _ in TEST_ENVIRONMENTS)
+        published = [
+            row[0]
+            for row in connection.execute(
+                f"SELECT DISTINCT app_version FROM {scoped} "
+                f"WHERE environment NOT IN ({marks}) AND app_version != 'unknown'",
+                TEST_ENVIRONMENTS,
+            )
+        ]
+    return max(published, key=version_key, default=None)
+
+
 def _day_start(moment):
     return moment.strftime("%Y-%m-%dT00:00:00.000000+00:00")
 

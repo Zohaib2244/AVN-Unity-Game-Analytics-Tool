@@ -111,7 +111,9 @@ function collapsible(section, game, name) {
 
 function filterState(game) {
   const saved = storeGet(`avn-filters-${game.id}`) || {};
-  return {range: saved.range || null, timezone: saved.timezone === 'utc' ? 'utc' : 'local', hideTest: saved.hideTest ?? true, environment: saved.environment || [], app_version: saved.app_version || [], build: saved.build || [], country: saved.country || [], platform: saved.platform || []};
+  return {range: saved.range || null, timezone: saved.timezone === 'utc' ? 'utc' : 'local', hideTest: saved.hideTest ?? true, environment: saved.environment || [], app_version: saved.app_version || [], build: saved.build || [], country: saved.country || [], platform: saved.platform || [],
+    // Dashboards open on the newest published build by default; 'custom' (picked builds) and 'all' are remembered.
+    versionMode: ['latest', 'custom', 'all'].includes(saved.versionMode) ? saved.versionMode : saved.app_version?.length ? 'custom' : 'latest'};
 }
 function saveFilters(game, state) { storeSet(`avn-filters-${game.id}`, state); }
 const timezoneOffset = state => state.timezone === 'utc' ? 0 : localTimezoneOffset();
@@ -138,8 +140,11 @@ function mountFilters(container, game, onChange) {
   const filterPopHTML = () => `<div data-filter-pop><div class="pop-scroll"><label class="opt"><input type="checkbox" class="cb-in" id="hide-test" ${state.hideTest ? 'checked' : ''} ${state.environment.length ? 'disabled' : ''}><span class="ot">Hide editor &amp; development data</span></label>${Object.keys(FILTER_KEYS).map(dimension => {
     const values = [...new Set([...(facets[dimension] || []).map(item => item.value), ...state[dimension]])];
     const counts = Object.fromEntries((facets[dimension] || []).map(item => [item.value, item.players]));
-    return `<div class="pop-grp"><span class="eyebrow">${DIMENSION_LABELS[dimension]}</span></div>${values.length ? values.map(value => `<label class="opt"><input type="checkbox" class="cb-in" data-dimension="${dimension}" value="${escapeHTML(value)}" ${state[dimension].includes(value) ? 'checked' : ''}><span class="ot">${escapeHTML(dimensionText(dimension, value))}</span><span class="oc" title="Players">${number(counts[value] || 0)}</span></label>`).join('') : '<p class="help pop-none">None in these days</p>'}`;
+    const latestRow = dimension === 'app_version' ? `<label class="opt"><input type="checkbox" class="cb-in" id="latest-build" ${state.versionMode === 'latest' ? 'checked' : ''} ${facets.latest_app_version ? '' : 'disabled'}><span class="ot">Latest published build</span><span class="oc">${escapeHTML(facets.latest_app_version || '—')}</span></label>` : '';
+    return `<div class="pop-grp"><span class="eyebrow">${DIMENSION_LABELS[dimension]}</span></div>${latestRow}${values.length ? values.map(value => `<label class="opt"><input type="checkbox" class="cb-in" data-dimension="${dimension}" value="${escapeHTML(value)}" ${state[dimension].includes(value) ? 'checked' : ''}><span class="ot">${escapeHTML(dimensionText(dimension, value))}</span><span class="oc" title="Players">${number(counts[value] || 0)}</span></label>`).join('') : '<p class="help pop-none">None in these days</p>'}`;
   }).join('')}</div><div class="pop-foot"><button type="button" class="btn sm ghost" data-filters-clear>Clear</button><button type="button" class="btn sm primary" data-filters-done>Done</button></div></div>`;
+  const applyLatest = () => { state.app_version = facets.latest_app_version ? [facets.latest_app_version] : []; };
+  const loadFacets = async range => { facets = await api(`${gameURL(game)}/insights/facets?${new URLSearchParams({start: range.from, end: range.to, tz_offset: timezoneOffset(state)})}`); };
   const changed = () => { saveFilters(game, state); draw(); onChange(state); };
   const draw = () => {
     const pop = document.querySelector('#pop');
@@ -149,15 +154,17 @@ function mountFilters(container, game, onChange) {
     count.hidden = !active; count.textContent = active;
     container.querySelectorAll('[data-timezone]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.timezone === state.timezone)));
     container.querySelectorAll('button[data-density]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.density === window.avnTheme.density())));
-    const chips = Object.keys(FILTER_KEYS).flatMap(dimension => state[dimension].map(value => `<button type="button" class="filter-chip" data-remove-dimension="${dimension}" data-remove-value="${escapeHTML(value)}" title="Remove this filter">${DIMENSION_LABELS[dimension]}: ${escapeHTML(dimensionText(dimension, value))} ${icon('close',11)}</button>`));
+    const chips = Object.keys(FILTER_KEYS).flatMap(dimension => state[dimension].map(value => `<button type="button" class="filter-chip" data-remove-dimension="${dimension}" data-remove-value="${escapeHTML(value)}" title="Remove this filter">${DIMENSION_LABELS[dimension]}: ${escapeHTML(dimensionText(dimension, value))}${dimension === 'app_version' && state.versionMode === 'latest' ? ' (latest)' : ''} ${icon('close',11)}</button>`));
     container.querySelector('#filter-chips').innerHTML = chips.join('') + (state.hideTest && !state.environment.length ? '<span class="filter-note">Editor & development data hidden</span>' : '') + (chips.length > 1 ? '<button type="button" class="filter-clear" data-clear>Clear all</button>' : '');
   };
   window.__filterPopChange && document.removeEventListener('change', window.__filterPopChange);
   window.__filterPopChange = event => {
     if (!container.isConnected || !event.target.closest?.('#pop [data-filter-pop]')) return;
     if (event.target.id === 'hide-test') { state.hideTest = event.target.checked; changed(); return; }
+    if (event.target.id === 'latest-build') { if (event.target.checked) { state.versionMode = 'latest'; applyLatest(); } else { state.versionMode = 'all'; state.app_version = []; } changed(); return; }
     const dimension = event.target.dataset.dimension; if (!dimension) return;
     state[dimension] = [...document.querySelectorAll(`#pop input[data-dimension="${dimension}"]:checked`)].map(input => input.value);
+    if (dimension === 'app_version') state.versionMode = state.app_version.length ? 'custom' : 'all';
     changed();
   };
   document.addEventListener('change', window.__filterPopChange);
@@ -165,7 +172,7 @@ function mountFilters(container, game, onChange) {
   window.__filterPopClick = event => {
     if (!container.isConnected) return;
     if (event.target.closest('#pop [data-filters-done]')) { closePop(); return; }
-    if (event.target.closest('#pop [data-filters-clear]')) { for (const dimension of Object.keys(FILTER_KEYS)) state[dimension] = []; changed(); }
+    if (event.target.closest('#pop [data-filters-clear]')) { for (const dimension of Object.keys(FILTER_KEYS)) state[dimension] = []; state.versionMode = 'all'; changed(); }
   };
   document.addEventListener('click', window.__filterPopClick);
   container.addEventListener('click', event => {
@@ -179,18 +186,24 @@ function mountFilters(container, game, onChange) {
     const chip = event.target.closest('[data-remove-dimension]');
     if (chip) {
       const dimension = chip.dataset.removeDimension, value = chip.dataset.removeValue;
-      state[dimension] = state[dimension].filter(item => item !== value); changed();
-      toast(`Removed filter: ${DIMENSION_LABELS[dimension]} ${dimensionText(dimension, value)}`, {label: 'Undo', run: () => { if (!state[dimension].includes(value)) state[dimension] = [...state[dimension], value]; changed(); }}, 'info');
+      const modeBefore = state.versionMode;
+      state[dimension] = state[dimension].filter(item => item !== value);
+      if (dimension === 'app_version') state.versionMode = state.app_version.length ? 'custom' : 'all';
+      changed();
+      toast(`Removed filter: ${DIMENSION_LABELS[dimension]} ${dimensionText(dimension, value)}`, {label: 'Undo', run: () => { if (!state[dimension].includes(value)) state[dimension] = [...state[dimension], value]; if (dimension === 'app_version') state.versionMode = modeBefore; changed(); }}, 'info');
     }
-    if (event.target.closest('[data-clear]')) { const before = Object.fromEntries(Object.keys(FILTER_KEYS).map(dimension => [dimension, [...state[dimension]]])); for (const dimension of Object.keys(FILTER_KEYS)) state[dimension] = []; changed(); toast('Cleared all filters', {label: 'Undo', run: () => { Object.assign(state, before); changed(); }}, 'info'); }
+    if (event.target.closest('[data-clear]')) { const before = Object.fromEntries(Object.keys(FILTER_KEYS).map(dimension => [dimension, [...state[dimension]]])); const modeBefore = state.versionMode; for (const dimension of Object.keys(FILTER_KEYS)) state[dimension] = []; state.versionMode = 'all'; changed(); toast('Cleared all filters', {label: 'Undo', run: () => { Object.assign(state, before); state.versionMode = modeBefore; changed(); }}, 'info'); }
   });
   const rangeBox = container.querySelector('#filter-range');
   rangeBox.innerHTML = compactRangeMarkup();
   bindRange(rangeBox, async range => {
     state.range = {from: range.from, to: range.to, preset: range.preset};
+    // On the default (latest build) the newest build is looked up first, so the page opens on it without a second load.
+    const wantLatest = state.versionMode === 'latest';
+    if (wantLatest) { try { await loadFacets(range); applyLatest(); } catch { /* every build shows if the lookup fails */ } }
     saveFilters(game, state);
     draw(); onChange(state);
-    try { facets = await api(`${gameURL(game)}/insights/facets?${new URLSearchParams({start: range.from, end: range.to, tz_offset: timezoneOffset(state)})}`); draw(); } catch { /* the menu keeps the chosen values */ }
+    if (!wantLatest) { try { await loadFacets(range); draw(); } catch { /* the menu keeps the chosen values */ } }
   }, state.range?.preset || '30', state.range);
   const setContext = (context = {}) => {
     const parts = [`${prettyDay(state.range.from)}${state.range.from === state.range.to ? '' : ` → ${prettyDay(state.range.to)}`}`, state.timezone === 'utc' ? 'UTC' : 'Local time', 'player ID = user_id, otherwise device_id'];
@@ -284,7 +297,9 @@ async function renderGameOverview() {
   let summary = null; let measure = 'players'; let dimension = 'environment'; let latest = 0;
   // Setup checklist: each step is Verified only by a check against real data, never by hand.
   const setupKey = `avn-setup-open-${game.id}`;
-  let setupOpen = storeGet(setupKey) !== false;
+  // Setup is a quiet nudge: closed by default, and it can be dismissed for good.
+  const dismissKey = `avn-setup-dismissed-${game.id}`;
+  let setupOpen = storeGet(setupKey) === true;
   let facts = null;
   const loadFacts = async () => {
     const [funnels, dictionary, team] = await Promise.allSettled([request(`${gameURL(game)}/insights/funnels`), request(`${gameURL(game)}/dictionary`), me.can_manage_team ? request('/v1/team') : Promise.resolve(null)]);
@@ -306,16 +321,20 @@ async function renderGameOverview() {
     ];
     return steps;
   };
+  let summaryForSetup = null;
   const drawSetup = data => {
+    summaryForSetup = data;
     const box = document.querySelector('#setup'); if (!box || !facts) return;
     const steps = setupSteps(data), verified = steps.filter(step => step.state === 'ok').length;
-    if (verified === steps.length) { box.innerHTML = ''; return; }
+    if (verified === steps.length || storeGet(dismissKey) === true) { box.innerHTML = ''; return; }
+    quietNote(`${steps.length - verified} setup step${steps.length - verified === 1 ? '' : 's'} left for ${game.name}`, 'Open the Overview to review them. You can ignore this.', `setup-${game.id}`);
     const tags = {ok: '<span class="tag ok">Verified</span>', done: '<span class="tag done">Done · to confirm</span>', wait: '<span class="tag info">Waiting</span>', todo: '<span class="tag plain">To do</span>'};
-    box.innerHTML = `<section class="panel setup"><div class="panel-header"><div><h2>Set up ${escapeHTML(game.name)}</h2><p>${verified} of ${steps.length} verified</p></div><div class="quiet-actions"><span class="sbar" aria-hidden="true">${steps.map(step => `<i class="${step.state}"></i>`).join('')}</span><button type="button" class="btn sm ghost" data-setup-toggle aria-expanded="${setupOpen}">${setupOpen ? 'Hide steps' : 'Show steps'}</button></div></div><div class="collapse${setupOpen ? '' : ' shut'}"><div>${steps.map(step => `<div class="srow"><span class="sic ${step.state}" aria-hidden="true">${step.state === 'ok' || step.state === 'done' ? icon('check', 13) : ''}</span><span><b>${step.title}</b><span class="s">${escapeHTML(step.note)}</span></span><span class="ra">${tags[step.state]}<a class="btn sm" href="${step.href}">${step.action}</a></span></div>`).join('')}</div></div></section>`;
+    box.innerHTML = `<section class="panel setup${setupOpen ? '' : ' closed'}"><div class="panel-header"><div><h2>Set up ${escapeHTML(game.name)}</h2><p>${verified} of ${steps.length} verified</p></div><div class="quiet-actions"><span class="sbar" aria-hidden="true">${steps.map(step => `<i class="${step.state}"></i>`).join('')}</span><button type="button" class="btn sm ghost" data-setup-toggle aria-expanded="${setupOpen}">${setupOpen ? 'Hide steps' : 'Show steps'}</button><button type="button" class="btn sm ghost" data-setup-dismiss aria-label="Dismiss setup suggestions" title="Dismiss">${icon('close', 14)}</button></div></div><div class="collapse${setupOpen ? '' : ' shut'}"><div>${steps.map(step => `<div class="srow"><span class="sic ${step.state}" aria-hidden="true">${step.state === 'ok' || step.state === 'done' ? icon('check', 13) : ''}</span><span><b>${step.title}</b><span class="s">${escapeHTML(step.note)}</span></span><span class="ra">${tags[step.state]}<a class="btn sm" href="${step.href}">${step.action}</a></span></div>`).join('')}</div></div></section>`;
   };
   document.querySelector('#setup').addEventListener('click', event => {
+    if (event.target.closest('[data-setup-dismiss]')) { storeSet(dismissKey, true); document.querySelector('#setup').innerHTML = ''; toast('Setup suggestions hidden for this game', {label: 'Undo', run: () => { storeSet(dismissKey, false); drawSetup(summaryForSetup); }}, 'info'); return; }
     if (!event.target.closest('[data-setup-toggle]')) return;
-    setupOpen = !setupOpen; storeSet(setupKey, setupOpen);
+    setupOpen = !setupOpen; document.querySelector('#setup .setup')?.classList.toggle('closed', !setupOpen); storeSet(setupKey, setupOpen);
     const toggle = document.querySelector('[data-setup-toggle]'); toggle.textContent = setupOpen ? 'Hide steps' : 'Show steps'; toggle.setAttribute('aria-expanded', String(setupOpen));
     document.querySelector('#setup .collapse').classList.toggle('shut', !setupOpen);
   });
@@ -382,7 +401,6 @@ async function renderGameOverview() {
       const looks = [
         context.low_sample && ['warn', 'Sample', 'Small sample', `${number(data.players || 0)} of ${number(context.minimum_players)} players`],
         context.anonymous_events && ['warn', 'Data', `${number(context.anonymous_events)} event${context.anonymous_events === 1 ? '' : 's'} without a player ID`, 'They do not count toward players.'],
-        context.excluded_events && ['info', 'Filter', `${number(context.excluded_events)} event${context.excluded_events === 1 ? '' : 's'} outside the active filters`, 'Clear a filter to include them.'],
       ].filter(Boolean);
       document.querySelector('#look').innerHTML = looks.length ? looks.map(([kind, tag, title, note]) => `<div class="look"><span class="tag ${kind}">${tag}</span><div><b>${title}</b><span class="s">${note}</span></div></div>`).join('') : `<div class="empty-scene">${doraScene()}<p>Nothing needs a look in this range. Dora is asleep on the monitor.</p></div>`;
       document.querySelector('#events-total').textContent = `${number(data.events)} events`;
