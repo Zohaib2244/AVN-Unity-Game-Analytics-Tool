@@ -133,38 +133,56 @@ const activeFilters = state => Object.keys(FILTER_KEYS).reduce((sum, dimension) 
 function mountFilters(container, game, onChange) {
   const state = filterState(game);
   let facets = {};
-  container.innerHTML = `<div class="filter-bar"><div id="filter-range"></div><div class="segmented timezone-toggle" role="group" aria-label="Time zone"><button type="button" data-timezone="local">Local</button><button type="button" data-timezone="utc">UTC</button></div><details class="filter-menu"><summary>${icon('funnel',14)} Filters <span class="count" id="filter-count" hidden></span></summary><div class="filter-options filter-popover" id="filter-options"></div></details></div><div class="filter-chips" id="filter-chips"></div><div class="analysis-context" aria-live="polite"></div>`;
+  container.innerHTML = `<div class="filter-bar"><div id="filter-range"></div><div class="segmented timezone-toggle" role="group" aria-label="Time zone"><button type="button" data-timezone="local">Local</button><button type="button" data-timezone="utc">UTC</button></div><div class="segmented density-toggle" role="group" aria-label="Row density"><button type="button" data-density="roomy">Roomy</button><button type="button" data-density="compact">Compact</button></div><button type="button" class="btn filters-open" data-filters-open aria-haspopup="dialog" aria-expanded="false">${icon('funnel',14)} Filters <span class="count" id="filter-count" hidden></span></button></div><div class="filter-chips" id="filter-chips"></div><div class="analysis-context" aria-live="polite"></div>`;
+  // The multi-select list: the common default on top, then one group per category, checkbox left and player count right.
+  const filterPopHTML = () => `<div data-filter-pop><div class="pop-scroll"><label class="opt"><input type="checkbox" class="cb-in" id="hide-test" ${state.hideTest ? 'checked' : ''} ${state.environment.length ? 'disabled' : ''}><span class="ot">Hide editor &amp; development data</span></label>${Object.keys(FILTER_KEYS).map(dimension => {
+    const values = [...new Set([...(facets[dimension] || []).map(item => item.value), ...state[dimension]])];
+    const counts = Object.fromEntries((facets[dimension] || []).map(item => [item.value, item.players]));
+    return `<div class="pop-grp"><span class="eyebrow">${DIMENSION_LABELS[dimension]}</span></div>${values.length ? values.map(value => `<label class="opt"><input type="checkbox" class="cb-in" data-dimension="${dimension}" value="${escapeHTML(value)}" ${state[dimension].includes(value) ? 'checked' : ''}><span class="ot">${escapeHTML(dimensionText(dimension, value))}</span><span class="oc" title="Players">${number(counts[value] || 0)}</span></label>`).join('') : '<p class="help pop-none">None in these days</p>'}`;
+  }).join('')}</div><div class="pop-foot"><button type="button" class="btn sm ghost" data-filters-clear>Clear</button><button type="button" class="btn sm primary" data-filters-done>Done</button></div></div>`;
   const changed = () => { saveFilters(game, state); draw(); onChange(state); };
   const draw = () => {
-    const options = container.querySelector('#filter-options');
-    const scroll = options.scrollTop;
-    options.innerHTML = `<label class="filter-switch"><input type="checkbox" id="hide-test" ${state.hideTest ? 'checked' : ''} ${state.environment.length ? 'disabled' : ''}><span>Hide editor & development data</span></label>` +
-      Object.keys(FILTER_KEYS).map(dimension => {
-        const values = [...new Set([...(facets[dimension] || []).map(item => item.value), ...state[dimension]])];
-        const counts = Object.fromEntries((facets[dimension] || []).map(item => [item.value, item.players]));
-        return `<fieldset data-dimension="${dimension}"><legend>${DIMENSION_LABELS[dimension]}</legend>${values.length ? values.map(value => `<label><input type="checkbox" value="${escapeHTML(value)}" ${state[dimension].includes(value) ? 'checked' : ''}><span>${escapeHTML(dimensionText(dimension, value))}</span><small title="Players">${number(counts[value] || 0)}</small></label>`).join('') : '<p class="help">None in these days</p>'}</fieldset>`;
-      }).join('');
-    options.scrollTop = scroll;
+    const pop = document.querySelector('#pop');
+    if (pop && !pop.hidden && pop.querySelector('[data-filter-pop]')) { const scroll = pop.querySelector('.pop-scroll').scrollTop; pop.innerHTML = filterPopHTML(); pop.querySelector('.pop-scroll').scrollTop = scroll; }
     const active = activeFilters(state);
     const count = container.querySelector('#filter-count');
     count.hidden = !active; count.textContent = active;
     container.querySelectorAll('[data-timezone]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.timezone === state.timezone)));
+    container.querySelectorAll('button[data-density]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.density === window.avnTheme.density())));
     const chips = Object.keys(FILTER_KEYS).flatMap(dimension => state[dimension].map(value => `<button type="button" class="filter-chip" data-remove-dimension="${dimension}" data-remove-value="${escapeHTML(value)}" title="Remove this filter">${DIMENSION_LABELS[dimension]}: ${escapeHTML(dimensionText(dimension, value))} ${icon('close',11)}</button>`));
     container.querySelector('#filter-chips').innerHTML = chips.join('') + (state.hideTest && !state.environment.length ? '<span class="filter-note">Editor & development data hidden</span>' : '') + (chips.length > 1 ? '<button type="button" class="filter-clear" data-clear>Clear all</button>' : '');
   };
-  container.addEventListener('change', event => {
+  window.__filterPopChange && document.removeEventListener('change', window.__filterPopChange);
+  window.__filterPopChange = event => {
+    if (!container.isConnected || !event.target.closest?.('#pop [data-filter-pop]')) return;
     if (event.target.id === 'hide-test') { state.hideTest = event.target.checked; changed(); return; }
-    const group = event.target.closest('fieldset[data-dimension]'); if (!group) return;
-    state[group.dataset.dimension] = [...group.querySelectorAll('input:checked')].map(input => input.value);
+    const dimension = event.target.dataset.dimension; if (!dimension) return;
+    state[dimension] = [...document.querySelectorAll(`#pop input[data-dimension="${dimension}"]:checked`)].map(input => input.value);
     changed();
-  });
+  };
+  document.addEventListener('change', window.__filterPopChange);
+  window.__filterPopClick && document.removeEventListener('click', window.__filterPopClick);
+  window.__filterPopClick = event => {
+    if (!container.isConnected) return;
+    if (event.target.closest('#pop [data-filters-done]')) { closePop(); return; }
+    if (event.target.closest('#pop [data-filters-clear]')) { for (const dimension of Object.keys(FILTER_KEYS)) state[dimension] = []; changed(); }
+  };
+  document.addEventListener('click', window.__filterPopClick);
   container.addEventListener('click', event => {
+    const density = event.target.closest('button[data-density]');
+    if (density) { window.avnTheme.setDensity(density.dataset.density); document.querySelectorAll('button[data-density]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.density === window.avnTheme.density()))); return; }
     const timezone = event.target.closest('[data-timezone]');
     if (timezone && timezone.dataset.timezone !== state.timezone) { state.timezone = timezone.dataset.timezone; changed(); return; }
     if (event.target.closest('[data-include-test]')) { state.hideTest = false; changed(); return; }
+    const opener = event.target.closest('[data-filters-open]');
+    if (opener) { openPop(opener, filterPopHTML(), {width: 320, label: 'Filters'}); return; }
     const chip = event.target.closest('[data-remove-dimension]');
-    if (chip) { state[chip.dataset.removeDimension] = state[chip.dataset.removeDimension].filter(value => value !== chip.dataset.removeValue); changed(); }
-    if (event.target.closest('[data-clear]')) { for (const dimension of Object.keys(FILTER_KEYS)) state[dimension] = []; changed(); }
+    if (chip) {
+      const dimension = chip.dataset.removeDimension, value = chip.dataset.removeValue;
+      state[dimension] = state[dimension].filter(item => item !== value); changed();
+      toast(`Removed filter: ${DIMENSION_LABELS[dimension]} ${dimensionText(dimension, value)}`, {label: 'Undo', run: () => { if (!state[dimension].includes(value)) state[dimension] = [...state[dimension], value]; changed(); }}, 'info');
+    }
+    if (event.target.closest('[data-clear]')) { const before = Object.fromEntries(Object.keys(FILTER_KEYS).map(dimension => [dimension, [...state[dimension]]])); for (const dimension of Object.keys(FILTER_KEYS)) state[dimension] = []; changed(); toast('Cleared all filters', {label: 'Undo', run: () => { Object.assign(state, before); changed(); }}, 'info'); }
   });
   const rangeBox = container.querySelector('#filter-range');
   rangeBox.innerHTML = compactRangeMarkup();
@@ -250,10 +268,12 @@ async function renderGameOverview() {
   const game = currentGame;
   const archived = game.archived_at ? `<div class="archived-banner">${icon('lock',18)}<div><strong>Archived.</strong> Collection is paused for this platform.</div><a class="button" href="${gamePath(game, 'settings')}">Game settings</a></div>` : '';
   shell('Overview', heading(game.name, `${platformLabel(game.platform)} · ${game.bundle_id}`, `<a class="button primary" href="${gamePath(game, 'exports')}">${icon('export',15)} Export data</a>`) + archived +
-    `<div id="mapping-notice"></div><div id="filters"></div><div id="totals"></div><div id="anomalies"></div><div id="active"></div>
-    <section class="panel"><div class="panel-header"><h2>Activity per day</h2><div class="segmented" role="group" aria-label="Measure">${[['players','Players (DAU)'],['sessions','Sessions'],['events','Events']].map(([key, label]) => `<button type="button" data-measure="${key}" aria-pressed="${key === 'players'}">${label}</button>`).join('')}</div></div><div class="panel-body chart-wrap" id="daily">${skeleton('chart')}</div></section>
+    `<div id="mapping-notice"></div><div id="filters"></div><div id="setup"></div><div id="anomalies"></div><div id="totals"></div>
+    <div class="split"><section class="panel"><div class="panel-header"><div><h2>Activity per day</h2></div><div class="quiet-actions">${freshStamp()}<div class="segmented" role="group" aria-label="Measure">${[['players','Players (DAU)'],['sessions','Sessions'],['events','Events']].map(([key, label]) => `<button type="button" data-measure="${key}" aria-pressed="${key === 'players'}">${label}</button>`).join('')}</div></div></div><div class="panel-body chart-wrap" id="daily">${skeleton('chart')}</div></section>
+    <section class="panel"><div class="panel-header"><h2>Needs a look</h2></div><div id="look"></div></section></div>
+    <div id="tiles"></div><div id="active"></div>
     <div class="section-grid overview-grid section-spacing"><section class="panel"><div class="panel-header"><h2>Who’s playing</h2><div class="segmented" aria-label="Break down by">${Object.entries(DIMENSION_LABELS).map(([key, label], index) => `<button type="button" data-dimension-tab="${key}" aria-pressed="${index === 0}">${label.replace('Device platform', 'Platform').replace('App version', 'Version')}</button>`).join('')}</div></div><div id="breakdowns"></div></section>
-    <section class="panel"><div class="panel-header"><h2>Top events</h2><a class="text-link" href="${gamePath(game, 'dictionary')}">Dictionary ${icon('arrow',13)}</a></div><div id="top-events"></div></section></div>`);
+    <section class="panel"><div class="panel-header"><h2>Top events</h2><div class="quiet-actions"><span class="help" id="events-total"></span><a class="text-link" href="${gamePath(game, 'dictionary')}">Dictionary ${icon('arrow',13)}</a></div></div><div id="top-events"></div></section></div>`);
   // mappingNotice() lives in events.js, which is loaded after this file and ready by the time it runs.
   const notice = document.querySelector('#mapping-notice');
   api(`${gameURL(game)}/mappings/status`).then(status => { if (notice.isConnected) notice.innerHTML = mappingNotice(game, status); }).catch(() => { /* no notice is better than a wrong one */ });
@@ -262,6 +282,55 @@ async function renderGameOverview() {
     storeSet(`avn-mapping-dismissed-${game.id}`, dismiss.dataset.dismissMappingNotice); notice.innerHTML = '';
   });
   let summary = null; let measure = 'players'; let dimension = 'environment'; let latest = 0;
+  // Setup checklist: each step is Verified only by a check against real data, never by hand.
+  const setupKey = `avn-setup-open-${game.id}`;
+  let setupOpen = storeGet(setupKey) !== false;
+  let facts = null;
+  const loadFacts = async () => {
+    const [funnels, dictionary, team] = await Promise.allSettled([request(`${gameURL(game)}/insights/funnels`), request(`${gameURL(game)}/dictionary`), me.can_manage_team ? request('/v1/team') : Promise.resolve(null)]);
+    facts = {funnels: funnels.status === 'fulfilled' ? funnels.value : null, dictionary: dictionary.status === 'fulfilled' ? dictionary.value : null, team: team.status === 'fulfilled' ? team.value : null};
+    return facts;
+  };
+  const setupSteps = data => {
+    const described = facts?.dictionary ? Object.values(facts.dictionary).filter(item => (item?.description || '').trim()).length : 0;
+    const shown = (data.top_events || []).slice(0, 10);
+    const undescribed = shown.filter(row => !(facts?.dictionary?.[row.name]?.description || '').trim()).length;
+    const versions = (data.breakdowns?.app_version || []).length;
+    const steps = [
+      {id: 'sdk', title: 'Add the SDK to your game', note: data.events || game.events ? `${number(game.events || data.events)} events received` : 'Waiting for the first event', state: game.events || data.events ? 'ok' : 'wait', href: gamePath(game, 'event-setup'), action: 'Event setup'},
+      {id: 'key', title: 'Use an API key', note: game.events ? 'Events are arriving with a key' : 'Create one and put it in the game', state: game.events ? 'ok' : 'todo', href: gamePath(game, 'keys'), action: 'API keys'},
+      {id: 'dictionary', title: 'Describe your events', note: facts?.dictionary ? `${number(described)} described${shown.length ? ` · ${undescribed ? `${undescribed} of the top ${shown.length} still without` : 'every top event has one'}` : ''}` : 'Checking…', state: !facts?.dictionary ? 'wait' : shown.length && !undescribed ? 'ok' : described ? 'done' : 'todo', href: gamePath(game, 'dictionary'), action: 'Dictionary'},
+      {id: 'funnel', title: 'Save your first funnel', note: facts?.funnels ? (facts.funnels.length ? `${facts.funnels.length} saved` : 'Funnels show where players stop') : 'Checking…', state: !facts?.funnels ? 'wait' : facts.funnels.length ? 'ok' : 'todo', href: gamePath(game, 'funnels'), action: 'Funnels'},
+      {id: 'release', title: 'See a new release', note: versions > 1 ? `${versions} versions seen` : 'Compare releases once a second version sends events', state: versions > 1 ? 'ok' : 'todo', href: gamePath(game, 'levels'), action: 'Levels'},
+      ...(me.can_manage_team ? [{id: 'team', title: 'Invite your team', note: facts?.team ? (facts.team.length > 1 ? `${facts.team.length} people` : 'Only you so far') : 'Checking…', state: !facts?.team ? 'wait' : facts.team.length > 1 ? 'ok' : 'todo', href: '/team', action: 'Team'}] : []),
+    ];
+    return steps;
+  };
+  const drawSetup = data => {
+    const box = document.querySelector('#setup'); if (!box || !facts) return;
+    const steps = setupSteps(data), verified = steps.filter(step => step.state === 'ok').length;
+    if (verified === steps.length) { box.innerHTML = ''; return; }
+    const tags = {ok: '<span class="tag ok">Verified</span>', done: '<span class="tag done">Done · to confirm</span>', wait: '<span class="tag info">Waiting</span>', todo: '<span class="tag plain">To do</span>'};
+    box.innerHTML = `<section class="panel setup"><div class="panel-header"><div><h2>Set up ${escapeHTML(game.name)}</h2><p>${verified} of ${steps.length} verified</p></div><div class="quiet-actions"><span class="sbar" aria-hidden="true">${steps.map(step => `<i class="${step.state}"></i>`).join('')}</span><button type="button" class="btn sm ghost" data-setup-toggle aria-expanded="${setupOpen}">${setupOpen ? 'Hide steps' : 'Show steps'}</button></div></div><div class="collapse${setupOpen ? '' : ' shut'}"><div>${steps.map(step => `<div class="srow"><span class="sic ${step.state}" aria-hidden="true">${step.state === 'ok' || step.state === 'done' ? icon('check', 13) : ''}</span><span><b>${step.title}</b><span class="s">${escapeHTML(step.note)}</span></span><span class="ra">${tags[step.state]}<a class="btn sm" href="${step.href}">${step.action}</a></span></div>`).join('')}</div></div></section>`;
+  };
+  document.querySelector('#setup').addEventListener('click', event => {
+    if (!event.target.closest('[data-setup-toggle]')) return;
+    setupOpen = !setupOpen; storeSet(setupKey, setupOpen);
+    const toggle = document.querySelector('[data-setup-toggle]'); toggle.textContent = setupOpen ? 'Hide steps' : 'Show steps'; toggle.setAttribute('aria-expanded', String(setupOpen));
+    document.querySelector('#setup .collapse').classList.toggle('shut', !setupOpen);
+  });
+  // Sections at a glance: one tile per area with its own headline, each opening that page.
+  const drawTiles = data => {
+    const tile = (section, symbol, title, value, note) => `<a class="tile" href="${gamePath(game, section)}"><span class="th">${icon(symbol, 16)}${title}</span><span class="tv">${value}</span><span class="ts2">${escapeHTML(note)}</span><span class="go">Open ${title.toLowerCase()} ${icon('arrow', 13)}</span></a>`;
+    const top = (data.top_events || [])[0];
+    const described = facts?.dictionary ? Object.values(facts.dictionary).filter(item => (item?.description || '').trim()).length : null;
+    document.querySelector('#tiles').innerHTML = `<div class="strip-h"><span class="eyebrow">Sections at a glance</span></div><div class="tiles">${[
+      tile('funnels', 'funnel', 'Funnels', facts?.funnels ? number(facts.funnels.length) : '—', facts?.funnels?.length ? `saved funnel${facts.funnels.length === 1 ? '' : 's'}` : 'Where players stop, step by step'),
+      tile('levels', 'game', 'Levels', '→', 'Where players stop, level by level'),
+      tile('players', 'users', 'Players', number(data.players), `${number(data.new_players)} new in this range`),
+      tile('dictionary', 'book', 'Event dictionary', top ? escapeHTML(top.name) : '—', top ? `most sent · ${number(top.events)} events${described != null ? ` · ${number(described)} described` : ''}` : 'Describe what your events mean'),
+    ].join('')}</div>`;
+  };
   const drawDaily = () => {
     const box = document.querySelector('#daily');
     box.innerHTML = summary.events ? dailyChart(summary.days, filters.state.range, measure) : '<p class="help">No events with these filters and days.</p>';
@@ -300,8 +369,25 @@ async function renderGameOverview() {
       if (old) shownOld = true;
       summary = data;
       filters.setContext({...data.context, players: data.players});
-      document.querySelector('#totals').innerHTML = stats([['Players', number(data.players), `${number(data.new_players)} new · unique player IDs`], ['Sessions', number(data.sessions), data.players ? `${(data.sessions / data.players).toFixed(1)} per player` : 'with a player ID'], ['Events', number(data.events), `${number(data.context.identified_events)} player-linked · ${number(data.context.anonymous_events)} without an ID`]]);
-      document.querySelector('#anomalies').innerHTML = data.anomalies.length ? `<section class="anomaly-strip" aria-label="Notable changes from the preceding period"><div><strong>Notable change${data.anomalies.length === 1 ? '' : 's'}</strong><span>Compared with the preceding ${daysBetween(state.range.from, state.range.to) + 1}-day period</span></div>${data.anomalies.map(item => `<span class="anomaly-item ${item.direction}"><b>${escapeHTML(item.label)}</b> ${item.change_percent > 0 ? '+' : ''}${percent(item.change_percent)} <small>${number(item.previous)} → ${number(item.current)}</small></span>`).join('')}</section>` : '';
+      const active = data.active || {};
+      const dauChange = (active.dau || 0) - (active.dau_previous || 0);
+      const kpi = (label, value, note) => `<div class="kpi"><div class="eyebrow">${label}</div><div class="k-v">${value}</div><div class="k-c">${note}</div></div>`;
+      document.querySelector('#totals').innerHTML = `<div class="kpis">${[
+        kpi('Players', number(data.players), `${number(data.new_players)} new · unique player IDs`),
+        kpi('Sessions', number(data.sessions), data.players ? `${(data.sessions / data.players).toFixed(1)} per player` : 'with a player ID'),
+        kpi('Daily active', number(active.dau || 0), data.events ? `<span class="d ${dauChange < 0 ? 'down' : 'up'}">${dauChange > 0 ? '+' : ''}${number(dauChange)}</span> vs ${shortDay(addDays(active.last_day, -1))}` : 'no events yet'),
+        kpi('Stickiness', active.stickiness == null ? '—' : `${active.stickiness}<small>%</small>`, 'avg DAU ÷ MAU'),
+      ].join('')}</div>`;
+      const context = data.context || {};
+      const looks = [
+        context.low_sample && ['warn', 'Sample', 'Small sample', `${number(data.players || 0)} of ${number(context.minimum_players)} players`],
+        context.anonymous_events && ['warn', 'Data', `${number(context.anonymous_events)} event${context.anonymous_events === 1 ? '' : 's'} without a player ID`, 'They do not count toward players.'],
+        context.excluded_events && ['info', 'Filter', `${number(context.excluded_events)} event${context.excluded_events === 1 ? '' : 's'} outside the active filters`, 'Clear a filter to include them.'],
+      ].filter(Boolean);
+      document.querySelector('#look').innerHTML = looks.length ? looks.map(([kind, tag, title, note]) => `<div class="look"><span class="tag ${kind}">${tag}</span><div><b>${title}</b><span class="s">${note}</span></div></div>`).join('') : `<div class="empty-scene">${doraScene()}<p>Nothing needs a look in this range. Dora is asleep on the monitor.</p></div>`;
+      document.querySelector('#events-total').textContent = `${number(data.events)} events`;
+      markFresh(); drawTiles(data); (facts ? Promise.resolve(facts) : loadFacts()).then(() => { if (notice.isConnected) { drawSetup(data); drawTiles(data); } });
+      document.querySelector('#anomalies').innerHTML = data.anomalies.length ? `<div class="strip-h"><span class="eyebrow">What changed · vs the preceding ${daysBetween(state.range.from, state.range.to) + 1}-day period</span></div><div class="insights">${data.anomalies.map(item => `<div class="insight"><span class="tag plain dot">${item.direction === 'down' ? 'Down' : 'Up'}</span><b>${escapeHTML(item.label)} ${item.change_percent > 0 ? '+' : ''}${percent(item.change_percent)}</b><span class="s">${number(item.previous)} → ${number(item.current)}</span></div>`).join('')}</div>` : '';
       document.querySelector('#active').innerHTML = data.events ? activeUsers(data.active) : '';
       drawDaily(); drawBreakdown();
       document.querySelector('#top-events').innerHTML = data.top_events.length ? `<table class="compact-table"><thead><tr><th>Event</th><th class="num">Events</th><th class="num">Players</th></tr></thead><tbody>${data.top_events.slice(0, 10).map(row => `<tr><td class="mono">${escapeHTML(row.name)}</td><td class="num">${number(row.events)}</td><td class="num">${number(row.players)}</td></tr>`).join('')}</tbody></table>` : '<p class="help panel-body">No events.</p>';
@@ -312,6 +398,7 @@ async function renderGameOverview() {
       for (const id of ['totals', 'breakdowns', 'top-events']) document.querySelector(`#${id}`).innerHTML = '';
       summary = null;
       document.querySelector('#anomalies').innerHTML = '';
+      document.querySelector('#look').innerHTML = '';
       document.querySelector('#active').innerHTML = '';
       document.querySelector('#daily').innerHTML = loadError(error);
     } } finally { finishLoading.forEach(finish => finish()); }
@@ -329,7 +416,7 @@ async function renderFunnels() {
     <section class="panel section-spacing"><div class="panel-header funnel-header"><div class="saved-row"><select id="saved-funnel" aria-label="Saved funnels"></select></div><div class="quiet-actions"><button class="button small-button" type="button" id="save-funnel">Save</button><button class="button small-button" type="button" id="save-as">Save as…</button><button class="button small-button danger-text" type="button" id="delete-funnel">Delete</button></div></div>
       <div class="panel-body"><div id="funnel-steps"></div>
         <div class="funnel-actions"><div class="quiet-actions"><button class="button small-button" type="button" id="add-step">${icon('plus',14)} Add step</button><button class="button small-button" type="button" id="quick-levels">${icon('plus',14)} Level steps…</button><button class="button ghost small-button" type="button" id="clear-steps">Clear</button></div><button class="button primary" type="button" id="run-funnel">Run funnel</button></div>
-        <details class="funnel-more"><summary>Options <span id="options-summary" class="muted"></span></summary><div class="funnel-options"><label class="inline-field">Count<select id="funnel-scope"><option value="player">Per player, across sessions</option><option value="session">Within one session</option></select></label><label class="inline-field">Finish within<select id="funnel-window"><option value="">Any time</option><option value="0.25">15 minutes</option><option value="1">1 hour</option><option value="24">1 day</option><option value="168">7 days</option><option value="720">30 days</option></select></label><label class="inline-field">Break down by<select id="funnel-breakdown"><option value="">Nothing</option>${Object.entries(DIMENSION_LABELS).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select></label></div></details></div></section>
+        <div class="funnel-more"><span class="eyebrow">Options</span><div class="funnel-options option-chips"><label class="inline-field">Count<select id="funnel-scope"><option value="player">Per player, across sessions</option><option value="session">Within one session</option></select></label><label class="inline-field">Finish within<select id="funnel-window"><option value="">Any time</option><option value="0.25">15 minutes</option><option value="1">1 hour</option><option value="24">1 day</option><option value="168">7 days</option><option value="720">30 days</option></select></label><label class="inline-field">Break down by<select id="funnel-breakdown"><option value="">Nothing</option>${Object.entries(DIMENSION_LABELS).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select></label></div></div></div></section>
     <section class="panel section-spacing"><div class="panel-header"><div><h2>Result</h2><p id="funnel-note">Add at least two steps.</p></div><button class="button small-button" type="button" id="funnel-csv" hidden>${icon('export',14)} CSV</button></div><div id="funnel-summary"></div><div class="panel-body" id="funnel-result"><p class="help">No result yet.</p></div></section>
     <section class="panel section-spacing" id="journeys-panel"></section>
     <section class="panel section-spacing" id="breakdown-panel" hidden><div class="panel-header"><div><h2 id="breakdown-title">Breakdown</h2><p>Players reaching each step, per segment · a player’s segment comes from their step 1 event</p></div></div><div id="breakdown-result"></div></section>`);
@@ -366,7 +453,8 @@ async function renderFunnels() {
     if (current.window_hours) parts.push(`within ${document.querySelector('#funnel-window').selectedOptions[0].textContent}`);
     const breakdown = document.querySelector('#funnel-breakdown').value;
     if (breakdown) parts.push(`by ${DIMENSION_LABELS[breakdown].toLowerCase()}`);
-    document.querySelector('#options-summary').textContent = `· ${parts.join(' · ')}`;
+    // Options that differ from the default are highlighted, so nothing hidden changes the numbers.
+    for (const [id, changed] of [['funnel-scope', current.scope === 'session'], ['funnel-window', !!current.window_hours], ['funnel-breakdown', !!breakdown]]) document.querySelector(`#${id}`).closest('label').classList.toggle('changed', changed);
   };
   const drawSteps = () => {
     document.querySelector('#add-step').disabled = current.steps.length >= MAX_STEPS;
@@ -501,7 +589,8 @@ async function renderFunnels() {
     document.querySelector('#funnel-note').textContent = first ? `${current.scope === 'session' ? 'Each player’s best single session' : 'Each player, across all their sessions'}${current.window_hours ? ` · finished within ${document.querySelector('#funnel-window').selectedOptions[0].textContent}` : ''} · hover times for averages` : 'Nobody did the first step with these filters and days.';
     document.querySelector('#funnel-csv').hidden = false;
     panels.result.setNote(first ? `${number(first)} started · ${number(last.players)} completed · ${percent(last.of_first)}` : 'nobody did step 1');
-    document.querySelector('#funnel-summary').innerHTML = first ? `<div class="panel-body funnel-stats">${stats([['Started', number(first), 'did step 1'], ['Completed', number(last.players), 'reached the last step'], ['Conversion', percent(last.of_first), 'first → last step'], ['Time to complete', data.time_to_complete ? duration(data.time_to_complete.median) : '—', data.time_to_complete ? `median · 90% within ${duration(data.time_to_complete.p90)}` : 'nobody finished']])}</div>` : '';
+    const kpi = ([label, value, note]) => `<div class="kpi"><div class="eyebrow">${label}</div><div class="k-v">${value}</div><div class="k-c">${note}</div></div>`;
+    document.querySelector('#funnel-summary').innerHTML = first ? `<div class="panel-body funnel-stats"><p class="funnel-headline"><strong>${percent(last.of_first)}</strong> of players who did “${stepLabel(rows[0])}” went on to “${stepLabel(last)}”.</p><div class="kpis">${[['Started', number(first), 'did step 1'], ['Completed', number(last.players), 'reached the last step'], ['Conversion', percent(last.of_first), 'first → last step'], ['Time to complete', data.time_to_complete ? duration(data.time_to_complete.median) : '—', data.time_to_complete ? `median · 90% within ${duration(data.time_to_complete.p90)}` : 'nobody finished']].map(kpi).join('')}</div></div>` : '';
     let worst = null;
     rows.forEach((row, index) => { if (index && rows[index - 1].players && row.of_previous < 100 && (!worst || row.of_previous < worst.rate)) worst = {index, rate: row.of_previous}; });
     result.classList.toggle('many', rows.length > 15);
@@ -732,21 +821,20 @@ async function renderPlayers() {
   const view = {sort: 'last_seen', order: 'desc', conditions: [], metrics: [], ...(storeGet(viewKey) || {})};
   let catalog = {events: []};
   shell('Players', heading('Players', 'A player uses user_id when available, otherwise device_id. Open one to read their events, sort the list, or add event-based columns.') +
-    `<div id="filters"></div>
-    <section class="panel section-spacing"><div class="panel-header"><h2>Players <span class="count" id="player-count">0</span></h2><div class="search">${icon('search',16)}<input id="player-search" type="search" aria-label="Search players" placeholder="Search by user or install ID…"></div></div>
+    `<div id="filters"></div><div id="rule-bar"></div>
+    <section class="panel section-spacing"><div class="panel-header"><div><h2>Players <span class="count" id="player-count">0</span></h2></div><div class="quiet-actions">${freshStamp()}<div class="search">${icon('search',16)}<input id="player-search" type="search" aria-label="Search players" placeholder="Search by user or install ID…"></div></div></div>
       <div class="players-toolbar"><label class="inline-field">Sort by<select id="player-sort"></select></label><button type="button" class="button small-button" id="player-order"></button>
-        <button type="button" class="button small-button rules-toggle" id="rules-toggle" aria-expanded="false" aria-controls="player-rules">${icon('funnel', 14)} Event rules <span class="count" id="rules-count" hidden></span></button><span class="rules-summary small muted" id="rules-summary"></span>
-        <div class="player-rules" id="player-rules" hidden>
+        <button type="button" class="button small-button rules-toggle" id="rules-toggle" aria-haspopup="dialog">${icon('funnel', 14)} Event rules <span class="count" id="rules-count" hidden></span></button>
+      <div id="player-list">${skeleton('table', 8, 7)}</div></section><div id="rules-holder" hidden><div class="player-rules" id="player-rules">
           <section class="rule-section" id="conditions-section"><button type="button" class="rule-section-toggle" aria-expanded="true"><span class="rule-chevron">${icon('chevron', 15)}</span><span class="rule-section-title">Only show players who…</span><span class="count" id="conditions-count" hidden></span><span class="rule-section-note small muted" id="conditions-note"></span></button><div class="rule-section-body"><p class="help">Every rule here must be true. For example: <em>Did</em> <code>POWERUP_CONSUMED</code> at least 3 times, or <em>Never did</em> <code>SETTINGS_OPENED</code>.</p><div id="condition-list"></div></div></section>
-          <section class="rule-section" id="metrics-section"><button type="button" class="rule-section-toggle" aria-expanded="true"><span class="rule-chevron">${icon('chevron', 15)}</span><span class="rule-section-title">Add a column (and sort by it)</span><span class="count" id="metrics-count" hidden></span><span class="rule-section-note small muted" id="metrics-note"></span></button><div class="rule-section-body"><p class="help">Pick what to work out for each player, from an event: how many times, the highest, lowest or total of one of its parameters, or when it first or last happened.</p><div id="metric-list"></div></div></section></div></div>
-      <div id="player-list">${skeleton('table', 8, 7)}</div></section>`);
+          <section class="rule-section" id="metrics-section"><button type="button" class="rule-section-toggle" aria-expanded="true"><span class="rule-chevron">${icon('chevron', 15)}</span><span class="rule-section-title">Add a column (and sort by it)</span><span class="count" id="metrics-count" hidden></span><span class="rule-section-note small muted" id="metrics-note"></span></button><div class="rule-section-body"><p class="help">Pick what to work out for each player, from an event: how many times, the highest, lowest or total of one of its parameters, or when it first or last happened.</p><div id="metric-list"></div></div></section></div></div></div>`);
   const list = document.querySelector('#player-list');
   let offset = 0; let search = ''; let latest = 0; let chosen = null; let lastMetrics = [];
   const persist = () => storeSet(viewKey, view);
-  const panel = document.querySelector('#player-rules'); const toggle = document.querySelector('#rules-toggle');
-  const showRules = open => { panel.hidden = !open; toggle.setAttribute('aria-expanded', String(open)); toggle.classList.toggle('active', open); };
-  toggle.addEventListener('click', () => { view.rulesOpen = panel.hidden; persist(); showRules(view.rulesOpen); });
-  showRules(Boolean(view.rulesOpen));
+  const holder = document.querySelector('#rules-holder');
+  // The rule editor opens in the inspector drawer, never inline; closing hands its lists back to the holder.
+  const openRules = () => openDrawer(() => `${drawerHead('Player rules', 'Who to show, and extra columns')}<div class="db" id="rules-drawer-body"></div>`, {bind: drawer => drawer.querySelector('#rules-drawer-body').append(...holder.children), onClose: () => { holder.append(...document.querySelectorAll('#rules-drawer-body > *')); drawRuleBar(); }});
+  document.querySelector('#rules-toggle').addEventListener('click', openRules);
   view.fold = view.fold || {};
   const foldSection = (id, name) => {
     const section = document.querySelector(id); const button = section.querySelector('.rule-section-toggle');
@@ -755,6 +843,28 @@ async function renderPlayers() {
     apply();
   };
   foldSection('#conditions-section', 'conditions'); foldSection('#metrics-section', 'metrics');
+  let lastTotal = null;
+  const ruleSentence = rule => `<span class="sent"><span class="tok verb${rule.does === 'didnt' ? ' not' : ''}">${rule.does === 'didnt' ? 'didn’t do' : 'did'}</span><span class="tok">${escapeHTML(rule.event)}</span>${rule.param ? `<span>where</span><span class="tok">${escapeHTML(rule.param)}</span><span class="tok op">${escapeHTML(operatorLabel(rule.op))}</span>${rule.op === 'exists' ? '' : `<span class="tok val">${escapeHTML(rule.value)}</span>`}` : ''}${rule.does !== 'didnt' && (rule.min_times || 1) > 1 ? `<span>at least</span><span class="tok val">${rule.min_times}×</span>` : ''}</span>`;
+  // The rule bar sits above the data and is never folded away: every rule that changes the list is on screen.
+  function drawRuleBar() {
+    const bar = document.querySelector('#rule-bar'); if (!bar) return;
+    const used = view.conditions.map((rule, index) => [rule, index]).filter(([rule]) => rule.event);
+    const metrics = view.metrics.map((rule, index) => [rule, index]).filter(([rule]) => rule.event);
+    const count = lastTotal == null ? '' : `<span class="rb-count"><b>${number(lastTotal)}</b> player${lastTotal === 1 ? '' : 's'}</span>`;
+    const extra = metrics.length ? `<div class="rb-cols"><span class="eyebrow">Extra columns</span>${metrics.map(([metric, index]) => `<span class="chip">${escapeHTML(metricLabel(metric))}<button type="button" data-metric-del="${index}" aria-label="Remove column ${escapeHTML(metricLabel(metric))}">×</button></span>`).join('')}</div>` : '';
+    bar.innerHTML = used.length
+      ? `<section class="rulebar" aria-label="Player rules"><div class="rb-h"><span class="rb-ic">${icon('funnel', 15)}</span><b class="ttl">Showing players who</b>${count}<button type="button" class="btn sm ghost" data-rules-clear>Clear rules</button></div><div class="rb-list">${used.map(([rule, index], position) => `${position ? '<div class="rjoin"><span class="join static">AND</span><span class="dim">players match every rule</span></div>' : ''}<div class="rrow">${ruleSentence(rule)}<span class="ra"><button type="button" class="icon-btn" data-rule-edit aria-label="Edit rule">${icon('edit', 15)}</button><button type="button" class="icon-btn" data-rule-del="${index}" aria-label="Remove rule">${icon('close', 15)}</button></span></div>`).join('')}<button type="button" class="rb-add" data-rule-edit>+ Add rule</button>${extra}</div></section>`
+      : `<section class="rulebar" aria-label="Player rules"><div class="rb-empty"><span class="rb-ic">${icon('funnel', 15)}</span><b>${lastTotal == null ? 'All players' : `All ${number(lastTotal)} player${lastTotal === 1 ? '' : 's'}`}</b><span class="muted">No rules. Narrow the list by what people did.</span>${extra}<button type="button" class="btn sm rb-open" data-rule-edit>+ Add rule</button></div></section>`;
+  }
+  document.querySelector('#rule-bar').addEventListener('click', event => {
+    if (event.target.closest('[data-rule-edit]')) { openRules(); return; }
+    const del = event.target.closest('[data-rule-del]');
+    if (del) { const index = Number(del.dataset.ruleDel); const [removed] = view.conditions.splice(index, 1); conditionList.redraw(); persist(); drawControls(); offset = 0; load(); toast('Rule removed', {label: 'Undo', run: () => { view.conditions.splice(index, 0, removed); conditionList.redraw(); persist(); drawControls(); offset = 0; load(); }}, 'info'); return; }
+    const column = event.target.closest('[data-metric-del]');
+    if (column) { const index = Number(column.dataset.metricDel); const [removed] = view.metrics.splice(index, 1); metricList.redraw(); persist(); drawControls(); offset = 0; load(); toast('Column removed', {label: 'Undo', run: () => { view.metrics.splice(index, 0, removed); metricList.redraw(); persist(); drawControls(); offset = 0; load(); }}, 'info'); return; }
+    if (event.target.closest('[data-rules-clear]')) { const before = view.conditions.splice(0); conditionList.redraw(); persist(); drawControls(); offset = 0; load(); toast('Rules cleared', {label: 'Undo', run: () => { view.conditions.push(...before); conditionList.redraw(); persist(); drawControls(); offset = 0; load(); }}, 'info'); }
+  });
+  let pageRows = [];
   const rulesBody = () => ({conditions: usableRules(view.conditions).map(rule => ({...rule, does: rule.does || 'did', min_times: rule.min_times || 1})), metrics: usableRules(view.metrics).map(rule => ({...rule, agg: rule.agg || 'count'}))});
 
   const drawControls = () => {
@@ -773,7 +883,7 @@ async function renderPlayers() {
     const part = (name, count, texts) => { const badge = document.querySelector(`#${name}-count`); badge.hidden = !count; badge.textContent = count; document.querySelector(`#${name}-note`).textContent = texts.join(' · '); };
     part('conditions', conditions.length, conditions.map(rule => `${rule.does === 'didnt' ? 'never' : 'did'} ${rule.event}${rule.param ? ` (${rule.param})` : ''}`));
     part('metrics', metrics.length, metrics.map(metricLabel));
-    document.querySelector('#rules-summary').textContent = active ? [...conditions.map(rule => `${rule.does === 'didnt' ? 'never' : 'did'} ${rule.event}${rule.param ? ` (${rule.param})` : ''}`), ...metrics.map(metricLabel)].join(' · ') : '';
+    drawRuleBar();
   };
   const conditionList = mountRuleList({
     container: document.querySelector('#condition-list'), rules: view.conditions, catalog: () => catalog, addLabel: 'Add a condition', empty: 'No conditions yet.',
@@ -807,7 +917,8 @@ async function renderPlayers() {
       if (ticket !== latest) return;
       if (old) shownOld = true;
       filtersControl?.setContext(data.context || {});
-      document.querySelector('#player-count').textContent = number(data.total);
+      pageRows = data.players;
+      document.querySelector('#player-count').textContent = number(data.total); lastTotal = data.total; markFresh(); drawRuleBar();
       if (!data.players.length) { list.innerHTML = empty(search || body.conditions.length ? 'No matching players' : 'No players', search || body.conditions.length ? 'Try another ID, or loosen the event rules.' : 'Pick other days or filters, or check that your game is sending events.', '', 'users'); return; }
       const link = row => `${gamePath(game, 'players')}?${new URLSearchParams({player: row.player})}`;
       const head = (key, label, extra = '') => `<th class="${extra} sortable ${view.sort === key ? 'sorted' : ''}" data-sort="${key}" aria-sort="${view.sort === key ? (view.order === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button">${escapeHTML(label)}<span class="sort-arrow">${view.sort === key ? (view.order === 'asc' ? '▲' : '▼') : ''}</span></button></th>`;
@@ -819,6 +930,12 @@ async function renderPlayers() {
     finally { finishLoading(); }
   };
   list.addEventListener('click', event => {
+    // A player opens in the inspector drawer so the list keeps its place; Previous / Next walk this page of players.
+    const link = event.target.closest('a[href*="player="]');
+    if (link && event.button === 0 && !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) {
+      const id = new URL(link.href, location.href).searchParams.get('player'); const index = pageRows.findIndex(row => row.player === id);
+      if (index >= 0) { event.preventDefault(); renderJourney(game, id, {overlay: true, trigger: link, filters: chosen, browse: {index, total: pageRows.length, load: async position => pageRows[position]}}); return; }
+    }
     const page = event.target.closest('[data-page]'); if (page) { offset = Math.max(0, offset + 50 * Number(page.dataset.page)); load(); return; }
     const header = event.target.closest('[data-sort]');
     if (header) { const key = header.dataset.sort; if (view.sort === key) view.order = view.order === 'desc' ? 'asc' : 'desc'; else { view.sort = key; view.order = 'desc'; } persist(); offset = 0; load(); }
@@ -904,7 +1021,7 @@ function playerInformation(data, timezone, fetchedDevice = null) {
 }
 
 async function renderJourney(game, player, options = {}) {
-  const container = options.pane || (options.overlay ? modal : document);
+  const container = options.pane || (options.overlay ? drawerEls().drawer : document);
   const embedded = Boolean(options.overlay || options.pane);  // not a page of its own
   const returnScroll = {left: window.scrollX, top: window.scrollY, behavior: 'instant'};
   const content = `<a class="back-link" href="${gamePath(game, 'players')}">← Back to players</a>` + heading('Player', player) +
@@ -924,35 +1041,22 @@ async function renderJourney(game, player, options = {}) {
       pane.querySelector('.player-pane-head').insertBefore(controls, pane.querySelector('[data-close-player]'));
     }
   } else if (options.overlay) {
-    modal.classList.add('player-dialog');
-    modal.innerHTML = '<div class="player-dialog-head"><h2 id="dialog-title">Player details</h2><button type="button" class="button" data-close-player aria-label="Close player details">Close ×</button></div>' + content;
-    modal.querySelector('.back-link').remove();
-    modal.querySelector('[data-close-player]').addEventListener('click', dismissModal);
+    // The inspector drawer: the list keeps its place behind it, and closing returns focus to the row.
+    const drawer = drawerEls().drawer;
+    const rangePicker = () => drawer.querySelector('[data-range-picker]')?._flatpickr;
+    openDrawer(() => `<div class="dh"><div class="sp1"><h2 id="drawer-title">Player details</h2><span class="sub">${escapeHTML(shortId(player))}</span></div><span class="player-browse-slot"></span><button type="button" class="icon-btn" data-close-player aria-label="Close player details">${icon('close', 16)}</button></div><div class="db">${content}</div>`, {onClose: () => {
+      latest++; rangePicker()?.destroy();
+      if (options.trigger?.isConnected) { options.trigger.focus({preventScroll: true}); window.scrollTo(returnScroll); }
+    }});
+    drawer.classList.add('player-drawer');
+    drawer.querySelector('.back-link').remove();
+    drawer.querySelector('[data-close-player]').addEventListener('click', closeDrawer);
     if (options.browse) {
       const controls = document.createElement('div');
       controls.className = 'player-browse';
-      controls.innerHTML = '<button type="button" class="button small-button" data-player-previous>← Previous player</button><span data-player-position aria-live="polite"></span><button type="button" class="button small-button" data-player-next>Next player →</button>';
-      modal.querySelector('.player-dialog-head').insertBefore(controls, modal.querySelector('[data-close-player]'));
+      controls.innerHTML = '<button type="button" class="btn sm" data-player-previous>‹ Previous</button><span data-player-position aria-live="polite"></span><button type="button" class="btn sm" data-player-next>Next ›</button>';
+      drawer.querySelector('.player-browse-slot').replaceWith(controls);
     }
-    const rangePicker = () => modal.querySelector('[data-range-picker]')?._flatpickr;
-    const cancel = event => {
-      if (rangePicker()?.isOpen) { event.preventDefault(); rangePicker().close(); }
-    };
-    modal.addEventListener('cancel', cancel);
-    const dismiss = () => {
-      rangePicker()?.destroy();
-      modal.removeEventListener('cancel', cancel);
-    };
-    modal.addEventListener('close', dismiss, {once: true, capture: true});
-    modal.addEventListener('close', () => {
-      latest++;
-      modal.classList.remove('player-dialog');
-      if (options.trigger?.isConnected) {
-        options.trigger.focus({preventScroll: true});
-        window.scrollTo(returnScroll);
-      }
-    }, {once: true});
-    modal.showModal();
   } else {
     shell('Player', content);
   }
@@ -963,7 +1067,7 @@ async function renderJourney(game, player, options = {}) {
   let latest = 0;
   let range = null; let timezone = saved.timezone; let fetchedDevice = null;
   const body = container.querySelector('#story-body');
-  const isOpen = () => options.pane ? body.isConnected : modal.open;
+  const isOpen = () => options.pane ? body.isConnected : !drawerEls().drawer.hidden && body.isConnected;
   let playerIndex = options.browse?.index ?? 0;
   let browsing = false;
   // Opened from a level: the timeline starts at the player's last event on it.
@@ -990,7 +1094,7 @@ async function renderJourney(game, player, options = {}) {
       container.querySelector('#story-metrics').innerHTML = '';
       options.onPlayer?.(player);
       draw();
-      (options.pane || modal).scrollTop = 0;
+      (options.pane || container.querySelector('.db') || container).scrollTop = 0;
     } catch (error) { if (body.isConnected && isOpen()) toastError(error); }
     finally { browsing = false; syncBrowse(); }
   };
@@ -1490,6 +1594,31 @@ const overviewPrefetchPath = game => `${gameURL(game)}/insights/summary?${filter
 
 // Where the Levels list was left when a level page was opened, so Back finds it as it was.
 let levelsReturn = null;
+// Levels at a glance: players remaining by level (the two steepest drops marked) and a heat strip, one cell per level.
+function levelViz(levels) {
+  const rows = levels.filter(row => row.started != null);
+  if (rows.length < 2) return '';
+  const width = 800, height = 190, left = 40, right = 12, top = 18, bottom = 24;
+  const peak = Math.max(1, ...rows.map(row => row.started));
+  const x = index => left + index / (rows.length - 1) * (width - left - right);
+  const y = value => top + (height - top - bottom) * (1 - value / peak);
+  const drop = row => row.transition?.available && !row.low_sample ? row.transition.drop_percent : null;
+  const steepest = rows.filter(row => drop(row) != null).sort((a, b) => drop(b) - drop(a)).slice(0, 2).map(row => row.level);
+  const line = rows.map((row, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)} ${y(row.started).toFixed(1)}`).join(' ');
+  const every = Math.ceil(rows.length / 12);
+  const ticks = [0, Math.round(peak / 2), peak].filter((value, index, list) => list.indexOf(value) === index);
+  const maxDrop = Math.max(1, ...rows.map(row => drop(row) ?? 0));
+  const summary = `Players remaining by level, from ${number(rows[0].started)} at level ${rows[0].level} to ${number(rows[rows.length - 1].started)} at level ${rows[rows.length - 1].level}${steepest.length ? `. Steepest drops after level ${steepest.join(' and ')}` : ''}.`;
+  return `<section class="panel level-viz"><div class="panel-header"><div><h2>Players remaining by level</h2><p>Steep steps are where players stop${steepest.length ? ' · the two steepest are marked' : ''}</p></div></div><div class="panel-body">
+    <svg class="level-curve" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHTML(summary)}">
+      ${ticks.map(value => `<line class="chart-grid" x1="${left}" x2="${width - right}" y1="${y(value)}" y2="${y(value)}"/><text class="chart-axis" x="${left - 6}" y="${y(value) + 4}" text-anchor="end">${number(value)}</text>`).join('')}
+      <path class="curve-area" d="${line} L${x(rows.length - 1)} ${y(0)} L${x(0)} ${y(0)}Z"/><path class="curve-line" d="${line}"/>
+      ${rows.map((row, index) => { const big = steepest.includes(row.level); return `<circle class="curve-dot${big ? ' big' : ''}" cx="${x(index).toFixed(1)}" cy="${y(row.started).toFixed(1)}" r="${big ? 4.5 : 2.6}"/>${big ? `<text class="curve-flag" x="${(x(index) + 7).toFixed(1)}" y="${(y(row.started) - 7).toFixed(1)}">L${row.level} −${Math.round(drop(row))}%</text>` : ''}${index % every === 0 || index === rows.length - 1 ? `<text class="chart-axis" x="${x(index).toFixed(1)}" y="${height - 7}" text-anchor="middle">${row.level}</text>` : ''}`; }).join('')}
+    </svg>
+    <div class="lvheat-strip" role="group" aria-label="Drop to the next level, per level">${rows.map(row => { const d = drop(row); return `<button type="button" class="lvheat h${d == null ? 0 : Math.max(1, Math.ceil(d / maxDrop * 6))}" data-heat-level="${row.level}" title="Level ${row.level}: ${d == null ? 'no next level yet' : `${percent(d)} did not start the next`}">${row.level}</button>`; }).join('')}</div>
+    <p class="foot-note">Cell colour is the drop to the next level, per level: lighter is low, stronger is high. Open a level to see its players.</p></div></section>`;
+}
+
 async function renderLevels() {
   const game = currentGame;
   const navKey = `avn-level-nav-${game.id}`;
@@ -1726,6 +1855,7 @@ async function renderLevels() {
       } catch (error) { toastError(error); }
     }
   });
+  document.querySelector('#levels-summary').addEventListener('click', event => { const heat = event.target.closest('[data-heat-level]'); if (heat) navigate(levelURL(heat.dataset.heatLevel)); });
   pageBox.addEventListener('change', event => {
     const select = event.target.closest('[data-drill-sort]'); if (!select) return;
     const level = Number(select.closest('[data-level-drill]').dataset.levelDrill); const state = drill.get(level);
@@ -1749,7 +1879,8 @@ async function renderLevels() {
     const largestDrop = [...data.levels].filter(row => !row.low_sample && row.transition?.available).sort((first, second) => second.transition.drop_percent - first.transition.drop_percent)[0];
     const hardest = [...data.levels].filter(row => !row.low_sample).sort((a, b) => (a.completion ?? 100) - (b.completion ?? 100))[0];
     const slowest = [...data.levels].filter(row => row.median_seconds != null).sort((a, b) => b.median_seconds - a.median_seconds)[0];
-    document.querySelector('#levels-summary').innerHTML = stats([['Levels seen', number(data.levels.length), `level ${data.levels[0].level} to ${data.levels[data.levels.length - 1].level}`], ['Largest total drop', largestDrop ? `Level ${largestDrop.level}` : '—', largestDrop ? `${percent(largestDrop.transition.drop_percent)} did not start level ${largestDrop.level + 1}${firstSession() ? ' in their first session' : ''}` : `needs at least ${number(minimum)} players`], ['Hardest level', hardest ? `Level ${hardest.level}` : '—', hardest ? `${percent(hardest.completion)} of players finish it` : `needs at least ${number(minimum)} players`], ['Slowest level', slowest ? `Level ${slowest.level}` : '—', slowest ? `median ${duration(slowest.median_seconds)}` : '']]);
+    const kpiRow = items => `<div class="kpis">${items.map(([label, value, note]) => `<div class="kpi"><div class="eyebrow">${label}</div><div class="k-v">${value}</div><div class="k-c">${note}</div></div>`).join('')}</div>`;
+    document.querySelector('#levels-summary').innerHTML = kpiRow([['Levels seen', number(data.levels.length), `level ${data.levels[0].level} to ${data.levels[data.levels.length - 1].level}`], ['Largest total drop', largestDrop ? `Level ${largestDrop.level}` : '—', largestDrop ? `${percent(largestDrop.transition.drop_percent)} did not start level ${largestDrop.level + 1}${firstSession() ? ' in their first session' : ''}` : `needs at least ${number(minimum)} players`], ['Hardest level', hardest ? `Level ${hardest.level}` : '—', hardest ? `${percent(hardest.completion)} of players finish it` : `needs at least ${number(minimum)} players`], ['Slowest level', slowest ? `Level ${slowest.level}` : '—', slowest ? `median ${duration(slowest.median_seconds)}` : '']]) + levelViz(data.levels);
     const sorted = rows();
     const size = document.querySelector('#levels-page-size').value === 'all' ? sorted.length : Number(document.querySelector('#levels-page-size').value);
     page = Math.min(page, Math.max(0, Math.ceil(sorted.length / size) - 1));

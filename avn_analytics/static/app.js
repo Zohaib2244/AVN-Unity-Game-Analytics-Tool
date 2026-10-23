@@ -83,7 +83,7 @@ const presets = [
 
 // Compact variant for dashboards: one row with a preset menu, the calendar field and ‹ › steps.
 function compactRangeMarkup() {
-  return `<div class="range range-compact"><select data-preset-select aria-label="Date range">${presets.map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}<option value="custom">Custom days</option></select>
+  return `<div class="range range-compact"><button type="button" class="select" data-preset-button aria-haspopup="listbox" aria-expanded="false" aria-label="Date range"><span data-preset-label>Last 30 days</span>${icon('chevron', 12)}</button>
   <button type="button" class="range-nav" data-range-step="-1" aria-label="Previous range">‹</button><input type="text" class="range-input" data-range-picker readonly aria-label="Selected days"><button type="button" class="range-nav" data-range-step="1" aria-label="Next range">›</button>
   <input type="hidden" data-range="from"><input type="hidden" data-range="to"></div>`;
 }
@@ -101,7 +101,7 @@ function bindRange(container, onChange, initialPreset = '7', initialRange = null
   const input = container.querySelector('[data-range-picker]');
   const hidden = {from: container.querySelector('[data-range="from"]'), to: container.querySelector('[data-range="to"]')};
   const picker = flatpickr(input, {
-    ...(container.closest('dialog') ? {appendTo: container, static: true} : {}),
+    ...(container.closest('dialog, .drawer') ? {appendTo: container, static: true} : {}),
     mode: 'range', showMonths: 1, dateFormat: 'Y-m-d', altInput: true, altFormat: 'M j, Y', closeOnSelect: false,
     altInputClass: 'range-input', minDate: '1970-01-01', maxDate: '9998-12-31', locale: {firstDayOfWeek: 1}, allowInput: false,
     // The calendar stays open after the second click (so the range can be adjusted); it closes when you
@@ -121,16 +121,23 @@ function bindRange(container, onChange, initialPreset = '7', initialRange = null
     if (updatePicker) picker.setDate([state.from, state.to], false);
     hidden.from.value = state.from; hidden.to.value = state.to;
     container.querySelectorAll('[data-preset]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.preset === state.preset)));
-    const select = container.querySelector('[data-preset-select]'); if (select) select.value = state.preset;
+    const presetLabel = container.querySelector('[data-preset-label]'); if (presetLabel) presetLabel.textContent = state.preset === 'custom' ? 'Custom days' : presets.find(([key]) => key === state.preset)?.[1] || 'Custom days';
     onChange({...state});
   }
   container.querySelectorAll('[data-preset]').forEach(button => button.addEventListener('click', () => {
     if (button.dataset.preset === 'custom') { state.preset = 'custom'; apply(false); picker.open(); return; }
     [state.from, state.to] = presets.find(([key]) => key === button.dataset.preset)[2](); state.preset = button.dataset.preset; apply();
   }));
-  container.querySelector('[data-preset-select]')?.addEventListener('change', event => {
-    if (event.target.value === 'custom') { state.preset = 'custom'; apply(false); picker.open(); return; }
-    [state.from, state.to] = presets.find(([key]) => key === event.target.value)[2](); state.preset = event.target.value; apply();
+  const choosePreset = key => {
+    if (key === 'custom') { state.preset = 'custom'; apply(false); picker.open(); return; }
+    [state.from, state.to] = presets.find(([name]) => name === key)[2](); state.preset = key; apply();
+  };
+  // A single-select list: a tick marks the current choice and the right side hints at the dates it covers.
+  container.querySelector('[data-preset-button]')?.addEventListener('click', event => {
+    const short = day => new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, {month: 'short', day: 'numeric', timeZone: 'UTC'});
+    const rows = presets.map(([key, label, range]) => { const [from, to] = range(); return `<button type="button" class="opt" role="option" aria-selected="${state.preset === key}" data-pick-preset="${key}"><span class="tick">${state.preset === key ? icon('check', 14) : ''}</span><span class="ot">${label}</span><span class="oc">${from === to ? short(from) : `${short(from)} – ${short(to)}`}</span></button>`; }).join('');
+    const pop = openPop(event.currentTarget, `<div class="pop-scroll">${rows}<button type="button" class="opt" role="option" aria-selected="${state.preset === 'custom'}" data-pick-preset="custom"><span class="tick">${state.preset === 'custom' ? icon('check', 14) : ''}</span><span class="ot">Custom range…</span></button></div>`, {width: 280, label: 'Date range'});
+    pop?.querySelectorAll('[data-pick-preset]').forEach(row => row.addEventListener('click', () => { const key = row.dataset.pickPreset; closePop(); choosePreset(key); }));
   });
   container.querySelectorAll('[data-range-step]').forEach(button => button.addEventListener('click', () => {
     const direction = Number(button.dataset.rangeStep);
@@ -171,35 +178,11 @@ function mountActivity(container, game, basis = 'server_ts') {
 const platformLabel = platform => ({android:'Android', ios:'iOS'}[platform] || escapeHTML(platform));
 const fileSize = value => value >= 1073741824 ? `${(value / 1073741824).toFixed(1)} GB` : value >= 1048576 ? `${(value / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round((value || 0) / 1024))} KB`;
 const gameURL = game => `/v1/games/${encodeURIComponent(game.id)}`;
-const brand = `<a href="/" class="brand"><span class="brand-icon" aria-hidden="true">a.</span><span><span class="brand-name">avn analytics</span><span class="brand-sub"></span></span></a>`;
 
 function diagram() {
   return `<div class="welcome-art" aria-hidden="true"><svg viewBox="0 0 340 230" fill="none"><circle cx="185" cy="115" r="82" stroke="currentColor"/><circle cx="185" cy="115" r="57" stroke="currentColor" opacity=".6"/><path d="M52 70h48l48 44m-96 59h50l46-48m77-11h68" stroke="var(--accent-cyan)" stroke-width="1.4" stroke-dasharray="4 5"/><rect x="26" y="43" width="59" height="54" rx="13" fill="var(--bg-nested)" stroke="var(--border)"/><rect x="26" y="146" width="59" height="54" rx="13" fill="var(--bg-nested)" stroke="var(--border)"/><rect x="139" y="75" width="87" height="81" rx="20" fill="var(--accent-orange)" stroke="var(--border)"/><rect x="266" y="87" width="49" height="54" rx="12" fill="var(--bg-nested)" stroke="var(--border)"/><path d="M169 99h28v12h-28Zm0 18h28v12h-28Z" stroke="var(--badge-text)" stroke-width="2"/><circle cx="175" cy="105" r="1.5" fill="var(--badge-text)"/><circle cx="175" cy="123" r="1.5" fill="var(--badge-text)"/><path d="M45 65h19l3 14-8-3h-9l-8 3 3-14Zm2 5h7m-3-3v6m9-2h.1M45 167h21v14H45Zm3 17h15m-11-3v3m6-3v3M279 101h15m-15 6h15m-15 6h9m-9 6h12" stroke="var(--accent-orange)" stroke-width="1.5" stroke-linecap="round"/><circle cx="241" cy="65" r="12" fill="var(--bg-nested)" stroke="var(--accent-cyan)"/><path d="m236 65 3 3 6-6" stroke="var(--accent-cyan)" stroke-width="1.5"/><circle cx="116" cy="181" r="4" fill="var(--accent-cyan)"/><circle cx="288" cy="167" r="3" fill="var(--accent-cyan)"/></svg></div>`;
 }
 
-function toast(message, action = null, kind = 'status') {
-  const notice = document.querySelector('#notice');
-  notice.dataset.kind = kind;
-  notice.setAttribute('role', kind === 'error' ? 'alert' : 'status');
-  notice.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
-  notice.textContent = message;
-  if (action) {
-    const button = document.createElement('button');
-    button.type = 'button'; button.className = 'button small-button'; button.textContent = action.label;
-    button.addEventListener('click', () => { notice.textContent = ''; action.run(); }, {once: true});
-    notice.append(' ', button);
-  }
-  clearTimeout(noticeTimer);
-  const dismiss = document.createElement('button');
-  dismiss.type = 'button'; dismiss.className = 'button small-button'; dismiss.textContent = 'Dismiss';
-  dismiss.addEventListener('click', () => { notice.textContent = ''; });
-  notice.append(dismiss);
-  if (kind !== 'error') noticeTimer = setTimeout(() => { notice.textContent = ''; }, action ? 8000 : 4500);
-}
-
-function toastError(error) {
-  if (error?.name !== 'AbortError') toast(error.message || 'The action failed. Please try again.', null, 'error');
-}
 
 let pendingRequests = 0; let requestIndicatorTimer;
 function requestActivity(change) {
@@ -390,7 +373,7 @@ function beginLoading(element, placeholder, {path = null, note = true} = {}) {
 }
 
 function empty(title, description, action = '', type = 'game') {
-  return `<div class="empty"><span class="empty-icon">${icon(type, 23)}</span><h3>${escapeHTML(title)}</h3><p>${escapeHTML(description)}</p>${action}</div>`;
+  return `<div class="empty">${isoBlocks()}<h3>${escapeHTML(title)}</h3><p>${escapeHTML(description)}</p>${action}</div>`;
 }
 
 function heading(title, subtitle, action = '') {
@@ -400,8 +383,8 @@ function heading(title, subtitle, action = '') {
 const registerButton = () => canManageGames() ? `<a class="button primary" href="/games/new">${icon('plus', 15)} Register game</a>` : '';
 const ROLE_LABELS = {admin: 'Admin', lead: 'Team lead', member: 'Member'};
 
-function metric(title, value, footer, symbol) {
-  return `<article class="metric"><div class="metric-top"><span>${title}</span>${icon(symbol,17)}</div><div class="metric-value">${value}</div><p class="metric-foot">${footer}</p></article>`;
+function metric(title, value, footer) {
+  return `<div class="kpi"><div class="eyebrow">${title}</div><div class="k-v">${value}</div><div class="k-c">${footer}</div></div>`;
 }
 
 // Game-first navigation: the workspace lists games; inside a game, the sidebar shows that game's
@@ -458,30 +441,11 @@ function gameGroups(games) {
   });
 }
 
-function variantSwitch(game, section) {
-  const variants = variantsOf(game);
-  const missing = PLATFORM_ORDER.filter(platform => !variants.some(item => item.platform === platform));
-  return `<div class="variant-switch" role="group" aria-label="Platform">${variants.map(item => `<a href="${gamePath(item, section)}" ${item.id === game.id ? 'aria-current="page" ' : ''}title="${escapeHTML(item.bundle_id)}">${platformLabel(item.platform)}${item.archived_at ? ' ·  paused' : ''}</a>`).join('')}${(canManageGames() ? missing : []).map(platform => `<a class="variant-add" href="/games/new?${new URLSearchParams({name: game.name, bundle_id: game.bundle_id, platform})}" title="Register the ${platformLabel(platform)} version">+ ${platformLabel(platform)}</a>`).join('')}</div>`;
-}
-
-function shell(title, content) {
-  const secondary = [...(me.can_manage_team ? [['/workspaces','grid','Workspaces'],['/team','users','Team']] : []), ['/status','pulse','Status'],['/settings','settings','Settings']];
-  const link = ([url, symbol, label], active) => `<a href="${url}" aria-label="${label}" class="${active ? 'active' : ''}" ${active ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span></a>`;
-  const game = currentGame;
-  const main = game
-    ? `<a class="back-to-games" href="/">← All games</a><div class="sidebar-game">${avatar(game.name, variantsOf(game))}<div><strong>${escapeHTML(game.name)}</strong><span>${escapeHTML(game.bundle_id)}</span></div></div>${variantSwitch(game, currentSection)}<p class="nav-label eyebrow">Game</p><nav class="nav" aria-label="Game">${GAME_SECTIONS.map(([section, symbol, label]) => link([gamePath(game, section), symbol, label], section === currentSection)).join('')}</nav>`
-    : `<p class="nav-label eyebrow">Menu</p><nav class="nav" aria-label="Menu">${link(['/', 'grid', 'Games'], ['/', '/games', '/games/new'].includes(location.pathname))}</nav>`;
-  const crumbs = game ? `<a href="/">Games</a> <span>/</span> <a href="${gamePath(game)}">${escapeHTML(game.name)} · ${platformLabel(game.platform)}</a> <span>/</span> <strong>${escapeHTML(title)}</strong>` : `Workspace <span>/</span> <strong>${escapeHTML(title)}</strong>`;
-  const switcher = me.workspaces.length > 1 || me.is_admin ? `<div class="ws-switch"><label for="ws-select">Workspace</label><select id="ws-select" aria-label="Workspace">${me.workspaces.map(item => `<option value="${item.id}" ${item.id === currentWorkspace ? 'selected' : ''}>${escapeHTML(item.name)}</option>`).join('')}</select></div>` : '';
-  root.innerHTML = `<aside class="sidebar" id="sidebar" aria-label="Sidebar">${brand}${switcher}${main}<nav class="nav nav-secondary" aria-label="Secondary">${secondary.map(item => link(item, location.pathname === item[0])).join('')}</nav><div class="sidebar-bottom"><div class="account"><span class="avatar">${escapeHTML((me.name || me.email || 'A').slice(0,2).toUpperCase())}</span><div><strong>${escapeHTML(me.name || (me.email || '').split('@')[0] || 'Administrator')}</strong><p>${ROLE_LABELS[wsRole()] || wsRole()}${me.source === 'lan' ? ' · local network' : ''}</p></div></div></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-nav-toggle" data-action="nav" aria-controls="sidebar" aria-expanded="false" aria-label="Open navigation">${icon('grid',17)}</button><div class="breadcrumb">${crumbs}</div><div class="topbar-right"><button class="icon-button" data-action="theme" title="Switch light/dark theme" aria-label="Switch light/dark theme">${icon(window.avnTheme?.theme() === 'light' ? 'moon' : 'sun',15)}</button><button class="icon-button" data-action="refresh" title="Refresh data" aria-label="Refresh data">${icon('refresh',15)}</button></div></header><main id="main">${content}<footer class="footnote"><span>${icon('shield',13)} Your data stays on your server.</span><span>AVN Analytics</span></footer></main></div>`;
-  document.title = `${game ? `${title} · ${game.name}` : title} · AVN Analytics`;
-}
-
 function renderHome() {
   const all = gameGroups(overview.games);
   const archivedCount = all.filter(group => group.archived).length;
   shell('Games', heading(me.workspaces.length > 1 || me.is_admin ? `${workspaceName() || 'Your'} games` : 'Your games', 'Pick a game to see its players, funnels, exports and settings.', registerButton()) +
-    `<section class="metrics" aria-label="Workspace totals">${metric('Games', number(all.length), `${number(overview.games.length)} platform variant${overview.games.length === 1 ? '' : 's'}`, 'game')}${metric('Events collected', number(overview.events), 'Safely stored, never double-counted', 'pulse')}${metric('Events today', number(overview.today), `${number(overview.anonymous_today)} without a player ID · local time`, 'export')}${metric('Players today', number(overview.dau_today), 'Unique player IDs · local time, no editor data', 'users')}</section>
+    `<div class="kpis" aria-label="Workspace totals">${[['Games', number(all.length), `${number(overview.games.length)} platform variant${overview.games.length === 1 ? '' : 's'}`], ['Events collected', number(overview.events), 'Safely stored, never double-counted'], ['Events today', number(overview.today), `${number(overview.anonymous_today)} without a player ID · local time`], ['Players today', number(overview.dau_today), 'Unique player IDs · local time, no editor data']].map(([label, value, note]) => `<div class="kpi"><div class="eyebrow">${label}</div><div class="k-v">${value}</div><div class="k-c">${note}</div></div>`).join('')}</div>
     ${all.length ? `<div class="toolbar games-toolbar"><div class="search">${icon('search',16)}<input id="game-search" type="search" aria-label="Search games" placeholder="Search by name, bundle ID or notes…"></div>
     <div class="range-modes" role="group" aria-label="Show">${[['active',`Active (${all.length - archivedCount})`],['archived',`Archived (${archivedCount})`],['all',`All (${all.length})`]].map(([key,label]) => `<button type="button" data-filter="${key}">${label}</button>`).join('')}</div>
     <div class="game-select"><label for="game-sort">Sort</label><select id="game-sort"><option value="recent">Latest activity</option><option value="name">Name A–Z</option><option value="events">Most events</option><option value="newest">Newest first</option></select></div></div>` : ''}<div id="game-results"></div>
@@ -498,7 +462,7 @@ function renderHome() {
     document.querySelectorAll('[data-filter]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.filter === state.filter)));
     const query = state.query.toLowerCase();
     const groups = all.filter(group => (state.filter === 'all' || (state.filter === 'archived') === group.archived) && `${group.name} ${group.variants.map(item => item.bundle_id).join(' ')} ${group.notes}`.toLowerCase().includes(query)).sort(sorters[state.sort]);
-    document.querySelector('#game-results').innerHTML = groups.length ? `<div class="game-grid">${groups.map(group => `<article class="game-card ${group.archived ? 'archived' : ''}"><div class="game-card-header">${avatar(group.name, group.variants)}<span>${group.archived ? '<span class="pill bad">Archived</span>' : ''}</span></div><h2><a class="card-link" href="${gamePath(group.primary)}">${escapeHTML(group.name)}</a></h2><p class="mono">${escapeHTML([...new Set(group.variants.map(item => item.bundle_id))].join(' · '))}</p>${group.notes ? `<p class="game-notes">${escapeHTML(group.notes)}</p>` : ''}<div class="card-variants">${group.variants.map(item => `<a class="pill ${item.archived_at ? 'bad' : ''}" href="${gamePath(item)}" title="Open the ${platformLabel(item.platform)} version">${platformLabel(item.platform)} · ${number(item.events)}</a>`).join('')}${(canManageGames() ? PLATFORM_ORDER.filter(platform => !group.variants.some(item => item.platform === platform)) : []).map(platform => `<a class="pill variant-add" href="/games/new?${new URLSearchParams({name: group.name, bundle_id: group.primary.bundle_id, platform})}">+ ${platformLabel(platform)}</a>`).join('')}</div>${group.archived ? '' : `<p class="card-dau" title="Daily active users: distinct player IDs with an event on that local day, editor and development data left out"><strong>${number(group.dau_today)}</strong> DAU today <span>· ${number(group.dau_yesterday)} yesterday</span></p>`}<div class="game-card-footer"><span>${number(group.events)} events</span><span>${group.archived ? 'Collection paused' : group.last_event ? `Last event ${displayDate(group.last_event)}` : 'Awaiting events'} ${icon('arrow',12)}</span></div></article>`).join('')}</div>` : `<section class="panel">${empty('No games found', 'Try another search or filter.')}</section>`;
+    document.querySelector('#game-results').innerHTML = groups.length ? `<div class="game-grid">${groups.map(group => `<article class="game-card ${group.archived ? 'archived' : ''}"><div class="game-card-header">${avatar(group.name, group.variants)}<span>${group.archived ? '<span class="tag bad">Archived</span>' : Date.now() - new Date(group.last_event || 0) < 600000 ? '<span class="tag ok dot">Live</span>' : '<span class="tag plain">Quiet</span>'}</span></div><h2><a class="card-link" href="${gamePath(group.primary)}">${escapeHTML(group.name)}</a></h2><p class="mono">${escapeHTML([...new Set(group.variants.map(item => item.bundle_id))].join(' · '))}</p>${group.notes ? `<p class="game-notes">${escapeHTML(group.notes)}</p>` : ''}<div class="card-variants">${group.variants.map(item => `<a class="pill ${item.archived_at ? 'bad' : ''}" href="${gamePath(item)}" title="Open the ${platformLabel(item.platform)} version">${platformLabel(item.platform)} · ${number(item.events)}</a>`).join('')}${(canManageGames() ? PLATFORM_ORDER.filter(platform => !group.variants.some(item => item.platform === platform)) : []).map(platform => `<a class="pill variant-add" href="/games/new?${new URLSearchParams({name: group.name, bundle_id: group.primary.bundle_id, platform})}">+ ${platformLabel(platform)}</a>`).join('')}</div>${group.archived ? '' : `<p class="card-dau" title="Daily active users: distinct player IDs with an event on that local day, editor and development data left out"><strong>${number(group.dau_today)}</strong> DAU today <span>· ${number(group.dau_yesterday)} yesterday</span></p>`}<div class="game-card-footer"><span>${number(group.events)} events</span><span>${group.archived ? 'Collection paused' : group.last_event ? `Last event ${displayDate(group.last_event)}` : 'Awaiting events'} ${icon('arrow',12)}</span></div></article>`).join('')}${canManageGames() ? `<a class="game-card add-card" href="/games/new"><span class="add-plus">+</span><strong>Register a game</strong><span>Add a platform or a new game</span></a>` : ''}</div>` : `<section class="panel">${empty('No games found', 'Try another search or filter.')}</section>`;
   };
   document.querySelector('#game-search').addEventListener('input', event => { state.query = event.target.value; draw(); });
   document.querySelector('#game-sort').addEventListener('change', event => { state.sort = event.target.value; draw(); });
@@ -561,7 +525,7 @@ async function renderGameSettings() {
   const actions = `<div class="heading-actions">${manage ? `<button class="button" data-game-action="edit">${icon('settings',15)} Edit</button>` : ''}<a class="button primary" href="${gamePath(game, 'exports')}">${icon('export',15)} Export data</a></div>`;
   shell('Game settings', heading('Game settings', `${game.bundle_id} · ${platformLabel(game.platform)}`, actions) +
     (archived ? `<div class="archived-banner">${icon('lock',18)}<div><strong>Archived ${displayDate(game.archived_at)}.</strong> Collection is paused: the server refuses new events, and the Unity SDK keeps them queued on players’ devices until you restore the game.</div>${manage ? '<button class="button" data-game-action="unarchive">Restore game</button>' : ''}</div>` : '') +
-    `<section class="metrics">${metric('Events collected',number(game.events),`${number(game.event_names)} distinct event names`,'pulse')}${metric('Events today',number(game.today),'Received today · UTC','export')}${metric('API keys',`${game.keys_active} active`,`${game.keys_total} created in total`,'key')}${metric('Storage',fileSize(game.storage_bytes),'Event database on disk','disk')}</section>
+    `<section class="kpis">${metric('Events collected',number(game.events),`${number(game.event_names)} distinct event names`,'pulse')}${metric('Events today',number(game.today),'Received today · UTC','export')}${metric('API keys',`${game.keys_active} active`,`${game.keys_total} created in total`,'key')}${metric('Storage',fileSize(game.storage_bytes),'Event database on disk','disk')}</section>
     ${manage ? `<section class="panel section-spacing"><div class="panel-header"><div><h2>Game icon</h2><p>Shown next to the game in the sidebar and on the games page${variantsOf(game).length > 1 ? ' · applies to both platforms' : ''}</p></div></div><div class="panel-body icon-settings">${avatar(game.name, variantsOf(game)).replace('game-avatar', 'game-avatar icon-large')}<div class="icon-actions"><label class="button" for="icon-file">${icon('export',14)} ${game.icon_updated_at ? 'Change icon' : 'Upload icon'}</label><input id="icon-file" type="file" accept="image/*" hidden>${variantsOf(game).some(item => item.icon_updated_at) ? '<button type="button" class="button danger-text" id="icon-remove">Remove</button>' : ''}<p class="small muted">Any image works; it is cropped to a square.</p></div></div></section>` : ''}
     ${manage ? '<section class="panel section-spacing" id="access-panel"><div class="panel-header"><div><h2>Who can see this game</h2><p>Admins and team leads always see every game. Choose which members can open this one.</p></div></div><div class="panel-body" id="access-list">' + skeleton('table', 3, 2) + '</div></section>' : ''}
     <div class="section-grid section-spacing"><section class="panel"><div class="panel-header"><h2>Game information</h2>${manage ? `<button class="button ghost" data-game-action="edit">Edit ${icon('arrow',12)}</button>` : ''}</div><div class="panel-body"><ul class="status-list">
@@ -620,11 +584,12 @@ async function renderGameSettings() {
   document.querySelectorAll('[data-copy]').forEach(button => button.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(button.dataset.copy); toast('Copied.'); } catch { toast('Select the text and copy it manually.'); }
   }));
-  const update = async (changes, message) => { await api(`/v1/games/${game.id}`, {method:'PATCH', body:JSON.stringify(changes)}); toast(message); overview = await api(overviewURL()); overviewStale = false; currentGame = overview.games.find(item => item.id === game.id) || currentGame; await renderGameSettings(); };
+  const update = async (changes, message, undo = null) => { await api(`/v1/games/${game.id}`, {method:'PATCH', body:JSON.stringify(changes)}); toast(message, undo); overview = await api(overviewURL()); overviewStale = false; currentGame = overview.games.find(item => item.id === game.id) || currentGame; await renderGameSettings(); };
   document.querySelectorAll('[data-game-action]').forEach(button => button.addEventListener('click', async () => {
     const action = button.dataset.gameAction;
     if (action === 'edit') return editGame(game, update);
-    if (action === 'archive') return confirmDialog('Archive this game?', `${game.name} will stop accepting events. Nothing is deleted, and devices keep their events queued until you restore it.`, 'Archive game', () => update({archived:true}, 'Game archived. Collection is paused.'));
+    // Archiving is reversible, so it happens at once and the toast offers Undo; only deleting asks for the name.
+    if (action === 'archive') { try { await update({archived:true}, 'Game archived. Collection is paused.', {label: 'Undo', run: () => update({archived:false}, 'Game restored. Collection has resumed.').catch(toastError)}); } catch (error) { toastError(error); } return; }
     if (action === 'unarchive') { try { await update({archived:false}, 'Game restored. Collection has resumed.'); } catch (error) { toastError(error); } return; }
     if (action === 'delete') return deleteGame(game);
   }));
@@ -746,15 +711,20 @@ function renderExports() {
 
 async function renderStatus() {
   const game = selectedGame();
-  shell('Status', heading('Status', 'Recent event arrivals.', '<button class="button" data-action="refresh">'+icon('refresh',14)+' Refresh</button>') + `<div class="section-grid"><section class="panel"><div class="panel-header"><h2>At a glance</h2>${icon('server',17)}</div><div class="panel-body"><ul class="status-list"><li><span>Active game keys</span><strong>${overview.active_keys}</strong></li><li><span>Registered games</span><strong>${overview.games.length}</strong></li><li><span>Events collected</span><strong>${number(overview.events)}</strong></li></ul></div></section></div><section class="panel section-spacing"><div class="panel-header"><div><h2>Event arrivals</h2><p>Received by the server · choose any days · UTC</p></div></div><div class="panel-body">${game ? picker(game) : ''}${game ? '<div id="arrivals"></div>' : empty('No arrivals yet', 'Register a game and daily counts will appear here.', '', 'pulse')}</div></section>`);
+  const last = overview.games.map(item => item.last_event || '').sort().pop() || null;
+  const live = last && Date.now() - new Date(last) < 600000;
+  shell('Server status', heading('Server status', 'Is data arriving, and how much of it.', '<button class="button" data-action="refresh">'+icon('refresh',14)+' Refresh</button>') +
+    `<section class="panel"><div class="srv-top">${miniPC()}<div class="srv-state"><span class="row-wrap"><span class="${live ? 'live' : 'quiet-dot'}"></span><span class="big">${live ? 'Online, receiving events' : 'Online, quiet'}</span></span><span class="muted">Last event ${last ? displayDate(last) : 'none yet'} · ${number(overview.today)} events today</span><span class="tag ${live ? 'ok' : 'plain'}">${live ? 'Live' : 'Quiet'}</span></div></div></section>
+    <div class="kpis">${metric('Registered games', number(overview.games.length), 'Platform versions counted separately')}${metric('Events collected', number(overview.events), 'Safely stored, never double-counted')}${metric('Events today', number(overview.today), `${number(overview.anonymous_today)} without a player ID · local time`)}${metric('Players today', number(overview.dau_today), 'Unique player IDs · local time')}</div>
+    <section class="panel"><div class="panel-header"><div><h2>Event arrivals</h2><p>Received by the server · choose any days · UTC</p></div></div><div class="panel-body">${game ? picker(game) : ''}${game ? '<div id="arrivals"></div>' : empty('No arrivals yet', 'Register a game and daily counts will appear here.', '', 'pulse')}</div></section>`);
   bindPicker();
   if (game) mountActivity(document.querySelector('#arrivals'), game);
 }
 
 function renderSettings() {
-  const packs = [["ember", "#1e1a14", "#ff6b2b", "#00b4c8"], ["slate", "#161b22", "#4da3ff", "#00c8a0"], ["moss", "#141c14", "#8fc63c", "#d89a28"], ["plum", "#1c141e", "#e84a8a", "#d8a830"], ["reef", "#102321", "#ff7a59", "#5ad7b7"], ["berry", "#21151a", "#ff4d6d", "#39c6d6"], ["circuit", "#151b19", "#f2c94c", "#2dd4bf"], ["graphite", "#1b1b1b", "#f0623d", "#b4d455"]];
+  const packs = [["nutmeg"], ["slate"], ["moss"], ["hibiscus"], ["white"]];
   const thresholds = overview.analytics_thresholds;
-  shell('Settings', heading('Settings', 'Appearance and workspace details.') + `<div class="section-grid"><div><section class="panel" id="sdk-panel">${skeleton('table', 3, 2)}</section><section class="panel section-spacing"><div class="panel-header"><h2>Appearance</h2>${icon('settings',17)}</div><div class="panel-body"><p class="eyebrow">Theme</p><div class="seg-row range-modes" id="theme-modes">${['dark','light'].map(mode => `<button type="button" data-theme-mode="${mode}" aria-pressed="false">${mode}</button>`).join('')}</div><p class="eyebrow">Palette</p><div class="palette-grid" id="palette-grid">${packs.map(([id]) => `<button type="button" class="palette-btn" data-palette-id="${id}" aria-pressed="false"><span class="palette-swatch" data-swatch="${id}"><i></i><i></i><i></i></span>${id}</button>`).join('')}</div><p class="help section-spacing">Same themes as AVN Hub. Saved in this browser only.</p></div></section><section class="panel section-spacing"><div class="panel-header"><div><h2>Analysis confidence defaults</h2><p>Used for every game unless that game has an override.</p></div></div><form class="panel-body" id="workspace-threshold-form"><div class="threshold-grid"><div class="field"><label for="workspace-levels-min">Level minimum players</label><input id="workspace-levels-min" name="levels_min_players" type="number" min="1" max="1000000" value="${thresholds.levels_min_players}"></div><div class="field"><label for="workspace-funnels-min">Funnel minimum players</label><input id="workspace-funnels-min" name="funnels_min_players" type="number" min="1" max="1000000" value="${thresholds.funnels_min_players}"></div></div><div class="error" role="alert"></div>${me.can_manage_team ? '<button class="button primary" type="submit">Save workspace defaults</button>' : '<p class="help">Only the workspace admin can change these defaults.</p>'}</form></section>${me.can_manage_team ? '<section class="panel section-spacing" id="processing-panel"></section>' : ''}<section class="panel section-spacing"><div class="panel-header"><h2>Workspace</h2>${icon('server',17)}</div><div class="panel-body"><ul class="status-list"><li><span>Application</span><strong>AVN Analytics</strong></li><li><span>Local timezone</span><strong>${escapeHTML(localTimezone)}</strong></li><li><span>Export contents</span><strong>Parquet · JSONL.gz · dictionary · AI guide</strong></li><li><span>Collection address</span><code>${escapeHTML(overview.ingest_url)}</code></li></ul><p class="help section-spacing">Storage location and limits are set in the server's .env file.</p></div></section></div><aside class="aside-card">${icon('shield',25)}<h3>Protect this workspace</h3><p>This dashboard has no sign-in of its own. Put it behind your own access control, such as Cloudflare Access, a VPN or a private network, and never expose it directly.</p></aside></div>`);
+  shell('Settings', heading('Settings', 'Appearance and workspace details.') + `<div class="section-grid"><div><section class="panel" id="sdk-panel">${skeleton('table', 3, 2)}</section><section class="panel section-spacing"><div class="panel-header"><h2>Appearance</h2>${icon('settings',17)}</div><div class="panel-body"><p class="eyebrow">Theme</p><div class="seg-row range-modes" id="theme-modes">${['dark','light'].map(mode => `<button type="button" data-theme-mode="${mode}" aria-pressed="false">${mode}</button>`).join('')}</div><p class="eyebrow">Palette</p><div class="palette-grid" id="palette-grid">${packs.map(([id]) => `<button type="button" class="palette-btn" data-palette-id="${id}" aria-pressed="false"><span class="palette-swatch" data-swatch="${id}"><i></i><i></i><i></i></span>${id}</button>`).join('')}</div><p class="help section-spacing">Saved in this browser only.</p></div></section><section class="panel section-spacing"><div class="panel-header"><div><h2>Analysis confidence defaults</h2><p>Used for every game unless that game has an override.</p></div></div><form class="panel-body" id="workspace-threshold-form"><div class="threshold-grid"><div class="field"><label for="workspace-levels-min">Level minimum players</label><input id="workspace-levels-min" name="levels_min_players" type="number" min="1" max="1000000" value="${thresholds.levels_min_players}"></div><div class="field"><label for="workspace-funnels-min">Funnel minimum players</label><input id="workspace-funnels-min" name="funnels_min_players" type="number" min="1" max="1000000" value="${thresholds.funnels_min_players}"></div></div><div class="error" role="alert"></div>${me.can_manage_team ? '<button class="button primary" type="submit">Save workspace defaults</button>' : '<p class="help">Only the workspace admin can change these defaults.</p>'}</form></section>${me.can_manage_team ? '<section class="panel section-spacing" id="processing-panel"></section>' : ''}<section class="panel section-spacing"><div class="panel-header"><h2>Workspace</h2>${icon('server',17)}</div><div class="panel-body"><ul class="status-list"><li><span>Application</span><strong>AVN Analytics</strong></li><li><span>Local timezone</span><strong>${escapeHTML(localTimezone)}</strong></li><li><span>Export contents</span><strong>Parquet · JSONL.gz · dictionary · AI guide</strong></li><li><span>Collection address</span><code>${escapeHTML(overview.ingest_url)}</code></li></ul><p class="help section-spacing">Storage location and limits are set in the server's .env file.</p></div></section></div><aside class="aside-card">${icon('shield',25)}<h3>Protect this workspace</h3><p>This dashboard has no sign-in of its own. Put it behind your own access control, such as Cloudflare Access, a VPN or a private network, and never expose it directly.</p></aside></div>`);
   mountSdkPanel(document.querySelector('#sdk-panel'));
   if (me.can_manage_team) mountProcessingPanel(document.querySelector('#processing-panel'));
   if (!me.can_manage_team) document.querySelectorAll('#workspace-threshold-form input').forEach(input => { input.disabled = true; });
@@ -766,11 +736,11 @@ function renderSettings() {
   });
   const sync = () => {
     document.querySelectorAll('[data-theme-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.themeMode === window.avnTheme.theme())));
-    document.querySelectorAll('[data-palette-id]').forEach(button => button.setAttribute('aria-pressed', String((button.dataset.paletteId === 'berry' ? 'raspberry' : button.dataset.paletteId) === window.avnTheme.palette())));
+    document.querySelectorAll('[data-palette-id]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.paletteId === window.avnTheme.palette())));
     document.querySelector('[data-action="theme"]').innerHTML = icon(window.avnTheme.theme() === 'light' ? 'moon' : 'sun', 15);
   };
   document.querySelectorAll('[data-theme-mode]').forEach(button => button.addEventListener('click', () => { window.avnTheme.setTheme(button.dataset.themeMode); sync(); }));
-  document.querySelectorAll('[data-palette-id]').forEach(button => button.addEventListener('click', () => { window.avnTheme.setPalette(button.dataset.paletteId === 'berry' ? 'raspberry' : button.dataset.paletteId); sync(); }));
+  document.querySelectorAll('[data-palette-id]').forEach(button => button.addEventListener('click', () => { window.avnTheme.setPalette(button.dataset.paletteId); sync(); }));
   sync();
 }
 
@@ -804,10 +774,6 @@ document.addEventListener('change', event => {
 
 document.addEventListener('click', async event => {
   const action = event.target.closest('[data-action]')?.dataset.action;
-  if (action === 'nav') {
-    const sidebar = document.querySelector('#sidebar'); const button = event.target.closest('[data-action="nav"]');
-    const open = !sidebar.classList.contains('mobile-open'); sidebar.classList.toggle('mobile-open', open); button.setAttribute('aria-expanded', String(open)); button.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
-  }
   if (action === 'reload-session') { location.reload(); return; }
   if (action === 'close') dismissModal();
   if (action === 'refresh') {
@@ -953,11 +919,14 @@ async function go(url, push) {
   const current = ++navigation;
   if (modal.open) { modal.close(); modal.innerHTML = ''; }
   const target = new URL(url, location.href).pathname;
-  document.querySelectorAll('.nav a').forEach(link => link.classList.toggle('active', link.getAttribute('href') === target));
+  document.querySelectorAll('.nav .ni').forEach(link => link.classList.toggle('on', link.getAttribute('href') === target));
+  if (typeof moveNavIndicator === 'function') moveNavIndicator();
   if (!overview || overviewStale) await loadOverview().catch(() => {});
   prefetch(url); // Warm shared requests without delaying the destination shell.
   if (current !== navigation) return;
   if (push) history.pushState({}, '', url);
+  await mo.pageOut(document.querySelector('#main'));
+  if (current !== navigation) return;
   return transition(renderRoute);
 }
 const navigate = url => go(url, true);
@@ -1006,4 +975,5 @@ const queueScrollMark = () => { if (!scrollMarkQueued) { scrollMarkQueued = true
 new MutationObserver(queueScrollMark).observe(root, {childList: true, subtree: true});
 window.addEventListener('resize', queueScrollMark);
 root.innerHTML = `<main id="main" class="boot-loading">${skeleton('stats')}${skeleton('table', 8, 5)}</main>`;
+bootScreen();
 renderRoute();

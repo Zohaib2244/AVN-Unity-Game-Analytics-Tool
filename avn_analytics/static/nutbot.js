@@ -3,7 +3,7 @@
 // uses its helpers (request, icon, escapeHTML, toast, navigate, gamePath, filterState…) at call time.
 
 const NUTBOT_KEEP = 60; // messages remembered per game in this browser
-let nutbotState = {open: false, busy: false, game: null, info: null, convo: null, controller: null, usable: false};
+let nutbotState = {open: false, busy: false, game: null, info: null, convo: null, controller: null, usable: false, off: new Set()};
 
 function nbMarkdown(source) {
   const inline = text => escapeHTML(text).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, '$1<em>$2</em>');
@@ -69,15 +69,45 @@ function nbContext(game) {
   let funnel = storeGet(`avn-funnel-draft-${game.id}`);
   if (funnel?.steps?.length) funnel = {steps: funnel.steps.map(({event, param, op, value, label}) => ({event, param, op, value, label})).slice(0, 30), scope: funnel.scope, window_hours: funnel.window_hours};
   else funnel = null;
+  const off = nutbotState.off;
   return {
-    page: currentSection,
-    range: filters.range ? {from: filters.range.from, to: filters.range.to} : undefined,
+    page: off.has('page') ? undefined : currentSection,
+    range: filters.range && !off.has('range') ? {from: filters.range.from, to: filters.range.to} : undefined,
     hide_test: filters.hideTest,
-    filters: {environments: filters.environment, app_versions: filters.app_version, builds: filters.build, countries: filters.country, platforms: filters.platform},
-    player: query.get('player') || undefined,
+    filters: off.has('filters') ? {environments: [], app_versions: [], builds: [], countries: [], platforms: []} : {environments: filters.environment, app_versions: filters.app_version, builds: filters.build, countries: filters.country, platforms: filters.platform},
+    player: off.has('player') ? undefined : query.get('player') || undefined,
     funnel: funnel || undefined,
   };
 }
+
+
+// "Looking at": what the assistant is told about the page. Every chip except the game can be left out and put back.
+const NB_PAGES = {overview: 'Overview', funnels: 'Funnels', levels: 'Levels', players: 'Players', exports: 'Exports', dictionary: 'Event dictionary', 'event-setup': 'Event setup', keys: 'API keys', settings: 'Game settings'};
+function nbContextChips() {
+  const game = nutbotState.game; if (!game) return [];
+  const filters = filterState(game); const query = new URLSearchParams(location.search);
+  const active = Object.keys(FILTER_KEYS).flatMap(dimension => filters[dimension].map(value => dimensionText(dimension, value)));
+  return [
+    ['game', `${game.name} · ${platformLabel(game.platform)}`, false],
+    ['page', NB_PAGES[currentSection] || currentSection, true],
+    ...(filters.range ? [['range', `${prettyDay(filters.range.from)}${filters.range.from === filters.range.to ? '' : ` → ${prettyDay(filters.range.to)}`}`, true]] : []),
+    ...(active.length ? [['filters', active.slice(0, 2).join(', ') + (active.length > 2 ? ` +${active.length - 2}` : ''), true]] : []),
+    ...(query.get('player') ? [['player', `Player ${shortId(query.get('player'))}`, true]] : []),
+  ];
+}
+function nbDrawContext() {
+  const box = document.querySelector('#nb-ctx'); if (!box) return;
+  box.innerHTML = '<span class="eyebrow">Looking at</span>' + nbContextChips().map(([key, label, removable]) => nutbotState.off.has(key)
+    ? `<button type="button" class="ctxchip off" data-ctx-on="${key}" aria-label="Include ${escapeHTML(label)} again">+ ${escapeHTML(label)}</button>`
+    : `<span class="ctxchip">${escapeHTML(label)}${removable ? `<button type="button" data-ctx-off="${key}" aria-label="Leave out ${escapeHTML(label)}">×</button>` : ''}</span>`).join('');
+}
+const NB_SUGGESTIONS = {
+  levels: ['Which level loses the most players, and what changed in the latest version?', 'Is level 12 hard or just slow?', 'Compare the last two releases on the early levels.', 'Where should I add a hint or a reward?'],
+  funnels: ['Build a funnel from first open to level 10.', 'Where do players stop in my saved funnel?', 'What do players do between these two steps?', 'Which step lost the most players this week?'],
+  players: ['Show me what a typical first session looks like.', 'Find players who reached level 10 but never purchased.', 'What did the players who left in session one do last?', 'Tell me about the open player.'],
+  overview: ['How is the game doing this week compared with last week?', 'What changed since the last release?', 'Check that my events are arriving and described.', 'Where are players dropping off in the first 10 levels?'],
+};
+const nbScope = () => { const chips = nbContextChips().filter(([key]) => !nutbotState.off.has(key) && ['range', 'filters'].includes(key)).map(([, label]) => label); return chips.length ? `Same filters as the page · ${chips.join(' · ')}` : 'No page filters applied'; };
 
 function nbOpenAction(action) {
   const game = nutbotState.game;
@@ -96,12 +126,14 @@ function nbOpenAction(action) {
 
 function nbMessageHTML(message, index, streaming) {
   if (message.role === 'user') return `<div class="nb-msg user"><div class="nb-bubble">${escapeHTML(message.text)}</div></div>`;
-  const tools = (message.tools || []).map(tool => `<span class="nb-tool ${tool.done ? 'done' : ''}">${escapeHTML(tool.label)}${tool.done ? '' : '…'}</span>`).join('');
+  const toolList = (message.tools || []).map(tool => `<span class="nb-tool ${tool.done ? 'done' : ''}">${escapeHTML(tool.label)}${tool.done ? '' : '…'}</span>`).join('');
+  const tools = streaming || !(message.tools || []).length ? toolList : `<details class="nb-fold"><summary>Used ${message.tools.length} tool${message.tools.length === 1 ? '' : 's'}</summary>${toolList}</details>`;
   const actions = (message.actions || []).map((action, position) => `<button type="button" class="button small-button nb-action" data-action-index="${index}:${position}">${icon('arrow', 13)} ${escapeHTML(action.title)}</button>`).join('');
   const body = message.text ? nbMarkdown(message.text) : streaming ? '<p class="muted nb-wait">Thinking…</p>' : '';
   const error = message.error ? `<p class="nb-error">${escapeHTML(message.error)}</p>` : '';
+  const scope = message.scope && !streaming && message.text ? `<div class="nb-scope">${escapeHTML(message.scope)}</div>` : '';
   const meta = message.usage && !streaming ? `<div class="nb-meta">${message.usage.output_tokens != null ? `${number(message.usage.output_tokens)} tokens out` : ''}${message.seconds ? ` · ${message.seconds}s` : ''}</div>` : '';
-  return `<div class="nb-msg bot">${tools ? `<div class="nb-tools">${tools}</div>` : ''}<div class="nb-bubble">${body}${error}</div>${actions ? `<div class="nb-actions">${actions}</div>` : ''}${meta}</div>`;
+  return `<div class="nb-msg bot">${tools ? `<div class="nb-tools">${tools}</div>` : ''}<div class="nb-bubble">${body}${error}</div>${actions ? `<div class="nb-actions">${actions}</div>` : ''}${scope}${meta}</div>`;
 }
 
 function nbRender() {
@@ -110,7 +142,7 @@ function nbRender() {
   if (!list) return;
   const {convo, busy} = nutbotState;
   const stuck = list.scrollHeight - list.scrollTop - list.clientHeight < 60;
-  list.innerHTML = !nutbotState.usable ? '' : convo.messages.length ? convo.messages.map((message, index) => nbMessageHTML(message, index, busy && index === convo.messages.length - 1)).join('') : `<div class="nb-hello">${nbFace('idle')}<h3>Ask me about your players</h3><p>I can run funnels, follow journeys, read a player’s story, check levels, and save what we find. Try:</p><div class="nb-suggest">${['Where are players dropping off in the first 10 levels?', 'Which level is hardest, and why do you think so?', 'Show me what a typical first session looks like.', 'Build a funnel from first open to level 10.'].map(text => `<button type="button" class="nb-chip" data-suggest="${escapeHTML(text)}">${escapeHTML(text)}</button>`).join('')}</div></div>`;
+  list.innerHTML = !nutbotState.usable ? '' : convo.messages.length ? convo.messages.map((message, index) => nbMessageHTML(message, index, busy && index === convo.messages.length - 1)).join('') : `<div class="nb-hello">${nbFace('idle')}<h3>Ask me about your players</h3><p>I can run funnels, follow journeys, read a player’s story, check levels, and save what we find. Try:</p><div class="nb-suggest">${(NB_SUGGESTIONS[currentSection] || NB_SUGGESTIONS.overview).map(text => `<button type="button" class="nb-chip" data-suggest="${escapeHTML(text)}">${escapeHTML(text)}</button>`).join('')}</div></div>`;
   if (stuck || busy) list.scrollTop = list.scrollHeight;
   root.querySelector('.nb-head-face').innerHTML = nbFace(busy ? 'thinking' : 'idle');
   root.querySelector('.nb-send').innerHTML = busy ? `${icon('close', 14)} Stop` : `${icon('arrow', 14)} Send`;
@@ -128,7 +160,7 @@ async function nbSend(text) {
   if (state.convo.harness && state.convo.harness !== harness) state.convo.session = null; // another assistant can't continue that chat
   state.convo.harness = harness;
   state.convo.messages.push({role: 'user', text: text.trim()});
-  const answer = {role: 'assistant', text: '', tools: [], actions: []};
+  const answer = {role: 'assistant', text: '', tools: [], actions: [], scope: nbScope()};
   state.convo.messages.push(answer);
   state.busy = true; state.controller = new AbortController();
   storeSet('avn-nutbot-prefs', {...prefs, harness, models: {...(prefs.models || {}), [harness]: model}});
@@ -195,6 +227,7 @@ function nbOpen() {
     <div class="nb-setup">${usable.length ? `<label class="inline-field">Assistant<select class="nb-harness">${(info.harnesses).map(item => `<option value="${item.id}" ${item.id === harness ? 'selected' : ''} ${item.available ? '' : 'disabled'} title="${escapeHTML(item.reason || '')}">${escapeHTML(item.label)}${item.available ? '' : ' (not set up)'}</option>`).join('')}</select></label><label class="inline-field">Model<select class="nb-model">${nbModelOptions(harness, (prefs.models || {})[harness])}</select></label>` : ''}</div>
     ${usable.length ? '' : `<div class="nb-setup-help"><h3>NutBot isn’t set up on this server yet</h3><p>An admin needs to connect an assistant (Claude, OpenCode or Codex). The steps are in the README under “NutBot”.</p>${(info?.harnesses || []).map(item => `<p class="small muted"><strong>${escapeHTML(item.label)}:</strong> ${escapeHTML(item.reason)}</p>`).join('')}</div>`}
     <div class="nb-messages" aria-live="polite"></div>
+    <div class="nb-ctx" id="nb-ctx"></div>
     <form class="nb-form"><textarea class="nb-input" rows="2" maxlength="4000" placeholder="Ask about your players…" ${usable.length ? '' : 'disabled'}></textarea><button type="submit" class="button primary nb-send" ${usable.length ? '' : 'disabled'}></button></form>
     <p class="nb-foot small muted">NutBot can read this game’s data. It asks before saving anything. Answers can be wrong: check the numbers that matter.</p></aside>`;
   root.classList.add('open');
@@ -223,6 +256,12 @@ function nbOpen() {
     if (button) { const [message, position] = button.dataset.actionIndex.split(':').map(Number); const action = state.convo.messages[message]?.actions?.[position]; if (action) nbOpenAction(action); }
   });
   root.dataset.bound = '1';
+  root.addEventListener('click', event => {
+    const off = event.target.closest('[data-ctx-off]'), on = event.target.closest('[data-ctx-on]');
+    if (off) nutbotState.off.add(off.dataset.ctxOff); if (on) nutbotState.off.delete(on.dataset.ctxOn);
+    if (off || on) nbDrawContext();
+  });
+  nbDrawContext();
   nbRender();
   root.querySelector('.nb-input').focus();
 }

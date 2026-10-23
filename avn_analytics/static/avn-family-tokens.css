@@ -1,0 +1,78 @@
+/* ═══════════════════════════════════════════════════════════════════
+   AVN Family · tokens.css
+   Fills every role in /contract.md. Dark is the default; light follows the
+   system unless <html data-theme="light|dark"> is set.
+   Palettes: none = Nutmeg (default) · slate · moss · hibiscus · white
+   Select with <html data-palette="…">. Status hues stay constant across
+   palettes except White build, whose status colours follow the four face
+   buttons of a controller.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Layout: calm app shell (grouped sidebar with one sliding highlight → rail on tablet → bottom tab bar on phone).
+   The demo app is a container, so Tablet / Phone previews are real layouts, not scaled screenshots. */
+:root {
+  color-scheme: dark;
+  --font-px: 'Pixelify Sans', ui-monospace, monospace;
+  --font-ui: 'Atkinson Hyperlegible', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  --r-card: 12px; --r-ctl: 9px;
+  /* Style contract: shape and type dials every style must set */
+  --bw: 1px; --shadow-c: transparent; --lift: none; --lift-btn: none;
+  --font-label: var(--font-mono); --font-btn: var(--font-ui); --tt-btn: none; --ls-btn: normal;
+  --num: var(--text); --w-display: 500;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+
+  --bg: light-dark(#ece5d8, #14110d);
+  --panel: light-dark(#f8f4ec, #1c1713);
+  --nested: light-dark(#f1eadd, #181410);
+  --raise: light-dark(#e8dfcf, #27201a);
+  --line: light-dark(#dacfbb, #2f271f);
+  --line-strong: light-dark(#b3a287, #4a3d31);
+  --text: light-dark(#211b13, #efe6d5);
+  --muted: light-dark(#5a4d3e, #b5a893);
+  --dim: light-dark(#75664f, #8f826e);
+  --accent: light-dark(#cf5418, #ff7f45);
+  --accent-ink: light-dark(#fff7ef, #1e1109);
+  --accent-soft: color-mix(in srgb, var(--accent) 13%, var(--panel));
+  --accent-text: color-mix(in srgb, var(--accent) 80%, var(--text));
+  --bar: color-mix(in srgb, var(--accent) 50%, var(--panel));
+  --dot: light-dark(rgba(33, 27, 19, .04), rgba(239, 230, 213, .028));
+
+  --ok: light-dark(#1f8a3a, #5fd36a);      /* verified: confirmed by a check */
+  --done: light-dark(#17776f, #7fd6cf);    /* done, not yet confirmed */
+  --info: light-dark(#2d62a6, #86b4ea);
+  --new: light-dark(#6a49b8, #bba6f2);
+  --hl-orange: var(--accent); --hl-cyan: light-dark(#00839a, #3cc3cf); --hl-green: var(--ok); --hl-pink: light-dark(#b8326f, #f07ab0); --hl-violet: var(--new); --hl-gold: var(--warn);
+  --warn: light-dark(#8f6400, #e8c46b);
+  --bad: light-dark(#b23a2c, #f08a7e);
+  --ok-soft: color-mix(in srgb, var(--ok) 13%, var(--panel));
+  --done-soft: color-mix(in srgb, var(--done) 13%, var(--panel));
+  --info-soft: color-mix(in srgb, var(--info) 13%, var(--panel));
+  --new-soft: color-mix(in srgb, var(--new) 14%, var(--panel));
+  --warn-soft: color-mix(in srgb, var(--warn) 13%, var(--panel));
+  --bad-soft: color-mix(in srgb, var(--bad) 13%, var(--panel));
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { color-scheme: light; } }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+:root[data-palette="slate"] {
+  --bg: light-dark(#e0e6ed, #0f1217); --panel: light-dark(#f4f7fa, #161b22); --nested: light-dark(#ebf0f5, #12161c); --raise: light-dark(#e1e8ef, #1e252e);
+  --line: light-dark(#c8d1dc, #262e39); --line-strong: light-dark(#8e9bac, #424d5b); --text: light-dark(#141a22, #dbe4ee); --muted: light-dark(#424d5a, #a6b0bb); --dim: light-dark(#5a6778, #7d8793);
+  --accent: light-dark(#1d6fd1, #5aa8ff); --accent-ink: light-dark(#f4f8fc, #07111c); --dot: light-dark(rgba(20,26,34,.04), rgba(219,228,238,.028));
+}
+:root[data-palette="moss"] {
+  --bg: light-dark(#e0e7d6, #0e130e); --panel: light-dark(#f3f7ec, #151c14); --nested: light-dark(#eaf0e1, #111811); --raise: light-dark(#e3ebda, #1d261c);
+  --line: light-dark(#c7d1b8, #28342a); --line-strong: light-dark(#8c9c7b, #455841); --text: light-dark(#161c10, #dde8d2); --muted: light-dark(#444d3b, #a8b2a0); --dim: light-dark(#5b684d, #7e8976);
+  --accent: light-dark(#4b8411, #9ccc4a); --accent-ink: light-dark(#f6faef, #0e1508); --dot: light-dark(rgba(22,28,16,.04), rgba(221,232,210,.028));
+}
+:root[data-palette="white"] {
+  --bg: light-dark(#eef0f2, #121416); --panel: light-dark(#ffffff, #1b1e21); --nested: light-dark(#f5f6f8, #16181b); --raise: light-dark(#eceef1, #24282c);
+  --line: light-dark(#dde1e5, #2c3136); --line-strong: light-dark(#a9b0b8, #4a5158); --text: light-dark(#15181b, #eceff2); --muted: light-dark(#4b525a, #aab1b8); --dim: light-dark(#6a727b, #828a92);
+  --accent: light-dark(#1d2125, #f2f4f6); --accent-ink: light-dark(#ffffff, #121416); --dot: light-dark(rgba(21,24,27,.035), rgba(236,239,242,.03));
+  --ok: light-dark(#1e8e3e, #4cc764); --bad: light-dark(#d93a3f, #ff6b6b); --info: light-dark(#2b6fc2, #5aa3ec); --warn: light-dark(#a57700, #f2c230);
+}
+:root[data-palette="hibiscus"] {
+  --bg: light-dark(#eadde0, #150b0e); --panel: light-dark(#faf2f4, #1f1115); --nested: light-dark(#f3e7ea, #190d11); --raise: light-dark(#ecdde1, #2a171d);
+  --line: light-dark(#dcc5cb, #3b2229); --line-strong: light-dark(#a88892, #5c3540); --text: light-dark(#24101a, #f1dfe3); --muted: light-dark(#5a3f47, #bfa4ab); --dim: light-dark(#74545e, #94787f);
+  --accent: light-dark(#b0204a, #e0476b); --accent-ink: light-dark(#fff4f6, #1a070c); --dot: light-dark(rgba(36,16,26,.04), rgba(241,223,227,.028));
+}

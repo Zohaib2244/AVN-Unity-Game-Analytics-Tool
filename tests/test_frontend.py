@@ -309,8 +309,8 @@ def test_accessibility_markup_and_text_safe_colour_tokens():
     static = Path(__file__).parents[1] / "avn_analytics/static"
     scripts = {path.name: path.read_text() for path in static.glob("*.js")}
     css = (static / "style.css").read_text()
-    # aria-pressed is not valid on links; the platform switch marks the current page instead.
-    assert 'aria-current="page" ' in scripts["app.js"]
+    # aria-pressed is not valid on links; the shell's platform switch marks the current page.
+    assert 'aria-current="page" ' in scripts["shell.js"]
     assert "variant-switch a[aria-pressed" not in css
     # Every column header needs text, even icon-only action columns.
     assert all("<th></th>" not in text for text in scripts.values())
@@ -764,3 +764,96 @@ assert.equal(processingFacts({facts: {ready: false, phase: 'backfill', done: 50,
     )
     # The status refresh rewrites text only (focus stays put) and pauses while a change is saved.
     assert "root.isConnected" in script and "toggle.disabled) return" in script
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_level_curve_marks_the_two_steepest_drops_and_heat_strip_buckets():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/insights.js").read_text()
+    start = script.index("function levelViz(levels)")
+    viz = script[start : script.index("async function renderLevels()")]
+    checks = """
+import assert from 'node:assert/strict';
+const escapeHTML = value => String(value);
+const number = value => String(value);
+const percent = value => `${value}%`;
+const level = (n, started, drop, low = false) => ({
+  level: n, started, low_sample: low, transition: {available: drop != null, drop_percent: drop}});
+const levels = [level(1, 100, 10), level(2, 90, 50), level(3, 45, 20), level(4, 36, 40),
+  level(5, 21, 80, true), level(6, 4, null)];
+const html = levelViz(levels);
+// The two steepest drops among levels with enough players are flagged; a small sample never is.
+assert.match(html, /L2 −50%/);
+assert.match(html, /L4 −40%/);
+assert.doesNotMatch(html, /L5 −/);
+assert.equal((html.match(/curve-dot big/g) || []).length, 2);
+// One heat cell per level; the biggest drop is the strongest bucket, no next level the empty one.
+assert.equal((html.match(/data-heat-level=/g) || []).length, 6);
+assert.match(html, /lvheat h6" data-heat-level="2"/);
+assert.match(html, /lvheat h0" data-heat-level="6"/);
+// Fewer than two levels draws nothing.
+assert.equal(levelViz([level(1, 10, null)]), '');
+// The chart is readable without sight: one sentence names where it starts and ends.
+assert.match(html, /aria-label="Players remaining by level, from 100 at level 1 to 4 at level 6/);
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=viz + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed to exercise browser JS")
+def test_ux_helpers_relative_time_and_definitions():
+    script = (Path(__file__).parents[1] / "avn_analytics/static/ux.js").read_text()
+    time = script[script.index("const relativeTime") : script.index("function notesHTML")]
+    define_start = script.index("const DEFINITIONS")
+    definitions = script[define_start : script.index("function tipEl()")]
+    checks = """
+import assert from 'node:assert/strict';
+const escapeHTML = value => String(value).replace(/</g, '&lt;');
+const now = Date.now();
+assert.equal(relativeTime(now - 10000), 'just now');
+assert.equal(relativeTime(now - 5 * 60000), '5 min ago');
+assert.equal(relativeTime(now - 3 * 3600000), '3 h ago');
+assert.equal(relativeTime(now - 2 * 86400000), '2 d ago');
+// A label with a definition becomes a focusable dotted term; one without stays plain text.
+assert.match(defineLabel('Players'), /class="def" tabindex="0" data-def="Players"/);
+assert.equal(defineLabel('Something else'), 'Something else');
+// Every key-number label the pages draw has a definition that says how it is counted.
+const labels = ['Players', 'Sessions', 'Daily active', 'Stickiness', 'Levels seen', 'Conversion'];
+for (const label of labels) {
+  assert.ok(DEFINITIONS[label][0].length > 20, label);
+}
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module"],
+        input=time + definitions + checks,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_attribute_selectors_never_match_the_density_flag_on_html():
+    # <html data-density> is set by theme.js, so a bare [data-density] selector matches every click.
+    static = Path(__file__).parents[1] / "avn_analytics/static"
+    for path in static.glob("*.js"):
+        text = path.read_text()
+        assert "closest('[data-density]')" not in text, path.name
+
+
+def test_motion_is_vendored_loaded_first_and_respects_reduced_motion():
+    static = Path(__file__).parents[1] / "avn_analytics/static"
+    page = (static / "index.html").read_text()
+    assert (static / "vendor/motion.js").exists() and (static / "vendor/motion-LICENSE.md").exists()
+    # The library, then the helper that wraps it, then the code that calls the helper.
+    order = [page.index(name) for name in ("vendor/motion.js", "motion-ui.js", "ux.js", "app.js")]
+    assert order == sorted(order)
+    helper = (static / "motion-ui.js").read_text()
+    assert "prefers-reduced-motion: reduce" in helper
+    # Only opacity and transform properties are animated: nothing that forces layout.
+    assert not re.search(r"(width|height|top|left)\s*:\s*\[", helper)

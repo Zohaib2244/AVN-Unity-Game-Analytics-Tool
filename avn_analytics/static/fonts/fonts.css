@@ -1,2 +1,7 @@
-@font-face{font-family:'DotGothic16';font-style:normal;font-weight:400;font-display:swap;src:url(/assets/fonts/DotGothic16-400.woff2) format('woff2')}
+/* Self-hosted: the Content-Security-Policy only allows this origin, so no Google Fonts import. */
+@font-face{font-family:'Pixelify Sans';font-style:normal;font-weight:400;font-display:swap;src:url(/assets/fonts/Pixelify-400.ttf) format('truetype')}
+@font-face{font-family:'Pixelify Sans';font-style:normal;font-weight:500;font-display:swap;src:url(/assets/fonts/Pixelify-500.ttf) format('truetype')}
+@font-face{font-family:'Pixelify Sans';font-style:normal;font-weight:600;font-display:swap;src:url(/assets/fonts/Pixelify-600.ttf) format('truetype')}
+@font-face{font-family:'Atkinson Hyperlegible';font-style:normal;font-weight:400;font-display:swap;src:url(/assets/fonts/Atkinson-400.ttf) format('truetype')}
+@font-face{font-family:'Atkinson Hyperlegible';font-style:normal;font-weight:700;font-display:swap;src:url(/assets/fonts/Atkinson-700.ttf) format('truetype')}
 @font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:100 800;font-display:swap;src:url(/assets/fonts/JetBrainsMono-var.woff2) format('woff2')}
