@@ -16,7 +16,7 @@
   --accent-orange: var(--accent);
   --accent-cyan: var(--accent-text);
   --accent-warm: var(--text);
-  --badge-text: var(--accent-text);
+  --badge-text: var(--accent-ink);
   --accent-fill: var(--accent);
   --status-up: var(--ok);
   --status-down: var(--bad);

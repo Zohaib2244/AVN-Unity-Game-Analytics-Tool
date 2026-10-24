@@ -5,8 +5,9 @@ import { useCallback, useEffect, useMemo, useState, type ReactElement } from 're
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useRead } from '@/api';
 import { resolveRange } from '@/components/DateRange';
-import { FilterBar, useFilters } from '@/components/Filters';
-import { Heading } from '@/components/feedback';
+import { FilterBar, facetsPath, useFilters } from '@/components/Filters';
+import type { Facets } from '@/lib/filters';
+import { Heading, Skeleton } from '@/components/feedback';
 import { gamePath } from '@/lib/games';
 import { storeGet, storeSet } from '@/lib/store';
 import type { Game, LevelsResult } from '@/lib/types';
@@ -32,10 +33,14 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
 
   // ?level=12 opens that level's page; ?view=compare opens Compare releases (the view is also remembered).
   const pageLevel = search.level != null && Number.isInteger(Number(search.level)) ? Number(search.level) : null;
-  const view: 'table' | 'compare' = pageLevel == null && isCompareView(search.view || storeGet<string>(viewKey(game))) ? 'compare' : 'table';
+  // With no view chosen yet, a game with two published builds opens on the latest build against the one before it.
+  const facets = useRead<Facets>(facetsPath(game, filters));
+  const chosen = search.view || storeGet<string>(viewKey(game));
+  const view: 'table' | 'compare' = pageLevel == null && (chosen ? isCompareView(chosen) : !!facets.data?.previous_app_version) ? 'compare' : 'table';
+  const deciding = pageLevel == null && !chosen && !facets.data && !facets.isError;
 
   const path = levelsPath(game, filters, nav.scope);
-  const levels = useRead<LevelsResult>(path, { enabled: view === 'table' });
+  const levels = useRead<LevelsResult>(path, { enabled: view === 'table' && !deciding });
   // The players each level's drill has been opened on (group, sort) last; kept while the dates and filters stay.
   const memory = useMemo(() => new Map<number, DrillState>(), [path]);
 
@@ -69,7 +74,7 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
         <button type="button" aria-pressed={view === 'table'} onClick={() => chooseView('table')}>Level by level</button>
         <button type="button" aria-pressed={view === 'compare'} onClick={() => chooseView('compare')}>Compare releases</button>
       </div>
-      {view === 'compare' ? (
+      {deciding ? <Skeleton kind="table" rows={6} columns={7} /> : view === 'compare' ? (
         <LevelCompare game={game} filters={filters} nav={nav} prefs={prefs} onPrefs={setPrefs} onRestore={restore} onJump={jumpFromCompare} />
       ) : pageLevel != null ? (
         <LevelPage game={game} filters={filters} scope={nav.scope} level={pageLevel} query={levels} path={path} memory={memory} onOpenPlayer={openPlayer} />

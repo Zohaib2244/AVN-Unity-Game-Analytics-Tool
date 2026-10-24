@@ -29,6 +29,11 @@ describe('filterState', () => {
     expect(filterState(game).versionMode).toBe('all');
   });
 
+  it('remembers "the build before"', () => {
+    save({ app_version: ['1.1'], versionMode: 'previous' });
+    expect(filterState(game).versionMode).toBe('previous');
+  });
+
   it('falls back to latest on an unknown mode', () => {
     save({ versionMode: 'nonsense' });
     expect(filterState(game).versionMode).toBe('latest');

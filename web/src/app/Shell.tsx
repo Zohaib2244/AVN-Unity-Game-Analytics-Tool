@@ -5,16 +5,18 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router';
 import { AccountMenu, AppShell, BellButton, CommandPalette, IconButton, MoreSheet, NotificationList, Page, Popover, SearchButton, ShortcutsDialog, Sidebar, SidebarNav, SingleSelect, TabBar, TopBar, Workspace, type CommandItem, type IconName, type NavGroup } from '@avn/ui';
 import { freshness, refreshAll, requestActivity } from '@/api';
-import { GAME_SECTIONS, PLATFORM_ORDER, ROLE_LABELS, gameGroups, gamePath, iconURL, initials, withIcon } from '@/lib/games';
+import { GAME_SECTIONS, PLATFORM_ORDER, ROLE_LABELS, gameGroups, gamePath, iconURL, initials, sameGame, withIcon } from '@/lib/games';
 import { platformLabel, relativeTime } from '@/lib/format';
 import { copyText } from '@/lib/store';
 import { useNotify } from '@/components/feedback';
+import { BrandMark } from '@/components/BrandMark';
 import { Ico } from '@/components/icons';
 import { useSession } from './session';
 import { useCurrentGame } from './GameSection';
 import { useNutBot } from './nutbot';
 import { NutBotHost } from '@/pages/nutbot/NutBot';
 import { useTheme } from './theme';
+import { GameSwitcher, variantFor } from './GameSwitcher';
 
 const NAV_GROUPS: NavGroup[] = [
   { label: 'Analyze', items: GAME_SECTIONS.slice(0, 4).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
@@ -45,12 +47,18 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
   const [shortcuts, setShortcuts] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [bell, setBell] = useState(false);
+  const [switcher, setSwitcher] = useState(false);
   const [refreshMenu, setRefreshMenu] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [online, setOnline] = useState(() => navigator.onLine);
   const [auto, setAuto] = useState<number>(() => Number(localStorage.getItem(AUTO_KEY) || 0));
   const bellButton = useRef<HTMLButtonElement>(null);
   const refreshButton = useRef<HTMLButtonElement>(null);
+  const switchAnchor = useRef<HTMLElement | null>(null);
+  const openSwitcher = useCallback((from?: HTMLElement | null) => {
+    switchAnchor.current = from ?? (document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : document.querySelector<HTMLElement>('.game-switch, .m-switch'));
+    setSwitcher(true);
+  }, []);
   const updated = useSyncExternalStore(freshness.subscribe, freshness.get, freshness.get);
 
   const refresh = useCallback(async () => { setRefreshing(true); try { await refreshAll(); } finally { setRefreshing(false); } }, []);
@@ -91,7 +99,7 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
     ...(game ? NAV_GROUPS.flatMap((group) => group.items.map((item) => ({ id: `page:${item.id}`, group: 'Pages', label: item.label, icon: item.icon, hint: game.name, run: () => navigate({ to: gamePath(game, item.id) }) }))) : []),
     { id: 'page:games', group: 'Pages', label: 'All games', icon: 'grid', run: () => navigate({ to: '/' }) },
     ...accountItems.filter((item) => item.id !== 'theme').map((item) => ({ id: `page:${item.id}`, group: 'Pages', label: item.label, icon: item.icon, run: () => navigate({ to: item.id }) })),
-    ...gameGroups(overview.games).map((group) => ({ id: `game:${group.primary.id}`, group: 'Games', label: group.name, icon: 'pad' as IconName, hint: group.primary.bundle_id, run: () => navigate({ to: gamePath(group.primary) }) })),
+    ...gameGroups(overview.games).map((group) => ({ id: `game:${group.primary.id}`, group: 'Games', label: group.name, icon: 'pad' as IconName, hint: game && sameGame(group.primary, game) ? 'this game' : group.primary.bundle_id, run: () => navigate({ to: gamePath(variantFor(group, game?.platform), game ? section : 'overview') }) })),
     { id: 'act:refresh', group: 'Actions', label: 'Refresh data', icon: 'refresh', run: () => void refresh() },
     { id: 'act:link', group: 'Actions', label: 'Copy link to this view', icon: 'link', run: () => void copyLink() },
     { id: 'act:theme', group: 'Actions', label: 'Switch light or dark theme', icon: 'eye', run: toggleTheme },
@@ -114,14 +122,14 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
 
   const sidebar = (
     <Sidebar>
-      <Link to="/" className="brand" title="All games"><span className="mark px-mark" aria-hidden="true"><img src="/assets/icons/avn-analytics.svg" alt="" width={28} height={28} /></span><span className="brand-t">AVN Analytics</span></Link>
+      <Link to="/" className="brand" title="All games"><span className="mark px-mark" aria-hidden="true"><BrandMark size={28} /></span><span className="brand-t">AVN Analytics</span></Link>
       {me.workspaces.length > 1 || me.is_admin ? (
         <div className="ws-switch"><label className="eyebrow" htmlFor="ws-select">Workspace</label>
           <select id="ws-select" value={workspace ?? ''} onChange={(event) => { chooseWorkspace(event.target.value); void navigate({ to: '/' }); }}>{me.workspaces.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
       ) : null}
       {game ? (
         <>
-          <Link className="game" to={gamePath(game, section)} title={game.name}><span className="g-ic">{mark ? <img src={iconURL(mark)} alt="" width={30} height={30} /> : initials(game.name)}</span><span className="gm"><b>{game.name}</b><small>{game.bundle_id}</small></span></Link>
+          <button type="button" className="game game-switch" aria-haspopup="listbox" aria-expanded={switcher} title={`${game.name} · ${game.bundle_id}. Switch game`} onClick={(event) => openSwitcher(event.currentTarget)}><span className="g-ic">{mark ? <img src={iconURL(mark)} alt="" width={30} height={30} /> : initials(game.name)}</span><span className="gm"><b>{game.name}</b><small>{game.bundle_id}</small></span><Ico name="chevron" size={14} /></button>
           <div className={`platforms${variants.length + missing.length < 2 ? ' one' : ''}`} role="group" aria-label="Platform">
             {variants.map((item) => <Link key={item.id} to={gamePath(item, section)} className={item.id === game.id ? 'on' : ''} aria-current={item.id === game.id ? 'page' : undefined} title={item.bundle_id}>{platformLabel(item.platform)}{item.archived_at ? ' · paused' : ''}</Link>)}
             {missing.map((platform) => <Link key={platform} className="add" to="/games/new" search={{ name: game.name, bundle_id: game.bundle_id, platform }} title={`Register the ${platformLabel(platform)} version`}>+ {platformLabel(platform)}</Link>)}
@@ -133,7 +141,7 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
     </Sidebar>
   );
   const crumbs = game
-    ? [{ label: 'Games', onClick: () => navigate({ to: '/' }) }, { label: `${game.name} · ${platformLabel(game.platform)}`, onClick: () => navigate({ to: gamePath(game) }) }, { label: title }]
+    ? [{ label: 'Games', onClick: () => navigate({ to: '/' }) }, { label: `${game.name} · ${platformLabel(game.platform)}`, onClick: () => openSwitcher() }, { label: title }]
     : [{ label: 'Workspace' }, { label: title }];
 
   return (
@@ -142,7 +150,9 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
       {!online ? <div id="conn-banner" className="conn-banner" role="alert"><Ico name="shield" size={15} /><span><b>You’re offline.</b> Showing data from {new Date(updated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. It refreshes by itself when you’re back.</span></div> : null}
       <AppShell sidebar={sidebar} density={density === 'compact' ? 'compact' : 'comfort'} tabbar={<TabBar items={tabs} active={navActive} onSelect={onNav} moreItems onMore={() => setSheet(true)} />}>
         <Workspace>
-          <TopBar crumbs={crumbs} mobileTitle={<><span className="mark" aria-hidden="true"><img src="/assets/icons/avn-analytics.svg" alt="" width={24} height={24} /></span><b>{title}</b></>}
+          <TopBar crumbs={crumbs} mobileTitle={game ? (
+              <button type="button" className="m-switch" aria-haspopup="listbox" aria-expanded={switcher} aria-label={`${title} · ${game.name}. Switch game`} onClick={(event) => openSwitcher(event.currentTarget)}><span className="mark" aria-hidden="true">{mark ? <img src={iconURL(mark)} alt="" width={24} height={24} /> : <BrandMark size={24} />}</span><span className="m-switch-t"><b>{title}</b><small>{game.name} · {platformLabel(game.platform)}</small></span><Ico name="chevron" size={13} /></button>
+            ) : <><span className="mark" aria-hidden="true"><BrandMark size={24} /></span><b>{title}</b></>}
             tools={<>
               <SearchButton onClick={() => setPalette(true)} />
               <span className="refresh-wrap"><button ref={refreshButton} type="button" className={`icon-btn${refreshing ? ' spinning' : ''}`} aria-haspopup="menu" aria-expanded={refreshMenu} title="Refresh and auto-refresh" aria-label="Refresh and auto-refresh" onClick={() => setRefreshMenu((open) => !open)}><Ico name="refresh" size={16} />{auto ? <span className="auto-tag">{auto}m</span> : null}</button></span>
@@ -161,6 +171,7 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
           <div className="pop-scroll"><button type="button" className="opt" onClick={() => { setRefreshMenu(false); void refresh(); }}><span className="tick"><Ico name="refresh" size={15} /></span><span className="ot">Refresh now</span><span className="oc">this page</span></button><div className="pop-grp"><span className="eyebrow">Auto-refresh</span></div></div>
           <SingleSelect options={[{ value: '0', label: 'Off' }, { value: '1', label: 'Every minute' }, { value: '5', label: 'Every 5 minutes' }, { value: '15', label: 'Every 15 minutes' }]} value={String(auto)} onChange={(value) => { setRefreshMenu(false); setAutoRefresh(Number(value)); }} />
         </Popover>
+        <GameSwitcher open={switcher} onClose={() => setSwitcher(false)} anchor={switchAnchor} games={overview.games} current={game} onPick={(next) => navigate({ to: gamePath(next, section) })} onAll={() => navigate({ to: '/' })} onRegister={canManageGames ? () => navigate({ to: '/games/new' }) : undefined} />
         <Popover open={bell} onClose={() => setBell(false)} anchor={bellButton} width={360}><NotificationList onClose={() => setBell(false)} /></Popover>
         <CommandPalette open={palette} onClose={() => setPalette(false)} items={commands} onAsk={nutbot.usable ? (text) => nutbot.ask(text) : undefined} />
         <ShortcutsDialog open={shortcuts} onClose={() => setShortcuts(false)} />

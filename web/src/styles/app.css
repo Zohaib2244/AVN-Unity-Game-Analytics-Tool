@@ -74,3 +74,42 @@
 .drawer .journey-events li { grid-template-columns: 78px 60px minmax(0, 1fr); row-gap: 4px; }
 .drawer .journey-params { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 0; }
 .drawer .journey-params .chip { flex: 0 1 auto; min-width: 0; }
+
+/* Game switcher: the sidebar game card is a button; the phone title and the popover list reuse its look. */
+.game-switch { font: inherit; color: var(--text); cursor: pointer; }
+.game-switch .ic, .game-switch svg:last-child { margin-left: auto; flex: 0 0 auto; color: var(--dim); }
+.game-switch[aria-expanded="true"] { border-color: var(--line-strong); }
+.game-opt { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; }
+.game-opt .g-ic { width: 28px; height: 28px; }
+.game-opt .g-ic img { width: 100%; height: 100%; border-radius: 7px; object-fit: cover; }
+.game-opt .ot { display: grid; min-width: 0; }
+.game-opt .ot small { color: var(--dim); font-size: var(--fs-micro); font-family: var(--font-mono); }
+.game-opt.on { background: var(--accent-soft); }
+.game-pop-foot { display: grid; gap: 2px; margin-top: 4px; border-top: var(--bw) solid var(--line); padding-top: 4px; }
+.m-switch { display: flex; align-items: center; gap: 9px; min-width: 0; max-width: 100%; min-height: 44px; padding: 0 4px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.m-switch .m-switch-t { display: grid; min-width: 0; }
+.m-switch .m-switch-t b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-switch .m-switch-t small { color: var(--dim); font-size: var(--fs-micro); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-switch svg { color: var(--dim); flex: 0 0 auto; }
+
+/* Phone: the filter row wraps instead of scrolling sideways, so the build switch (latest, previous, all) is always in reach; row density is a setting, not a filter, and goes. */
+@media (max-width: 620px) {
+  .filter-bar { flex-wrap: wrap; overflow: visible; margin-inline: 0; padding: 0; }
+  .filter-bar .build-switch { flex: 0 1 auto; max-width: 100%; }
+  .filter-bar .density-switch { display: none; }
+}
+
+/* The brand mark takes the theme: tile = page background, frame = accent, glyph = text. */
+.brand-mark { display: block; border-radius: 22%; }
+.brand-mark .bm-tile { fill: var(--bg); }
+.brand-mark .bm-frame { fill: var(--accent); }
+.brand-mark .bm-glyph { fill: var(--text); }
+
+/* Long names and bundle ids shorten with an ellipsis instead of running under the switch arrow or out of the card. */
+.game .gm { flex: 1 1 auto; min-width: 0; }
+.game .gm b, .game .gm small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.game-opt .ot, .game-opt .ot small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Text on an accent fill is the accent's ink (--badge-text now points at it; it pointed at the accent's own text colour, which is unreadable on the fill).
+   Pressed segments in the level views follow the same "raised chip" look as the other segments, not a second accent-filled button. */
+.level-explore .panel-header .button[aria-pressed="true"], .level-drill .segmented button[aria-pressed="true"], .level-explore .segmented button[aria-pressed="true"], .route-filters button[aria-pressed="true"] { background: var(--raise); border-color: var(--line-strong); color: var(--text); font-weight: 700; box-shadow: none; }

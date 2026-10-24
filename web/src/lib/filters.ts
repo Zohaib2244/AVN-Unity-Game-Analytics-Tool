@@ -12,7 +12,7 @@ export const OPERATORS: Array<[string, string]> = [['eq', '='], ['ne', '≠'], [
 export const operatorLabel = (op: string): string => OPERATORS.find(([key]) => key === op)?.[1] || '=';
 
 export type DayRange = { from: string; to: string; preset?: string };
-export type VersionMode = 'latest' | 'custom' | 'all';
+export type VersionMode = 'latest' | 'previous' | 'custom' | 'all';
 export type FilterState = {
   range: DayRange | null; timezone: Timezone; hideTest: boolean; versionMode: VersionMode;
   environment: string[]; app_version: string[]; build: string[]; country: string[]; platform: string[];
@@ -20,7 +20,7 @@ export type FilterState = {
 /** A filter state whose range has been chosen. */
 export type ActiveFilters = FilterState & { range: DayRange };
 
-export type Facets = Partial<Record<Dimension, Array<{ value: string; players: number }>>> & { latest_app_version?: string | null };
+export type Facets = Partial<Record<Dimension, Array<{ value: string; players: number }>>> & { latest_app_version?: string | null; previous_app_version?: string | null };
 
 const key = (game: { id: string }) => `avn-filters-${game.id}`;
 
@@ -31,8 +31,8 @@ export function filterState(game: { id: string }): FilterState {
     timezone: saved.timezone === 'utc' ? 'utc' : 'local',
     hideTest: saved.hideTest ?? true,
     environment: saved.environment || [], app_version: saved.app_version || [], build: saved.build || [], country: saved.country || [], platform: saved.platform || [],
-    // Dashboards open on the newest published build by default; 'custom' (picked builds) and 'all' are remembered.
-    versionMode: (['latest', 'custom', 'all'] as const).includes(saved.versionMode as VersionMode) ? (saved.versionMode as VersionMode) : saved.app_version?.length ? 'custom' : 'latest',
+    // Dashboards open on the newest published build by default; 'previous' (the build before it), 'custom' (picked builds) and 'all' are remembered.
+    versionMode: (['latest', 'previous', 'custom', 'all'] as const).includes(saved.versionMode as VersionMode) ? (saved.versionMode as VersionMode) : saved.app_version?.length ? 'custom' : 'latest',
   };
 }
 export function saveFilters(game: { id: string }, state: FilterState): void { storeSet(key(game), state); }

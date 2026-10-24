@@ -747,10 +747,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             game_id,
             "facets",
             days,
-            lambda: {
-                **insights.facets(storage, str(game_id), *days),
-                "latest_app_version": insights.latest_build(storage, str(game_id), *days),
-            },
+            lambda: _facets_with_builds(storage, str(game_id), days),
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/summary")
@@ -1141,6 +1138,16 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
 
     app.include_router(admin_api)
     return app
+
+
+def _facets_with_builds(storage, game_id, days):
+    """The filter choices, plus the newest published build and the one before it."""
+    builds = insights.published_builds(storage, game_id, *days)
+    return {
+        **insights.facets(storage, game_id, *days),
+        "latest_app_version": builds[0] if builds else None,
+        "previous_app_version": builds[1] if len(builds) > 1 else None,
+    }
 
 
 def create_ingest_app():

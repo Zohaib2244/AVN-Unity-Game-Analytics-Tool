@@ -3673,7 +3673,11 @@ def test_latest_build_is_the_newest_published_version_not_a_test_build(backend):
     _send_as(ingest, game, "editor", [event(device_id="dev", app_version="2.0")])
     base = f"/v1/games/{game['id']}/insights/facets"
     days = {"start": "2026-10-04", "end": "2026-10-04"}
-    assert admin.get(base, headers=AUTH, params=days).json()["latest_app_version"] == "1.10"
+    facets = admin.get(base, headers=AUTH, params=days).json()
+    assert facets["latest_app_version"] == "1.10"
+    # "the build before" is the next published one: never the editor-only 2.0, and 1.9 before 1.10
+    assert facets["previous_app_version"] == "1.9"
     # a range with no events has no latest build, and the dashboards then show every version
     empty = {"start": "2026-10-10", "end": "2026-10-10"}
     assert admin.get(base, headers=AUTH, params=empty).json()["latest_app_version"] is None
+    assert admin.get(base, headers=AUTH, params=empty).json()["previous_app_version"] is None

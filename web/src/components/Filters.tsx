@@ -12,6 +12,9 @@ import { DateRange, resolveRange } from './DateRange';
 import { useNotify } from './feedback';
 import { Ico } from './icons';
 
+/** The filter choices (and the latest and previous published builds) for a game and range. */
+export const facetsPath = (game: Pick<Game, 'id'>, state: Pick<ActiveFilters, 'range' | 'timezone'>): string => `${gameURL(game)}/insights/facets?${new URLSearchParams({ start: state.range.from, end: state.range.to, tz_offset: String(timezoneOffset(state)) })}`;
+
 export type FilterContext = { anonymous_events?: number; excluded_events?: number; low_sample?: boolean; players?: number; minimum_players?: number };
 
 /** Owns the filter state for a game page. Returns the active state (range resolved) and a setter. */
@@ -27,14 +30,16 @@ export function FilterBar({ game, state, onChange, context, children }: { game: 
   const { density, setDensity } = useTheme();
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
-  const facetsQuery = useRead<Facets>(`${gameURL(game)}/insights/facets?${new URLSearchParams({ start: state.range.from, end: state.range.to, tz_offset: String(timezoneOffset(state)) })}`);
+  const facetsQuery = useRead<Facets>(facetsPath(game, state));
   const facets = facetsQuery.data ?? {};
-  // On the default (latest build) the newest build is applied as soon as it is known.
+  // On the default (latest build) the newest build is applied as soon as it is known; "Previous" does the same with the one before it.
   useEffect(() => {
-    if (state.versionMode !== 'latest' || !facetsQuery.data) return;
-    const latest = facetsQuery.data.latest_app_version ? [facetsQuery.data.latest_app_version] : [];
-    if (latest.join() !== state.app_version.join()) onChange((s) => ({ ...s, app_version: latest }));
+    if ((state.versionMode !== 'latest' && state.versionMode !== 'previous') || !facetsQuery.data) return;
+    const wanted = state.versionMode === 'latest' ? facetsQuery.data.latest_app_version : facetsQuery.data.previous_app_version;
+    const builds = wanted ? [wanted] : [];
+    if (builds.join() !== state.app_version.join()) onChange((s) => ({ ...s, app_version: builds }));
   }, [facetsQuery.data, state.versionMode, state.app_version, onChange]);
+  const chooseBuild = (mode: 'latest' | 'previous' | 'all') => onChange((s) => ({ ...s, versionMode: mode, app_version: mode === 'latest' ? [facets.latest_app_version].filter((v): v is string => !!v) : mode === 'previous' ? [facets.previous_app_version].filter((v): v is string => !!v) : [] }));
 
   const set = (patch: Partial<Omit<FilterState, 'range'>> & { range?: ActiveFilters['range'] }) => onChange((s) => ({ ...s, ...patch }));
   const setDimension = (dimension: Dimension, values: string[]) => onChange((s) => ({ ...s, [dimension]: values, ...(dimension === 'app_version' ? { versionMode: values.length ? 'custom' : 'all' } : {}) }));
@@ -64,15 +69,23 @@ export function FilterBar({ game, state, onChange, context, children }: { game: 
     <>
       <div className="filter-bar">
         <DateRange compact value={state.range} onChange={(range) => set({ range })} />
+        <div className="build-switch">
+        <Segmented label="Build" value={state.versionMode} onChange={(mode) => { if (mode === 'latest' || mode === 'previous' || mode === 'all') chooseBuild(mode); }}
+          options={[
+            { value: 'latest', label: facets.latest_app_version ? `Latest ${facets.latest_app_version}` : 'Latest' },
+            ...(facets.previous_app_version || state.versionMode === 'previous' ? [{ value: 'previous' as const, label: facets.previous_app_version ? `Previous ${facets.previous_app_version}` : 'Previous' }] : []),
+            { value: 'all', label: 'All builds' },
+          ]} />
+        </div>
         <Segmented label="Time zone" value={state.timezone} onChange={(timezone) => set({ timezone })} options={[{ value: 'local', label: 'Local' }, { value: 'utc', label: 'UTC' }]} />
-        <Segmented label="Row density" value={density} onChange={setDensity} options={[{ value: 'roomy', label: 'Roomy' }, { value: 'compact', label: 'Compact' }]} />
+        <div className="density-switch"><Segmented label="Row density" value={density} onChange={setDensity} options={[{ value: 'roomy', label: 'Roomy' }, { value: 'compact', label: 'Compact' }]} /></div>
         {children}
         <button ref={button} type="button" className="btn filters-open" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}><Ico name="funnel" size={14} /> Filters {active ? <span className="count">{active}</span> : null}</button>
       </div>
       <div className="filter-chips">
         {chips.map(({ dimension, value: item }) => (
           <button key={`${dimension}:${item}`} type="button" className="filter-chip" title="Remove this filter" onClick={() => remove(dimension, item)}>
-            {DIMENSION_LABELS[dimension]}: {dimensionText(dimension, item)}{dimension === 'app_version' && state.versionMode === 'latest' ? ' (latest)' : ''} <Ico name="close" size={11} />
+            {DIMENSION_LABELS[dimension]}: {dimensionText(dimension, item)}{dimension === 'app_version' && state.versionMode === 'latest' ? ' (latest)' : dimension === 'app_version' && state.versionMode === 'previous' ? ' (previous)' : ''} <Ico name="close" size={11} />
           </button>
         ))}
         {hidden ? <span className="filter-note">Editor & development data hidden</span> : null}

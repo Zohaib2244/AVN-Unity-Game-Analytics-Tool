@@ -236,11 +236,12 @@ def facets(storage, game_id, start, end):
     return result
 
 
-def latest_build(storage, game_id, start, end):
-    """The newest app version real players are on in the range, or None.
+def published_builds(storage, game_id, start, end):
+    """The app versions real players are on in the range, newest first.
 
-    Editor, development and test builds never count as published. This is what dashboards open on
-    by default; the filter menu still lets anyone pick other builds or all of them.
+    Editor, development and test builds never count as published. The first is what dashboards
+    open on by default and the second is "the build before"; the filter menu still lets anyone
+    pick other builds or all of them.
     """
     storage.get_game(game_id)
     with storage.connect(storage.game_path(game_id)) as connection:
@@ -254,7 +255,17 @@ def latest_build(storage, game_id, start, end):
                 TEST_ENVIRONMENTS,
             )
         ]
-    return max(published, key=version_key, default=None)
+    return sorted(published, key=version_key, reverse=True)
+
+
+def latest_build(storage, game_id, start, end):
+    """The newest published app version in the range, or None."""
+    return next(iter(published_builds(storage, game_id, start, end)), None)
+
+
+def previous_build(storage, game_id, start, end):
+    """The published app version just before the newest one in the range, or None."""
+    return next(iter(published_builds(storage, game_id, start, end)[1:]), None)
 
 
 def _day_start(moment):

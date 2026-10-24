@@ -1,5 +1,6 @@
 // Flavour moments (AVN Family): isometric block piles for empty states, Dora asleep when nothing needs a
 // look, the mini PC on the server page, and the boot screen once a day. Fills use classes, never inline styles.
+import { BrandMark } from './BrandMark';
 import { useEffect, useState, type ReactElement } from 'react';
 import { reducedMotion } from '@/app/theme';
 
@@ -75,7 +76,7 @@ export function BootScreen(): ReactElement | null {
   return (
     <div className="boot-ov" aria-hidden="true">
       <Starfield />
-      <div className="boot-in"><img className="boot-mark" src="/assets/icons/avn-analytics.svg" alt="" width={84} height={84} /><div className="boot-t">AVN Analytics</div><div className="boot-s">Your games, your data</div></div>
+      <div className="boot-in"><BrandMark className="boot-mark" size={84} /><div className="boot-t">AVN Analytics</div><div className="boot-s">Your games, your data</div></div>
     </div>
   );
 }
