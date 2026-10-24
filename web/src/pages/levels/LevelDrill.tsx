@@ -63,7 +63,7 @@ export function LastActions({ level, group, lastActions, lastAction, onPick }: {
 }
 
 /* ─── The drill ─── */
-export function LevelDrill({ game, filters, scope, level, row, memory }: { game: Game; filters: ActiveFilters; scope: LevelScope; level: number; row: LevelRow | undefined; memory: Map<number, DrillState> }): ReactElement {
+export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPlayer }: { game: Game; filters: ActiveFilters; scope: LevelScope; level: number; row: LevelRow | undefined; memory: Map<number, DrillState>; onOpenPlayer?: (player: string, index: number, players: string[]) => void }): ReactElement {
   const { toastError } = useNotify();
   const [state, setStateRaw] = useState<DrillState>(() => memory.get(level) ?? { group: levelDrillGroup(row), sort: 'exit_at', lastAction: null });
   const setState = (patch: Partial<DrillState>) => setStateRaw((previous) => { const next = { ...previous, ...patch }; memory.set(level, next); return next; });
@@ -137,7 +137,7 @@ export function LevelDrill({ game, filters, scope, level, row, memory }: { game:
                   <tbody>
                     {players.map((item, index) => (
                       <tr key={item.player} data-player={item.player}>
-                        <td><Link className="row-title" to={gamePath(game, 'players')} search={{ player: item.player }}><span className="mono">{shortId(item.player)}</span></Link></td>
+                        <td><Link className="row-title" to={gamePath(game, 'levels')} search={(previous: Record<string, string | undefined>) => ({ ...previous, level: String(level), player: item.player })} onClick={(event: MouseEvent) => { if (onOpenPlayer && event.button === 0 && !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) { event.preventDefault(); onOpenPlayer(item.player, index, players.map((entry) => entry.player)); } }}><span className="mono">{shortId(item.player)}</span></Link></td>
                         {quitting ? <td className="small"><LastDidButton row={item} index={index} expanded={did?.index === index}
                           onPointerOver={(event) => { if (event.pointerType === 'mouse' && !did?.pinned) setDid({ index, pinned: false, anchor: event.currentTarget }); }}
                           onPointerOut={(event) => { if (event.pointerType === 'mouse' && !did?.pinned) hideLastDid(); }}

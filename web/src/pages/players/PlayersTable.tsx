@@ -1,7 +1,7 @@
 // The player list: a TanStack table with a sticky header, sortable columns (the server sorts; the page
 // shown is ordered by the same comparator so the header and the rows always agree), one row per player
 // that opens in the drawer on click or Enter.
-import { useMemo, type KeyboardEvent, type MouseEvent, type ReactElement } from 'react';
+import { useMemo, useRef, type KeyboardEvent, type MouseEvent, type ReactElement } from 'react';
 import { Link } from '@tanstack/react-router';
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable, type RowData } from '@tanstack/react-table';
 import { TEST_ENVIRONMENTS } from '@/lib/filters';
@@ -23,10 +23,14 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSor
   onSort: (key: string) => void; onOpen: (player: string, index: number) => void;
 }): ReactElement {
   const data = useMemo(() => [...rows].sort(playerComparator(sort, order)), [rows, sort, order]);
+  // The page passes a new onOpen on every render. Columns built from it would be new every render too, and the
+  // table would remount all its rows (a flicker) each time the drawer opens or closes; so read it through a ref.
+  const open = useRef(onOpen);
+  open.current = onOpen;
   const columns = useMemo(() => [
     column.accessor('player', { id: 'player', header: 'Player', enableSorting: false, cell: ({ row }) => (
       <>
-        <Link to={gamePath(game, 'players')} search={{ player: row.original.player }} className="row-title" onClick={(event: MouseEvent) => { if (plainClick(event)) onOpen(row.original.player, row.index); }}><span className="mono">{shortId(row.original.player)}</span></Link>
+        <Link to={gamePath(game, 'players')} search={{ player: row.original.player }} className="row-title" onClick={(event: MouseEvent) => { if (plainClick(event)) open.current(row.original.player, row.index); }}><span className="mono">{shortId(row.original.player)}</span></Link>
         <p className="small muted">{row.original.has_user_id ? 'User ID' : 'Install ID'} · {platformLabel(row.original.platform || '—')}</p>
       </>
     ) }),
@@ -39,7 +43,7 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSor
     column.accessor('app_version', { id: 'version', header: 'Version', meta: { className: 'small', sortable: true }, cell: ({ getValue }) => getValue() || '—' }),
     column.accessor('environment', { id: 'environment', header: 'Env', enableSorting: false, cell: ({ getValue }) => <span className={`pill ${TEST_ENVIRONMENTS.includes(getValue() || '') ? '' : 'good'}`}>{getValue() || '—'}</span> }),
     column.accessor('country', { id: 'country', header: 'Country', enableSorting: false, meta: { className: 'small' }, cell: ({ getValue }) => (getValue() ? <abbr className="cc" title={countryName(getValue())}>{getValue()}</abbr> : '—') }),
-  ], [game, metrics, timezone, onOpen]);
+  ], [game, metrics, timezone]);
   const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel(), manualSorting: true, state: { sorting: [{ id: sort, desc: order === 'desc' }] } });
   const onRowKey = (event: KeyboardEvent<HTMLTableRowElement>, player: string, index: number) => { if (event.key === 'Enter' && event.target === event.currentTarget) { event.preventDefault(); onOpen(player, index); } };
   return (

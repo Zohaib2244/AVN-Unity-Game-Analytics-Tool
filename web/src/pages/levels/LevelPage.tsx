@@ -1,5 +1,5 @@
 // One level: its numbers, the links to the levels either side, and the players behind it (LevelDrill).
-import type { ReactElement } from 'react';
+import { useEffect, type ReactElement } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { QueryRegion, Skeleton } from '@/components/feedback';
@@ -8,6 +8,7 @@ import { duration, number, percent } from '@/lib/format';
 import { gamePath } from '@/lib/games';
 import type { Game, LevelsResult } from '@/lib/types';
 import { LevelDrill } from './LevelDrill';
+import { leftForLevel } from './levelReturn';
 import type { LevelScope } from './levelMath';
 import type { DrillState } from './levelPaths';
 
@@ -19,10 +20,12 @@ type Props = {
   query: UseQueryResult<LevelsResult>;
   path: string;
   memory: Map<number, DrillState>;
+  onOpenPlayer: (player: string, index: number, players: string[]) => void;
 };
 
-export function LevelPage({ game, filters, scope, level, query, path, memory }: Props): ReactElement {
+export function LevelPage({ game, filters, scope, level, query, path, memory, onOpenPlayer }: Props): ReactElement {
   const list = gamePath(game, 'levels');
+  useEffect(() => leftForLevel(game.id), [game.id]);
   return (
     <QueryRegion query={query} path={path} skeleton={<Skeleton kind="table" rows={8} columns={7} />}>
       {(data) => {
@@ -60,7 +63,7 @@ export function LevelPage({ game, filters, scope, level, query, path, memory }: 
             </div>
             <div className="panel-body">
               <div className="level-page-split">
-                <LevelDrill key={level} game={game} filters={filters} scope={scope} level={level} row={row} memory={memory} />
+                <LevelDrill key={level} game={game} filters={filters} scope={scope} level={level} row={row} memory={memory} onOpenPlayer={onOpenPlayer} />
               </div>
             </div>
           </section>

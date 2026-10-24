@@ -80,7 +80,7 @@ export function levelHighlights(levels: LevelRow[]): { largestDrop: LevelRow | u
 }
 
 /* ─── Levels at a glance: players remaining by level and a heat strip ─── */
-export type CurvePoint = { level: number; x: number; y: number; big: boolean; flag: string | null; axis: boolean };
+export type CurvePoint = { level: number; started: number; drop: number | null; x: number; y: number; big: boolean; flag: string | null; axis: boolean };
 export type HeatCell = { level: number; bucket: number; title: string };
 export type LevelCurve = {
   width: number; height: number; left: number; right: number;
@@ -107,11 +107,11 @@ export function levelCurve(levels: LevelRow[]): LevelCurve | null {
   const summary = `Players remaining by level, from ${number(first.started)} at level ${first.level} to ${number(last.started)} at level ${last.level}${steepest.length ? `. Steepest drops after level ${steepest.join(' and ')}` : ''}.`;
   const points = rows.map((row, index) => {
     const big = steepest.includes(row.level);
-    return { level: row.level, x: Number(x(index).toFixed(1)), y: Number(y(row.started).toFixed(1)), big, flag: big ? `L${row.level} −${Math.round(levelDrop(row)!)}%` : null, axis: index % every === 0 || index === rows.length - 1 };
+    return { level: row.level, started: row.started, drop: levelDrop(row), x: Number(x(index).toFixed(1)), y: Number(y(row.started).toFixed(1)), big, flag: big ? `L${row.level} −${Math.round(levelDrop(row)!)}%` : null, axis: index % every === 0 || index === rows.length - 1 };
   });
   const heat = rows.map((row) => {
     const drop = levelDrop(row);
-    return { level: row.level, bucket: drop == null ? 0 : Math.max(1, Math.ceil((drop / maxDrop) * 6)), title: `Level ${row.level}: ${drop == null ? 'no next level yet' : `${percent(drop)} did not start the next`}` };
+    return { level: row.level, bucket: drop == null ? 0 : Math.max(1, Math.ceil((drop / maxDrop) * 6)), title: `Level ${row.level} · ${number(row.started)} ${row.started === 1 ? 'player' : 'players'} · ${drop == null ? 'no next level yet' : `${percent(drop)} did not start the next`}` };
   });
   return { width, height, left, right, line, area: `${line} L${x(rows.length - 1)} ${y(0)} L${x(0)} ${y(0)}Z`, ticks, points, steepest, heat, summary };
 }

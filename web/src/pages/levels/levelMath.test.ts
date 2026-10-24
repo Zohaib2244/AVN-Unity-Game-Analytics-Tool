@@ -152,8 +152,12 @@ describe('players remaining by level', () => {
   it('shades the heat strip by the drop, with no next level as the lightest cell', () => {
     const heat = levelCurve(rows)!.heat;
     expect(heat.map((cell) => cell.bucket)).toEqual([4, 6, 0]);
-    expect(heat[2]!.title).toBe('Level 3: no next level yet');
-    expect(heat[0]!.title).toBe(`Level 1: ${percent(50)} did not start the next`);
+    expect(heat[2]!.title).toBe(`Level 3 · ${number(10)} players · no next level yet`);
+    expect(heat[0]!.title).toBe(`Level 1 · ${number(100)} players · ${percent(50)} did not start the next`);
+  });
+  it('gives every point its players and drop, for the hover text on the curve', () => {
+    const points = levelCurve(rows)!.points;
+    expect(points.map((point) => [point.level, point.started, point.drop])).toEqual([[1, 100, 50], [2, 50, 80], [3, 10, null]]);
   });
   it('leaves a small sample out of the steepest drops', () => {
     const curve = levelCurve([row(1, { started: 100, low_sample: true, transition: transition({ drop_percent: 90 }) }), row(2, { started: 40, transition: transition({ drop_percent: 20 }) }), row(3, { started: 30, transition: null })])!;

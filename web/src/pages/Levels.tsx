@@ -1,7 +1,7 @@
 // Levels: where players stop, level by level. Three views: the level table (with a level page for
 // ?level=N), and Compare releases. Filters, sorting, the players shown and chosen releases are remembered
 // per game in this browser; the open view and level are in the address, so a link can copy them.
-import { useMemo, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useRead } from '@/api';
 import { resolveRange } from '@/components/DateRange';
@@ -10,9 +10,11 @@ import { Heading } from '@/components/feedback';
 import { gamePath } from '@/lib/games';
 import { storeGet, storeSet } from '@/lib/store';
 import type { Game, LevelsResult } from '@/lib/types';
+import { PlayerDrawer, type PlayerBrowse } from './player/PlayerView';
 import { LevelCompare } from './levels/LevelCompare';
 import { LevelPage } from './levels/LevelPage';
 import { LevelTable } from './levels/LevelTable';
+import { forgetSpot } from './levels/levelReturn';
 import { cleanNavigation, navigationKey, type LevelNavigation, type ReleasePrefs, type SavedLevelView } from './levels/levelMath';
 import { isCompareView, levelsPath, releasesKey, viewKey, type DrillState } from './levels/levelPaths';
 
@@ -25,6 +27,8 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
   const [prefs, setPrefsState] = useState<ReleasePrefs>(() => storeGet<ReleasePrefs>(releasesKey(game)) ?? {});
   const setPrefs = (next: ReleasePrefs) => { setPrefsState(next); storeSet(releasesKey(game), next); };
   const [jump, setJump] = useState<{ level: number } | null>(null);
+  const [browse, setBrowse] = useState<PlayerBrowse | undefined>();
+  useEffect(() => () => forgetSpot(game.id), [game.id]);
 
   // ?level=12 opens that level's page; ?view=compare opens Compare releases (the view is also remembered).
   const pageLevel = search.level != null && Number.isInteger(Number(search.level)) ? Number(search.level) : null;
@@ -42,6 +46,14 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
     void navigate({ to: listPath, search: next === 'compare' ? { view: 'compare' } : {}, replace: true });
   };
   const openLevel = (level: number) => { void navigate({ to: listPath, search: { level: String(level) } }); };
+  // A player opens in the drawer over the level they were found on (?level=12&player=…), not on the Players page;
+  // Previous / Next walk the players listed. Closing leaves the level page as it was.
+  const player = search.player || null;
+  const openPlayer = useCallback((id: string, index: number, ids: string[]) => {
+    setBrowse({ index, total: ids.length, load: async (position: number) => (ids[position] ? { id: ids[position] } : undefined) });
+    void navigate({ to: listPath, search: (previous: Record<string, string | undefined>) => ({ ...previous, player: id }) });
+  }, [listPath, navigate]);
+  const closePlayer = () => { setBrowse(undefined); void navigate({ to: listPath, search: (previous: Record<string, string | undefined>) => { const { player: _player, ...rest } = previous; return rest; }, replace: true }); };
   const jumpFromCompare = (level: number) => { setJump({ level }); chooseView('table'); };
   const restore = (saved: SavedLevelView) => {
     updateFilters(() => ({ ...saved.filters, range: resolveRange(saved.filters.range?.preset || '30', saved.filters.range) }));
@@ -60,10 +72,11 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
       {view === 'compare' ? (
         <LevelCompare game={game} filters={filters} nav={nav} prefs={prefs} onPrefs={setPrefs} onRestore={restore} onJump={jumpFromCompare} />
       ) : pageLevel != null ? (
-        <LevelPage game={game} filters={filters} scope={nav.scope} level={pageLevel} query={levels} path={path} memory={memory} />
+        <LevelPage game={game} filters={filters} scope={nav.scope} level={pageLevel} query={levels} path={path} memory={memory} onOpenPlayer={openPlayer} />
       ) : (
         <LevelTable key={path} game={game} filters={filters} scope={nav.scope} nav={nav} onNav={setNav} query={levels} path={path} jump={jump} onJumped={() => setJump(null)} onOpen={openLevel} />
       )}
+      <PlayerDrawer game={game} player={player} filters={filters} browse={browse} onClose={closePlayer} />
     </>
   );
 }

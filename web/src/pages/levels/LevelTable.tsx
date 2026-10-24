@@ -1,6 +1,6 @@
 // "Level by level": the summary numbers, the players-remaining curve, and the table of every level with
 // its sort, scope, rows per page, jump-to-level and paging. A row or a level opens that level's page.
-import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactElement } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactElement } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { prefetch } from '@/api';
@@ -13,6 +13,7 @@ import type { Game, LevelRow, LevelsResult } from '@/lib/types';
 import { LEVEL_SCOPES, clampPage, levelHighlights, levelsNote, levelDrillGroup, pageSizeOf, pageCount, sortLevels, type LevelNavigation, type LevelPageSize, type LevelScope, type LevelSort } from './levelMath';
 import { drillPagePath } from './levelPaths';
 import { LevelViz } from './LevelViz';
+import { forgetSpot, rememberSpot, returnSpot, scrollBackTo } from './levelReturn';
 
 const SORTS: Array<[LevelSort, string]> = [['level', 'Level order'], ['drop', 'Highest total drop'], ['completion', 'Lowest completion'], ['tries', 'Most tries per player'], ['time', 'Slowest']];
 const PAGE_SIZES: Array<[LevelPageSize, string]> = [['25', '25'], ['50', '50'], ['100', '100'], ['all', 'All']];
@@ -50,7 +51,10 @@ type Props = {
 
 export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump, onJumped, onOpen }: Props): ReactElement {
   const { toast } = useNotify();
-  const [page, setPage] = useState(0);
+  // Back from a level's page: the same page of levels, then the same scroll position once the rows are there.
+  const [spot] = useState(() => returnSpot(game.id));
+  const [page, setPage] = useState(spot?.page ?? 0);
+  const returning = useRef(spot);
   const [highlight, setHighlight] = useState<{ level: number; token: number } | null>(null);
   const [jumpText, setJumpText] = useState('');
   const box = useRef<HTMLElement>(null);
@@ -77,6 +81,13 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
     row?.querySelector<HTMLElement>('.level-toggle')?.focus({ preventScroll: true });
   }, [highlight]);
 
+  useLayoutEffect(() => {
+    if (!returning.current || !data?.levels.length) return;
+    const { y } = returning.current;
+    returning.current = null; forgetSpot(game.id);
+    return scrollBackTo(y);
+  }, [data, game.id]);
+
   const onJumpSubmit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); jumpTo(Number(jumpText)); };
   const openRow = (event: MouseEvent<HTMLTableRowElement>, level: number) => {
     if ((event.target as Element).closest('a, button')) return;
@@ -84,7 +95,7 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
   };
 
   return (
-    <section ref={box} className="panel levels-panel">
+    <section ref={box} className="panel levels-panel" onClickCapture={() => rememberSpot(game.id, { y: window.scrollY, page: current })}>
       <div className="panel-header">
         <div><h2>Level by level</h2><p id="levels-note">{levelsNote(scope)}{sample ? <> <span className="level-sample-legend"><span className="level-sample-marker" aria-hidden="true">·</span> Small sample: fewer than {number(minimum)} players started.</span></> : null}</p></div>
         <div className="quiet-actions">
@@ -128,7 +139,7 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
                 <div className="kpi"><div className="eyebrow">Hardest level</div><div className="k-v">{hardest ? `Level ${hardest.level}` : '—'}</div><div className="k-c">{hardest ? `${percent(hardest.completion ?? 0)} of players finish it` : `needs at least ${number(minimum)} players`}</div></div>
                 <div className="kpi"><div className="eyebrow">Slowest level</div><div className="k-v">{slowest ? `Level ${slowest.level}` : '—'}</div><div className="k-c">{slowest ? `median ${duration(slowest.median_seconds)}` : ''}</div></div>
               </div>
-              <LevelViz levels={result.levels} onOpen={onOpen} />
+              <LevelViz game={game} levels={result.levels} onOpen={onOpen} />
               <div className="table-wrap level-scroll levels-scroll" tabIndex={0} role="region" aria-label="Level results">
                 <table className="levels-grid">
                   <thead><tr><th>Level</th><th className="num">Start</th><th className="num">Finish</th><th className="num" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">Drop · start → start</th><th className="num">Tries / player</th><th className="num">Fails</th><th className="num">Median time</th></tr></thead>
