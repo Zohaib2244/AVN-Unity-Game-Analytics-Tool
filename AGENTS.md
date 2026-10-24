@@ -66,3 +66,7 @@ tests through `scripts/check.sh` (or `. scripts/_env.sh` first); a bare
   - Pure browser logic that must agree with the server (`web/src/lib/conditions.ts`, `player-events.ts`) is written in erasable TypeScript so `tests/test_conditions.py` and `tests/test_player_events.py` can run it directly with Node.
 - Raw events are kept indefinitely and SQLite may hold committed data in `-wal` files: never "clean up" data files as part of a change.
 - Don't push, merge or open PRs yourself; leave the branch for review.
+
+## Design preferences
+
+- Player details open in a centred viewer for focused reading and quick browsing; never move them to the screen edge or stack them beside NutBot as another sidebar.

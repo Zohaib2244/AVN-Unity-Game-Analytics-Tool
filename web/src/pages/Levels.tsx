@@ -11,7 +11,7 @@ import { Heading, Skeleton } from '@/components/feedback';
 import { gamePath } from '@/lib/games';
 import { storeGet, storeSet } from '@/lib/store';
 import type { Game, LevelsResult } from '@/lib/types';
-import { PlayerDrawer, type PlayerBrowse } from './player/PlayerView';
+import { PlayerViewer, type PlayerBrowse } from './player/PlayerView';
 import { LevelCompare } from './levels/LevelCompare';
 import { LevelPage } from './levels/LevelPage';
 import { LevelTable } from './levels/LevelTable';
@@ -51,14 +51,14 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
     void navigate({ to: listPath, search: next === 'compare' ? { view: 'compare' } : {}, replace: true });
   };
   const openLevel = (level: number) => { void navigate({ to: listPath, search: { level: String(level) } }); };
-  // A player opens in the drawer over the level they were found on (?level=12&player=…), not on the Players page;
+  // A player opens in the centred viewer over the level they were found on (?level=12&player=…);
   // Previous / Next walk the players listed. Closing leaves the level page as it was.
   const player = search.player || null;
   const openPlayer = useCallback((id: string, index: number, ids: string[]) => {
     setBrowse({ index, total: ids.length, load: async (position: number) => (ids[position] ? { id: ids[position] } : undefined) });
-    void navigate({ to: listPath, search: (previous: Record<string, string | undefined>) => ({ ...previous, player: id }) });
+    void navigate({ to: listPath, search: (previous: Record<string, string | undefined>) => ({ ...previous, player: id }), resetScroll: false });
   }, [listPath, navigate]);
-  const closePlayer = () => { setBrowse(undefined); void navigate({ to: listPath, search: (previous: Record<string, string | undefined>) => { const { player: _player, ...rest } = previous; return rest; }, replace: true }); };
+  const closePlayer = () => { setBrowse(undefined); void navigate({ to: listPath, search: (previous: Record<string, string | undefined>) => { const { player: _player, ...rest } = previous; return rest; }, replace: true, resetScroll: false }); };
   const jumpFromCompare = (level: number) => { setJump({ level }); chooseView('table'); };
   const restore = (saved: SavedLevelView) => {
     updateFilters(() => ({ ...saved.filters, range: resolveRange(saved.filters.range?.preset || '30', saved.filters.range) }));
@@ -81,7 +81,7 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
       ) : (
         <LevelTable key={path} game={game} filters={filters} scope={nav.scope} nav={nav} onNav={setNav} query={levels} path={path} jump={jump} onJumped={() => setJump(null)} onOpen={openLevel} />
       )}
-      <PlayerDrawer game={game} player={player} filters={filters} browse={browse} onClose={closePlayer} />
+      <PlayerViewer game={game} player={player} filters={filters} browse={browse} onClose={closePlayer} />
     </>
   );
 }

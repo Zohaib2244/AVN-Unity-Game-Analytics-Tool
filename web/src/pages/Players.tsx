@@ -1,6 +1,6 @@
 // Players: a sortable list with custom event-based columns and "only players who…" rules. The rules are
 // remembered per game (`avn-players-view-<id>`), edited in the drawer and always shown in the rule bar
-// above the data. `?player=` opens one player in the player drawer over the list.
+// above the data. `?player=` opens one player in the centred viewer over the list.
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactElement, type ReactNode } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { Drawer } from '@avn/ui';
@@ -13,7 +13,7 @@ import { number, relativeTime } from '@/lib/format';
 import { gamePath, gameURL } from '@/lib/games';
 import { storeGet, storeSet } from '@/lib/store';
 import type { Catalog, EventRule, Game, PlayerRow, PlayersResult } from '@/lib/types';
-import { PlayerDrawer, type PlayerBrowse } from './player/PlayerView';
+import { PlayerViewer, type PlayerBrowse } from './player/PlayerView';
 import { RuleList, paramKeys, ruleOptions } from './players/RuleList';
 import { PlayerRuleBar } from './players/PlayerRuleBar';
 import { PlayersTable } from './players/PlayersTable';
@@ -91,12 +91,12 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
   };
   const fold = (name: string) => setView((v) => ({ ...v, fold: { ...v.fold, [name]: !v.fold[name] } }));
 
-  // A player opens in the drawer so the list keeps its place; Previous / Next walk this page of players.
+  // The player viewer keeps the list's place; Previous / Next walk this page of players.
   const open = useCallback((id: string, index: number, rows: PlayerRow[]) => {
     setBrowse({ index, total: rows.length, load: async (position: number) => (rows[position] ? { id: rows[position].player } : undefined) });
-    void navigate({ to: gamePath(game, 'players'), search: { ...query, player: id } });
+    void navigate({ to: gamePath(game, 'players'), search: { ...query, player: id }, resetScroll: false });
   }, [game, navigate, query]);
-  const close = () => { setBrowse(undefined); const { player: _player, ...rest } = query; void navigate({ to: gamePath(game, 'players'), search: rest }); };
+  const close = () => { setBrowse(undefined); const { player: _player, ...rest } = query; void navigate({ to: gamePath(game, 'players'), search: rest, resetScroll: false }); };
 
   const active = body.conditions.length + body.metrics.length;
   const options = sortOptions(body.metrics);
@@ -147,7 +147,7 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
         </div>
       </Drawer>
 
-      <PlayerDrawer game={game} player={player} filters={filters} browse={browse} onClose={close} />
+      <PlayerViewer game={game} player={player} filters={filters} browse={browse} onClose={close} />
     </>
   );
 }

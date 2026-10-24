@@ -70,10 +70,31 @@
 .curve-tip .muted { color: var(--muted); }
 .lvheat { cursor: pointer; }
 .lvheat:hover, .lvheat:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; position: relative; z-index: 1; }
-/* The drawer is narrow: the event's parameters take their own row under the time, gap and name, as on a phone. */
-.drawer .journey-events li { grid-template-columns: 78px 60px minmax(0, 1fr); row-gap: 4px; }
-.drawer .journey-params { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 0; }
-.drawer .journey-params .chip { flex: 0 1 auto; min-width: 0; }
+/* Player details stay in the screen centre, independently of the sidebar and NutBot. */
+body:has(.dlg > .player-view) { overflow: hidden; }
+.dlg:has(> .player-view) { position: fixed; inset: 0; margin: auto; transform: none; animation: none; width: min(1180px, calc(100vw - 48px)); max-width: none; height: fit-content; max-height: calc(100dvh - 48px); display: flex; flex-direction: column; gap: 0; padding: 0; overflow: hidden; border-radius: var(--r-card); }
+.dlg:has(> .player-view) > h2 { flex: none; margin: 0; padding: 20px 24px 0; padding-right: 120px; font: 500 24px var(--font-px); }
+.dlg-bg:has(+ .dlg > .player-view) { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 76%, transparent); }
+.player-view { display: flex; flex-direction: column; min-height: 0; }
+.player-view-head { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; flex: none; padding: 8px 24px 16px; border-bottom: var(--bw) solid var(--line); }
+.player-view-id { min-width: 0; overflow-wrap: anywhere; color: var(--muted); }
+.player-view-close { position: absolute; top: 16px; right: 24px; }
+.player-view .player-browse { margin-left: auto; flex-wrap: wrap; font-size: var(--fs-sm); }
+.player-view-body { min-height: 0; overflow: auto; overflow-anchor: none; overscroll-behavior: contain; padding: 20px 24px 24px; }
+.player-view .highlight-navigation { top: 0; }
+.player-view .journey-params { min-width: 0; }
+/* Shared pickers calculate coordinates inside the app; the viewer uses the fixed viewport. */
+@media (min-width: 621px) {
+  .player-view .pop { top: calc(var(--y, 0px) - var(--player-view-page-y, 0px)); }
+}
+@media (max-width: 620px) {
+  .dlg:has(> .player-view) { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .dlg:has(> .player-view) > h2 { padding: 16px 112px 0 16px; }
+  .player-view-head { padding: 8px 16px 12px; }
+  .player-view-close { top: 12px; right: 16px; }
+  .player-view .player-browse { order: initial; width: 100%; margin: 0; justify-content: space-between; }
+  .player-view-body { padding: 16px; }
+}
 
 /* Game switcher: the sidebar game card is a button; the phone title and the popover list reuse its look. */
 .game-switch { font: inherit; color: var(--text); cursor: pointer; }
