@@ -32,10 +32,12 @@ from . import (
     device_specs,
     dictionary_import,
     events,
+    group_library,
     highlights,
     insights,
     journeys,
     materialize,
+    player_groups,
     sdk_package,
 )
 from .auth import AccessVerifier, Accounts, Principal
@@ -65,9 +67,11 @@ from .models import (
     MappingPreview,
     Name,
     NutBotChat,
+    PlayerGroupsQuery,
     PlayerRules,
     SavedFunnel,
     SavedHighlight,
+    SavedPlayerGroup,
     TeamAdd,
     TeamUpdate,
     WorkerControl,
@@ -905,6 +909,17 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             lambda: events.detail(storage, str(game_id), name, *days, chosen, tz_offset),
         )
 
+    @admin_api.post("/v1/games/{game_id}/insights/player-groups")
+    def insights_player_groups(game_id: UUID, query: PlayerGroupsQuery):
+        days = day_range(query.start, query.end, query.timezone_offset_minutes)
+        body = query.model_dump(mode="json")
+        return cached(
+            game_id,
+            "player_groups",
+            (days, body),
+            lambda: player_groups.compare(storage, str(game_id), *days, body),
+        )
+
     @admin_api.get("/v1/games/{game_id}/insights/levels")
     def insights_levels(
         game_id: UUID,
@@ -1013,6 +1028,28 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             offset=offset,
             snapshot=snapshot,
         )
+
+    @admin_api.get("/v1/games/{game_id}/insights/group-library")
+    def list_player_group_library(game_id: UUID):
+        return group_library.list_items(storage, str(game_id))
+
+    @admin_api.post("/v1/games/{game_id}/insights/group-library", status_code=201)
+    def create_player_group_item(game_id: UUID, saved: SavedPlayerGroup):
+        return group_library.save(storage, str(game_id), None, saved.model_dump(mode="json"))
+
+    @admin_api.put("/v1/games/{game_id}/insights/group-library/{item_id}")
+    def update_player_group_item(game_id: UUID, item_id: UUID, saved: SavedPlayerGroup):
+        return group_library.save(
+            storage, str(game_id), str(item_id), saved.model_dump(mode="json")
+        )
+
+    @admin_api.delete("/v1/games/{game_id}/insights/group-library/{item_id}", status_code=204)
+    def delete_player_group_item(game_id: UUID, item_id: UUID):
+        group_library.remove(storage, str(game_id), str(item_id))
+
+    @admin_api.post("/v1/games/{game_id}/insights/group-library/{item_id}/restore")
+    def restore_player_group_item(game_id: UUID, item_id: UUID):
+        return group_library.restore(storage, str(game_id), str(item_id))
 
     @admin_api.get("/v1/games/{game_id}/insights/highlights")
     def list_highlights(game_id: UUID):

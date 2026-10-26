@@ -70,3 +70,9 @@ tests through `scripts/check.sh` (or `. scripts/_env.sh` first); a bare
 ## Design preferences
 
 - Player details open in a centred viewer for focused reading and quick browsing; never move them to the screen edge or stack them beside NutBot as another sidebar.
+- Undo and notification actions keep the current page and player viewer open; picker positions follow their trigger through scrolling.
+- Home opens Games with a browser-local Continue toast. Remember the last page separately for each account and workspace; selections and filters stay browser-specific.
+
+- Complex analytical comparisons use guided steps, with a short visible summary of the choices; avoid crowding every setup field onto one screen.
+
+- Analytical tools open with task shortcuts and reusable, named saved groups. Do not phrase shortcuts as questions or add built-in presets until the owner supplies them. Keep setup and statistical detail optional; extra hint paragraphs increase overload.

@@ -17,9 +17,13 @@ for (const theme of ['dark', 'light']) {
         await page.goto(`/games/viewer-game/${section}`);
         const trigger = page.locator('a.row-title').first();
         await expect(trigger).toBeVisible();
+        // Record the resting page position after its entrance transform has finished.
+        await expect.poll(() => page.locator('main.content').evaluate((el) => getComputedStyle(el).transform)).toBe('none');
         await trigger.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
-        const scroll = await page.evaluate(() => window.scrollY);
+        // Playwright may scroll the link into view again before clicking. Match the actual opening spot.
+        await trigger.evaluate((el) => el.addEventListener('click', () => el.setAttribute('data-opening-scroll', String(window.scrollY)), { once: true, capture: true }));
         await trigger.click();
+        const scroll = Number(await trigger.getAttribute('data-opening-scroll'));
         const dialog = page.getByRole('dialog', { name: 'Player details', exact: true });
         await expect(dialog).toBeVisible();
         await expect(dialog.locator('.player-view-id')).toHaveText('player-one');
@@ -67,9 +71,8 @@ for (const theme of ['dark', 'light']) {
         await page.keyboard.press('Escape');
         await expect(dialog).not.toBeVisible();
         await expect(trigger).toBeFocused();
-        const returned = await page.evaluate(() => ({ y: window.scrollY, room: Math.max(0, document.documentElement.scrollHeight - window.innerHeight) }));
-        // Allow a few pixels as page-entry motion settles; a lost list position jumps hundreds.
-        expect(Math.abs(returned.y - Math.min(scroll, returned.room))).toBeLessThan(8);
+        // Wait for focus and scroll restoration to finish, allowing the shorter page to clamp the position.
+        await expect.poll(() => page.evaluate((origin) => Math.abs(window.scrollY - Math.min(origin, Math.max(0, document.documentElement.scrollHeight - window.innerHeight))), scroll)).toBeLessThan(8);
         expect(new URL(page.url()).searchParams.has('player')).toBe(false);
       }
       expect(errors).toEqual([]);

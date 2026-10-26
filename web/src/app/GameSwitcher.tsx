@@ -19,7 +19,7 @@ export function GameSwitcher({ open, onClose, anchor, games, current, onPick, on
 }): ReactElement {
   const groups = gameGroups(games);
   return (
-    <Popover open={open} onClose={onClose} anchor={anchor} width={300} className="game-pop">
+    <Popover position="fixed" open={open} onClose={onClose} anchor={anchor} width={300} className="game-pop">
       <div className="pop-scroll" role="listbox" aria-label="Switch game">
         <div className="pop-grp"><span className="eyebrow">Switch game</span></div>
         {groups.map((group) => {

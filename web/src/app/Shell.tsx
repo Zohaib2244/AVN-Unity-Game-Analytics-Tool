@@ -17,6 +17,7 @@ import { useNutBot } from './nutbot';
 import { NutBotHost } from '@/pages/nutbot/NutBot';
 import { useTheme } from './theme';
 import { GameSwitcher, variantFor } from './GameSwitcher';
+import { useBrowserPage } from './browserPage';
 
 const NAV_GROUPS: NavGroup[] = [
   { label: 'Analyze', items: GAME_SECTIONS.slice(0, 4).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
@@ -39,6 +40,8 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const href = useRouterState({ select: (state) => state.location.href });
+  const gameIds = useMemo(() => overview.games.map((item) => item.id), [overview.games]);
+  useBrowserPage(href, workspace, me.email || me.source, gameIds);
   const { toast } = useNotify();
   const { theme, density, toggleTheme } = useTheme();
   const nutbot = useNutBot();
@@ -56,7 +59,7 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
   const refreshButton = useRef<HTMLButtonElement>(null);
   const switchAnchor = useRef<HTMLElement | null>(null);
   const openSwitcher = useCallback((from?: HTMLElement | null) => {
-    switchAnchor.current = from ?? (document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : document.querySelector<HTMLElement>('.game-switch, .m-switch'));
+    switchAnchor.current = from ?? document.querySelector<HTMLElement>('.crumbs > span:nth-child(2) > .crumb-link') ?? document.querySelector<HTMLElement>('.game-switch, .m-switch');
     setSwitcher(true);
   }, []);
   const updated = useSyncExternalStore(freshness.subscribe, freshness.get, freshness.get);
@@ -167,12 +170,12 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
           </Page>
         </Workspace>
         <MoreSheet open={sheet} onClose={() => setSheet(false)} sections={sheetSections} onSelect={(id) => (game && labels[id] ? onNav(id) : onAccount(id))} />
-        <Popover open={refreshMenu} onClose={() => setRefreshMenu(false)} anchor={refreshButton} width={240}>
+        <Popover position="fixed" open={refreshMenu} onClose={() => setRefreshMenu(false)} anchor={refreshButton} width={240}>
           <div className="pop-scroll"><button type="button" className="opt" onClick={() => { setRefreshMenu(false); void refresh(); }}><span className="tick"><Ico name="refresh" size={15} /></span><span className="ot">Refresh now</span><span className="oc">this page</span></button><div className="pop-grp"><span className="eyebrow">Auto-refresh</span></div></div>
           <SingleSelect options={[{ value: '0', label: 'Off' }, { value: '1', label: 'Every minute' }, { value: '5', label: 'Every 5 minutes' }, { value: '15', label: 'Every 15 minutes' }]} value={String(auto)} onChange={(value) => { setRefreshMenu(false); setAutoRefresh(Number(value)); }} />
         </Popover>
         <GameSwitcher open={switcher} onClose={() => setSwitcher(false)} anchor={switchAnchor} games={overview.games} current={game} onPick={(next) => navigate({ to: gamePath(next, section) })} onAll={() => navigate({ to: '/' })} onRegister={canManageGames ? () => navigate({ to: '/games/new' }) : undefined} />
-        <Popover open={bell} onClose={() => setBell(false)} anchor={bellButton} width={360}><NotificationList onClose={() => setBell(false)} /></Popover>
+        <Popover position="fixed" open={bell} onClose={() => setBell(false)} anchor={bellButton} width={360}><NotificationList onClose={() => setBell(false)} /></Popover>
         <CommandPalette open={palette} onClose={() => setPalette(false)} items={commands} onAsk={nutbot.usable ? (text) => nutbot.ask(text) : undefined} />
         <ShortcutsDialog open={shortcuts} onClose={() => setShortcuts(false)} />
         <NutBotHost />

@@ -1,12 +1,13 @@
 // Games home (avn-ux pages.md "Games home"): workspace totals, then a grid of game status cards with
 // search, an Active / Archived / All filter and a sort, plus the dashed "Register a game" card.
-import { useState, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { PixelField } from '@avn/ui';
-import { Link } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { useSession } from '@/app/session';
+import { lastBrowserPage } from '@/app/browserPage';
 import { PLATFORM_ORDER, gameGroups, gamePath, type GameGroup } from '@/lib/games';
 import { displayDate, number, platformLabel } from '@/lib/format';
-import { Empty, Heading, Metric } from '@/components/feedback';
+import { Empty, Heading, Metric, useNotify } from '@/components/feedback';
 import { GameAvatar } from '@/components/GameAvatar';
 import { Ico } from '@/components/icons';
 
@@ -33,6 +34,7 @@ export function homeList(all: GameGroup[], state: HomeListState): GameGroup[] {
 export const initialHomeFilter = (all: GameGroup[]): HomeFilter => (all.length && all.every((group) => group.archived) ? 'all' : 'active');
 
 const LIVE_MS = 600000;
+let resumeToast: number | null = null;
 
 export function GameCard({ group, canManage }: { group: GameGroup; canManage: boolean }): ReactElement {
   const missing = canManage ? PLATFORM_ORDER.filter((platform) => !group.variants.some((item) => item.platform === platform)) : [];
@@ -56,7 +58,17 @@ export function GameCard({ group, canManage }: { group: GameGroup; canManage: bo
 const RegisterButton = (): ReactElement => <Link className="button primary" to="/games/new"><Ico name="plus" size={15} /> Register game</Link>;
 
 export function HomePage(): ReactElement {
-  const { me, overview, canManageGames, workspaceName } = useSession();
+  const { me, overview, workspace, canManageGames, workspaceName } = useSession();
+  const resume = lastBrowserPage(workspace, me.email || me.source, overview.games.map((game) => game.id));
+  const navigate = useNavigate();
+  const { toast, dismiss } = useNotify();
+  const offered = useRef<string | null>(null);
+  useEffect(() => {
+    if (!resume || offered.current === resume) return;
+    offered.current = resume;
+    if (resumeToast != null) dismiss(resumeToast);
+    resumeToast = toast('Continue where you left off?', { label: 'Continue', run: () => { void navigate({ href: resume }); } }, 'info');
+  }, [resume, navigate, toast, dismiss]);
   const all = gameGroups(overview.games);
   const archivedCount = all.filter((group) => group.archived).length;
   const [state, setState] = useState<HomeListState>(() => ({ query: '', filter: initialHomeFilter(all), sort: 'recent' }));

@@ -14,7 +14,7 @@ export type RequestOptions = Omit<RequestInit, 'body' | 'headers'> & { body?: Bo
 
 /** Only these POST endpoints are reads (they answer a question instead of changing anything). */
 export function analyticsRead(path: string, options: RequestOptions = {}): boolean {
-  return (options.method || 'GET').toUpperCase() === 'POST' && /\/insights\/(?:funnel|journeys(?:\/players)?)$/.test(path.split('?')[0] ?? '');
+  return (options.method || 'GET').toUpperCase() === 'POST' && /\/insights\/(?:funnel|player-groups|journeys(?:\/players)?)$/.test(path.split('?')[0] ?? '');
 }
 
 const STATUS_MESSAGES: Record<number, string> = {

@@ -49,7 +49,7 @@ export function DateRange({ value, onChange, compact = false, label = 'Date rang
   ], []);
   const calendarValue = { start: dayToDate(value.from), end: dayToDate(value.to) };
   const picker = (
-    <Popover open={calendar} onClose={closeCalendar} anchor={daysButton} width={300} className="range-pop">
+    <Popover position="fixed" open={calendar} onClose={closeCalendar} anchor={daysButton} width={300} className="range-pop">
       <Calendar value={calendarValue} onChange={(range) => { onChange({ from: dateToDay(range.start), to: dateToDay(range.end), preset: 'custom' }); }} />
       <div className="pop-foot"><span className="muted small">{rangeText(value)}</span><button type="button" className="btn sm" onClick={closeCalendar}>Done</button></div>
     </Popover>
@@ -61,7 +61,7 @@ export function DateRange({ value, onChange, compact = false, label = 'Date rang
         <button type="button" className="range-nav" onClick={() => step(-1)} aria-label="Previous range">‹</button>
         <button ref={daysButton} type="button" className="range-input" aria-label="Selected days" aria-haspopup="dialog" aria-expanded={calendar} onClick={() => setCalendar((open) => !open)}>{rangeText(value)}</button>
         <button type="button" className="range-nav" onClick={() => step(1)} aria-label="Next range">›</button>
-        <Popover open={menu} onClose={closeMenu} anchor={menuButton} width={280}>
+        <Popover position="fixed" open={menu} onClose={closeMenu} anchor={menuButton} width={280}>
           <SingleSelect options={options} value={value.preset || 'custom'} onChange={(key) => { closeMenu(); choose(key); }} />
         </Popover>
         {picker}

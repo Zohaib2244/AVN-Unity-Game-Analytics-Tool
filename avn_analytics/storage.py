@@ -172,6 +172,16 @@ class Storage:
                 note TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS player_group_library (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL COLLATE NOCASE,
+                definition TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                deleted_at TEXT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS player_group_library_name
+                ON player_group_library(kind, name) WHERE deleted_at IS NULL;
             CREATE TABLE IF NOT EXISTS highlight_rules (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL COLLATE NOCASE UNIQUE,

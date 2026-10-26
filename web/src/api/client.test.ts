@@ -1,7 +1,7 @@
 // The browser request contract (was tests/test_frontend.py): bounded retries for reads, never for writes,
 // actionable messages per status, unreadable success is an error, and slow loads are remembered.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, request, rememberSlow, slowLoadMessage, usualWait } from './client';
+import { ApiError, analyticsRead, request, rememberSlow, slowLoadMessage, usualWait } from './client';
 
 const response = (status: number, body: unknown = {}) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => '5' }, json: async () => body }) as unknown as Response;
 
@@ -68,5 +68,13 @@ describe('slow loads', () => {
     expect(slowLoadMessage(12)).toMatch(/Still working.*fewer days/);
     expect(slowLoadMessage(45)).toMatch(/longer than usual.*stops after a minute/);
     for (const seconds of [2, 12, 45]) expect(slowLoadMessage(seconds, 6200)).not.toMatch(/%/);
+  });
+});
+
+
+describe('analytical reads', () => {
+  it('recognises comparisons as reads without treating writes as reads', () => {
+    expect(analyticsRead('/v1/games/g1/insights/player-groups', { method: 'POST' })).toBe(true);
+    expect(analyticsRead('/v1/games/g1/settings', { method: 'POST' })).toBe(false);
   });
 });

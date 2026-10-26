@@ -98,7 +98,7 @@ export function FilterBar({ game, state, onChange, context, children }: { game: 
           {context?.excluded_events && hidden ? <button type="button" className="filter-clear" onClick={() => set({ hideTest: false })}>Include editor & development data</button> : null}
         </span>
       </div>
-      <Popover open={open} onClose={() => setOpen(false)} anchor={button} width={320} className="filter-pop">
+      <Popover position="fixed" open={open} onClose={() => setOpen(false)} anchor={button} width={320} className="filter-pop">
         <div className="pop-scroll">
           <label className="opt"><input type="checkbox" className="cb-in" checked={state.hideTest} disabled={!!state.environment.length} onChange={(e) => set({ hideTest: e.target.checked })} /><span className="ot">Hide editor &amp; development data</span></label>
           <div className="pop-grp"><span className="eyebrow">App version</span></div>

@@ -1,6 +1,6 @@
 // A centred player viewer over the list: summary, dates, then Raw events, Event Analysis or Player info.
 // `?player=` opens it; Previous / Next walk the original list, which keeps its place behind the viewer.
-import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { useLocation, useNavigate } from '@tanstack/react-router';
 import { DialogShell } from '@avn/ui';
 import { useRead } from '@/api';
@@ -80,7 +80,7 @@ export function PlayerViewer({ game, player, filters, browse, onClose }: { game:
       onOpenChange={(next) => { if (!next) onClose(); }}
       title="Player details"
     >
-      <div className="player-view" style={{ '--player-view-page-y': `${window.scrollY}px` } as CSSProperties}>
+      <div className="player-view">
         <header className="player-view-head">
           <span className="player-view-id mono">{player}</span>
           <button type="button" className="button small-button player-view-close" onClick={onClose}>Close ×</button>

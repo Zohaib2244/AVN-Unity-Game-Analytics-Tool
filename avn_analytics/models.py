@@ -434,6 +434,128 @@ class FunnelQuery(FunnelDefinition):
     timezone_offset_minutes: Annotated[int, Field(ge=-840, le=840)] = 0
 
 
+class GroupBehavior(StrictModel):
+    kind: Literal["level_duration", "event_count", "parameter"] = "level_duration"
+    level: Annotated[int, Field(ge=0, le=1_000_000)] = 1
+    event: FunnelStep | None = None
+    parameter: Annotated[str, Field(max_length=80)] = ""
+    window_minutes: Annotated[float, Field(gt=0, le=24 * 60 * 30, allow_inf_nan=False)] = 10
+    comparison: Literal["number", "equals"] = "number"
+    split: Annotated[float, Field(allow_inf_nan=False)] | None = None
+    value: Annotated[str, Field(max_length=200)] = ""
+
+    @model_validator(mode="after")
+    def complete_behavior(self):
+        if self.kind != "parameter" or self.comparison == "number":
+            if self.split is None:
+                raise ValueError("Enter the numeric split for the groups")
+            if self.kind != "parameter" and self.split < 0:
+                raise ValueError("Duration and event-count splits cannot be negative")
+        elif not self.value:
+            raise ValueError("Enter the parameter value for group A")
+        if self.kind in ("event_count", "parameter") and self.event is None:
+            raise ValueError("Choose the behavior event")
+        if self.kind == "parameter" and not self.parameter:
+            raise ValueError("Choose the parameter to compare")
+        return self
+
+
+class GroupOutcome(StrictModel):
+    kind: Literal["level", "event"] = "level"
+    level: Annotated[int, Field(ge=0, le=1_000_000)] = 4
+    event: FunnelStep | None = None
+    window_hours: Annotated[float, Field(gt=0, le=24 * 30, allow_inf_nan=False)] = 24
+
+    @model_validator(mode="after")
+    def complete_outcome(self):
+        if self.kind == "event" and self.event is None:
+            raise ValueError("Choose the outcome event")
+        return self
+
+
+class PlayerGroupsPopulation(StrictModel):
+    start: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    end: datetime_date = Field(ge=datetime_date(1970, 1, 1), le=datetime_date(9998, 12, 31))
+    filters: Filters = Filters()
+    timezone_offset_minutes: Annotated[int, Field(ge=-840, le=840)] = 0
+    entry_level: Annotated[int, Field(ge=0, le=1_000_000)] | None = 1
+    exclude_players: list[Annotated[str, Field(min_length=1, max_length=128)]] = Field(
+        default_factory=list, max_length=200
+    )
+    exclude_events: list[FunnelStep] = Field(default_factory=list, max_length=20)
+    behavior: GroupBehavior
+
+
+class PlayerGroupsQuery(PlayerGroupsPopulation):
+    outcome: GroupOutcome = GroupOutcome()
+
+    @model_validator(mode="after")
+    def ordered_windows(self):
+        if (
+            self.behavior.kind != "level_duration"
+            and self.behavior.window_minutes >= self.outcome.window_hours * 60
+        ):
+            raise ValueError("The behavior window must end before the outcome window")
+        if (
+            self.behavior.kind == "level_duration"
+            and self.outcome.kind == "level"
+            and self.outcome.level <= self.behavior.level
+        ):
+            raise ValueError("Choose an outcome level after the behavior level")
+        return self
+
+
+class SavedGroupDefinition(PlayerGroupsPopulation):
+    window_hours: Annotated[float, Field(gt=0, le=720, allow_inf_nan=False)] = 24
+    range_preset: Literal["today", "yesterday", "7", "30", "90", "month", "lastmonth", "custom"] = (
+        "custom"
+    )
+    version_mode: Literal["latest", "previous", "custom", "all"] = "custom"
+    timezone: Literal["local", "utc"] = "local"
+    hide_test: bool = True
+    outcome: GroupOutcome | None = None
+
+    @model_validator(mode="after")
+    def valid_setup(self):
+        if self.end < self.start or (self.end - self.start).days > 365:
+            raise ValueError("Choose a date range of at most 366 days")
+        if self.behavior.kind != "level_duration":
+            if self.behavior.window_minutes >= self.window_hours * 60:
+                raise ValueError("The behavior window must end before the observation window")
+        if self.outcome is not None:
+            if self.outcome.window_hours != self.window_hours:
+                raise ValueError("The outcome and observation windows must match")
+            PlayerGroupsQuery.model_validate(
+                {
+                    **self.model_dump(
+                        exclude={
+                            "window_hours",
+                            "range_preset",
+                            "version_mode",
+                            "timezone",
+                            "hide_test",
+                        }
+                    ),
+                }
+            )
+        return self
+
+
+class SavedPlayerGroup(StrictModel):
+    name: Annotated[str, Field(min_length=1, max_length=80)]
+    kind: Literal["groups", "check"]
+    definition: SavedGroupDefinition
+
+    @model_validator(mode="after")
+    def complete_saved_item(self):
+        self.name = self.name.strip()
+        if not self.name:
+            raise ValueError("Give this item a name")
+        if (self.kind == "check") != (self.definition.outcome is not None):
+            raise ValueError("Checks require an outcome; saved groups have no outcome")
+        return self
+
+
 class JourneyTarget(StrictModel):
     """Which players to list: one whole journey (its steps and outcome), or one exit."""
 
