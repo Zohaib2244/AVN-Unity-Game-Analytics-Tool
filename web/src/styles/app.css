@@ -42,6 +42,27 @@
 .nb-b .nb-error{color:var(--bad);font-size:var(--fs-sm)}
 .nb-b .nb-actions{display:flex;flex-wrap:wrap;gap:6px}
 .nb-b .nb-meta{font-size:var(--fs-micro);color:var(--dim)}
+.nb-b .nb-notice{margin:0;font-size:var(--fs-sm);color:var(--warn)}
+.nb-b .nb-link{background:none;border:0;padding:0;color:var(--accent);font:inherit;font-size:var(--fs-micro);cursor:pointer;text-decoration:underline}
+.nb-b .nb-trace{display:grid;gap:4px;font-size:var(--fs-sm)}
+.nb-b .nb-trace summary{cursor:pointer;color:var(--muted)}
+.nb-b .nb-trace pre{margin:4px 0 0;max-height:160px;overflow:auto;background:var(--nested);border:var(--bw) solid var(--line);border-radius:var(--r-ctl);padding:6px;font-size:var(--fs-micro);white-space:pre-wrap;overflow-wrap:anywhere}
+/* The settings strip: chats, usage and the context meter */
+.nb-extra .nb-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end}
+.nb-extra .nb-context,.nb-extra .nb-window{flex-basis:100%;display:flex;align-items:center;gap:8px;margin:0;font-size:var(--fs-micro);color:var(--dim)}
+.nb-extra .nb-context.heavy,.nb-extra .nb-window.warn{color:var(--warn)}
+.nb-extra .nb-bar{flex:0 0 72px;height:6px;border-radius:3px;background:var(--nested);border:var(--bw) solid var(--line);overflow:hidden}
+.nb-extra .nb-bar>span{display:block;height:100%;background:var(--accent)}
+.nb-extra .nb-window.warn .nb-bar>span{background:var(--warn)}
+.nb-extra .nb-chats,.nb-extra .nb-usage{flex-basis:100%;display:grid;gap:4px;max-height:220px;overflow:auto;font-size:var(--fs-sm);color:var(--text)}
+.nb-extra .nb-usage p{margin:0}
+.nb-extra .nb-chat-row{display:flex;align-items:center;gap:4px;padding:2px 0;border-bottom:1px dashed var(--line)}
+.nb-extra .nb-chat-row.current .nb-chat-title{color:var(--accent)}
+.nb-extra .nb-chat-open{flex:1;min-width:0;display:grid;gap:1px;text-align:left;background:none;border:0;padding:4px 2px;color:var(--text);font:inherit;cursor:pointer}
+.nb-extra .nb-chat-open:disabled{cursor:default}
+.nb-extra .nb-chat-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nb-extra .nb-rename{flex:1;min-width:0}
+.nb-extra .nb-rename input{width:100%;min-height:28px;padding:0 6px;border-radius:var(--r-ctl);border:var(--bw) solid var(--line);background:var(--nested);color:var(--text);font:inherit;font-size:var(--fs-sm)}
 
 /* Quiet night (avn-family flavour, 0.2.0): stars and the comet use role colours; the animations come from the style's flavour.css. */
 .scene.night .st { fill: var(--muted); }
@@ -211,3 +232,11 @@ body:has(.dlg > .player-view) { overflow: hidden; }
   .group-library-actions { justify-content: flex-start; }
   .group-library .panel-header, .group-builder .panel-header { flex-wrap: wrap; gap: 12px; }
 }
+/* NutBot proposals: what a proposal card says it will do */
+.nb-proposal p,.nb-proposal ul{margin:0}
+.nb-proposal ul{padding-left:18px}
+.nb-extra .nb-reports{display:flex;flex-direction:column;gap:2px}
+.nb-extra .nb-report.current{background:var(--nested)}
+.nb-extra .nb-report-body{padding:8px 4px;max-height:40vh;overflow:auto}
+.kpis .kpi-button{all:unset;display:block;cursor:pointer;border-radius:var(--r-ctl)}
+.kpis .kpi-button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}

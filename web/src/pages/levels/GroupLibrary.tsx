@@ -3,7 +3,7 @@ import { Button } from '@avn/ui';
 import { errorMessage, useRead, write } from '@/api';
 import { DialogShell, LoadError, Skeleton, useNotify } from '@/components/feedback';
 import { Field } from '@/components/forms';
-import { savedDefinition, type SaveGroupIntent, type SavedGroupItem } from './groupLibrary';
+import { savedDefinition, type SaveGroupIntent, type SavedGroupItem } from './groupLibraryModel';
 
 export function GroupLibrary({ path, intent, onCloseSave, onSaved, onNew, onUse, onEdit, busy }: {
   path: string; intent: SaveGroupIntent | null; onCloseSave: () => void; onSaved: (item: SavedGroupItem) => void;

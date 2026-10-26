@@ -12,7 +12,7 @@ describe('ruleText', () => {
     expect(ruleText(rule({ param: 'score', op: 'gte', value: '10' }))).toBe('all versions · when score ≥ 10');
   });
   it('leaves the value out of an exists rule', () => {
-    expect(ruleText(rule({ param: 'level', op: 'exists', value: 'ignored' }))).toBe('all versions · when level exists');
+    expect(ruleText(rule({ param: 'level', op: 'exists', value: 'ignored' }))).toBe('all versions · when level has any value');
   });
   it('shows unknown operators as they are', () => {
     expect(operatorText('eq')).toBe('=');

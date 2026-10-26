@@ -16,6 +16,7 @@ import { ActiveUsers } from './overview/ActiveUsers';
 import { BreakdownTable } from './overview/BreakdownTable';
 import { DailyChart } from './overview/DailyChart';
 import { MappingNotice } from './overview/MappingNotice';
+import { PinnedReports } from './overview/Pinned';
 import { SectionTiles, SetupChecklist, useFacts } from './overview/Setup';
 import { signed, toggleValue } from './overview/maths';
 
@@ -57,6 +58,7 @@ export function GameOverviewPage({ game }: { game: Game }): ReactElement {
           </div>
         </>
       ) : null}
+      <PinnedReports game={game} />
       <QueryRegion query={query} path={path} skeleton={<Skeleton kind="stats" />}>
         {(summary) => {
           const a = summary.active || {};

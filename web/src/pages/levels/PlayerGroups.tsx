@@ -8,13 +8,13 @@ import { Field } from '@/components/forms';
 import { filterQuery, type ActiveFilters, type Facets } from '@/lib/filters';
 import { analysisDate, number, percent } from '@/lib/format';
 import { gameURL } from '@/lib/games';
-import { downloadCSV, storeGet, storeSet } from '@/lib/store';
+import { downloadCSV, storeGet, storeSet, useStorePushed } from '@/lib/store';
 import type { Catalog, Game } from '@/lib/types';
-import { RuleFields, RuleList } from '../players/RuleList';
+import { RuleFields, RuleList } from '@/components/EventRule';
 import { blankGroupRule, defaultGroupDraft, groupDraftKey, groupRequest, groupRunKey, groupStepError, savedGroupDraft, type GroupAnswer, type GroupDraft } from './groupModel';
 
 import { GroupLibrary } from './GroupLibrary';
-import { restoreSavedGroup, type SavedGroupItem, type SaveGroupIntent } from './groupLibrary';
+import { restoreSavedGroup, type SavedGroupItem, type SaveGroupIntent } from './groupLibraryModel';
 
 const STEPS = ['Population', 'Behavior', 'Groups', 'Outcome'];
 const EMPTY_CATALOG: Catalog = { events: [] };
@@ -38,6 +38,13 @@ export function PlayerGroups({ game, filters, onFilters, onOpenPlayer }: {
   const [opening, setOpening] = useState(false);
   const [runFilters, setRunFilters] = useState<ActiveFilters>(() => storeGet<ActiveFilters>(`${groupRunKey(game.id)}-filters`) || filters);
   const { toast, toastError } = useNotify();
+  // NutBot put a comparison here: show it and run it.
+  useStorePushed(groupRunKey(game.id), () => {
+    const run = savedGroupDraft(storeGet(groupRunKey(game.id)));
+    setDraftState(savedGroupDraft(storeGet(groupDraftKey(game.id))) ?? defaultGroupDraft());
+    setSubmitted(run); setRunFilters(storeGet<ActiveFilters>(`${groupRunKey(game.id)}-filters`) || filters);
+    setStep(run ? 3 : 0); setEditor(false); setError('');
+  });
   const update = (patch: Partial<GroupDraft>) => { setDraftState((before) => { const next = { ...before, ...patch }; storeSet(groupDraftKey(game.id), next); return next; }); setError(''); };
   const catalogPath = `${gameURL(game)}/insights/catalog?${filterQuery(filters)}`;
   const catalog = useRead<Catalog>(catalogPath);

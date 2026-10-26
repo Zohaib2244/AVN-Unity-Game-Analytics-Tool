@@ -43,20 +43,32 @@ class Settings:
     access_audience: str = ""  # the Access application's "Application Audience (AUD) Tag"
     admin_email: str = ""  # always an admin; can't be removed or demoted from the website
     lan_admin: bool = True  # requests from the private network (no Cloudflare) count as admin
-    # NutBot: an assistant that drives the dashboard through a local AI agent CLI (claude, opencode,
-    # codex). Which people may use it is set per workspace by an admin.
+    # NutBot: an assistant that drives the dashboard through a local AI agent (claude, codex,
+    # opencode) over the Agent Client Protocol. Which people may use it is set per workspace.
     nutbot_enabled: bool = True
-    nutbot_internal_url: str = "http://127.0.0.1:8000"  # how the agent CLI reaches this app
+    nutbot_internal_url: str = "http://127.0.0.1:8000"  # how the agent reaches this app
     nutbot_daily_limit: int = 100  # messages per person per day
     nutbot_run_seconds: int = 300  # longest a single answer may take
     nutbot_default_harness: str = "claude"
-    nutbot_claude_bin: str = ""  # path or glob of the claude binary; empty = look on PATH
-    nutbot_claude_model: str = "claude-sonnet-5-5"
-    nutbot_opencode_bin: str = ""
-    nutbot_opencode_model: str = ""  # e.g. anthropic/claude-sonnet-5-5
+    nutbot_keep_days: int = 0  # chats older than this are removed; 0 keeps them
+    # Skip the "is it signed in?" check (sign-ins kept elsewhere, e.g. the macOS keychain in dev).
+    nutbot_trust_logins: bool = False
+    # Where the agents keep their sign-ins and transcripts (HOME for the adapters); empty = in data.
+    nutbot_home_dir: str = ""
+    nutbot_limit_warn: int = 80  # warn when an agent's allowance window is this % used
+    # The ACP adapters (path or glob; empty = look on PATH) and, for Claude and Codex, the CLI
+    # the adapter should run (empty = the one the adapter bundles or finds).
+    nutbot_claude_acp: str = ""
+    nutbot_claude_bin: str = ""
+    nutbot_claude_model: str = "sonnet"
+    nutbot_claude_cheap_model: str = "haiku"
+    nutbot_codex_acp: str = ""
     nutbot_codex_bin: str = ""
-    nutbot_codex_model: str = ""
-    nutbot_allow_codex: bool = False  # codex can't be limited to this app's tools: opt in
+    nutbot_codex_model: str = ""  # empty = the agent's default
+    nutbot_codex_cheap_model: str = ""
+    nutbot_opencode_bin: str = ""  # opencode itself is the adapter (`opencode acp`)
+    nutbot_opencode_model: str = ""  # e.g. anthropic/claude-sonnet-5-5
+    nutbot_opencode_cheap_model: str = ""
 
     def __post_init__(self):
         if self.max_body_bytes < 1 or self.requests_per_minute < 1 or self.max_export_bytes < 1:
@@ -74,10 +86,19 @@ class Settings:
         ):
             if not low <= getattr(self, name) <= high:
                 raise ValueError(f"AVN_{name.upper()} must be between {low} and {high}")
+        if self.nutbot_keep_days < 0 or not 1 <= self.nutbot_limit_warn <= 100:
+            raise ValueError("AVN_NUTBOT_KEEP_DAYS must be 0 or more; AVN_NUTBOT_LIMIT_WARN 1-100")
 
     @property
     def nutbot_home(self):
+        if self.nutbot_home_dir:
+            return Path(self.nutbot_home_dir).expanduser().resolve()
         return self.data_dir / "nutbot" / "home"
+
+    @property
+    def nutbot_dir(self):
+        """Working files of the agents (their work directories and temporary files)."""
+        return self.data_dir / "nutbot"
 
     @property
     def access_enabled(self):
@@ -115,13 +136,19 @@ class Settings:
             nutbot_daily_limit=int(os.environ.get("AVN_NUTBOT_DAILY_LIMIT", "100")),
             nutbot_run_seconds=int(os.environ.get("AVN_NUTBOT_RUN_SECONDS", "300")),
             nutbot_default_harness=os.environ.get("AVN_NUTBOT_DEFAULT_HARNESS", "claude").strip(),
-            nutbot_claude_bin=os.environ.get("AVN_NUTBOT_CLAUDE_BIN", "").strip(),
-            nutbot_claude_model=os.environ.get(
-                "AVN_NUTBOT_CLAUDE_MODEL", "claude-sonnet-5-5"
-            ).strip(),
-            nutbot_opencode_bin=os.environ.get("AVN_NUTBOT_OPENCODE_BIN", "").strip(),
-            nutbot_opencode_model=os.environ.get("AVN_NUTBOT_OPENCODE_MODEL", "").strip(),
-            nutbot_codex_bin=os.environ.get("AVN_NUTBOT_CODEX_BIN", "").strip(),
-            nutbot_codex_model=os.environ.get("AVN_NUTBOT_CODEX_MODEL", "").strip(),
-            nutbot_allow_codex=_flag("AVN_NUTBOT_ALLOW_CODEX", False),
+            nutbot_keep_days=int(_text("AVN_NUTBOT_KEEP_DAYS", "0")),
+            nutbot_trust_logins=_flag("AVN_NUTBOT_TRUST_LOGINS", False),
+            nutbot_home_dir=_text("AVN_NUTBOT_HOME"),
+            nutbot_limit_warn=int(_text("AVN_NUTBOT_LIMIT_WARN", "80")),
+            nutbot_claude_acp=_text("AVN_NUTBOT_CLAUDE_ACP"),
+            nutbot_claude_bin=_text("AVN_NUTBOT_CLAUDE_BIN"),
+            nutbot_claude_model=_text("AVN_NUTBOT_CLAUDE_MODEL", "sonnet"),
+            nutbot_claude_cheap_model=_text("AVN_NUTBOT_CLAUDE_CHEAP_MODEL", "haiku"),
+            nutbot_codex_acp=_text("AVN_NUTBOT_CODEX_ACP"),
+            nutbot_codex_bin=_text("AVN_NUTBOT_CODEX_BIN"),
+            nutbot_codex_model=_text("AVN_NUTBOT_CODEX_MODEL"),
+            nutbot_codex_cheap_model=_text("AVN_NUTBOT_CODEX_CHEAP_MODEL"),
+            nutbot_opencode_bin=_text("AVN_NUTBOT_OPENCODE_BIN"),
+            nutbot_opencode_model=_text("AVN_NUTBOT_OPENCODE_MODEL"),
+            nutbot_opencode_cheap_model=_text("AVN_NUTBOT_OPENCODE_CHEAP_MODEL"),
         )

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Catalog, EventRule } from '@/lib/types';
-import { RuleList } from './RuleList';
+import { RuleList } from './EventRule';
 
 const catalog: Catalog = { events: [{ name: 'level_start', count: 10, params: [{ key: 'level', count: 10, values: ['1', '2'] }] }, { name: 'purchase', count: 2, params: [] }] };
 function Harness() {

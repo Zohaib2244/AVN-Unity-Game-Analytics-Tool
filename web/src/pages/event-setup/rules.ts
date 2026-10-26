@@ -1,9 +1,10 @@
 // How a mapping rule reads: the operators it can use and the one-line text beside a mapped event.
 import type { MappingPreview, MappingRule } from '@/lib/types';
+import { RULE_OPS, opLabel } from '@/lib/conditions';
 import { number } from '@/lib/format';
 
-export const MAPPING_OPERATORS: Array<[string, string]> = [['eq', '='], ['ne', '≠'], ['gt', '>'], ['gte', '≥'], ['lt', '<'], ['lte', '≤'], ['contains', 'contains'], ['exists', 'exists']];
-export const operatorText = (op: string): string => (MAPPING_OPERATORS.find(([key]) => key === op) || [op, op])[1];
+export const MAPPING_OPERATORS = RULE_OPS;
+export const operatorText = (op: string): string => (op === 'exists' ? 'has any value' : opLabel(op));
 export const ruleText = (rule: MappingRule): string => `${rule.app_version ? `version ${rule.app_version} · ` : 'all versions · '}${rule.param ? `when ${rule.param} ${operatorText(rule.op)}${rule.op === 'exists' ? '' : ` ${rule.value}`}` : 'every time'}${rule.number_param ? ` · level in ${rule.number_param}` : ''}`;
 /** Two rules are the same mapping when every field agrees (the server compares them the same way). */
 export const sameRule = (a: MappingRule, b: MappingRule): boolean => JSON.stringify(a) === JSON.stringify(b);

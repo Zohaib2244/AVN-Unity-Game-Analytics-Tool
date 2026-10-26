@@ -7,7 +7,12 @@ name = "avn-analytics"
 version = "0.1.0"
 description = "Self-hosted game event collection backend"
 requires-python = ">=3.12"
-dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "PyJWT[crypto]>=2.8,<3"]
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "PyJWT[crypto]>=2.8,<3",
+    "agent-client-protocol>=0.12,<1",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.11,<1"]
@@ -16,7 +21,7 @@ dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.11,<1"]
 include = ["avn_analytics*"]
 
 [tool.setuptools.package-data]
-avn_analytics = ["static/*", "skill/*", "avn_events_standard/*", "sdk/*"]
+avn_analytics = ["static/*", "skill/*", "nutbot_skills/*", "avn_events_standard/*", "sdk/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -30,4 +35,10 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 "avn_analytics/nutbot.py" = ["E501"]  # long tool descriptions and prompt text
+"avn_analytics/nutbot_acp.py" = ["E501"]  # long error texts
+"avn_analytics/nutbot_tools.py" = ["E501"]  # long tool descriptions
+"avn_analytics/nutbot_analysis.py" = ["E501"]
+"avn_analytics/nutbot_proposals.py" = ["E501"]  # long tool descriptions
+"avn_analytics/nutbot_reports.py" = ["E501"]  # long tool descriptions
+"avn_analytics/nutbot_groups.py" = ["E501"]  # long tool descriptions
 "tests/test_nutbot.py" = ["E501"]  # the fake CLI script is embedded as text

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ActiveFilters } from '@/lib/filters';
 import { defaultGroupDraft, groupRequest } from './groupModel';
-import { restoreSavedGroup, savedDefinition, type SavedGroupItem } from './groupLibrary';
+import { restoreSavedGroup, savedDefinition, type SavedGroupItem } from './groupLibraryModel';
 
 const filters: ActiveFilters = { range: { from: '2026-10-01', to: '2026-10-26', preset: '30' }, timezone: 'utc', hideTest: true, versionMode: 'latest', app_version: ['0.1.3'], environment: [], build: ['2'], country: ['PK'], platform: ['android'] };
 

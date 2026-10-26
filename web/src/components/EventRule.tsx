@@ -1,6 +1,7 @@
-// A reusable editor for a list of "an event, optionally with a parameter test" (the old mountRuleList).
-// Used on the Players page for "only players who…" conditions and for custom columns, and shaped so any
-// other page can reuse it (funnel-like steps, segments, cohorts…).
+// The one editor for "an event, optionally with a parameter test": RuleFields is the row (event, parameter,
+// comparison, value) and RuleList a list of them. Funnel steps, player conditions and columns, group
+// behaviours, outcomes and exclusions all use it, so they offer the same choices (lib/conditions.ts) and
+// behave the same: picking an event clears the test, picking a parameter starts at "any value".
 //
 //   <RuleList rules={…} catalog={…} blank={catalog => rule} onChange={rules => …}
 //             before={(rule, set) => <select … onChange={e => set({ does: e.target.value })} />} />
@@ -10,7 +11,7 @@
 //   before/  extra controls drawn before / after the event fields; they change the rule through `set(patch)`
 //   after    (a number field should pass a number: `set({ min_times: Number(value) || 1 })`)
 import { useId, type ReactElement, type ReactNode } from 'react';
-import { OPERATORS } from '@/lib/filters';
+import { RULE_OPS, valuelessOp } from '@/lib/conditions';
 import type { Catalog, CatalogEvent, EventRule } from '@/lib/types';
 import { Ico } from '@/components/icons';
 
@@ -38,26 +39,27 @@ export function ruleOptions(items: string[], chosen: string, blank?: string): Re
 export const paramKeys = (event: CatalogEvent | undefined): string[] => (event?.params || []).map((param) => param.key);
 
 /** The event, parameter, condition and value fields of one rule. */
-export function RuleFields<T extends EventRule>({ rule, catalog, set, listId }: { rule: T; catalog: Catalog; set: RuleSetter<T>; listId: string }): ReactElement {
+export function RuleFields<T extends EventRule>({ rule, catalog, set, listId, name = '', fixed = false }: { rule: T; catalog: Catalog; set: RuleSetter<T>; listId: string; /** A prefix for the fields' accessible names ("Step 2 "). */ name?: string; /** Keep all four fields in place (disabled when they do not apply), for rows laid out as a table. */ fixed?: boolean }): ReactElement {
   const event = catalog.events.find((item) => item.name === rule.event);
   const values = event?.params.find((param) => param.key === rule.param)?.values || [];
-  const needsValue = rule.param && rule.op !== 'exists';
+  const needsValue = !!rule.param && !valuelessOp(rule.op || 'eq');
+  const noEvents = !catalog.events.length && !rule.event;
   return (
     <>
-      <select className="rule-event" aria-label="Event" value={rule.event} onChange={(e) => set({ event: e.target.value, param: '', op: 'eq', value: '', of: '' } as Partial<T>)}>
-        {ruleOptions(catalog.events.map((item) => item.name), rule.event, rule.event ? undefined : 'Pick an event…')}
+      <select className="rule-event" data-field="event" aria-label={name ? `${name}event` : 'Event'} value={rule.event} onChange={(e) => set({ event: e.target.value, param: '', op: 'eq', value: '', ...('of' in rule ? { of: '' } : {}) } as Partial<T>)}>
+        {noEvents ? <option value="">No events in these days</option> : ruleOptions(catalog.events.map((item) => item.name), rule.event, rule.event ? undefined : 'Pick an event…')}
       </select>
-      <select className="rule-param" aria-label="Only when this parameter…" value={rule.param} onChange={(e) => set({ param: e.target.value, op: 'exists', value: '' } as Partial<T>)}>
-        {ruleOptions(paramKeys(event), rule.param, '+ only when a parameter…')}
+      <select className="rule-param" data-field="param" aria-label={name ? `${name}parameter` : 'Only when this parameter…'} value={rule.param} onChange={(e) => set(e.target.value ? { param: e.target.value, op: 'exists', value: '' } as Partial<T> : { param: '', op: 'eq', value: '' } as Partial<T>)}>
+        {ruleOptions(paramKeys(event), rule.param, fixed ? 'Any parameters' : '+ only when a parameter…')}
       </select>
-      {rule.param ? (
-        <select className="rule-op" aria-label="Condition" value={rule.op || 'eq'} onChange={(e) => set((e.target.value === 'exists' ? { op: 'exists', value: '' } : { op: e.target.value }) as Partial<T>)}>
-          {OPERATORS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+      {rule.param || fixed ? (
+        <select className="rule-op" data-field="op" aria-label={name ? `${name}condition` : 'Condition'} disabled={!rule.param} value={rule.op || 'eq'} onChange={(e) => set((valuelessOp(e.target.value) ? { op: e.target.value, value: '' } : { op: e.target.value }) as Partial<T>)}>
+          {RULE_OPS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </select>
       ) : null}
-      {needsValue ? (
+      {needsValue || fixed ? (
         <>
-          <input className="rule-value" aria-label="Value" placeholder="value" value={rule.value || ''} list={listId} onChange={(e) => set({ value: e.target.value } as Partial<T>)} />
+          <input className="rule-value" data-field="value" aria-label={name ? `${name}value` : 'Value'} placeholder={needsValue ? 'value' : '—'} disabled={!needsValue} value={rule.value || ''} list={listId} onChange={(e) => set({ value: e.target.value } as Partial<T>)} />
           <datalist id={listId}>{values.slice(0, 40).map((value) => <option key={value} value={value} />)}</datalist>
         </>
       ) : null}

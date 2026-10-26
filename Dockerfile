@@ -18,10 +18,24 @@ RUN npm ci --no-audit --no-fund
 COPY web ./
 RUN npm run build
 
+# NutBot's agent adapters (Agent Client Protocol): claude-agent-acp, codex-acp and opencode, pinned in
+# deploy/nutbot/package.json. They bring their own Claude Code, Codex and OpenCode binaries for Linux.
+FROM node:22-bookworm-slim AS nutbot-adapters
+WORKDIR /opt/nutbot
+COPY deploy/nutbot/package.json deploy/nutbot/package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund --ignore-scripts \
+    && npm rebuild --no-audit --no-fund 2>/dev/null || true
+
 FROM python:3.14-slim
 
 COPY --from=sqlite-build /opt/sqlite/lib/ /opt/sqlite/lib/
-ENV LD_LIBRARY_PATH=/opt/sqlite/lib PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 AVN_DATA_DIR=/data
+# Node for the NutBot adapters, and the adapters themselves (sign-ins live in /data/nutbot/home).
+COPY --from=nutbot-adapters /usr/local/bin/node /usr/local/bin/node
+COPY --from=nutbot-adapters /opt/nutbot /opt/nutbot
+ENV LD_LIBRARY_PATH=/opt/sqlite/lib PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 AVN_DATA_DIR=/data \
+    AVN_NUTBOT_CLAUDE_ACP=/opt/nutbot/node_modules/.bin/claude-agent-acp \
+    AVN_NUTBOT_CODEX_ACP=/opt/nutbot/node_modules/.bin/codex-acp \
+    AVN_NUTBOT_OPENCODE_BIN=/opt/nutbot/node_modules/.bin/opencode
 RUN python -c 'import sqlite3; assert sqlite3.sqlite_version_info >= (3, 51, 3)'
 WORKDIR /app
 COPY requirements.lock ./

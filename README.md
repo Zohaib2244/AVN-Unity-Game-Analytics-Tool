@@ -387,7 +387,7 @@ Always true, whatever the rules: an import never deletes an event or a parameter
 
 NutBot is a chat assistant on every game page. You ask in plain words ("where do players drop off in the first ten levels?"); it runs funnels, follows journeys, reads player stories and level numbers, and answers with the real figures. It can also save a funnel or rename events in the dictionary, but only after you say yes, and only for people who may change things. When it builds a funnel or finds a player worth reading, it adds a button that opens it in the dashboard.
 
-**How it works.** The server starts a local AI agent CLI (Claude Code, OpenCode or Codex) for each message and gives it this app's tools over MCP. The CLI's own tools (shell, files, web) are switched off, so it can only call the tools below; each one runs as the person who asked and only sees the games they may see. Answers stream back to the browser. The agent CLI uses your own subscription or keys; the server needs no API key of its own.
+**How it works.** For each message the server starts a local AI agent (Claude Code, Codex or OpenCode) through its [Agent Client Protocol](https://agentclientprotocol.com/) adapter and gives it this app's tools over MCP. The agent's own tools (shell, files, web) are switched off and every other permission it asks for is refused, so it can only call the tools below; each one runs as the person who asked and only sees the games they may see. Answers stream back to the browser. The agents use your own subscriptions or keys; the server needs no API key of its own.
 
 | Tool | What it does |
 | --- | --- |
@@ -395,18 +395,30 @@ NutBot is a chat assistant on every game page. You ask in plain words ("where do
 | `get_overview`, `get_level_progress` | Totals, DAU/WAU/MAU and breakdowns; per-level completion, tries, time and where players stop. |
 | `run_funnel`, `get_journeys`, `list_journey_players` | Funnels and the journeys between two steps, and who took them. |
 | `get_player_story`, `find_players` | A player's sessions in readable lines; player search. |
+| `get_player_events`, `get_player_levels`, `compare_player` | One player: their events counted like the player page's Event Analysis (per event, per parameter value), their levels (tries, fails, time, stuck or passed), and where they rank against other players. |
+| `get_level_detail`, `get_exits`, `compare_cohorts` | One level in depth (who left, who got stuck, what they did last), where players stop across the game, and two groups of players side by side. |
+| `compare_player_groups`, `list_saved_groups`, `propose_player_groups` | Split new players by an early behaviour (time to finish a level, how often they saw an event, a recorded parameter) and compare who reaches a later outcome, with intervals; read the game's saved groups and checks; open or save a comparison from a card. |
+| `get_behaviour` | What players do beyond the levels: how many use each event and how often, common sequences, loops, dominant parameter values and this week against last. |
+| `propose_players_view`, `propose_funnel`, `propose_highlight`, `propose_level_view`, `explain_conditions` | Build rules, a funnel, a highlight or a levels view for you as a card; nothing changes until you press **Apply** (or you set NutBot to apply itself, with Undo). |
+| `save_report` | Keep findings as a report for the game. |
 | `save_funnel`, `set_event_label` | Change data. Need a team lead or admin, and a yes from the user. |
 | `show_in_dashboard` | Adds an "open this" button to the answer. |
 
+**Skills and reports.** Type `/` in the panel for the prepared reviews: `/level-review 12` (where players leave level 12 and why), `/player-review` (the open player), `/exits` (where players stop) and `/digest` (what players have been doing lately) and `/release-check` (the latest build against the one before). Each one is a markdown file in `avn_analytics/nutbot_skills/` with a short header, so you can add your own. **Reports** keep findings per game: save an answer with *Save as report*, reopen it from the Reports list, and pin a report's headline figure to the game's Overview.
+
+**Chats.** Every chat is kept on the server, per game and per person: the panel lists your recent chats, reopens, renames and deletes them (Undo for a day). A follow-up message continues the agent's own transcript; when the agent cannot (its transcript is gone, or you switched agent), the chat is rebuilt from the saved record, so nothing is lost. `AVN_NUTBOT_KEEP_DAYS` removes old chats (default: keep). Admins see that chats exist in the usage view, not their contents; an admin can open the trace of their own chats (every tool call with its input and output) to see why an answer went wrong.
+
+**Models, usage and limits.** The panel lists the models each agent offers and has a **Cheap** button for the smaller one (`AVN_NUTBOT_*_MODEL` / `AVN_NUTBOT_*_CHEAP_MODEL`). **Usage** shows your answers and tokens today and over the last week, and each agent's subscription windows (5 hours, week) as far as the agent reports them; a warning appears before an answer when a window is past `AVN_NUTBOT_LIMIT_WARN` percent. A context meter under the composer shows how full the agent's context window is: long chats cost more per message, so start a new chat when it gets heavy.
+
 **Who can use it.** An admin sets this per workspace on the **Workspaces** page: *Admins only*, *Admins + leads* (default) or *Everyone in it*. People without access see NutBot locked. Messages are limited per person per day (`AVN_NUTBOT_DAILY_LIMIT`), one answer runs at a time per person, and each answer is stopped after `AVN_NUTBOT_RUN_SECONDS`. Starting a chat and every change NutBot makes go in the activity log.
 
-**Setting it up.**
+**Setting it up.** The adapters (and the Claude Code, Codex and OpenCode binaries they bring) are built into the image, pinned in `deploy/nutbot/package.json`. Sign in the agents you want, once, with their home at `data/nutbot/home`:
 
-1. Make a CLI available inside the admin container: bind-mount its binary folder and point `AVN_NUTBOT_CLAUDE_BIN` at it (see `deploy/nutbot.compose.example.yaml`).
-2. Sign it in once. Either run `claude setup-token` on a machine where you are signed in and put the token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN`, or sign in inside the container: `docker compose exec -it admin sh -c 'HOME=/data/nutbot/home "$(ls -d /opt/nutbot/claude/* | tail -1)" auth login'`. The sign-in is kept in `data/nutbot/home`.
-3. Open **Workspaces** and choose who may use it.
+- **Claude:** run `claude setup-token` on a machine where you are signed in and put the token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN`; or sign in inside the container: `docker compose exec -it admin sh -c 'HOME=/data/nutbot/home /opt/nutbot/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude auth login'` (`-arm64` on ARM hosts).
+- **Codex:** `docker compose exec -it admin sh -c 'HOME=/data/nutbot/home CODEX_HOME=/data/nutbot/home/.codex /opt/nutbot/node_modules/.bin/codex-acp cli login --device-auth'`, or put `OPENAI_API_KEY` in `.env`.
+- **OpenCode:** `docker compose exec -it admin sh -c 'HOME=/data/nutbot/home /opt/nutbot/node_modules/.bin/opencode auth login'`, and set `AVN_NUTBOT_OPENCODE_MODEL` (for example `anthropic/claude-sonnet-5-5`).
 
-Claude (default model `claude-sonnet-5-5`, others selectable in the panel) is the supported, tested assistant. OpenCode works through the same tools with built-in tools disabled; set `AVN_NUTBOT_OPENCODE_BIN` and a model such as `anthropic/claude-sonnet-5-5` plus that provider's key. Codex is off unless `AVN_NUTBOT_ALLOW_CODEX=true` because it can't be limited to this app's tools. Don't point NutBot at an agent that has a shell.
+Then open **Workspaces** and choose who may use it. The panel's Assistant list shows which agents are signed in. To run other adapter builds than the image's, see `deploy/nutbot.compose.example.yaml`. Don't point NutBot at an agent that keeps a shell.
 
 ## Exporting data
 
@@ -548,20 +560,20 @@ Environment variables (see `.env.example`):
 | `AVN_ACCESS_TEAM_DOMAIN` / `AVN_ACCESS_AUDIENCE` | none | Cloudflare Access team domain and application audience tag; set both to turn on [team access](#team-access-and-workspaces) |
 | `AVN_ADMIN_EMAIL` | none | Always an admin; the person named on the "no access" page |
 | `AVN_LAN_ADMIN` | `true` | Requests from your own network (not through Cloudflare) count as admin |
-| `AVN_NUTBOT*` | see `.env.example` | NutBot assistant: on/off (`AVN_NUTBOT`, default on), agent CLI paths, default model, daily limit, run time |
+| `AVN_NUTBOT*` | see `.env.example` | NutBot assistant: on/off (`AVN_NUTBOT`, default on), default agent, default and cheap model per agent, daily limit, run time, chat retention (`AVN_NUTBOT_KEEP_DAYS`), allowance warning (`AVN_NUTBOT_LIMIT_WARN`), adapter paths |
 
 ## Storage layout
 
 ```text
 data/
-  registry.sqlite3       games, API keys, rate-limit counters, workspaces, team, game access, activity log
+  registry.sqlite3       games, API keys, rate-limit counters, workspaces, team, game access, activity log, NutBot chats and usage
   games/<uuid>.sqlite3   raw events, dictionary (with unconfirmed AI drafts and import history), session environments, environment fixes and saved funnels for one game
                          plus derived analytics tables (analytics_*: per-event facts and their progress), rebuilt from the raw events, never the other way round
   icons/<uuid>.png       game icons
   exports/               temporary downloads
   sqlite-tmp/            SQLite query scratch files (container startup creates this directory)
   deleted/               games and icons you deleted (not erased)
-  nutbot/                NutBot's agent CLI sign-in and chat sessions (only if NutBot is used)
+  nutbot/                NutBot's agent sign-ins and the agents' own transcripts (only if NutBot is used)
 ```
 
 Raw events are kept indefinitely; there is no retention job or deletion endpoint yet, so watch your disk space. The analytics facts add about half again to a game's database (54% on the synthetic benchmark games, see `docs/analytics-pipeline.md`). To move or back up the data, stop both services and copy the **whole** directory (SQLite may hold committed data in `-wal` sidecar files). Keep the data on a local filesystem, not SMB or NFS. Clients simply queue events during the downtime.

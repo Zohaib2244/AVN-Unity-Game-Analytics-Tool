@@ -9,7 +9,16 @@ export type ConditionNode = Condition | ConditionGroup;
 export type ConditionEvent = { name: string; params?: Record<string, unknown> | null };
 export type HighlightRule = { enabled?: boolean; conditions: ConditionGroup; name?: string; color?: string };
 
-export const CONDITION_OPS: Array<[string, string]> = [['eq', 'equals'], ['ne', 'does not equal'], ['contains', 'contains'], ['gt', '>'], ['gte', '≥'], ['lt', '<'], ['lte', '≤'], ['exists', 'exists'], ['missing', 'is missing']];
+// The one list of comparisons every condition editor offers (funnel steps, player rules and columns, groups,
+// event mappings, highlights). `missing` is only for highlight trees; `eventOps` are what an event name supports.
+export const CONDITION_OPS: Array<[string, string]> = [['eq', '='], ['ne', '≠'], ['gt', '>'], ['gte', '≥'], ['lt', '<'], ['lte', '≤'], ['contains', 'contains'], ['exists', 'any value'], ['missing', 'is missing']];
+export const RULE_OPS: Array<[string, string]> = CONDITION_OPS.filter(([key]) => key !== 'missing');
+export const EVENT_NAME_OPS: Array<[string, string]> = CONDITION_OPS.filter(([key]) => ['eq', 'ne', 'contains'].includes(key));
+/** The comparison as words inside a sentence ("AD_TYPE equals “x”"). */
+export const OP_WORDS: Record<string, string> = { eq: 'equals', ne: 'does not equal', contains: 'contains', gt: '>', gte: '≥', lt: '<', lte: '≤', exists: 'exists', missing: 'is missing' };
+export const opLabel = (op: string): string => CONDITION_OPS.find(([key]) => key === op)?.[1] || op;
+/** Operators that take no value. */
+export const valuelessOp = (op: string): boolean => op === 'exists' || op === 'missing';
 export const HIGHLIGHT_COLORS: Array<[string, string]> = [['orange', 'Orange'], ['cyan', 'Cyan'], ['green', 'Green'], ['pink', 'Pink'], ['violet', 'Violet'], ['gold', 'Gold']];
 export const isGroup = (node: ConditionNode): node is ConditionGroup => 'conditions' in node && Array.isArray((node as ConditionGroup).conditions);
 export const conditionGroup = (conditions: ConditionNode[] = []): ConditionGroup => ({ match: 'all', conditions });
@@ -74,6 +83,6 @@ export function simpleHighlightTree(tree: ConditionGroup): boolean {
 export function describeHighlight(tree: ConditionNode): string {
   if (isGroup(tree)) return '(' + tree.conditions.map(describeHighlight).join(tree.match === 'any' ? ' OR ' : ' AND ') + ')';
   const field = tree.field === 'event' ? 'Event' : tree.param || 'Choose a parameter';
-  const op = CONDITION_OPS.find(([key]) => key === tree.op)?.[1] || tree.op;
+  const op = OP_WORDS[tree.op] || tree.op;
   return `${field} ${op}${['exists', 'missing'].includes(tree.op) ? '' : ` “${tree.value}”`}`;
 }

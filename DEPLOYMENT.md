@@ -230,7 +230,7 @@ data/
   games/<uuid>.sqlite3   one database per game
   icons/                 game icons
   deleted/               deleted games and icons (moved here, not erased)
-  nutbot/                NutBot's agent CLI sign-in and chat sessions (if used)
+  nutbot/                NutBot's agent sign-ins and the agents' own transcripts (if used)
   exports/               temporary download files (safe to delete when stopped)
   sqlite-tmp/            SQLite query scratch space (normally empty between queries)
 ```

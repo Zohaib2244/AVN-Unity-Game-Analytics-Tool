@@ -1,4 +1,5 @@
 // The dashboard filters: days + environment, version, build, country, platform. Remembered per game.
+import { RULE_OPS } from './conditions';
 import { localTimezoneOffset, type Timezone } from './format';
 import { storeGet, storeSet } from './store';
 
@@ -8,7 +9,7 @@ export const DIMENSIONS = ['environment', 'app_version', 'build', 'country', 'pl
 export type Dimension = (typeof DIMENSIONS)[number];
 export const DIMENSION_LABELS: Record<Dimension, string> = { environment: 'Environment', app_version: 'App version', build: 'Build', country: 'Country', platform: 'Device platform' };
 export const FILTER_KEYS: Record<Dimension, string> = { environment: 'env', app_version: 'version', build: 'build', country: 'country', platform: 'platform' };
-export const OPERATORS: Array<[string, string]> = [['eq', '='], ['ne', '≠'], ['gt', '>'], ['gte', '≥'], ['lt', '<'], ['lte', '≤'], ['contains', 'contains'], ['exists', 'any value']];
+export const OPERATORS = RULE_OPS;
 export const operatorLabel = (op: string): string => OPERATORS.find(([key]) => key === op)?.[1] || '=';
 
 export type DayRange = { from: string; to: string; preset?: string };

@@ -1,0 +1,10 @@
+{
+  "name": "avn-nutbot-adapters",
+  "private": true,
+  "description": "The ACP adapters NutBot drives (see README > NutBot). Pinned; bump deliberately.",
+  "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.95.0",
+    "@agentclientprotocol/codex-acp": "2.2.2",
+    "opencode-ai": "1.19.4"
+  }
+}

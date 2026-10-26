@@ -9,7 +9,7 @@ import { FilterBar, facetsPath, useFilters } from '@/components/Filters';
 import type { Facets } from '@/lib/filters';
 import { Heading, Skeleton } from '@/components/feedback';
 import { gamePath } from '@/lib/games';
-import { storeGet, storeSet } from '@/lib/store';
+import { storeGet, storeSet, useStorePushed } from '@/lib/store';
 import type { Game, LevelsResult } from '@/lib/types';
 import { PlayerViewer, type PlayerBrowse } from './player/PlayerView';
 import { LevelCompare } from './levels/LevelCompare';
@@ -26,6 +26,7 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
   const [filters, updateFilters] = useFilters(game);
   const [nav, setNavState] = useState<LevelNavigation>(() => cleanNavigation(storeGet<Partial<LevelNavigation>>(navigationKey(game))));
   const setNav = (patch: Partial<LevelNavigation>) => setNavState((previous) => { const next = { ...previous, ...patch }; storeSet(navigationKey(game), next); return next; });
+  useStorePushed(navigationKey(game), () => setNavState(cleanNavigation(storeGet<Partial<LevelNavigation>>(navigationKey(game)))));
   const [prefs, setPrefsState] = useState<ReleasePrefs>(() => storeGet<ReleasePrefs>(releasesKey(game)) ?? {});
   const setPrefs = (next: ReleasePrefs) => { setPrefsState(next); storeSet(releasesKey(game), next); };
   const [jump, setJump] = useState<{ level: number } | null>(null);

@@ -55,18 +55,20 @@ services:
       AVN_ANALYTICS_ACTIVE_VIEWS: ${AVN_ANALYTICS_ACTIVE_VIEWS:-12}
       AVN_ANALYTICS_STORAGE_BYTES: ${AVN_ANALYTICS_STORAGE_BYTES:-268435456}
       AVN_PUBLIC_INGEST_URL: ${AVN_PUBLIC_INGEST_URL:-}
-      # NutBot (see README): which agent CLI to use and how it signs in
+      # NutBot (see README): the agents, their models and limits. The adapters are in the image;
+      # the sign-ins live in data/nutbot/home.
       AVN_NUTBOT: ${AVN_NUTBOT:-true}
       AVN_NUTBOT_DEFAULT_HARNESS: ${AVN_NUTBOT_DEFAULT_HARNESS:-claude}
       AVN_NUTBOT_DAILY_LIMIT: ${AVN_NUTBOT_DAILY_LIMIT:-100}
       AVN_NUTBOT_RUN_SECONDS: ${AVN_NUTBOT_RUN_SECONDS:-300}
-      AVN_NUTBOT_CLAUDE_BIN: ${AVN_NUTBOT_CLAUDE_BIN:-}
-      AVN_NUTBOT_CLAUDE_MODEL: ${AVN_NUTBOT_CLAUDE_MODEL:-claude-sonnet-5-5}
-      AVN_NUTBOT_OPENCODE_BIN: ${AVN_NUTBOT_OPENCODE_BIN:-}
-      AVN_NUTBOT_OPENCODE_MODEL: ${AVN_NUTBOT_OPENCODE_MODEL:-}
-      AVN_NUTBOT_CODEX_BIN: ${AVN_NUTBOT_CODEX_BIN:-}
+      AVN_NUTBOT_KEEP_DAYS: ${AVN_NUTBOT_KEEP_DAYS:-0}
+      AVN_NUTBOT_LIMIT_WARN: ${AVN_NUTBOT_LIMIT_WARN:-80}
+      AVN_NUTBOT_CLAUDE_MODEL: ${AVN_NUTBOT_CLAUDE_MODEL:-sonnet}
+      AVN_NUTBOT_CLAUDE_CHEAP_MODEL: ${AVN_NUTBOT_CLAUDE_CHEAP_MODEL:-haiku}
       AVN_NUTBOT_CODEX_MODEL: ${AVN_NUTBOT_CODEX_MODEL:-}
-      AVN_NUTBOT_ALLOW_CODEX: ${AVN_NUTBOT_ALLOW_CODEX:-false}
+      AVN_NUTBOT_CODEX_CHEAP_MODEL: ${AVN_NUTBOT_CODEX_CHEAP_MODEL:-}
+      AVN_NUTBOT_OPENCODE_MODEL: ${AVN_NUTBOT_OPENCODE_MODEL:-}
+      AVN_NUTBOT_OPENCODE_CHEAP_MODEL: ${AVN_NUTBOT_OPENCODE_CHEAP_MODEL:-}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
@@ -83,7 +85,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    mem_limit: 512m
+    mem_limit: 1g  # an agent adapter runs beside the app while NutBot answers
     cpus: 1.0
 
   # The analytics worker (see docs/analytics-pipeline.md): copies and checks analytics facts and

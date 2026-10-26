@@ -1,16 +1,12 @@
-# Example override that makes the host's agent CLIs available to the admin container.
-# Copy to compose.override.yaml (merge with any existing one), adjust the host paths, then
-#   docker compose up -d
-# and sign the CLI in once (see README > NutBot).
+# Example override for running NutBot's adapters from the host instead of the ones built into the
+# image (for example to try a newer adapter). Copy to compose.override.yaml (merge with any existing
+# one), adjust the paths, then `docker compose up -d`. The sign-ins stay in data/nutbot/home.
 services:
   admin:
     volumes:
-      # claude: the folder holding the versioned binaries (newest is used automatically)
-      - /home/YOU/.local/share/claude/versions:/opt/nutbot/claude:ro
-      # opencode (optional)
-      # - /home/YOU/.opencode/bin:/opt/nutbot/opencode:ro
+      # a folder where you ran `npm install` of deploy/nutbot/package.json (Linux binaries!)
+      - /home/YOU/nutbot-adapters/node_modules:/opt/nutbot-host/node_modules:ro
     environment:
-      AVN_NUTBOT_CLAUDE_BIN: /opt/nutbot/claude/*
-      # AVN_NUTBOT_OPENCODE_BIN: /opt/nutbot/opencode/opencode
-      # AVN_NUTBOT_OPENCODE_MODEL: anthropic/claude-sonnet-5-5
-    mem_limit: 1g  # an agent CLI needs more than the 512 MB the service gets by default
+      AVN_NUTBOT_CLAUDE_ACP: /opt/nutbot-host/node_modules/.bin/claude-agent-acp
+      AVN_NUTBOT_CODEX_ACP: /opt/nutbot-host/node_modules/.bin/codex-acp
+      AVN_NUTBOT_OPENCODE_BIN: /opt/nutbot-host/node_modules/.bin/opencode

@@ -37,6 +37,7 @@ from . import (
     insights,
     journeys,
     materialize,
+    nutbot_commands,
     player_groups,
     sdk_package,
 )
@@ -67,6 +68,10 @@ from .models import (
     MappingPreview,
     Name,
     NutBotChat,
+    NutBotChatCreate,
+    NutBotChatRename,
+    NutBotReportChange,
+    NutBotReportCreate,
     PlayerGroupsQuery,
     PlayerRules,
     SavedFunnel,
@@ -180,6 +185,8 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     async def lifespan(app):
         storage.initialize()
         accounts.initialize()
+        if admin:
+            nutbot.initialize()
         yield
 
     def current(request: Request) -> Principal:
@@ -311,16 +318,89 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         return Response(status_code=405, headers={"Allow": "POST"})
 
     @admin_api.get("/v1/nutbot")
-    def nutbot_status(principal: Current):
-        return nutbot.describe()
+    async def nutbot_status(principal: Current):
+        return await nutbot.describe()
 
-    @admin_api.post("/v1/games/{game_id}/nutbot/chat")
-    async def nutbot_chat(game_id: UUID, body: NutBotChat, principal: Current):
+    @admin_api.get("/v1/nutbot/limits")
+    async def nutbot_limits(principal: Current, refresh: bool = False):
+        return await nutbot.limits_view(force=refresh)
+
+    @admin_api.get("/v1/nutbot/usage")
+    def nutbot_usage(principal: Current, days: int = 7, everyone: bool = False):
+        days = max(1, min(days, 90))
+        if everyone and not principal.is_admin:
+            raise HTTPException(403, "Only the admin can see everyone's usage")
+        return nutbot.chats.usage(None if everyone else principal.email, days)
+
+    def nutbot_user(principal, game_id):
         workspace_id = accounts.workspace_of_game(str(game_id))
         if not workspace_id or not accounts.can_use_nutbot(principal, workspace_id):
             raise HTTPException(403, "NutBot isn't switched on for you in this workspace")
+        return workspace_id
+
+    def own_chat(principal, game_id, chat_id):
+        chat = nutbot.chats.get(str(chat_id), principal.email)
+        if chat is None or chat["game_id"] != str(game_id):
+            raise HTTPException(404, "That chat doesn't exist")
+        return chat
+
+    @admin_api.get("/v1/games/{game_id}/nutbot/chats")
+    def nutbot_chats(game_id: UUID, principal: Current):
+        nutbot_user(principal, game_id)
+        return {"chats": nutbot.chats.list(str(game_id), principal.email)}
+
+    @admin_api.post("/v1/games/{game_id}/nutbot/chats", status_code=201)
+    def nutbot_chat_create(game_id: UUID, body: NutBotChatCreate, principal: Current):
+        nutbot_user(principal, game_id)
+        storage.get_game(str(game_id))
+        spec = nutbot._spec(body.harness)
+        return nutbot.chats.create(
+            str(game_id), principal.email, spec.id, body.model or spec.default_model(), body.title
+        )
+
+    @admin_api.get("/v1/games/{game_id}/nutbot/chats/{chat_id}")
+    def nutbot_chat_read(game_id: UUID, chat_id: UUID, principal: Current):
+        nutbot_user(principal, game_id)
+        chat = own_chat(principal, game_id, chat_id)
+        return {"chat": chat, "messages": nutbot.chats.messages(chat["id"])}
+
+    @admin_api.get("/v1/games/{game_id}/nutbot/chats/{chat_id}/trace")
+    def nutbot_chat_trace(game_id: UUID, chat_id: UUID, principal: Current):
+        """What the agent called and what came back, for finding out why an answer went wrong."""
+        nutbot_user(principal, game_id)
+        if not principal.is_admin:
+            raise HTTPException(403, "Only the admin can read a chat's trace")
+        chat = own_chat(principal, game_id, chat_id)
+        return {"chat": chat, "messages": nutbot.chats.messages(chat["id"], with_trace=True)}
+
+    @admin_api.patch("/v1/games/{game_id}/nutbot/chats/{chat_id}")
+    def nutbot_chat_rename(
+        game_id: UUID, chat_id: UUID, body: NutBotChatRename, principal: Current
+    ):
+        nutbot_user(principal, game_id)
+        own_chat(principal, game_id, chat_id)
+        nutbot.chats.rename(str(chat_id), principal.email, body.title)
+        return {"status": "saved"}
+
+    @admin_api.delete("/v1/games/{game_id}/nutbot/chats/{chat_id}")
+    def nutbot_chat_delete(game_id: UUID, chat_id: UUID, principal: Current):
+        nutbot_user(principal, game_id)
+        own_chat(principal, game_id, chat_id)
+        nutbot.chats.delete(str(chat_id), principal.email)
+        return {"status": "deleted"}
+
+    @admin_api.post("/v1/games/{game_id}/nutbot/chats/{chat_id}/restore")
+    def nutbot_chat_restore(game_id: UUID, chat_id: UUID, principal: Current):
+        nutbot_user(principal, game_id)
+        if not nutbot.chats.restore(str(chat_id), principal.email):
+            raise HTTPException(404, "That chat can't be restored")
+        return {"status": "restored"}
+
+    @admin_api.post("/v1/games/{game_id}/nutbot/chat")
+    async def nutbot_chat(game_id: UUID, body: NutBotChat, principal: Current):
+        workspace_id = nutbot_user(principal, game_id)
         game = storage.get_game(str(game_id))
-        prepared = nutbot.prepare(principal, game, workspace_id, body.model_dump())
+        prepared = nutbot.prepare(principal, game, workspace_id, body.model_dump(mode="json"))
 
         async def lines():
             async for event in nutbot.stream(prepared):
@@ -331,6 +411,74 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             media_type="application/x-ndjson",
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
+
+    @admin_api.get("/v1/nutbot/skills")
+    def nutbot_skills(principal: Current):
+        return {"skills": nutbot_commands.listing()}
+
+    def own_report(principal, game_id, report_id, workspace_id):
+        report = nutbot.reports.get(str(report_id), str(game_id))
+        if report is None:
+            raise HTTPException(404, "That report doesn't exist")
+        if report["email"] != principal.email and not (
+            principal.is_admin or principal.manages_games_in(workspace_id)
+        ):
+            raise HTTPException(403, "Only its author or a team lead can change this report")
+        return report
+
+    @admin_api.get("/v1/games/{game_id}/nutbot/reports")
+    def nutbot_reports(game_id: UUID, principal: Current, pinned: bool = False):
+        nutbot_user(principal, game_id)
+        return {"reports": nutbot.reports.list(str(game_id), pinned=pinned)}
+
+    @admin_api.post("/v1/games/{game_id}/nutbot/reports", status_code=201)
+    def nutbot_report_create(game_id: UUID, body: NutBotReportCreate, principal: Current):
+        nutbot_user(principal, game_id)
+        report = nutbot.reports.create(
+            str(game_id),
+            principal.email,
+            body.title,
+            body.body,
+            body.headline.model_dump() if body.headline else None,
+            str(body.chat_id or ""),
+        )
+        accounts.audit(principal, "nutbot.report", str(game_id), report["title"])
+        return report
+
+    @admin_api.get("/v1/games/{game_id}/nutbot/reports/{report_id}")
+    def nutbot_report_read(game_id: UUID, report_id: UUID, principal: Current):
+        nutbot_user(principal, game_id)
+        report = nutbot.reports.get(str(report_id), str(game_id))
+        if report is None:
+            raise HTTPException(404, "That report doesn't exist")
+        return report
+
+    @admin_api.patch("/v1/games/{game_id}/nutbot/reports/{report_id}")
+    def nutbot_report_change(
+        game_id: UUID, report_id: UUID, body: NutBotReportChange, principal: Current
+    ):
+        workspace_id = nutbot_user(principal, game_id)
+        own_report(principal, game_id, report_id, workspace_id)
+        return nutbot.reports.update(str(report_id), str(game_id), body.title, body.pinned)
+
+    @admin_api.delete("/v1/games/{game_id}/nutbot/reports/{report_id}", status_code=204)
+    def nutbot_report_delete(game_id: UUID, report_id: UUID, principal: Current):
+        workspace_id = nutbot_user(principal, game_id)
+        own_report(principal, game_id, report_id, workspace_id)
+        nutbot.reports.delete(str(report_id), str(game_id))
+
+    @admin_api.post("/v1/games/{game_id}/nutbot/reports/{report_id}/restore")
+    def nutbot_report_restore(game_id: UUID, report_id: UUID, principal: Current):
+        workspace_id = nutbot_user(principal, game_id)
+        report = nutbot.reports.get(str(report_id), str(game_id), include_deleted=True)
+        if report is None or (
+            report["email"] != principal.email
+            and not (principal.is_admin or principal.manages_games_in(workspace_id))
+        ):
+            raise HTTPException(404, "That report doesn't exist")
+        if not nutbot.reports.restore(str(report_id), str(game_id)):
+            raise HTTPException(404, "That report can't come back any more")
+        return nutbot.reports.get(str(report_id), str(game_id))
 
     @admin_api.patch("/v1/workspaces/{workspace_id}/nutbot")
     def set_workspace_nutbot(workspace_id: UUID, body: WorkspaceNutBot, principal: TeamAdmin):

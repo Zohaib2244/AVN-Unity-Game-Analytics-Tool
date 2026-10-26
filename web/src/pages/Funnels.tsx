@@ -7,7 +7,7 @@ import { Heading, useNotify } from '@/components/feedback';
 import { FilterBar, useFilters } from '@/components/Filters';
 import { filterQuery, type Dimension } from '@/lib/filters';
 import { gameURL } from '@/lib/games';
-import { storeGet, storeSet } from '@/lib/store';
+import { storeGet, storeSet, useStorePushed } from '@/lib/store';
 import type { Catalog, FunnelDraft, FunnelResult, Game } from '@/lib/types';
 import { FunnelEditor } from './funnels/FunnelEditor';
 import { Breakdown, FunnelResultPanel } from './funnels/FunnelResultPanel';
@@ -60,6 +60,9 @@ export function FunnelsPage({ game }: { game: Game }): ReactElement {
     if (force && json === lastBody.current) void resultQuery.refetch();
     lastBody.current = json;
   };
+
+  // NutBot put a funnel in the draft: show it and run it.
+  useStorePushed(draftKey(game), () => { const next = loadDraft(game); setDraft(next); submit(next, true); });
 
   // The filters changed (or the page opened): the result follows them.
   const filterKey = filterQuery(filters).toString();

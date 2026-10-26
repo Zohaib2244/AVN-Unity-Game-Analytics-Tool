@@ -4,6 +4,12 @@
 !avn_analytics/*.py
 !avn_analytics/skill/
 !avn_analytics/skill/*
+!avn_analytics/nutbot_skills/
+!avn_analytics/nutbot_skills/*
+!deploy/
+!deploy/nutbot/
+!deploy/nutbot/package.json
+!deploy/nutbot/package-lock.json
 !avn_analytics/avn_events_standard/
 !avn_analytics/avn_events_standard/*
 !avn_analytics/sdk/

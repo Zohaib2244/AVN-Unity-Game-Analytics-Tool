@@ -184,7 +184,11 @@ class KeyCreate(StrictModel):
     label: Annotated[str, Field(min_length=1, max_length=128)] = "default"
 
 
-CanonicalOp = Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"]
+# The comparisons every event rule offers (funnel steps, player rules, mappings); the site lists the
+# same ones in lib/conditions.ts. Highlight trees add "missing" (ConditionOp).
+RuleOp = Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"]
+ConditionOp = Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists", "missing"]
+CanonicalOp = RuleOp
 
 
 class CanonicalMapping(StrictModel):
@@ -415,7 +419,7 @@ class AnalyticsThresholdOverrides(StrictModel):
 class FunnelStep(StrictModel):
     event: Name
     param: Annotated[str, Field(max_length=80)] = ""
-    op: Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"] = "eq"
+    op: RuleOp = "eq"
     value: Annotated[str, Field(max_length=200)] = ""
     label: Annotated[str, Field(max_length=80)] = ""
 
@@ -582,13 +586,12 @@ class JourneyPlayersQuery(JourneyQuery):
 
 
 ParamName = Annotated[str, Field(max_length=80, pattern=r'^[^"\\]*$')]
-RuleOp = Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"]
 
 
 class EventTest(StrictModel):
     field: Literal["event", "param"] = "param"
     param: Annotated[str, Field(max_length=80)] = ""
-    op: Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists", "missing"] = "eq"
+    op: ConditionOp = "eq"
     value: Annotated[str, Field(max_length=200)] = ""
 
     @model_validator(mode="after")
@@ -668,12 +671,40 @@ class PlayerRules(StrictModel):
     metrics: list[PlayerMetric] = Field(default_factory=list, max_length=3)
 
 
+class NutBotHeadline(StrictModel):
+    title: Annotated[str, Field(min_length=1, max_length=80)]
+    value: Annotated[str, Field(min_length=1, max_length=80)]
+    sub: Annotated[str, Field(max_length=80)] = ""
+
+
+class NutBotReportCreate(StrictModel):
+    title: Annotated[str, Field(min_length=1, max_length=80)]
+    body: Annotated[str, Field(min_length=1, max_length=20000)]
+    headline: NutBotHeadline | None = None
+    chat_id: UUID | None = None
+
+
+class NutBotReportChange(StrictModel):
+    title: Annotated[str, Field(min_length=1, max_length=80)] | None = None
+    pinned: bool | None = None
+
+
 class NutBotChat(StrictModel):
     message: Annotated[str, Field(min_length=1, max_length=4000)]
     harness: Annotated[str, Field(max_length=20)] | None = None
     model: Annotated[str, Field(max_length=80)] | None = None
-    session_id: Annotated[str, Field(max_length=80)] | None = None
+    chat_id: UUID | None = None
     context: dict = Field(default_factory=dict)
+
+
+class NutBotChatCreate(StrictModel):
+    harness: Annotated[str, Field(max_length=20)] | None = None
+    model: Annotated[str, Field(max_length=80)] | None = None
+    title: Annotated[str, Field(max_length=80)] = ""
+
+
+class NutBotChatRename(StrictModel):
+    title: Annotated[str, Field(min_length=1, max_length=80)]
 
 
 class WorkspaceNutBot(StrictModel):

@@ -1,5 +1,5 @@
 // Small things remembered in this browser (filters per game, folded panels, theme).
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export function storeGet<T = unknown>(key: string): T | null {
   try { const raw = localStorage.getItem(key); return raw == null ? null : (JSON.parse(raw) as T); } catch { return null; }
@@ -32,4 +32,23 @@ export function downloadCSV(name: string, rows: Array<Array<string | number | nu
 /** Copies text, telling the caller whether the browser allowed it. */
 export async function copyText(text: string): Promise<boolean> {
   try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
+}
+
+const PUSHED = 'avn-store-pushed';
+
+/** Writes a remembered value on behalf of another part of the app (NutBot) and tells the page that owns it, which may already be open. */
+export function storePush(key: string, value: unknown): void {
+  storeSet(key, value);
+  window.dispatchEvent(new CustomEvent(PUSHED, { detail: key }));
+}
+
+/** Runs `reload` when `key` is written with storePush. */
+export function useStorePushed(key: string, reload: () => void): void {
+  const latest = useRef(reload);
+  latest.current = reload;
+  useEffect(() => {
+    const listener = (event: Event) => { if ((event as CustomEvent<string>).detail === key) latest.current(); };
+    window.addEventListener(PUSHED, listener);
+    return () => window.removeEventListener(PUSHED, listener);
+  }, [key]);
 }

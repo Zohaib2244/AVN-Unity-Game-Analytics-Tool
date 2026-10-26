@@ -116,30 +116,48 @@ export type OverviewSummary = {
 };
 
 /* ─── NutBot (the assistant; see src/pages/nutbot) ─── */
-export type NutBotHarness = { id: string; label: string; available: boolean; reason: string; default_model: string | null; models: string[] };
+export type NutBotHarness = { id: string; label: string; available: boolean; reason: string; default_model: string | null; cheap_model: string | null; models: string[]; models_from: 'agent' | 'fallback'; probe_error: string };
 /** GET /v1/nutbot */
-export type NutBotInfo = { enabled: boolean; default: string | null; harnesses: NutBotHarness[] };
+export type NutBotInfo = { enabled: boolean; default: string | null; harnesses: NutBotHarness[]; daily_limit: number; warn_percent: number; skills?: NutBotSkill[] };
+/** GET /v1/nutbot/limits: each signed-in agent's allowance windows, best effort. */
+export type NutBotWindow = { name: string; used_percent: number | null; resets_at: string | null; minutes: number | null };
+export type NutBotLimits = { agents: Record<string, { windows: NutBotWindow[]; checked_at: string | null; error: string }>; warn_percent: number };
+/** GET /v1/nutbot/usage: the ledger, per day and agent. */
+export type NutBotUsageRow = { day: string; harness: string; model: string; answers: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cost_usd: number; seconds: number };
+export type NutBotUsageReport = { days: number; rows: NutBotUsageRow[]; people: Array<{ email: string; answers: number; tokens: number; cost_usd: number; chats: number }> };
 export type NutBotFunnelStep = { event: string; param?: string; op?: string; value?: string; label?: string };
 export type NutBotFunnel = { steps: NutBotFunnelStep[]; scope?: string; window_hours?: number | null };
 /** A "show_in_dashboard" shortcut the assistant adds to its answer. */
 export type NutBotAction = { type: 'action'; action: 'open'; page: string; title: string; game_id: string; player?: string; start?: string; end?: string; show_journeys?: boolean; funnel?: NutBotFunnel };
-export type NutBotUsage = { type: 'usage'; input_tokens?: number | null; output_tokens?: number | null; cost_usd?: number | null };
+/** Something NutBot built for a page (rules, a funnel, a highlight, a levels view): a card the person applies. */
+export type NutBotProposal = { type: 'proposal'; kind: 'players' | 'funnel' | 'highlight' | 'levels' | 'groups'; title: string; why: string; game_id: string; payload: Record<string, unknown>; plain: string[] };
+export type NutBotUsage = { type: 'usage'; input_tokens?: number | null; output_tokens?: number | null; cache_read_tokens?: number | null; cache_write_tokens?: number | null; cost_usd?: number | null };
 /** One line of the newline-delimited JSON the chat endpoint streams back. */
 export type NutBotEvent =
-  | { type: 'session'; id: string }
+  | { type: 'chat'; id: string; title: string; harness: string }
   | { type: 'text'; text: string }
-  | { type: 'tool'; name: string; label: string }
-  | { type: 'tool_result'; ok?: boolean }
+  | { type: 'tool'; id: string; name: string }
+  | { type: 'tool_result'; id?: string; ok?: boolean }
+  | { type: 'context'; used: number | null; size: number | null; cost_usd?: number | null }
+  | { type: 'notice'; text: string }
   | NutBotAction
+  | NutBotProposal
   | NutBotUsage
   | { type: 'error'; message: string }
-  | { type: 'done'; seconds: number };
-export type NutBotTool = { name: string; label: string; done: boolean; /** 0.2.0: the call chip's state and how long it took; older chats have only `done`. */ status?: 'running' | 'done' | 'error'; ms?: number; started?: number };
-/** What the browser remembers per game (localStorage avn-nutbot-<game>): the old shape, so older chats still open. */
-export type NutBotStoredMessage =
-  | { role: 'user'; text: string }
-  | { role: 'assistant'; text: string; tools: NutBotTool[]; actions: NutBotAction[]; scope?: string; usage?: NutBotUsage; seconds?: number; error?: string };
-export type NutBotConversation = { session: string | null; harness: string | null; messages: NutBotStoredMessage[] };
+  | { type: 'done'; seconds: number; resumed?: boolean; stop_reason?: string };
+export type NutBotTool = { id?: string; name: string; label: string; done: boolean; status?: 'running' | 'done' | 'error'; ms?: number; started?: number };
+/** A slash command: a prepared set of instructions (nutbot_skills/*.md). */
+export type NutBotSkill = { name: string; summary: string; args: string };
+export type NutBotHeadline = { title: string; value: string; sub: string };
+/** A saved finding; `body` only comes with the single read. */
+export type NutBotReportRow = { id: string; game_id: string; email: string; title: string; headline: NutBotHeadline | null; pinned: boolean; chat_id: string | null; created_at: string; updated_at: string; body?: string };
+/** A chat as the server lists it. */
+export type NutBotChatRow = { id: string; game_id: string; email: string; title: string; harness: string; model: string; agent_session: string; created_at: string; updated_at: string; deleted: boolean; messages: number };
+/** The server's stored messages (GET /v1/games/{id}/nutbot/chats/{chat}); the trace adds input/output per tool. */
+export type NutBotStoredTool = { tool: string; ok?: boolean; ms?: number; denied?: boolean; input?: string | null; output?: string | null };
+export type NutBotStoredAssistant = { id: number; role: 'assistant'; text: string; tools: NutBotStoredTool[]; actions: Array<NutBotAction | NutBotProposal>; scope: string; error: string; seconds: number | null; harness: string; model: string; usage: { input_tokens: number | null; output_tokens: number | null; cache_read_tokens: number | null; cache_write_tokens: number | null; cost_usd: number | null }; context: { used: number | null; size: number | null }; created_at: string };
+export type NutBotStoredMessage = { id: number; role: 'user'; text: string } | NutBotStoredAssistant;
+export type NutBotChatRead = { chat: NutBotChatRow; messages: NutBotStoredMessage[] };
 export type NutBotPrefs = { harness?: string; models?: Record<string, string> };
 /** The page context sent with every message (what the "Looking at" chips say). */
 export type NutBotContext = { page?: string; range?: { from: string; to: string }; hide_test: boolean; filters: { environments: string[]; app_versions: string[]; builds: string[]; countries: string[]; platforms: string[] }; player?: string; funnel?: NutBotFunnel };
