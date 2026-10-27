@@ -2,7 +2,15 @@
 whichever way they read the events (AVN_ANALYTICS_READ_MODE)."""
 
 import pytest
-from parity import PRODUCTION, REFERENCE, build_fixture, compare, make_storage, snapshot
+from parity import (
+    PRODUCTION,
+    REFERENCE,
+    build_fixture,
+    compare,
+    make_storage,
+    snapshot,
+    without_added_level_fields,
+)
 
 from avn_analytics import analytics, insights
 
@@ -88,4 +96,4 @@ def test_levels_refuse_too_much_data_as_before(fixture, monkeypatch, mode):
                 actual = _answer(
                     getattr(journeys, name), storage, game_id, start, end, *arguments, **extra
                 )
-                assert actual == expected, (limit, scope, name)
+                assert without_added_level_fields(actual) == expected, (limit, scope, name)

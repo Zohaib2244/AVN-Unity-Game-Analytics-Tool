@@ -3,7 +3,7 @@
 // Show more, CSV, and a link per player that opens their timeline at their last event on the level.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from '@tanstack/react-router';
+import { Link, useSearch } from '@tanstack/react-router';
 import { read, useRead } from '@/api';
 import { QueryRegion, Skeleton, Spinner, useNotify } from '@/components/feedback';
 import { Ico } from '@/components/icons';
@@ -12,7 +12,7 @@ import { analysisDate, duration, number, platformLabel, shortId } from '@/lib/fo
 import { gamePath } from '@/lib/games';
 import { downloadCSV } from '@/lib/store';
 import type { Game, LevelLastAction, LevelPlayer, LevelPlayersResult, LevelRow } from '@/lib/types';
-import { LEVEL_DRILL_GROUPS, lastDidDetails, lastDidLabel, levelDrillGroup, type DrillSort, type LevelDrillGroup, type LevelScope } from './levelMath';
+import { CARRIED_ON_GROUPS, LEVEL_DRILL_GROUPS, lastDidDetails, lastDidLabel, levelDrillGroup, type DrillSort, type LevelDrillGroup, type LevelScope } from './levelMath';
 import { drillPagePath, drillPath, type DrillState } from './levelPaths';
 
 /* ─── "What they did last": the label, its popover and the group's chips ─── */
@@ -53,7 +53,7 @@ export function LastDidPopover({ row, level, anchor, pinned }: { row: LevelPlaye
 
 /** What the group's players did last on the level; pick one to list only those players. Nothing for players who carried on. */
 export function LastActions({ level, group, lastActions, lastAction, onPick }: { level: number; group: LevelDrillGroup; lastActions: LevelLastAction[] | undefined; lastAction: string | null; onPick?: (text: string | null) => void }): ReactElement | null {
-  if (group === 'kept_going' || !lastActions?.length) return null;
+  if (CARRIED_ON_GROUPS.includes(group) || !lastActions?.length) return null;
   return (
     <div className="last-actions" role="group" aria-label={`What players did last on level ${level}`}>
       <span className="last-actions-label">What they did last</span>
@@ -65,7 +65,10 @@ export function LastActions({ level, group, lastActions, lastAction, onPick }: {
 /* ─── The drill ─── */
 export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPlayer }: { game: Game; filters: ActiveFilters; scope: LevelScope; level: number; row: LevelRow | undefined; memory: Map<number, DrillState>; onOpenPlayer?: (player: string, index: number, players: string[]) => void }): ReactElement {
   const { toastError } = useNotify();
-  const [state, setStateRaw] = useState<DrillState>(() => memory.get(level) ?? { group: levelDrillGroup(row), sort: 'exit_at', lastAction: null });
+  // A link from the table (?group=failed_left) opens that group; otherwise the group last used on this level, else the bigger drop.
+  const asked = (useSearch({ strict: false }) as Record<string, string | undefined>).group;
+  const requested = LEVEL_DRILL_GROUPS.find(([key]) => key === asked)?.[0];
+  const [state, setStateRaw] = useState<DrillState>(() => (requested ? { ...(memory.get(level) ?? { sort: 'exit_at' as DrillSort }), group: requested, lastAction: null } : memory.get(level)) ?? { group: levelDrillGroup(row), sort: 'exit_at', lastAction: null });
   const setState = (patch: Partial<DrillState>) => setStateRaw((previous) => { const next = { ...previous, ...patch }; memory.set(level, next); return next; });
   const firstPath = drillPagePath(game, filters, scope, level, state, 0);
   // A new group or sort waits for its own answer; the previous group's rows are not shown under its name.
@@ -109,8 +112,8 @@ export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPla
     } catch (error) { toastError(error); }
   };
 
-  const quitting = state.group !== 'kept_going';
-  const counts: Record<string, number> | null = first.data?.counts ?? (row?.transition ? { left: row.transition.left, finished_stopped: row.transition.finished_stopped, kept_going: row.transition.kept_going, unknown_progress: row.transition.unknown_progress } : null);
+  const quitting = !CARRIED_ON_GROUPS.includes(state.group);
+  const counts: Record<string, number> | null = first.data?.counts ?? (row?.transition ? { left: row.transition.left, finished_stopped: row.transition.finished_stopped, kept_going: row.transition.kept_going, unknown_progress: row.transition.unknown_progress, failed_left: row.transition.failed_left, failed_kept_playing: row.transition.failed_kept_playing } : null);
   return (
     <div className="level-drill level-page-list" data-level-drill={level}>
       <div className="level-drill-head">

@@ -22,6 +22,25 @@ REFERENCE = SimpleNamespace(
 )
 PRODUCTION = SimpleNamespace(insights=insights, journeys=journeys, events=events)
 
+# What the level dashboards gained after the reference was frozen: the failed-then-left groups. The
+# reference cannot answer them, so the comparison leaves them out (test_backend.py checks them).
+ADDED_LEVEL_GROUPS = {"failed", "failed_left", "failed_kept_playing"}
+ADDED_LEVEL_FIELDS = ADDED_LEVEL_GROUPS | {"fail_drop_percent"}
+
+
+def without_added_level_fields(value):
+    if isinstance(value, list):
+        return [without_added_level_fields(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    counts = "total_drop" in value  # a level's group counts, or its transition summary
+    return {
+        key: without_added_level_fields(item)
+        for key, item in value.items()
+        if not (counts and key in ADDED_LEVEL_FIELDS)
+    }
+
+
 HIDE_TEST = {"exclude_environments": ["editor", "development", "test", "debug"]}
 FILTERS = {
     "none": {},
@@ -224,6 +243,8 @@ def snapshot(storage, game_id, module, *, full=True):
             answers[key] = function(*args, **kwargs)
         except Exception as error:  # an error is an answer too: both sides must agree on it
             answers[key] = {"error": type(error).__name__, "detail": str(error)}
+        if getattr(function, "__name__", "") in ("level_progress", "level_players"):
+            answers[key] = without_added_level_fields(answers[key])
         if function is module.insights.journey and "snapshot" in answers[key]:
             # An opaque page token: raw events and facts number it differently (see
             # insights.FACTS_SNAPSHOT); what it does is tested on its own.
@@ -288,6 +309,8 @@ def snapshot(storage, game_id, module, *, full=True):
                     numbers = [row["level"] for row in progress["levels"]]
                     for number in _shown_levels(numbers):
                         for group in module.journeys.LEVEL_GROUPS:
+                            if group in ADDED_LEVEL_GROUPS:
+                                continue
                             ask(
                                 f"level {number} {group} {name} {label} {scope}",
                                 module.journeys.level_players,

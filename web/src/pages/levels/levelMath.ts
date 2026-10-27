@@ -10,11 +10,13 @@ export const LEVEL_SCOPES: Record<LevelScope, string> = { all: 'Everyone', first
 export const isLevelScope = (value: unknown): value is LevelScope => value === 'all' || value === 'first_session';
 
 // The players behind a level: where the drop splits, and who carried on.
-export type LevelDrillGroup = 'left' | 'finished_stopped' | 'kept_going';
-export const LEVEL_DRILL_GROUPS: Array<[LevelDrillGroup, string]> = [['left', 'Quit during level'], ['finished_stopped', 'Quit after finishing'], ['kept_going', 'Reached next level']];
+export type LevelDrillGroup = 'left' | 'finished_stopped' | 'kept_going' | 'failed_left' | 'failed_kept_playing';
+export const LEVEL_DRILL_GROUPS: Array<[LevelDrillGroup, string]> = [['left', 'Quit during level'], ['finished_stopped', 'Quit after finishing'], ['kept_going', 'Reached next level'], ['failed_left', 'Failed, then quit'], ['failed_kept_playing', 'Failed, kept playing']];
+/** Groups of players who carried on, so there is no “what they did last” for them. */
+export const CARRIED_ON_GROUPS: LevelDrillGroup[] = ['kept_going', 'failed_kept_playing'];
 
-export type LevelSort = 'level' | 'drop' | 'completion' | 'tries' | 'time';
-export const LEVEL_SORTS: LevelSort[] = ['level', 'drop', 'completion', 'tries', 'time'];
+export type LevelSort = 'level' | 'drop' | 'failquit' | 'completion' | 'tries' | 'time';
+export const LEVEL_SORTS: LevelSort[] = ['level', 'drop', 'failquit', 'completion', 'tries', 'time'];
 export type LevelPageSize = '25' | '50' | '100' | 'all';
 export const LEVEL_PAGE_SIZES: LevelPageSize[] = ['25', '50', '100', 'all'];
 export type DrillSort = 'exit_at' | 'tries' | 'fails';
@@ -62,7 +64,7 @@ export function lastDidDetails(row: Pick<LevelPlayer, 'last_action' | 'next_acti
 export function sortLevels(levels: LevelRow[], sort: LevelSort): LevelRow[] {
   const list = [...levels];
   const keys: Record<Exclude<LevelSort, 'level'>, (row: LevelRow) => number> = {
-    drop: (row) => -(row.transition?.drop_percent ?? -1), completion: (row) => row.completion ?? 101,
+    drop: (row) => -(row.transition?.drop_percent ?? -1), failquit: (row) => -(row.transition?.fail_drop_percent ?? -1), completion: (row) => row.completion ?? 101,
     tries: (row) => -(row.tries_per_player ?? -1), time: (row) => -(row.median_seconds ?? -1),
   };
   return sort === 'level' ? list : list.sort((a, b) => keys[sort](a) - keys[sort](b));
@@ -72,11 +74,12 @@ export const pageCount = (pageSize: LevelPageSize, total: number): number => Mat
 export const clampPage = (page: number, pageSize: LevelPageSize, total: number): number => Math.min(page, pageCount(pageSize, total) - 1);
 
 /** The key numbers above the table: the largest drop, hardest and slowest level (small samples not ranked). */
-export function levelHighlights(levels: LevelRow[]): { largestDrop: LevelRow | undefined; hardest: LevelRow | undefined; slowest: LevelRow | undefined } {
+export function levelHighlights(levels: LevelRow[]): { largestDrop: LevelRow | undefined; failQuit: LevelRow | undefined; hardest: LevelRow | undefined; slowest: LevelRow | undefined } {
   const largestDrop = levels.filter((row) => !row.low_sample && row.transition?.available).sort((a, b) => (b.transition!.drop_percent ?? 0) - (a.transition!.drop_percent ?? 0))[0];
+  const failQuit = levels.filter((row) => !row.low_sample && row.transition?.fail_drop_percent != null).sort((a, b) => b.transition!.fail_drop_percent! - a.transition!.fail_drop_percent! || b.transition!.failed_left - a.transition!.failed_left)[0];
   const hardest = levels.filter((row) => !row.low_sample).sort((a, b) => (a.completion ?? 100) - (b.completion ?? 100))[0];
   const slowest = levels.filter((row) => row.median_seconds != null).sort((a, b) => b.median_seconds! - a.median_seconds!)[0];
-  return { largestDrop, hardest, slowest };
+  return { largestDrop, failQuit, hardest, slowest };
 }
 
 /* ─── Levels at a glance: players remaining by level and a heat strip ─── */

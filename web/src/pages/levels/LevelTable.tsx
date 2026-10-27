@@ -15,7 +15,7 @@ import { drillPagePath } from './levelPaths';
 import { LevelViz } from './LevelViz';
 import { forgetSpot, rememberSpot, returnSpot, scrollBackTo } from './levelReturn';
 
-const SORTS: Array<[LevelSort, string]> = [['level', 'Level order'], ['drop', 'Highest total drop'], ['completion', 'Lowest completion'], ['tries', 'Most tries per player'], ['time', 'Slowest']];
+const SORTS: Array<[LevelSort, string]> = [['level', 'Level order'], ['drop', 'Highest total drop'], ['failquit', 'Most failers who quit'], ['completion', 'Lowest completion'], ['tries', 'Most tries per player'], ['time', 'Slowest']];
 const PAGE_SIZES: Array<[LevelPageSize, string]> = [['25', '25'], ['50', '50'], ['100', '100'], ['all', 'All']];
 
 /** The drop to the next level as a link to the level, with the net change under it. */
@@ -31,6 +31,21 @@ function DropCell({ game, row }: { game: Game; row: LevelRow }): ReactElement {
       <small className={`level-net ${net > 0 ? 'gain' : net < 0 ? 'loss' : ''}`} title="Separate comparison of filtered starter totals; includes players entering midway">
         {net > 0 ? '↑ Net gain +' : net < 0 ? '↓ Net loss ' : 'No net change '}{net ? number(Math.abs(net)) : ''}
       </small>
+    </>
+  );
+}
+
+/** Of the players who failed this level, how many then left for good: failing and playing on is fine, failing and leaving is the problem. */
+function FailQuitCell({ game, row }: { game: Game; row: LevelRow }): ReactElement {
+  const transition = row.transition;
+  if (!transition?.available) return <span className="muted" title="Needs a later level to tell who left.">—</span>;
+  if (!transition.failed) return <span className="muted" title="Nobody failed this level in these days.">No fails</span>;
+  return (
+    <>
+      <Link to={gamePath(game, 'levels')} search={{ level: String(row.level), group: 'failed_left' }} className="level-drop-button" title={`${number(transition.failed_left)} of ${number(transition.failed)} players who failed level ${row.level} did not pass it or play on. ${number(transition.failed_kept_playing)} failed and kept playing.`}>
+        <span className={`pill ${transition.failed_left ? 'bad' : 'good'}`}>{percent(transition.fail_drop_percent ?? 0)} quit · {number(transition.failed_left)}</span>
+      </Link>
+      <small className="level-net" title="Players who failed at least once, and how many of them kept playing">of {number(transition.failed)} who failed · {number(transition.failed_kept_playing)} kept playing</small>
     </>
   );
 }
@@ -124,25 +139,26 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
           <button type="button" className="button small-button" id="levels-next-page" disabled={!data?.levels.length || current + 1 >= pages} onClick={() => setPage(current + 1)}>Next →</button>
         </div>
       </div>
-      <QueryRegion query={query} path={path} skeleton={<><Skeleton kind="stats" /><Skeleton kind="table" rows={8} columns={7} /></>}>
+      <QueryRegion query={query} path={path} skeleton={<><Skeleton kind="stats" /><Skeleton kind="table" rows={8} columns={8} /></>}>
         {(result) => {
           if (!result.levels.length) {
             return <Empty title="No level data yet">Levels are read from events that start, complete, fail or restart a level, like “Started level 5”. Send some, or name yours in the event dictionary.</Empty>;
           }
-          const { largestDrop, hardest, slowest } = levelHighlights(result.levels);
+          const { largestDrop, failQuit, hardest, slowest } = levelHighlights(result.levels);
           const first = result.levels[0]!; const last = result.levels[result.levels.length - 1]!;
           return (
             <>
               <div className="kpis">
                 <div className="kpi"><div className="eyebrow">Levels seen</div><div className="k-v">{number(result.levels.length)}</div><div className="k-c">{`level ${first.level} to ${last.level}`}</div></div>
                 <div className="kpi"><div className="eyebrow">Largest total drop</div><div className="k-v">{largestDrop ? `Level ${largestDrop.level}` : '—'}</div><div className="k-c">{largestDrop ? `${percent(largestDrop.transition?.drop_percent ?? 0)} did not start level ${largestDrop.level + 1}${scope === 'first_session' ? ' in their first session' : ''}` : `needs at least ${number(minimum)} players`}</div></div>
+                <div className="kpi"><div className="eyebrow">Fail, then quit</div><div className="k-v">{failQuit ? `Level ${failQuit.level}` : '—'}</div><div className="k-c">{failQuit ? `${percent(failQuit.transition?.fail_drop_percent ?? 0)} of players who failed it then left` : `needs at least ${number(minimum)} players`}</div></div>
                 <div className="kpi"><div className="eyebrow">Hardest level</div><div className="k-v">{hardest ? `Level ${hardest.level}` : '—'}</div><div className="k-c">{hardest ? `${percent(hardest.completion ?? 0)} of players finish it` : `needs at least ${number(minimum)} players`}</div></div>
                 <div className="kpi"><div className="eyebrow">Slowest level</div><div className="k-v">{slowest ? `Level ${slowest.level}` : '—'}</div><div className="k-c">{slowest ? `median ${duration(slowest.median_seconds)}` : ''}</div></div>
               </div>
               <LevelViz game={game} levels={result.levels} onOpen={onOpen} />
               <div className="table-wrap level-scroll levels-scroll" tabIndex={0} role="region" aria-label="Level results">
                 <table className="levels-grid">
-                  <thead><tr><th>Level</th><th className="num">Start</th><th className="num">Finish</th><th className="num" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">Drop · start → start</th><th className="num">Tries / player</th><th className="num">Fails</th><th className="num">Median time</th></tr></thead>
+                  <thead><tr><th>Level</th><th className="num">Start</th><th className="num">Finish</th><th className="num" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">Drop · start → start</th><th className="num" title="Of the players who failed this level, the share who then did not pass it or play on">Failed → quit</th><th className="num">Tries / player</th><th className="num">Fails</th><th className="num">Median time</th></tr></thead>
                   <tbody>
                     {sorted.slice(current * size, (current + 1) * size).map((row) => (
                       <tr key={row.level} data-level-row={row.level} className={`${highlight?.level === row.level ? 'level-highlight ' : ''}${row.completion != null && !row.low_sample && row.completion < 60 ? 'level-hard' : ''}`}
@@ -156,6 +172,7 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
                         <td className="num">{number(row.started)}</td>
                         <td className="num">{number(row.completed)}</td>
                         <td className="num"><DropCell game={game} row={row} /></td>
+                        <td className="num"><FailQuitCell game={game} row={row} /></td>
                         <td className="num">{row.tries_per_player ?? '—'}</td>
                         <td className="num">{number(row.fails)}{row.restarts ? <span className="muted small"> · {row.restarts} restart{row.restarts === 1 ? '' : 's'}</span> : null}</td>
                         <td className="num">{duration(row.median_seconds)}</td>

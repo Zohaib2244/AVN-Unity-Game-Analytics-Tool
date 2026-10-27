@@ -43,6 +43,9 @@ LEVEL_GROUPS = (
     "kept_going",
     "unknown_progress",
     "stuck",
+    "failed",
+    "failed_left",
+    "failed_kept_playing",
     "started",
     "returning",
     "missing_history",
@@ -733,6 +736,11 @@ def _player_transitions(player, events, latest, scope, start, reader):
             mine[category] = record
         if not completed and not higher and (tries >= STUCK_TRIES or fail_count >= STUCK_TRIES):
             mine["stuck"] = record
+        # Failing is fine when the player still plays on; it is a problem when they fail and leave.
+        # Passing the level later, or going on to a later one, counts as playing on.
+        if fail_count:
+            mine["failed"] = record
+            mine["failed_left" if "left" in mine else "failed_kept_playing"] = record
         previous = selected_starts.get(number - 1)
         if number <= 0 or (
             previous is not None and events[previous][0]["client_ts"] <= initial["client_ts"]
@@ -925,6 +933,9 @@ class _LevelTotals:
                     "available": available,
                     "drop_percent": round(100 * counts["total_drop"] / started, 1)
                     if available
+                    else None,
+                    "fail_drop_percent": round(100 * counts["failed_left"] / counts["failed"], 1)
+                    if available and counts["failed"]
                     else None,
                     "matched_completed": sum(row["completed"] for row in groups["started"]),
                     "entrants": counts["returning"] + counts["missing_history"],

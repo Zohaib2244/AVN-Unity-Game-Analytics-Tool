@@ -190,6 +190,8 @@ export type PlayersResult = { total: number; players: PlayerRow[]; context?: { a
 export type LevelTransition = {
   available: boolean; next_level: number; drop_percent: number | null; total_drop: number; net_change: number | null;
   left: number; finished_stopped: number; kept_going: number; unknown_progress: number;
+  /** Players who failed the level at least once, split by whether they then left (without passing or going on) or kept playing. */
+  failed: number; failed_left: number; failed_kept_playing: number; fail_drop_percent: number | null;
 };
 export type LevelRow = {
   level: number; started: number; completed: number; completion: number | null; tries_per_player: number | null;

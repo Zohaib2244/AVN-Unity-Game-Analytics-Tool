@@ -4,10 +4,21 @@ import type { LevelRow, LevelTransition } from '@/lib/types';
 import { DRILL_PAGE, cleanNavigation, clampPage, dropChange, dropChangeLabel, dropText, lastDidDetails, lastDidLabel, levelCurve, levelDrillGroup, levelDrop, levelHighlights, levelsNote, pageCount, pageSizeOf, pickReleases, releaseChoices, sortLevels } from './levelMath';
 
 const transition = (over: Partial<LevelTransition> = {}): LevelTransition => ({
-  available: true, next_level: 2, drop_percent: 20, total_drop: 10, net_change: 0, left: 0, finished_stopped: 0, kept_going: 0, unknown_progress: 0, ...over,
+  available: true, next_level: 2, drop_percent: 20, total_drop: 10, net_change: 0, left: 0, finished_stopped: 0, kept_going: 0, unknown_progress: 0, failed: 0, failed_left: 0, failed_kept_playing: 0, fail_drop_percent: null, ...over,
 });
 const row = (level: number, over: Partial<LevelRow> = {}): LevelRow => ({
   level, started: 100, completed: 50, completion: 50, tries_per_player: 1, fails: 0, restarts: 0, median_seconds: 60, low_sample: false, transition: transition(), ...over,
+});
+
+describe('failing and then quitting', () => {
+  const failing = (level: number, percent: number, left: number, small = false): LevelRow => row(level, { low_sample: small, transition: transition({ failed: 20, failed_left: left, failed_kept_playing: 20 - left, fail_drop_percent: percent }) });
+  it('finds the level where the most failing players left, ignoring small samples', () => {
+    const { failQuit } = levelHighlights([failing(1, 10, 2), failing(2, 60, 12), failing(3, 90, 18, true), row(4)]);
+    expect(failQuit?.level).toBe(2);
+  });
+  it('sorts by the share of failers who quit, levels without the number last', () => {
+    expect(sortLevels([row(1), failing(2, 10, 2), failing(3, 60, 12)], 'failquit').map((item) => item.level)).toEqual([3, 2, 1]);
+  });
 });
 
 describe('level navigation memory', () => {
@@ -113,7 +124,7 @@ describe('the key numbers above the table', () => {
     expect(slowest?.level).toBe(1);
   });
   it('is empty when nothing qualifies', () => {
-    expect(levelHighlights([row(1, { low_sample: true, transition: null, median_seconds: null })])).toEqual({ largestDrop: undefined, hardest: undefined, slowest: undefined });
+    expect(levelHighlights([row(1, { low_sample: true, transition: null, median_seconds: null })])).toEqual({ largestDrop: undefined, failQuit: undefined, hardest: undefined, slowest: undefined });
   });
 });
 

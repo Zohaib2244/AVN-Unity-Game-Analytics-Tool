@@ -1786,6 +1786,47 @@ def _level_players(admin, game, level, group, **params):
     ).json()
 
 
+def test_failing_and_leaving_is_told_apart_from_failing_and_playing_on(backend):
+    admin, game = _journey_game(backend)
+    _, ingest, _ = backend
+    # p7 fails level 1 twice, then passes it and starts level 2: failing, but still playing
+    extra = _level_player(
+        "p7",
+        "s-p7",
+        30,
+        [
+            ("first_open", {}, 0),
+            ("LEVEL_ANALYSIS", {"Started": "1"}, 10),
+            ("LEVEL_ANALYSIS", {"Failed": "1"}, 30),
+            ("LEVEL_ANALYSIS", {"Restarted": "1"}, 31),
+            ("LEVEL_ANALYSIS", {"Failed": "1"}, 50),
+            ("LEVEL_ANALYSIS", {"Restarted": "1"}, 51),
+            ("LEVEL_ANALYSIS", {"Completed": "1"}, 90),
+            ("LEVEL_ANALYSIS", {"Started": "2"}, 100),
+        ],
+    )
+    assert send(ingest, game, extra).status_code == 200
+    ids = lambda data: sorted(row["player"] for row in data["players"])  # noqa: E731
+
+    failed = _level_players(admin, game, 1, "failed")
+    assert ids(failed) == ["p3", "p7"]
+    assert ids(_level_players(admin, game, 1, "failed_left")) == ["p3"]  # failed and stopped
+    assert ids(_level_players(admin, game, 1, "failed_kept_playing")) == ["p7"]
+    assert (
+        failed["counts"]["failed_left"] + failed["counts"]["failed_kept_playing"]
+        == (failed["counts"]["failed"])
+    )
+    levels = admin.get(
+        f"/v1/games/{game['id']}/insights/levels",
+        params={"start": "2026-10-04", "end": "2026-10-05"},
+    ).json()["levels"]
+    summary = next(row for row in levels if row["level"] == 1)["transition"]
+    assert (summary["failed"], summary["failed_left"], summary["fail_drop_percent"]) == (2, 1, 50.0)
+    # a level nobody failed has no share to report
+    quiet = next(row for row in levels if row["level"] == 3)["transition"]
+    assert quiet is None or quiet["failed"] or quiet["fail_drop_percent"] is None
+
+
 def test_level_players_group_who_left_who_finished_and_who_kept_going(backend):
     admin, game = _journey_game(backend)
     _, ingest, _ = backend
@@ -1827,6 +1868,9 @@ def test_level_players_group_who_left_who_finished_and_who_kept_going(backend):
         "finished_stopped": 0,
         "kept_going": 2,
         "stuck": 0,
+        "failed": 1,
+        "failed_left": 1,
+        "failed_kept_playing": 0,
         "started": 4,
         "unknown_progress": 0,
         "returning": 0,
