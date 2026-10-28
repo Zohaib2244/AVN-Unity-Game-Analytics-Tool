@@ -215,6 +215,8 @@ Environments are stored per session in a `sessions` table in each game's databas
 
 If a published build was left in development mode, all of its players are hidden as test data. **Game settings → Environment** lists what each build (version and build number) reported, with its players and events. On a development row, **Count as production…** re-counts everything that build sent, now and in the future, as production; **Undo** puts it back. The stored events are never changed: the correction is applied when events are read, so the dashboards, home-page DAU, filters and export filters all follow it. Exports keep the original `environment` and list the corrections in `manifest.json` (`environment_fixes`) and `events.md`. Team leads and admins can make and undo corrections; every change is in the activity log.
 
+**Game settings → Data by version** lists every app version with its players, events and first and last day seen. Team leads and admins can tick old versions and delete their events for good, typing the bundle ID to confirm (export first if you might need them). Raw events are otherwise never deleted; this is the one exception. Deletion runs in the background in short steps, so collection keeps working, and prepared answers are rebuilt afterwards. The database file doesn't shrink: new events reuse the freed space. Starting and finishing a deletion are both in the activity log.
+
 ### Time zones
 
 Dashboard days follow the **Local / UTC** switch in the filter bar (local is the default, remembered per game): a day is midnight to midnight in that zone, the per-day charts are grouped by it, and times in player stories use it. Exports, the Exports page and the activity log stay in UTC.
