@@ -154,6 +154,13 @@ FILTER_FIELDS = {
     "countries": "country",
     "platforms": "platform",
 }
+# "Everything except": the same dimensions, kept out instead of kept in (environments differ).
+EXCLUDE_FIELDS = {
+    "exclude_app_versions": "app_version",
+    "exclude_builds": "build",
+    "exclude_countries": "country",
+    "exclude_platforms": "platform",
+}
 HIDDEN_PARAMS = {"seq"}  # SDK bookkeeping, not something to analyze
 # Sent automatically by the Unity SDK and documented in the skill itself.
 SDK_EVENTS = {"first_open", "session_start", "session_end"}
@@ -182,6 +189,11 @@ def where(start, end, filters=None, column="client_ts", source=LEGACY):
     if excluded:
         clauses.append(f"{source.environment} NOT IN ({','.join('?' * len(excluded))})")
         args += excluded
+    for field_name, dimension in EXCLUDE_FIELDS.items():
+        values = filters.get(field_name) or []
+        if values:
+            clauses.append(f"{source.dimensions[dimension]} NOT IN ({','.join('?' * len(values))})")
+            args += values
     return " AND ".join(clauses), args
 
 

@@ -852,6 +852,32 @@ def test_environment_filters(backend):
     assert [row["player"] for row in only_editor.json()["players"]] == ["tester"]
 
 
+def test_everything_except_filters(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    key = {"X-API-Key": game["key"]["api_key"]}
+    for player, country in (("a", "PK"), ("b", "IN"), ("c", "US")):
+        sent = ingest.post(
+            "/v1/events",
+            headers={**key, "CF-IPCountry": country},
+            json={"events": [event(device_id=player, session_id=f"s-{player}")]},
+        )
+        assert sent.status_code == 200, sent.text
+    base = f"/v1/games/{game['id']}/insights/summary"
+    days = {"start": "2026-10-04", "end": "2026-10-04"}
+
+    def players(**params):
+        return admin.get(base, headers=AUTH, params={**days, **params}).json()["players"]
+
+    assert players() == 3
+    assert players(country="PK") == 1
+    assert players(not_country="PK") == 2
+    assert players(not_country=["PK", "IN"]) == 1
+    assert players(country=["PK", "IN"], not_country="PK") == 1  # only and except combine
+    assert players(not_platform="no-such-platform") == 3
+    assert players(not_version="no-such-version", not_build="no-such-build") == 3
+
+
 def test_summary_reports_daily_active_users(backend):
     admin, ingest, _ = backend
     game = register(admin)

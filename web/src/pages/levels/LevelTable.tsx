@@ -1,54 +1,56 @@
-// "Level by level": the summary numbers, the players-remaining curve, and the table of every level with
-// its sort, scope, rows per page, jump-to-level and paging. A row or a level opens that level's page.
+// "Level by level": the table of every level with its scope, sort, display settings (columns, heat, flags),
+// jump-to-level and paging, plus a Summary dialog (the levels worth a look and players remaining by level).
+// A row or a level opens that level's page. Drops and quits are drawn against per-game flag thresholds.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactElement } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { prefetch } from '@/api';
+import { AnimatePresence, motion } from 'motion/react';
 import { Empty, QueryRegion, Skeleton, useNotify } from '@/components/feedback';
-import { Ico } from '@/components/icons';
+import { Ico, type IcoName } from '@/components/icons';
 import type { ActiveFilters } from '@/lib/filters';
-import { duration, number, percent } from '@/lib/format';
+import { duration, number } from '@/lib/format';
+import { useStored } from '@/lib/store';
+import { POP } from '@/lib/motion';
 import { gamePath } from '@/lib/games';
 import type { Game, LevelRow, LevelsResult } from '@/lib/types';
-import { LEVEL_SCOPES, clampPage, levelHighlights, levelsNote, levelDrillGroup, pageSizeOf, pageCount, sortLevels, type LevelNavigation, type LevelPageSize, type LevelScope, type LevelSort } from './levelMath';
+import { LEVEL_SCOPES, clampPage, levelDrillGroup, pageSizeOf, pageCount, sortLevels, type LevelNavigation, type LevelPageSize, type LevelScope, type LevelSort } from './levelMath';
 import { drillPagePath } from './levelPaths';
-import { LevelViz } from './LevelViz';
+import { HeatValue } from './LevelHeat';
+import { LevelDisplayMenu } from './LevelDisplayMenu';
+import { LevelSummary } from './LevelSummary';
+import { cleanDisplay, displayKey, heatOf, type LevelDisplay } from './levelDisplay';
 import { forgetSpot, rememberSpot, returnSpot, scrollBackTo } from './levelReturn';
 
 const SORTS: Array<[LevelSort, string]> = [['level', 'Level order'], ['drop', 'Highest total drop'], ['failquit', 'Most failers who quit'], ['completion', 'Lowest completion'], ['tries', 'Most tries per player'], ['time', 'Slowest']];
 const PAGE_SIZES: Array<[LevelPageSize, string]> = [['25', '25'], ['50', '50'], ['100', '100'], ['all', 'All']];
 
-/** The drop to the next level as a link to the level, with the net change under it. */
-function DropCell({ game, row }: { game: Game; row: LevelRow }): ReactElement {
+/** The drop to the next level as a link to the level: a heat cell or bar against the drop flag. */
+function DropCell({ game, row, display }: { game: Game; row: LevelRow; display: LevelDisplay }): ReactElement {
   const transition = row.transition;
-  if (!transition?.available) return <span className="muted" title="No starters here or no observed start for the next numbered level. The next level may not exist or may be unlogged.">— Not enough data</span>;
+  if (!transition?.available) return <span className="muted" title="No starters here or no observed start for the next numbered level. The next level may not exist or may be unlogged.">—</span>;
   const net = transition.net_change ?? 0;
+  const netText = net > 0 ? `net gain +${number(net)}` : net < 0 ? `net loss ${number(Math.abs(net))}` : 'no net change';
   return (
-    <>
-      <Link to={gamePath(game, 'levels')} search={{ level: String(row.level) }} className="level-drop-button" title={`Players who started this level but have no later start of level ${transition.next_level} by the end of these dates`}>
-        <span className={`pill ${transition.total_drop ? 'bad' : 'good'}`}>↓ {percent(transition.drop_percent ?? 0)} drop · {number(transition.total_drop)}</span>
-      </Link>
-      <small className={`level-net ${net > 0 ? 'gain' : net < 0 ? 'loss' : ''}`} title="Separate comparison of filtered starter totals; includes players entering midway">
-        {net > 0 ? '↑ Net gain +' : net < 0 ? '↓ Net loss ' : 'No net change '}{net ? number(Math.abs(net)) : ''}
-      </small>
-    </>
+    <Link to={gamePath(game, 'levels')} search={{ level: String(row.level) }} className="level-drop-button" title={`${number(transition.total_drop)} players started this level but have no later start of level ${transition.next_level} by the end of these dates · ${netText} (filtered starter totals, includes players entering midway)`}>
+      <HeatValue value={transition.drop_percent ?? 0} threshold={display.dropFlag} style={display.style} counts={display.counts} count={number(transition.total_drop)} title={`${number(transition.total_drop)} of ${number(row.started)} did not start level ${transition.next_level}`} />
+    </Link>
   );
 }
 
 /** Of the players who failed this level, how many then left for good: failing and playing on is fine, failing and leaving is the problem. */
-function FailQuitCell({ game, row }: { game: Game; row: LevelRow }): ReactElement {
+function FailQuitCell({ game, row, display }: { game: Game; row: LevelRow; display: LevelDisplay }): ReactElement {
   const transition = row.transition;
   if (!transition?.available) return <span className="muted" title="Needs a later level to tell who left.">—</span>;
-  if (!transition.failed) return <span className="muted" title="Nobody failed this level in these days.">No fails</span>;
+  if (!transition.failed) return <span className="muted" title="Nobody failed this level in these days.">—</span>;
   return (
-    <>
-      <Link to={gamePath(game, 'levels')} search={{ level: String(row.level), group: 'failed_left' }} className="level-drop-button" title={`${number(transition.failed_left)} of ${number(transition.failed)} players who failed level ${row.level} did not pass it or play on. ${number(transition.failed_kept_playing)} failed and kept playing.`}>
-        <span className={`pill ${transition.failed_left ? 'bad' : 'good'}`}>{percent(transition.fail_drop_percent ?? 0)} quit · {number(transition.failed_left)}</span>
-      </Link>
-      <small className="level-net" title="Players who failed at least once, and how many of them kept playing">of {number(transition.failed)} who failed · {number(transition.failed_kept_playing)} kept playing</small>
-    </>
+    <Link to={gamePath(game, 'levels')} search={{ level: String(row.level), group: 'failed_left' }} className="level-drop-button" title={`${number(transition.failed_left)} of ${number(transition.failed)} players who failed level ${row.level} did not pass it or play on. ${number(transition.failed_kept_playing)} failed and kept playing.`}>
+      <HeatValue value={transition.fail_drop_percent ?? 0} threshold={display.quitFlag} style={display.style} counts={display.counts} count={`${number(transition.failed_left)}/${number(transition.failed)}`} title={`${number(transition.failed_left)} of ${number(transition.failed)} who failed then left`} />
+    </Link>
   );
 }
+
+const Th = ({ icon, children, title }: { icon: IcoName; children: string; title?: string }): ReactElement => <th className="num" title={title}><Ico name={icon} size={13} className="th-ico" />{children}</th>;
 
 type Props = {
   game: Game;
@@ -77,7 +79,10 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
   const sorted = useMemo(() => (data ? sortLevels(data.levels, nav.sort) : []), [data, nav.sort]);
   const current = clampPage(page, nav.pageSize, sorted.length);
   const minimum = data?.context.minimum_players ?? 0;
-  const sample = !!data?.levels.some((row) => row.low_sample);
+  const [stored, setDisplay] = useStored<unknown>(displayKey(game), null);
+  const display = useMemo(() => cleanDisplay(stored), [stored]);
+  const [summary, setSummary] = useState(false);
+  const flagged = data ? data.levels.filter((row) => heatOf(row.transition?.drop_percent, display.dropFlag).over && !row.low_sample).length : 0;
   const size = pageSizeOf(nav.pageSize, sorted.length);
   const pages = pageCount(nav.pageSize, sorted.length);
 
@@ -109,56 +114,62 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
     onOpen(level);
   };
 
+  const columns = display.columns;
   return (
     <section ref={box} className="panel levels-panel" onClickCapture={() => rememberSpot(game.id, { y: window.scrollY, page: current })}>
       <div className="panel-header">
-        <div><h2>Level by level</h2><p id="levels-note">{levelsNote(scope)}{sample ? <> <span className="level-sample-legend"><span className="level-sample-marker" aria-hidden="true">·</span> Small sample: fewer than {number(minimum)} players started.</span></> : null}</p></div>
+        <div><h2 className="with-icon"><Ico name="chart" size={16} /> Level by level</h2></div>
         <div className="quiet-actions">
           <div className="segmented" role="group" aria-label="Which players">
             {(Object.entries(LEVEL_SCOPES) as Array<[LevelScope, string]>).map(([key, label]) => (
-              <button key={key} type="button" aria-pressed={scope === key} onClick={() => { if (scope !== key) onNav({ scope: key }); }}>{label}</button>
+              <button key={key} type="button" aria-pressed={scope === key} onClick={() => { if (scope !== key) onNav({ scope: key }); }}><Ico name={key === 'all' ? 'users' : 'user-plus'} size={14} />{label}</button>
             ))}
           </div>
-          <label className="inline-field">Sort<select id="levels-sort" value={nav.sort} onChange={(event) => { setPage(0); onNav({ sort: event.target.value as LevelSort }); }}>
+          <label className="inline-field icon-field"><Ico name="sort" size={14} /><span className="sr-only">Sort</span><select id="levels-sort" aria-label="Sort" value={nav.sort} onChange={(event) => { setPage(0); onNav({ sort: event.target.value as LevelSort }); }}>
             {SORTS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </select></label>
+          <LevelDisplayMenu display={display} onChange={setDisplay} />
+          <button type="button" className="btn" disabled={!data?.levels.length} onClick={() => setSummary(true)}><Ico name="chart" size={14} /> Summary</button>
         </div>
       </div>
       <div className="levels-navigation">
         <form id="levels-jump-form" onSubmit={onJumpSubmit}>
-          <label htmlFor="levels-jump">Jump to level</label>
-          <input id="levels-jump" type="number" min={0} max={1000000} required placeholder="e.g. 120" value={jumpText} onChange={(event) => setJumpText(event.target.value)} />
+          <label htmlFor="levels-jump" className="icon-field"><Ico name="search" size={14} /><span className="sr-only">Jump to level</span></label>
+          <input id="levels-jump" type="number" min={0} max={1000000} required placeholder="Jump to level" value={jumpText} onChange={(event) => setJumpText(event.target.value)} />
           <button type="submit" className="button small-button">Go</button>
         </form>
-        <label className="inline-field">Rows<select id="levels-page-size" value={nav.pageSize} onChange={(event) => { setPage(0); onNav({ pageSize: event.target.value as LevelPageSize }); }}>
-          {PAGE_SIZES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-        </select></label>
+        <span className="level-flags" title="Cells over these percentages are tinted: hotter the further over. Change them in Display.">
+          <Ico name="flag" size={13} /> Flagging drops &gt; {display.dropFlag}%{columns.failquit ? ` · quits > ${display.quitFlag}%` : ''}
+          <AnimatePresence initial={false} mode="popLayout">{flagged ? <motion.b key="n" className="level-flagged" {...POP}>{flagged} flagged</motion.b> : null}</AnimatePresence>
+        </span>
         <div className="quiet-actions">
-          <button type="button" className="button small-button" id="levels-previous-page" disabled={!data?.levels.length || current === 0} onClick={() => setPage(current - 1)}>← Previous</button>
-          <span id="levels-page-info" className="small muted" aria-live="polite">{data?.levels.length ? `${current * size + 1}–${Math.min((current + 1) * size, sorted.length)} of ${number(sorted.length)} levels` : data ? '0 levels' : ''}</span>
-          <button type="button" className="button small-button" id="levels-next-page" disabled={!data?.levels.length || current + 1 >= pages} onClick={() => setPage(current + 1)}>Next →</button>
+          <span id="levels-page-info" className="small muted" aria-live="polite">{data?.levels.length ? `${current * size + 1}–${Math.min((current + 1) * size, sorted.length)} of ${number(sorted.length)}` : data ? '0 levels' : ''}</span>
+          <button type="button" className="button small-button icon-only" id="levels-previous-page" aria-label="Previous page" disabled={!data?.levels.length || current === 0} onClick={() => setPage(current - 1)}><Ico name="prev" size={14} /></button>
+          <button type="button" className="button small-button icon-only" id="levels-next-page" aria-label="Next page" disabled={!data?.levels.length || current + 1 >= pages} onClick={() => setPage(current + 1)}><Ico name="next" size={14} /></button>
+          <label className="inline-field"><span className="sr-only">Rows per page</span><select id="levels-page-size" aria-label="Rows per page" value={nav.pageSize} onChange={(event) => { setPage(0); onNav({ pageSize: event.target.value as LevelPageSize }); }}>
+            {PAGE_SIZES.map(([key, label]) => <option key={key} value={key}>{label === 'All' ? 'All rows' : `${label} rows`}</option>)}
+          </select></label>
         </div>
       </div>
-      <QueryRegion query={query} path={path} skeleton={<><Skeleton kind="stats" /><Skeleton kind="table" rows={8} columns={8} /></>}>
+      <QueryRegion query={query} path={path} skeleton={<Skeleton kind="table" rows={8} columns={6} />}>
         {(result) => {
           if (!result.levels.length) {
             return <Empty title="No level data yet">Levels are read from events that start, complete, fail or restart a level, like “Started level 5”. Send some, or name yours in the event dictionary.</Empty>;
           }
-          const { largestDrop, failQuit, hardest, slowest } = levelHighlights(result.levels);
-          const first = result.levels[0]!; const last = result.levels[result.levels.length - 1]!;
           return (
             <>
-              <div className="kpis">
-                <div className="kpi"><div className="eyebrow">Levels seen</div><div className="k-v">{number(result.levels.length)}</div><div className="k-c">{`level ${first.level} to ${last.level}`}</div></div>
-                <div className="kpi"><div className="eyebrow">Largest total drop</div><div className="k-v">{largestDrop ? `Level ${largestDrop.level}` : '—'}</div><div className="k-c">{largestDrop ? `${percent(largestDrop.transition?.drop_percent ?? 0)} did not start level ${largestDrop.level + 1}${scope === 'first_session' ? ' in their first session' : ''}` : `needs at least ${number(minimum)} players`}</div></div>
-                <div className="kpi"><div className="eyebrow">Fail, then quit</div><div className="k-v">{failQuit ? `Level ${failQuit.level}` : '—'}</div><div className="k-c">{failQuit ? `${percent(failQuit.transition?.fail_drop_percent ?? 0)} of players who failed it then left` : `needs at least ${number(minimum)} players`}</div></div>
-                <div className="kpi"><div className="eyebrow">Hardest level</div><div className="k-v">{hardest ? `Level ${hardest.level}` : '—'}</div><div className="k-c">{hardest ? `${percent(hardest.completion ?? 0)} of players finish it` : `needs at least ${number(minimum)} players`}</div></div>
-                <div className="kpi"><div className="eyebrow">Slowest level</div><div className="k-v">{slowest ? `Level ${slowest.level}` : '—'}</div><div className="k-c">{slowest ? `median ${duration(slowest.median_seconds)}` : ''}</div></div>
-              </div>
-              <LevelViz game={game} levels={result.levels} onOpen={onOpen} />
+              <LevelSummary open={summary} onClose={() => setSummary(false)} levels={result.levels} minimum={minimum} dropFlag={display.dropFlag} quitFlag={display.quitFlag} firstSession={scope === 'first_session'} onJump={jumpTo} onOpen={onOpen} />
               <div className="table-wrap level-scroll levels-scroll" tabIndex={0} role="region" aria-label="Level results">
                 <table className="levels-grid">
-                  <thead><tr><th>Level</th><th className="num">Start</th><th className="num">Finish</th><th className="num" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">Drop · start → start</th><th className="num" title="Of the players who failed this level, the share who then did not pass it or play on">Failed → quit</th><th className="num">Tries / player</th><th className="num">Fails</th><th className="num">Median time</th></tr></thead>
+                  <thead><tr><th>Level</th>
+                    {columns.started ? <Th icon="play">Started</Th> : null}
+                    {columns.finished ? <Th icon="check">Finished</Th> : null}
+                    {columns.drop ? <Th icon="trend" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">Drop to next</Th> : null}
+                    {columns.failquit ? <Th icon="exit" title="Of the players who failed this level, the share who then did not pass it or play on">Failed → quit</Th> : null}
+                    {columns.tries ? <Th icon="refresh">Tries / player</Th> : null}
+                    {columns.fails ? <Th icon="alert">Fails</Th> : null}
+                    {columns.time ? <Th icon="clock">Median time</Th> : null}
+                  </tr></thead>
                   <tbody>
                     {sorted.slice(current * size, (current + 1) * size).map((row) => (
                       <tr key={row.level} data-level-row={row.level} className={`${highlight?.level === row.level ? 'level-highlight ' : ''}${row.completion != null && !row.low_sample && row.completion < 60 ? 'level-hard' : ''}`}
@@ -169,13 +180,13 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
                           <strong>{row.level}</strong>
                           {row.low_sample ? <> <span className="level-sample-marker" role="img" aria-label={`Small sample: ${number(row.started)} of ${number(minimum)} players`} title={`Small sample: ${number(row.started)} players started; threshold is ${number(minimum)}`}>·</span></> : null}
                         </td>
-                        <td className="num">{number(row.started)}</td>
-                        <td className="num">{number(row.completed)}</td>
-                        <td className="num"><DropCell game={game} row={row} /></td>
-                        <td className="num"><FailQuitCell game={game} row={row} /></td>
-                        <td className="num">{row.tries_per_player ?? '—'}</td>
-                        <td className="num">{number(row.fails)}{row.restarts ? <span className="muted small"> · {row.restarts} restart{row.restarts === 1 ? '' : 's'}</span> : null}</td>
-                        <td className="num">{duration(row.median_seconds)}</td>
+                        {columns.started ? <td className="num">{number(row.started)}</td> : null}
+                        {columns.finished ? <td className="num">{number(row.completed)}</td> : null}
+                        {columns.drop ? <td className="num"><DropCell game={game} row={row} display={display} /></td> : null}
+                        {columns.failquit ? <td className="num"><FailQuitCell game={game} row={row} display={display} /></td> : null}
+                        {columns.tries ? <td className="num">{row.tries_per_player ?? '—'}</td> : null}
+                        {columns.fails ? <td className="num">{number(row.fails)}{row.restarts ? <span className="muted small"> · {row.restarts} restart{row.restarts === 1 ? '' : 's'}</span> : null}</td> : null}
+                        {columns.time ? <td className="num">{duration(row.median_seconds)}</td> : null}
                       </tr>
                     ))}
                   </tbody>

@@ -821,6 +821,10 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         build: Values = None,
         country: Values = None,
         platform: Values = None,
+        not_version: Values = None,
+        not_build: Values = None,
+        not_country: Values = None,
+        not_platform: Values = None,
     ):
         return Filters(
             environments=env or [],
@@ -829,6 +833,10 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             builds=build or [],
             countries=country or [],
             platforms=platform or [],
+            exclude_app_versions=not_version or [],
+            exclude_builds=not_build or [],
+            exclude_countries=not_country or [],
+            exclude_platforms=not_platform or [],
         ).model_dump()
 
     Filtered = Annotated[dict, Depends(filters)]

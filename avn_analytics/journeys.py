@@ -59,7 +59,7 @@ LAST_ACTIONS = 8
 NOT_AN_ACTION = {"session_start", "session_end", "first_open", "APP_ANALYSIS"}
 AD_EVENT = re.compile(r"^ads?(_|$)", re.I)
 # The filters that decide whether a player's earlier history counts (the rest pick the cohort).
-HISTORY_FILTERS = ("environments", "exclude_environments", "platforms")
+HISTORY_FILTERS = ("environments", "exclude_environments", "platforms", "exclude_platforms")
 
 
 class _Reader:

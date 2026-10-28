@@ -359,9 +359,13 @@ class Filters(StrictModel):
     environments: FilterValues = []
     exclude_environments: FilterValues = []
     app_versions: FilterValues = []
+    exclude_app_versions: FilterValues = []
     builds: FilterValues = []
+    exclude_builds: FilterValues = []
     countries: FilterValues = []
+    exclude_countries: FilterValues = []
     platforms: FilterValues = []
+    exclude_platforms: FilterValues = []
 
 
 Threshold = Annotated[int, Field(ge=1, le=1_000_000)]
