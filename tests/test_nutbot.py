@@ -135,8 +135,9 @@ def test_chat_limits_availability_and_models(bot, monkeypatch):
     game = register(admin)
     info = admin.get("/v1/nutbot").json()
     claude = next(item for item in info["harnesses"] if item["id"] == "claude")
-    assert claude["available"] and claude["default_model"] == "sonnet"
-    assert claude["models_from"] == "agent" and "fake-small" in claude["models"]
+    # Only what the agent reported: the configured "sonnet" isn't offered, so its own model leads.
+    assert claude["available"] and claude["models"] == ["fake-large", "fake-small"]
+    assert claude["default_model"] == "fake-large" and claude["models_from"] == "agent"
     assert claude["cheap_model"] == "haiku"
     assert next(item for item in info["harnesses"] if item["id"] == "codex")["available"] is False
     for _ in range(5):
@@ -150,6 +151,71 @@ def test_chat_limits_availability_and_models(bot, monkeypatch):
         f"/v1/games/{game['id']}/nutbot/chat", json={"message": "x", "harness": "codex"}
     )
     assert refused.status_code == 409
+
+
+def test_effort_levels_are_listed_per_model_and_applied(bot):
+    admin, tmp_path, _ = bot
+    game = register(admin)
+    claude = next(i for i in admin.get("/v1/nutbot").json()["harnesses"] if i["id"] == "claude")
+    # The large model offers effort levels, the small one none: each is probed once.
+    assert [level["value"] for level in claude["efforts"]["fake-large"]] == [
+        "low",
+        "medium",
+        "high",
+    ]
+    assert "fake-small" not in claude["efforts"]
+    assert chat(admin, game, model="fake-large", effort="high")[0].status_code == 200
+    log = agent_log(tmp_path)
+    assert {"kind": "set_config_option", "config_id": "effort", "value": "high"} in log
+    assert [item for item in log if item["kind"] == "prompt"][-1]["effort"] == "high"
+    # A level the model doesn't offer is left alone rather than failing the answer.
+    assert chat(admin, game, model="fake-small", effort="high")[0].status_code == 200
+    assert [item for item in agent_log(tmp_path) if item["kind"] == "prompt"][-1]["model"] == (
+        "fake-small"
+    )
+    bad = admin.post(
+        f"/v1/games/{game['id']}/nutbot/chat", json={"message": "x", "effort": "max; rm"}
+    )
+    assert bad.status_code == 400
+
+
+def test_hidden_models_are_never_listed_or_run(tmp_path, monkeypatch):
+    import sys
+
+    launcher = tmp_path / "claude-agent-acp"
+    launcher.write_text(
+        f"#!/bin/sh\nFAKE_ACP_LOG={tmp_path}/agent.log exec {sys.executable} {FAKE_AGENT}\n"
+    )
+    launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "test-token")
+    monkeypatch.setenv("AVN_NUTBOT_HIDE_MODELS", " Fake-Large , *fable* ")
+    monkeypatch.setenv("AVN_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("AVN_ADMIN_TOKEN", TOKEN)
+    monkeypatch.setenv("AVN_NUTBOT_CLAUDE_ACP", str(launcher))
+    monkeypatch.setenv("AVN_NUTBOT_CLAUDE_MODEL", "fake-large")
+    settings = Settings.from_env()
+    assert settings.nutbot_hide_models == ("fake-large", "*fable*")
+    with TestClient(create_app(settings, admin=True)) as admin:
+        game = register(admin)
+        info = admin.get("/v1/nutbot").json()
+        claude = next(item for item in info["harnesses"] if item["id"] == "claude")
+        # The hidden configured default is dropped too, and so are its effort levels.
+        assert claude["models"] == ["fake-small"] and claude["default_model"] == "fake-small"
+        assert claude["efforts"] == {}
+        refused = admin.post(
+            f"/v1/games/{game['id']}/nutbot/chat",
+            json={"message": "x", "model": "FAKE-LARGE"},
+        )
+        assert refused.status_code == 400
+        assert (
+            admin.post(
+                f"/v1/games/{game['id']}/nutbot/chats", json={"model": "claude-fable-5-1"}
+            ).status_code
+            == 400
+        )
+        assert chat(admin, game)[0].status_code == 200
+        prompts = [item for item in agent_log(tmp_path) if item["kind"] == "prompt"]
+        assert prompts[-1]["model"] == "fake-small"
 
 
 def test_chats_are_listed_renamed_deleted_restored_and_private(bot):
@@ -708,24 +774,43 @@ def test_reports_are_saved_listed_pinned_and_guarded(bot, tmp_path):
     assert admin.get(base + "?pinned=true").json()["reports"] == []  # deleting unpinned it
 
 
-def test_save_report_tool_keeps_the_agents_findings(tools):
+def test_report_tool_only_offers_a_card_and_saving_is_the_persons(tools):
     admin, game, nutbot, make = tools
     run = make(can_write=False)
+    base = f"/v1/games/{game['id']}/nutbot/reports"
     error, text = call(
         nutbot,
         run,
-        "save_report",
+        "propose_report",
         title="Exits",
         body="Level 3 loses the most players.",
         headline={"title": "Top exit", "value": "Level 3"},
     )
-    assert not error and json.loads(text)["saved"] is True
-    saved = admin.get(f"/v1/games/{game['id']}/nutbot/reports").json()["reports"]
-    assert saved[0]["title"] == "Exits" and saved[0]["headline"]["value"] == "Level 3"
-    error, text = call(nutbot, run, "save_report", title="Empty", body="  ")
+    assert not error and "Nothing has changed" in json.loads(text)["message"]
+    # The agent's call saves nothing: the person gets a card.
+    assert admin.get(base).json()["reports"] == []
+    card = run.actions.popleft()
+    assert card["kind"] == "report" and card["payload"]["headline"]["value"] == "Level 3"
+    assert card["plain"][0] == "Saves “Exits” to this game's Reports"
+    # Save on the card posts the payload; pressing it twice keeps one report.
+    chat_id = "11111111-1111-4111-8111-111111111111"
+    first = admin.post(base, json={**card["payload"], "chat_id": chat_id}).json()
+    again = admin.post(base, json={**card["payload"], "chat_id": chat_id}).json()
+    assert first["id"] == again["id"] and len(admin.get(base).json()["reports"]) == 1
+    error, text = call(nutbot, run, "propose_report", title="Empty", body="  ")
     assert error and "needs a title" in text
-    error, text = call(nutbot, run, "save_report", title="Bad", body="x", headline={"title": "t"})
-    assert error
+    error, text = call(
+        nutbot, run, "propose_report", title="Bad", body="x", headline={"title": "t"}
+    )
+    assert error and not run.actions
+    names = {tool["name"] for tool in TOOLS}
+    assert "propose_report" in names and "save_report" not in names
+
+
+def test_skills_offer_reports_instead_of_saving_them():
+    folder = Path(__file__).parents[1] / "avn_analytics" / "nutbot_skills"
+    for skill in folder.glob("*.md"):
+        assert "save_report" not in skill.read_text(), skill.name
 
 
 def test_agent_home_and_work_directories_follow_the_settings(tmp_path):

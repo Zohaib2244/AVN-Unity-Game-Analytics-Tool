@@ -1,16 +1,20 @@
 // A centred player viewer over the list: summary, dates, then Raw events, Event Analysis or Player info.
 // `?player=` opens it; Previous / Next walk the original list, which keeps its place behind the viewer.
+// NutBot: the dialog makes the page behind it inert, so the same conversation is drawn inside the viewer
+// (its slot) beside the player on wide screens, or as a Player / NutBot switch on narrow ones.
 import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { useLocation, useNavigate } from '@tanstack/react-router';
-import { DialogShell } from '@avn/ui';
+import { Button, DialogShell } from '@avn/ui';
 import { useRead } from '@/api';
+import { useNutBot } from '@/app/nutbot';
 import { DateRange, resolveRange } from '@/components/DateRange';
 import { QueryRegion, Skeleton, useNotify } from '@/components/feedback';
+import { Ico } from '@/components/icons';
 import type { ActiveFilters, DayRange } from '@/lib/filters';
 import { timezoneOffset } from '@/lib/filters';
 import { analysisDate, duration, number, type Timezone } from '@/lib/format';
 import { gameURL } from '@/lib/games';
-import { storeGet, storeSet } from '@/lib/store';
+import { copyText } from '@/lib/store';
 import type { Game, PlayerStory } from '@/lib/types';
 import { PlayerInformation } from './DeviceInfo';
 import { RawTimeline } from './RawTimeline';
@@ -18,18 +22,22 @@ import { RawTimeline } from './RawTimeline';
 /** The players the viewer walks: how many there are, which one is open, and the player at a position. */
 export type PlayerBrowse = { index: number; total: number; load: (position: number) => Promise<{ id: string } | undefined> };
 type PlayerTab = 'raw' | 'analysis' | 'info';
-const TAB_KEY = (game: Pick<Game, 'id'>) => `avn-story-view-${game.id}`;
 
 export function PlayerViewer({ game, player, filters, browse, onClose }: { game: Game; player: string | null; filters: ActiveFilters; browse?: PlayerBrowse; onClose: () => void }): ReactElement {
   const open = player != null;
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { toastError } = useNotify();
+  const { toast, toastError } = useNotify();
   const [index, setIndex] = useState(browse?.index ?? 0);
   const [browsing, setBrowsing] = useState(false);
   const body = useRef<HTMLDivElement>(null);
+  const nutbot = useNutBot();
+  const chatting = open && nutbot.usable && nutbot.open;
+  // On a narrow viewer only one of the two shows; every player opening starts on the player.
+  const [pane, setPane] = useState<'player' | 'chat'>('player');
   useEffect(() => { setIndex(browse?.index ?? 0); }, [browse]);
-  useEffect(() => { if (body.current) body.current.scrollTop = 0; }, [player]);
+  useEffect(() => { if (body.current) body.current.scrollTop = 0; setPane('player'); }, [player]);
+  const askNutBot = () => { nutbot.setOpen(true); setPane('chat'); };
 
   // Radix has no Dialog.Trigger here: the row lives on the page and the URL controls opening.
   // Restore its focus after the dialog finishes handing focus back on close.
@@ -79,11 +87,24 @@ export function PlayerViewer({ game, player, filters, browse, onClose }: { game:
       open={open}
       onOpenChange={(next) => { if (!next) onClose(); }}
       title="Player details"
+      className={chatting ? 'with-nb' : undefined}
     >
-      <div className="player-view">
+      <div className={`player-view${chatting ? ` with-nb pane-${pane}` : ''}`}>
         <header className="player-view-head">
-          <span className="player-view-id mono">{player}</span>
-          <button type="button" className="button small-button player-view-close" onClick={onClose}>Close ×</button>
+          <div className="player-view-identity">
+            <span className="player-view-id mono">{player}</span>
+            {player ? <Button variant="ghost" size="sm" aria-label="Copy player ID" title="Copy player ID" onClick={async () => { toast((await copyText(player)) ? 'Player ID copied.' : 'Select the player ID and copy it manually.'); }}><Ico name="copy" size={16} /></Button> : null}
+          </div>
+          <div className="player-view-tools">
+            {nutbot.usable && !chatting ? <Button size="sm" onClick={askNutBot}>Ask NutBot</Button> : null}
+            {chatting ? (
+              <div className="segmented player-view-panes" role="group" aria-label="Show">
+                <button type="button" aria-pressed={pane === 'player'} onClick={() => setPane('player')}>Player</button>
+                <button type="button" aria-pressed={pane === 'chat'} onClick={() => setPane('chat')}>NutBot</button>
+              </div>
+            ) : null}
+            <button type="button" className="button small-button player-view-close" onClick={onClose}>Close ×</button>
+          </div>
           {browse && player ? (
             <div className="player-browse">
               <button type="button" className="button small-button" onClick={() => void go(-1)} disabled={browsing || index === 0}>‹ Previous</button>
@@ -92,8 +113,11 @@ export function PlayerViewer({ game, player, filters, browse, onClose }: { game:
             </div>
           ) : null}
         </header>
-        <div className="player-view-body" ref={body}>
-          {player ? <PlayerDetails game={game} player={player} filters={filters} /> : null}
+        <div className="player-view-main">
+          <div className="player-view-body" ref={body}>
+            {player ? <PlayerDetails game={game} player={player} filters={filters} /> : null}
+          </div>
+          {chatting ? <div className="player-view-chat" ref={nutbot.setSlot} /> : null}
         </div>
       </div>
     </DialogShell>
@@ -104,11 +128,8 @@ export function PlayerViewer({ game, player, filters, browse, onClose }: { game:
 function PlayerDetails({ game, player, filters }: { game: Game; player: string; filters: ActiveFilters }): ReactElement {
   const [range, setRange] = useState<DayRange>(() => resolveRange(filters.range.preset || '30', filters.range));
   const [timezone, setTimezone] = useState<Timezone>(filters.timezone);
-  const [tab, setTab] = useState<PlayerTab>(() => {
-    const saved = storeGet<string>(TAB_KEY(game));
-    return saved === 'info' || saved === 'analysis' ? saved : 'raw';
-  });
-  const chooseTab = (next: PlayerTab) => { setTab(next); storeSet(TAB_KEY(game), next); };
+  const [tab, chooseTab] = useState<PlayerTab>('raw');
+  useEffect(() => { chooseTab('raw'); }, [player]);
   const storyPath = `${gameURL(game)}/insights/story?${new URLSearchParams({ start: range.from, end: range.to, player, tz_offset: String(timezoneOffset({ timezone })) })}`;
   const story = useRead<PlayerStory>(storyPath);
 

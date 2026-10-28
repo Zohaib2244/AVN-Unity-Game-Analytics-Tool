@@ -10,4 +10,4 @@ Compare the builds for {args_or_default}.
 3. Name the levels that got better or worse by a margin that is bigger than the sample allows for (ignore levels with few players), and what changed in what players did there (get_level_detail for the biggest movers).
 4. For new players, run compare_player_groups on the early behaviour that matters (time to finish level 1, say) for each build if the builds have enough new players, and say whether the outcome moved.
 
-Say plainly which build is healthier and where, how sure you are, and what to check or fix first. End by saving it with save_report titled with both versions.
+Say plainly which build is healthier and where, how sure you are, and what to check or fix first. End by offering it with propose_report titled with both versions.

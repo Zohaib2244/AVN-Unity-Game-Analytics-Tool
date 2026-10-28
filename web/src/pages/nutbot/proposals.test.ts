@@ -1,4 +1,4 @@
-import { applyMode, applyProposal, proposalKey, proposalPage } from './proposals';
+import { applyMode, applyProposal, proposalKey, proposalPage, savesReport } from './proposals';
 import type { Game, NutBotProposal } from '@/lib/types';
 
 const game = { id: 'g1', name: 'Test', platform: 'android' } as unknown as Game;
@@ -52,5 +52,19 @@ describe('NutBot proposals', () => {
     expect(applyMode()).toBe('ask');
     localStorage.setItem('avn-nutbot-apply', JSON.stringify('auto'));
     expect(applyMode()).toBe('auto');
+  });
+
+  it('saves a report only when applied, tied to its chat, and Undo deletes it', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => { calls.push({ url, init }); return new Response(JSON.stringify({ id: 'r1' }), { status: 200, headers: { 'Content-Type': 'application/json' } }); }));
+    const card = proposal('report', { title: 'Exits', body: 'Level 3.', headline: { title: 'Top exit', value: 'Level 3' } });
+    expect(savesReport(card)).toBe(true);
+    expect(savesReport(proposal('funnel', {}))).toBe(false);
+    const done = await applyProposal(game, card, 'c1');
+    expect(calls[0]).toMatchObject({ url: '/v1/games/g1/nutbot/reports', init: { method: 'POST' } });
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ title: 'Exits', body: 'Level 3.', headline: { title: 'Top exit', value: 'Level 3' }, chat_id: 'c1' });
+    await done.undo();
+    expect(calls.at(-1)).toMatchObject({ url: '/v1/games/g1/nutbot/reports/r1', init: { method: 'DELETE' } });
+    vi.unstubAllGlobals();
   });
 });

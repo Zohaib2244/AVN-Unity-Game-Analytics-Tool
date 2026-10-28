@@ -37,10 +37,12 @@ export function contextChips({ game, section, filters, player }: PageContext): C
 /** The chips as the @avn/ui panel wants them (the left-out ones stay visible with a +). */
 export const panelChips = (chips: Chip[], off: ReadonlySet<string>): ContextChip[] => chips.map((chip) => ({ id: chip.id, label: chip.label, fixed: !chip.removable, off: off.has(chip.id) }));
 
-/** The line under an answer: which page filters it used. */
+/** The line under an answer: which page filters it used, and the player it was about. Taken when the question is sent. */
 export function scopeLine(chips: Chip[], off: ReadonlySet<string>): string {
   const used = chips.filter((chip) => !off.has(chip.id) && ['range', 'filters'].includes(chip.id)).map((chip) => chip.label);
-  return used.length ? `Same filters as the page · ${used.join(' · ')}` : 'No page filters applied';
+  const player = chips.find((chip) => chip.id === 'player' && !off.has(chip.id));
+  const line = used.length ? `Same filters as the page · ${used.join(' · ')}` : 'No page filters applied';
+  return player ? `${line} · ${player.label}` : line;
 }
 
 /** The context sent with a message: page, range, filters, the open player and the funnel being drafted. */

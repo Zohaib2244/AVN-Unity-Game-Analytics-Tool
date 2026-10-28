@@ -353,7 +353,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         storage.get_game(str(game_id))
         spec = nutbot._spec(body.harness)
         return nutbot.chats.create(
-            str(game_id), principal.email, spec.id, body.model or spec.default_model(), body.title
+            str(game_id), principal.email, spec.id, nutbot.model_for(spec, body.model), body.title
         )
 
     @admin_api.get("/v1/games/{game_id}/nutbot/chats/{chat_id}")

@@ -1,6 +1,7 @@
 """NutBot's reports: findings kept per game so the team can list, reopen and pin them.
 
-A report is markdown the assistant wrote (or the person saved from an answer), an optional headline
+A report is markdown the assistant wrote (offered as a card the person saves, or saved from an
+answer), an optional headline
 (a small figure that can be pinned to the Overview) and who asked. They live in the registry next to
 the chats. Everyone who may use NutBot in the workspace can read a game's reports; the author and
 workspace leads and admins can change or delete one (a deleted report can come back for a day).
@@ -30,12 +31,17 @@ HEADLINE = {
 
 REPORT_TOOLS = [
     _tool(
-        "save_report",
-        "Keep your findings as a report for this game so the team can reopen it. Only when the person asked you to save one or the skill you are following says so. `body` is the report in markdown: the finding with its numbers first, then what to try, then what could not be answered. Add a headline when one number sums it up.",
+        "propose_report",
+        "Offer your findings as a report for this game. The person gets a card and the report is "
+        "saved only when they press Save, so never say it was saved. Use it when they ask for a "
+        "report or the skill you are following says so. `body` is the report in markdown: the "
+        "finding with its numbers first, then what to try, then what could not be answered. Add a "
+        "headline when one number sums it up.",
         {
             "title": {"type": "string", "description": "At most 80 characters."},
             "body": {"type": "string"},
             "headline": HEADLINE,
+            "why": {"type": "string", "description": "One line: why this is worth keeping."},
         },
         ["title", "body"],
     ),
@@ -105,6 +111,14 @@ class Reports:
         headline = clean_headline(headline)
         report_id, now = str(uuid4()), timestamp()
         with self.storage.connect(self.registry) as connection:
+            if chat_id:  # pressing Save on the same card again (say after a reload) keeps one copy
+                same = connection.execute(
+                    "SELECT id FROM nutbot_reports WHERE game_id=? AND chat_id=? AND title=? "
+                    "AND body=? AND deleted_at IS NULL",
+                    (game_id, chat_id, title, body[:MAX_BODY]),
+                ).fetchone()
+                if same:
+                    return self.get(same["id"], game_id)
             connection.execute(
                 "INSERT INTO nutbot_reports VALUES (?,?,?,?,?,?,0,?,?,?,NULL)",
                 (
@@ -190,24 +204,20 @@ class Reports:
 
 
 class ReportTools:
-    """The save_report handler; NutBot supplies `reports` and the run."""
+    """The propose_report handler; NutBot supplies `_propose` and the run. Nothing is saved here."""
 
-    def tool_save_report(self, run, game_id, args):
+    def tool_propose_report(self, run, game_id, args):
+        title, body = str(args.get("title") or "").strip()[:80], str(args.get("body") or "").strip()
+        if not title or not body:
+            raise ToolError("A report needs a title and some text.")
+        if len(body) > MAX_BODY:
+            raise ToolError(f"A report can be at most {MAX_BODY} characters.")
         try:
-            report = self.reports.create(
-                game_id,
-                run.principal.email,
-                args.get("title"),
-                args.get("body"),
-                args.get("headline"),
-                run.chat_id or "",
-            )
+            headline = clean_headline(args.get("headline"))
         except ValueError as error:
             raise ToolError(str(error)) from error
-        self.accounts.audit(run.principal, "nutbot.report", game_id, report["title"])
-        return {
-            "saved": True,
-            "id": report["id"],
-            "title": report["title"],
-            "message": "Saved. Tell the person it is under Reports in NutBot.",
-        }
+        plain = [f"Saves “{title}” to this game's Reports"]
+        if headline:
+            plain.append(f"Headline for the Overview: {headline['title']} · {headline['value']}")
+        payload = {"title": title, "body": body, "headline": headline}
+        return self._propose(run, game_id, "report", {**args, "title": title}, payload, plain)

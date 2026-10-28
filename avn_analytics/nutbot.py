@@ -33,7 +33,7 @@ from .models import (
     FunnelQuery,
     PlayerRules,
 )
-from .nutbot_acp import AcpHarness, Turn, scrub
+from .nutbot_acp import AcpHarness, Turn, hidden_model, scrub
 from .nutbot_base import (
     RANGE_PROPS,
     STEPS,
@@ -78,7 +78,7 @@ TOOL_LABELS = {
     "compare_player_groups": "Comparing player groups",
     "list_saved_groups": "Reading the saved groups",
     "propose_player_groups": "Building a group comparison",
-    "save_report": "Saving a report",
+    "propose_report": "Preparing a report",
     "compare_cohorts": "Comparing two groups",
     "get_behaviour": "Looking for behaviour patterns",
     "save_funnel": "Saving a funnel",
@@ -416,6 +416,17 @@ class NutBot(AnalysisTools, ProposalTools, GroupTools, ReportTools):
             raise HTTPException(400, "Unknown assistant")
         return spec
 
+    def model_for(self, spec, wanted):
+        """The model to run: the one asked for, else the listed default. Hidden ones are refused."""
+        model = (wanted or "").strip()
+        if hidden_model(self.settings, model):
+            raise HTTPException(400, "That model isn't offered here")
+        if not model:
+            model = self.harness.describe(spec)["default_model"] or ""
+        if model and not re.fullmatch(r"[A-Za-z0-9._:/\-\[\]]{1,80}", model):
+            raise HTTPException(400, "Unknown model")
+        return model
+
     def prepare(self, principal, game, workspace_id, body):
         """Check a chat request and set it up; raises HTTP errors before anything streams."""
         message = (body.get("message") or "").strip()
@@ -428,9 +439,10 @@ class NutBot(AnalysisTools, ProposalTools, GroupTools, ReportTools):
         ok, reason = spec.status()
         if not ok:
             raise HTTPException(409, reason)
-        model = (body.get("model") or spec.default_model() or "").strip()
-        if model and not re.fullmatch(r"[A-Za-z0-9._:/\-\[\]]{1,80}", model):
-            raise HTTPException(400, "Unknown model")
+        model = self.model_for(spec, body.get("model"))
+        effort = (body.get("effort") or "").strip()
+        if effort and not re.fullmatch(r"[A-Za-z0-9._\-]{1,40}", effort):
+            raise HTTPException(400, "Unknown effort")
         self._admit(principal)
         self._prune()
         chat = None
@@ -462,7 +474,12 @@ class NutBot(AnalysisTools, ProposalTools, GroupTools, ReportTools):
         chat["title"] = chat["title"] or chat_title(message)
         self.runs[run.token] = run
         self.active[principal.email] = (run.token, time.time())
-        self.accounts.audit(principal, "nutbot.chat", game["id"], f"{spec.id}/{model}")
+        self.accounts.audit(
+            principal,
+            "nutbot.chat",
+            game["id"],
+            f"{spec.id}/{model}" + (f"/{effort}" if effort else ""),
+        )
         return {
             "run": run,
             "spec": spec,
@@ -472,6 +489,7 @@ class NutBot(AnalysisTools, ProposalTools, GroupTools, ReportTools):
                 prompt=self.user_prompt(asked, context, defaults, game, run),
                 system=self.system_prompt(),
                 model=model,
+                effort=effort,
                 session_id=session_id or None,
                 replay=replay,
             ),
@@ -627,7 +645,7 @@ How you work
 - To change data (save_funnel, set_event_label): say exactly what you will change, wait for a clear yes, then call the tool with confirmed=true. Never save things nobody asked for.
 - To build conditions for the pages (propose_players_view, propose_funnel, propose_highlight, propose_level_view): use real event and parameter names from list_events, test the rule first (find_players or run_funnel) so you can say how many players it matches, then propose it. A proposal is a card the person applies; it changes nothing by itself, so never say it is applied. explain_conditions reads a rule back in words.
 - Keep results small to spare the person's allowance: ask for the narrowest tool first (get_exits, get_level_detail, get_player_levels, get_behaviour) before the big tables (get_level_progress, list_events, get_player_story), and don't repeat a call you already have the answer to.
-- Save a report (save_report) only when the person asks or a skill tells you to. When a message begins with a skill's instructions, follow them.
+- Offer a report (propose_report) only when the person asks or a skill tells you to. It is saved only when they press Save on its card, so never say it was saved. When a message begins with a skill's instructions, follow them.
 - Order of work: call the data tools you need; then WRITE YOUR ANSWER (the findings with their numbers, and what to try next) as normal text; only after that, if something is worth opening (a funnel, a player story, the levels table), call show_in_dashboard as the very last step to add a shortcut button. The button never replaces the written answer, and a reply that is only "I added a button" is wrong.
 
 Style: plain, friendly and brief, a little dry humour is fine, accuracy comes first. Lead with the answer, then the numbers behind it, then one or two concrete things worth trying. Short paragraphs, small markdown tables or bullet lists are fine. Don't repeat raw JSON.

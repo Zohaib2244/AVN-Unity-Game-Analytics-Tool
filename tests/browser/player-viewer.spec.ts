@@ -11,6 +11,7 @@ for (const theme of ['dark', 'light']) {
         localStorage.setItem('avn-theme', theme);
         localStorage.setItem('avn-palette', palette);
         localStorage.setItem('avn-boot-day', new Date().toISOString().slice(0, 10));
+        localStorage.setItem('avn-story-view-viewer-game', JSON.stringify('info'));
       }, { theme, palette });
 
       for (const section of ['levels?level=12', 'players']) {
@@ -27,6 +28,7 @@ for (const theme of ['dark', 'light']) {
         const dialog = page.getByRole('dialog', { name: 'Player details', exact: true });
         await expect(dialog).toBeVisible();
         await expect(dialog.locator('.player-view-id')).toHaveText('player-one');
+        await expect(dialog.getByRole('button', { name: 'Raw events', exact: true })).toHaveAttribute('aria-pressed', 'true');
         await expect(dialog.locator('.journey-events li').first()).toBeAttached();
         const bounds = await dialog.boundingBox();
         const viewport = page.viewportSize()!;
@@ -53,6 +55,8 @@ for (const theme of ['dark', 'light']) {
         if (section.startsWith('levels')) expect(new URL(page.url()).searchParams.get('level')).toBe('"12"');
         await dialog.getByRole('button', { name: 'Player info', exact: true }).click();
         await expect(dialog.getByRole('heading', { name: 'Player information' })).toBeVisible();
+        expect((await dialog.boundingBox())!.height).toBe(bounds!.height);
+        expect((await dialog.boundingBox())!.y).toBe(bounds!.y);
         await dialog.getByRole('button', { name: 'Raw events', exact: true }).click();
 
         // Calendar popovers must stay beneath their anchor rather than inheriting a centring transform.

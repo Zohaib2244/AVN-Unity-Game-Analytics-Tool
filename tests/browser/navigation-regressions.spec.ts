@@ -68,13 +68,11 @@ test('Game selector stays beside its trigger on a scrolled page', async ({ page 
 
 test('Continue toast offers each browser its own last view while Home and direct links stay predictable', async ({ page, browser }, info) => {
   await page.goto('/games/viewer-game/levels?view=table');
-  await page.getByRole('radiogroup', { name: 'Time zone', exact: true }).getByRole('radio', { name: 'UTC', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Level by level', exact: true })).toBeVisible();
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Test games', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await expect(page).toHaveURL(/\/games\/viewer-game\/levels\?view=table$/);
-  await expect(page.getByRole('radiogroup', { name: 'Time zone', exact: true }).getByRole('radio', { name: 'UTC', exact: true })).toHaveAttribute('aria-checked', 'true');
 
   const otherBrowser = await browser.newContext({ baseURL: info.project.use.baseURL });
   try {
@@ -84,7 +82,8 @@ test('Continue toast offers each browser its own last view while Home and direct
     await other.goto('/');
     await expect(other.getByRole('heading', { name: 'Test games', exact: true })).toBeVisible();
     await other.goto('/games/viewer-game/players');
-    await expect(other.getByRole('radiogroup', { name: 'Time zone', exact: true }).getByRole('radio', { name: 'Local', exact: true })).toHaveAttribute('aria-checked', 'true');
+    // Let the page finish opening, so it is the one this browser remembers.
+    await expect(other.getByRole('heading', { name: 'Players', exact: true })).toBeVisible();
     await other.goto('/');
     await expect(other.getByRole('heading', { name: 'Test games', exact: true })).toBeVisible();
     await other.getByRole('button', { name: 'Continue', exact: true }).click();

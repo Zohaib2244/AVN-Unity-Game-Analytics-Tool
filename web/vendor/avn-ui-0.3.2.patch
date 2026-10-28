@@ -1,0 +1,424 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index e7844f5..51aba6b 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -33,3 +33,13 @@
+ - `@avn/ui` 0.1.0: React + TypeScript + Motion components with tests.
+ - `scripts/check-style.mjs`, `examples/minimal.html` (style/palette/theme previewer), `board/index.html` (live board).
+ - Docs: README, using in a project, changing the UX, adding a style.
++
++## 0.3.1
++
++- Keep dialogs open when using toast actions.
++- Allow viewport-positioned popovers and keep pickers anchored through scrolling and resizing.
++
++## 0.3.2
++
++- NutBot panel: header `actions`, a `view` that replaces the conversation while the composer stays, an `embedded` mode for drawing it inside a dialog, and an app-kept `draft` so the typed text survives the panel moving.
++- Dialogs: `className`, and Escape closes an open menu inside the dialog (a prompt bar's / or @ list) before the dialog.
+diff --git a/board/index.html b/board/index.html
+index 87f4793..e7a7711 100644
+--- a/board/index.html
++++ b/board/index.html
+@@ -4,6 +4,7 @@
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+ <!-- AVN style board: every UX pattern working, both styles, all palettes, three widths. Self-contained reference copy. -->
++<!-- Fixed popovers follow viewport anchors; toast actions keep their originating dialog open. -->
+ <title>AVN Family Style</title>
+ <meta name="claude:viewport-fit-sides" content="cover">
+ <link rel="preconnect" href="https://fonts.googleapis.com">
+diff --git a/package-lock.json b/package-lock.json
+index c13454d..f152ac0 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -3917,7 +3917,7 @@
+     },
+     "packages/ui": {
+       "name": "@avn/ui",
+-      "version": "0.1.0",
++      "version": "0.3.2",
+       "license": "UNLICENSED",
+       "dependencies": {
+         "@radix-ui/react-dialog": "^1.1.0",
+diff --git a/packages/ui/package.json b/packages/ui/package.json
+index 86cbd21..2fdcd6a 100644
+--- a/packages/ui/package.json
++++ b/packages/ui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@avn/ui",
+-  "version": "0.3.0",
++  "version": "0.3.2",
+   "description": "Shared React components for AVN dashboards and tools (plain CSS, Motion animation)",
+   "type": "module",
+   "license": "UNLICENSED",
+diff --git a/packages/ui/src/assistant.tsx b/packages/ui/src/assistant.tsx
+index 6bcaa7e..e1c52f0 100644
+--- a/packages/ui/src/assistant.tsx
++++ b/packages/ui/src/assistant.tsx
+@@ -155,6 +155,9 @@ export type PromptBarProps = {
+   placeholder?: string;
+   hint?: ReactNode;
+   autoFocus?: boolean;
++  /** The typed text, when the app keeps it (so it survives the bar moving); otherwise kept here. */
++  draft?: string;
++  onDraftChange?: (text: string) => void;
+ };
+ 
+ const ARROW = 'M12 4.5L18.5 11H14.25V19.5H9.75V11H5.5Z';
+@@ -167,11 +170,17 @@ export function parseToken(draft: string): { kind: 'at' | 'slash'; query: string
+   return { kind: m[2] === '@' ? 'at' : 'slash', query: (m[3] ?? '').toLowerCase(), start: m.index + (m[1] ?? '').length };
+ }
+ 
+-export function PromptBar({ busy, onSend, onStop, context = [], commands = [], placeholder = 'Ask about what you’re looking at…', hint, autoFocus }: PromptBarProps): ReactElement {
++export function PromptBar({ busy, onSend, onStop, context = [], commands = [], placeholder = 'Ask about what you’re looking at…', hint, autoFocus, draft: kept, onDraftChange }: PromptBarProps): ReactElement {
+   const reduce = useReducedMotion();
+   const inputRef = useRef<HTMLTextAreaElement>(null);
+   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
+-  const [draft, setDraft] = useState('');
++  const [own, setOwn] = useState('');
++  const draft = kept ?? own;
++  const setDraft = (next: string | ((previous: string) => string)) => {
++    const text = typeof next === 'function' ? next(draft) : next;
++    if (kept === undefined) setOwn(text);
++    onDraftChange?.(text);
++  };
+   const [plus, setPlus] = useState(false);
+   const [dismissed, setDismissed] = useState(false);
+   const [active, setActive] = useState(0);
+@@ -227,7 +236,7 @@ export function PromptBar({ busy, onSend, onStop, context = [], commands = [], p
+   const pickedChips = picked.map((id) => context.find((c) => c.id === id)).filter(Boolean) as ContextChip[];
+ 
+   return (
+-    <div className="pbar">
++    <div className="pbar" data-menu-open={open ? '' : undefined}>
+       {open ? (
+         <div className="pbar-menu" role="listbox" aria-label={open === 'at' ? 'Add context' : 'Commands'}>
+           <i className={cx('pbar-glow', list.length > 0 && 'on')} aria-hidden="true" style={{ ['--y' as string]: `${glow.y}px`, ['--h' as string]: `${glow.h}px` }} />
+@@ -353,35 +362,37 @@ export type NutBotPanelProps = {
+   onPin?: (pin: Pin) => void;
+   /** The assistant's icon (the style's NutBot pixel icon). */
+   face?: ReactNode;
++  /** Extra header buttons (history, settings…), shown before New conversation. */
++  actions?: ReactNode;
++  /** Shown instead of the context row and the conversation (history, settings…); the composer stays. */
++  view?: ReactNode;
++  /** Drawn inside another surface (a dialog) instead of sliding in as the side panel. */
++  embedded?: boolean;
++  /** The typed text, when the app keeps it (see PromptBar). */
++  draft?: string;
++  onDraftChange?: (text: string) => void;
+ };
+ 
+ /**
+  * The assistant panel every AVN tool shares. The app supplies messages (built from its own tools);
+  * this renders context chips, the thought line with call chips, answer blocks, proposal cards and the prompt bar.
+  */
+-export function NutBotPanel({ open, onClose, messages, busy, onSend, onStop, onNew, context, onToggleContext, suggestions, commands, subtitle = 'Answers with this app’s tools · asks before changing anything', onPin, face }: NutBotPanelProps): ReactElement {
++export function NutBotPanel({ open, onClose, messages, busy, onSend, onStop, onNew, context, onToggleContext, suggestions, commands, subtitle = 'Answers with this app’s tools · asks before changing anything', onPin, face, actions, view, embedded, draft, onDraftChange }: NutBotPanelProps): ReactElement {
+   const reduce = useReducedMotion();
+   const listRef = useRef<HTMLDivElement>(null);
+-  useEffect(() => { listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight }); }, [messages, open]);
++  useEffect(() => { listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight }); }, [messages, open, view]);
+ 
+-  return (
+-    <AnimatePresence>
+-      {open ? (
+-        <motion.aside
+-          className="nb"
+-          aria-label="NutBot"
+-          style={{ animation: 'none' }}
+-          initial={reduce ? false : { x: '100%' }}
+-          animate={{ x: 0 }}
+-          exit={reduce ? { opacity: 0 } : { x: '100%' }}
+-          transition={{ type: 'spring', stiffness: 380, damping: 40 }}
+-        >
+-          <div className="nb-h">
+-            <span className={cx('nb-face', busy && 'think')}>{face}</span>
+-            <span className="sp1"><b>NutBot</b><small>{subtitle}</small></span>
+-            <button type="button" className="icon-btn" aria-label="New conversation" title="New conversation" onClick={onNew}><Icon name="edit" /></button>
+-            <button type="button" className="icon-btn" aria-label="Close NutBot" onClick={onClose}><Icon name="x" /></button>
+-          </div>
++  const inner = (
++    <>
++      <div className="nb-h">
++        <span className={cx('nb-face', busy && 'think')}>{face}</span>
++        <span className="sp1"><b>NutBot</b><small>{subtitle}</small></span>
++        {actions}
++        <button type="button" className="icon-btn" aria-label="New conversation" title="New conversation" onClick={onNew}><Icon name="edit" /></button>
++        <button type="button" className="icon-btn" aria-label="Close NutBot" title="Close NutBot" onClick={onClose}><Icon name="x" /></button>
++      </div>
++      {view ? <div className="nb-view">{view}</div> : (
++        <>
+           <div className="nb-ctx">
+             <span>Looking at</span>
+             {context.map((c) => (
+@@ -418,9 +429,25 @@ export function NutBotPanel({ open, onClose, messages, busy, onSend, onStop, onN
+               </div>
+             )}
+           </div>
+-          <div className="nb-in">
+-            <PromptBar busy={busy} onSend={onSend} onStop={onStop} context={context.filter((c) => !c.off)} commands={commands} hint="Enter to send · Shift + Enter for a new line · @ adds context · / commands · Ctrl J opens or closes" />
+-          </div>
++        </>
++      )}
++      <div className="nb-in"><PromptBar busy={busy} onSend={onSend} onStop={onStop} context={context.filter((c) => !c.off)} commands={commands} draft={draft} onDraftChange={onDraftChange} hint="Enter to send · Shift + Enter for a new line · @ adds context · / commands · Ctrl J opens or closes" /></div>
++    </>
++  );
++  if (embedded) return open ? <section className="nb nb-embedded" aria-label="NutBot">{inner}</section> : <></>;
++  return (
++    <AnimatePresence>
++      {open ? (
++        <motion.aside
++          className="nb"
++          aria-label="NutBot"
++          style={{ animation: 'none' }}
++          initial={reduce ? false : { x: '100%' }}
++          animate={{ x: 0 }}
++          exit={reduce ? { opacity: 0 } : { x: '100%' }}
++          transition={{ type: 'spring', stiffness: 380, damping: 40 }}
++        >
++          {inner}
+         </motion.aside>
+       ) : null}
+     </AnimatePresence>
+diff --git a/packages/ui/src/overlays.tsx b/packages/ui/src/overlays.tsx
+index 8f151a6..8e714bf 100644
+--- a/packages/ui/src/overlays.tsx
++++ b/packages/ui/src/overlays.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from 'react';
++import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactElement, type ReactNode } from 'react';
+ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+ import * as RadixDialog from '@radix-ui/react-dialog';
+ import * as RadixTooltip from '@radix-ui/react-tooltip';
+@@ -74,16 +74,23 @@ export function Drawer({ open, onClose, title, subtitle, onBack, headerExtra, fo
+ 
+ /* ───────── Dialogs ───────── */
+ 
+-type DialogShellProps = { open: boolean; onOpenChange: (open: boolean) => void; title: string; children: ReactNode };
++type DialogShellProps = { open: boolean; onOpenChange: (open: boolean) => void; title: string; children: ReactNode; /** Extra classes on the dialog box (a wider viewer, say). */ className?: string };
+ 
+ /** Radix dialog (focus trap, aria, Esc) rendered inside the app frame with our classes. */
+-export function DialogShell({ open, onOpenChange, title, children }: DialogShellProps): ReactElement {
++export function DialogShell({ open, onOpenChange, title, children, className }: DialogShellProps): ReactElement {
+   const container = useAppContainer();
+   return (
+     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
+       <RadixDialog.Portal container={container ?? undefined}>
+         <RadixDialog.Overlay className="dlg-bg" />
+-        <RadixDialog.Content className="dlg" aria-describedby={undefined}>
++        <RadixDialog.Content className={cx('dlg', className)} aria-describedby={undefined} onEscapeKeyDown={(event) => {
++          // Escape closes the innermost thing first: an open menu inside the dialog (a prompt bar's / or @ list).
++          const active = document.activeElement;
++          if (active instanceof Element && active.closest('[data-menu-open]')) event.preventDefault();
++        }} onInteractOutside={(event) => {
++          // Toast actions belong to the open task, even though their host lives outside this dialog.
++          if (event.target instanceof Element && event.target.closest('.toasts')) event.preventDefault();
++        }}>
+           <RadixDialog.Title asChild><h2>{title}</h2></RadixDialog.Title>
+           {children}
+         </RadixDialog.Content>
+@@ -192,17 +199,24 @@ export function Definition({ term, children, source }: { term: string; children:
+  * Opens under its anchor inside the app frame (so on a phone the CSS turns it into a bottom sheet).
+  * Esc or an outside click closes it.
+  */
+-export function Popover({ open, onClose, anchor, width = 260, className, children }: { open: boolean; onClose: () => void; anchor: React.RefObject<HTMLElement | null>; width?: number; className?: string; children: ReactNode }): ReactElement | null {
++export function Popover({ open, onClose, anchor, width = 260, position = 'absolute', className, children }: { open: boolean; onClose: () => void; anchor: React.RefObject<HTMLElement | null>; width?: number; position?: 'absolute' | 'fixed'; className?: string; children: ReactNode }): ReactElement | null {
+   const app = useAppContainer();
+   const ref = useRef<HTMLDivElement>(null);
+   const [pos, setPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+ 
+-  useEffect(() => {
++  useLayoutEffect(() => {
+     if (!open || !anchor.current) return;
+-    const a = anchor.current.getBoundingClientRect();
+-    const frame = (app ?? document.body).getBoundingClientRect();
+-    setPos({ x: Math.max(10, Math.min(a.left - frame.left, frame.width - width - 10)), y: a.bottom - frame.top + 6 });
+-  }, [open, anchor, app, width]);
++    const place = () => {
++      if (!anchor.current) return;
++      const a = anchor.current.getBoundingClientRect();
++      const frame = position === 'fixed' ? { left: 0, top: 0, width: window.innerWidth } : (app ?? document.body).getBoundingClientRect();
++      setPos({ x: Math.max(10, Math.min(a.left - frame.left, frame.width - width - 10)), y: a.bottom - frame.top + 6 });
++    };
++    place();
++    window.addEventListener('resize', place);
++    document.addEventListener('scroll', place, true);
++    return () => { window.removeEventListener('resize', place); document.removeEventListener('scroll', place, true); };
++  }, [open, anchor, app, width, position]);
+ 
+   useEffect(() => {
+     if (!open) return;
+@@ -221,7 +235,7 @@ export function Popover({ open, onClose, anchor, width = 260, className, childre
+   return (
+     <>
+       <div className="pop-bg" aria-hidden="true" />
+-      <div ref={ref} className={cx('pop', className)} role="dialog" style={{ ['--x' as string]: `${pos.x}px`, ['--y' as string]: `${pos.y}px`, ['--w' as string]: `${width}px` }}>
++      <div ref={ref} className={cx('pop', className)} role="dialog" style={{ position, ['--x' as string]: `${pos.x}px`, ['--y' as string]: `${pos.y}px`, ['--w' as string]: `${width}px` }}>
+         {children}
+       </div>
+     </>
+diff --git a/packages/ui/test/cards.test.tsx b/packages/ui/test/cards.test.tsx
+index cbd02fc..db7db47 100644
+--- a/packages/ui/test/cards.test.tsx
++++ b/packages/ui/test/cards.test.tsx
+@@ -247,4 +247,24 @@ describe('NutBot', () => {
+     render(panel({ open: false }));
+     expect(screen.queryByLabelText('NutBot')).toBeNull();
+   });
++  it('a kept draft survives the panel moving to another surface', async () => {
++    const user = userEvent.setup();
++    let kept = '';
++    const onDraftChange = vi.fn((text: string) => { kept = text; });
++    const { unmount } = render(panel({ draft: kept, onDraftChange }));
++    await user.type(screen.getByLabelText('Message NutBot'), 'W');
++    expect(onDraftChange).toHaveBeenLastCalledWith('W');
++    unmount();
++    render(panel({ embedded: true, draft: 'Why level 12', onDraftChange }));
++    expect(screen.getByLabelText('Message NutBot')).toHaveValue('Why level 12');
++    expect(screen.getByLabelText('NutBot').tagName).toBe('SECTION');
++  });
++  it('header actions sit beside New, and a view replaces the conversation but keeps the composer', () => {
++    render(panel({ messages, actions: <button type="button">History</button>, view: <p>Earlier chats</p> }));
++    expect(screen.getByRole('button', { name: 'History' })).toBeInTheDocument();
++    expect(screen.getByText('Earlier chats')).toBeInTheDocument();
++    expect(screen.queryByText('Level 12.')).toBeNull();
++    expect(screen.queryByText('Looking at')).toBeNull();
++    expect(screen.getByLabelText('Message NutBot')).toBeInTheDocument();
++  });
+ });
+diff --git a/packages/ui/test/overlays.test.tsx b/packages/ui/test/overlays.test.tsx
+index 3bd52b3..7d55050 100644
+--- a/packages/ui/test/overlays.test.tsx
++++ b/packages/ui/test/overlays.test.tsx
+@@ -1,8 +1,10 @@
+-import { createRef } from 'react';
++import { createRef, useState } from 'react';
+ import { describe, expect, it, vi } from 'vitest';
+-import { render, screen } from '@testing-library/react';
++import { render, screen, fireEvent } from '@testing-library/react';
+ import userEvent from '@testing-library/user-event';
+-import { Calendar, ConfirmDelete, Drawer, MultiSelect, Popover, SingleSelect, confirmsName, monthGrid, pickDay, sameDay } from '../src/overlays';
++import { Calendar, ConfirmDelete, DialogShell, Drawer, MultiSelect, Popover, SingleSelect, confirmsName, monthGrid, pickDay, sameDay } from '../src/overlays';
++import { ToastProvider, useToast } from '../src/feedback';
++import { AppContainerProvider } from '../src/context';
+ import { Button } from '../src/primitives';
+ 
+ describe('typed confirmation', () => {
+@@ -132,3 +134,62 @@ describe('date range', () => {
+     expect(screen.getByText('NOVEMBER 2026')).toBeInTheDocument();
+   });
+ });
++
++
++describe('dialog toast actions', () => {
++  it('Escape closes an open menu inside a dialog before the dialog', () => {
++    const onOpenChange = vi.fn();
++    render(
++      <DialogShell open onOpenChange={onOpenChange} title="Player details" className="wide">
++        <div data-menu-open=""><textarea aria-label="Message" /></div>
++      </DialogShell>,
++    );
++    expect(screen.getByRole('dialog')).toHaveClass('dlg', 'wide');
++    const box = screen.getByLabelText('Message');
++    box.focus();
++    fireEvent.keyDown(box, { key: 'Escape' });
++    expect(onOpenChange).not.toHaveBeenCalled();
++    box.parentElement!.removeAttribute('data-menu-open');
++    fireEvent.keyDown(box, { key: 'Escape' });
++    expect(onOpenChange).toHaveBeenCalledWith(false);
++  });
++  it('restores data without closing its dialog', async () => {
++    function Example() {
++      const [open, setOpen] = useState(true);
++      const [hidden, setHidden] = useState(false);
++      const { toast } = useToast();
++      return <DialogShell open={open} onOpenChange={setOpen} title="Player details"><button onClick={() => {
++        setHidden(true);
++        toast({ title: 'Parameter hidden', action: { label: 'Undo', onClick: () => setHidden(false) } });
++      }}>Hide parameter</button>{hidden ? null : <span>score</span>}</DialogShell>;
++    }
++    const user = userEvent.setup();
++    render(<ToastProvider><Example /></ToastProvider>);
++    await user.click(screen.getByRole('button', { name: 'Hide parameter' }));
++    expect(screen.queryByText('score')).toBeNull();
++    const undo = screen.getByRole('button', { name: 'Undo', hidden: true });
++    fireEvent.pointerDown(undo);
++    fireEvent.click(undo);
++    expect(screen.getByRole('dialog', { name: 'Player details' })).toBeInTheDocument();
++    expect(screen.getByText('score')).toBeInTheDocument();
++  });
++});
++
++describe('fixed popovers', () => {
++  it('uses viewport coordinates when the app has scrolled, and follows its anchor', () => {
++    const anchor = createRef<HTMLButtonElement>();
++    const app = document.createElement('div');
++    app.getBoundingClientRect = () => ({ left: 0, top: -300, width: 1200 } as DOMRect);
++    let bottom = 140;
++    const { rerender } = render(<button ref={anchor}>Game</button>);
++    anchor.current!.getBoundingClientRect = () => ({ left: 20, bottom } as DOMRect);
++    rerender(<AppContainerProvider appEl={app}><button ref={anchor}>Game</button><Popover open position="fixed" anchor={anchor} onClose={() => {}}>Games</Popover></AppContainerProvider>);
++    // The wrapper changes the button's identity, so replace its measurement and dispatch a scroll.
++    anchor.current!.getBoundingClientRect = () => ({ left: 20, bottom } as DOMRect);
++    fireEvent.scroll(document);
++    expect(screen.getByRole('dialog').style.getPropertyValue('--y')).toBe('146px');
++    bottom = 100;
++    fireEvent.scroll(document);
++    expect(screen.getByRole('dialog').style.getPropertyValue('--y')).toBe('106px');
++  });
++});
+diff --git a/ux/assets/components.css b/ux/assets/components.css
+index a227c2e..460b9e8 100644
+--- a/ux/assets/components.css
++++ b/ux/assets/components.css
+@@ -511,6 +511,7 @@ button.join:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
+ /* NutBot: assistant panel, shared by every AVN tool */
+ .nb { position: absolute; z-index: 66; top: 0; right: 0; bottom: 0; width: min(420px, 96%); display: flex; flex-direction: column; background: var(--panel); border-left: var(--bw) solid var(--line-strong); box-shadow: -24px 0 50px -24px rgba(0, 0, 0, .55); animation: drawerin .3s var(--ease) both; }
+ .nb[hidden] { display: none; }
++.nb.nb-embedded { position: relative; inset: auto; z-index: auto; width: auto; min-height: 0; border-left: 0; box-shadow: none; animation: none; }
+ @container app (min-width: 901px) { .app.nb-open .drawer { right: min(420px, 96%); } }
+ .nb-h { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: var(--bw) solid var(--line); }
+ .nb-face { width: 30px; height: 30px; border-radius: 8px; overflow: hidden; flex: 0 0 auto; box-shadow: 0 0 0 1px var(--line); }
+@@ -524,6 +525,7 @@ button.join:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
+ .ctxchip button:hover { background: var(--raise); color: var(--text); }
+ .ctxchip.off { opacity: .45; text-decoration: line-through; }
+ .nb-list { flex: 1; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
++.nb-view { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+ .nb-hello { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+ .nb-hello h3 { font-family: var(--font-px); font-weight: var(--w-display); font-size: 19px; }
+ .nb-hello p { color: var(--muted); font-size: 13px; }
+diff --git a/ux/references/assistant.md b/ux/references/assistant.md
+index 73e6f7c..7870f00 100644
+--- a/ux/references/assistant.md
++++ b/ux/references/assistant.md
+@@ -5,6 +5,7 @@ it answers with **that app's components**. The look comes from the style.
+ 
+ ## Where it lives
+ - A panel on the right (`.nb`, ≈420 px); the page stays usable beside it. An open drawer slides left to sit next to it. Phone: bottom sheet.
++- A modal viewer (player details) can't share the page with the panel: the same conversation moves inside the viewer (`embedded`), with the typed draft kept, and returns to the side when the viewer closes. History, reports and settings open as header views above the composer, never under it.
+ - Opens from the NutBot button, **Ctrl/Cmd + J**, or "Ask NutBot" in the command palette.
+ - Composer is a **prompt bar** (`.pbar`): a textarea that grows to five lines; a **+** button and typing **@** open the context list (game, page, range, player, session: the same chips as "Looking at"); typing **/** opens the app's commands (`/funnel`, `/players`, `/export` …); ↑ ↓ move a glow between rows, Enter or Tab picks, Esc closes. Enter sends, Shift + Enter new line. The send arrow **morphs into a stop square** while NutBot works; pressing it stops. New-conversation button. Conversations are kept per game.
+ 
+diff --git a/ux/references/feedback.md b/ux/references/feedback.md
+index 18ce621..67f33bc 100644
+--- a/ux/references/feedback.md
++++ b/ux/references/feedback.md
+@@ -45,3 +45,5 @@ Every toast is also kept in the **bell** (last 50) with time and kind; the bell
+ 
+ ## Freshness
+ Each data panel shows "Updated 2 min ago" with a refresh icon (spins while refreshing). The top bar's refresh menu has "Refresh now" and **auto-refresh** (off / 1 / 5 / 15 min); when on, a small badge shows the interval.
++
++Toast actions remain usable while a dialog is open; using Undo or Dismiss must keep the current dialog open.
+diff --git a/ux/references/pickers.md b/ux/references/pickers.md
+index d131ced..898aeb1 100644
+--- a/ux/references/pickers.md
++++ b/ux/references/pickers.md
+@@ -26,3 +26,5 @@ All three share one popover (`.pop`). Desktop/tablet: opens under its control, a
+ - **Stepping**: ‹ › move the range by its own length (a 7-day range steps a week, a month steps a month) and turn it into a custom range, because "the same window, one period earlier" is the comparison people ask for.
+ - **Full variant** (settings, forms): every preset is a pressed button in a wrapping row above the days, so the choice is visible without opening anything.
+ - Applied filters are chips under the bar (`FilterBar`); the chip only removes, the app offers Undo in the toast.
++
++Popover coordinates use their CSS positioning space: viewport coordinates for fixed overlays, app coordinates for absolute overlays. Reposition when scrolling or resizing so the picker stays with its trigger.

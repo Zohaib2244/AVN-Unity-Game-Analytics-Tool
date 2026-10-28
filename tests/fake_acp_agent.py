@@ -43,8 +43,9 @@ def log(kind, **data):
         handle.write(json.dumps({"kind": kind, **data}, default=str) + "\n")
 
 
-def options(model):
-    return [
+def options(model, effort="medium"):
+    """A model setting, plus an effort setting that only the large model offers."""
+    items = [
         SessionConfigOptionSelect(
             type="select",
             id="model",
@@ -57,12 +58,28 @@ def options(model):
             ],
         )
     ]
+    if model == "fake-large":
+        items.append(
+            SessionConfigOptionSelect(
+                type="select",
+                id="effort",
+                name="Effort",
+                category="thought_level",
+                currentValue=effort,
+                options=[
+                    SessionConfigSelectOption(value=level, name=level.title())
+                    for level in ("low", "medium", "high")
+                ],
+            )
+        )
+    return items
 
 
 class FakeAgent:
     def __init__(self):
         self.conn = None
         self.model = "fake-large"
+        self.effort = "medium"
         self.prompts = {}
 
     def on_connect(self, conn):
@@ -97,7 +114,9 @@ class FakeAgent:
             meta=meta,
             instructions=os.path.exists(os.path.join(cwd, "AGENTS.md")),
         )
-        return NewSessionResponse(session_id=session_id, config_options=options(self.model))
+        return NewSessionResponse(
+            session_id=session_id, config_options=options(self.model, self.effort)
+        )
 
     async def load_session(self, cwd, session_id, mcp_servers=None, **kw):
         lost = os.path.exists(LOST) and session_id in open(LOST, encoding="utf-8").read()
@@ -108,15 +127,17 @@ class FakeAgent:
         await self.conn.session_update(
             session_id=session_id, update=update_agent_message_text("REPLAYED OLD TEXT")
         )
-        return LoadSessionResponse(config_options=options(self.model))
+        return LoadSessionResponse(config_options=options(self.model, self.effort))
 
     async def set_config_option(self, config_id, session_id, value, **kw):
         log("set_config_option", config_id=config_id, value=value)
         if config_id == "model":
             self.model = value
+        elif config_id == "effort":
+            self.effort = value
         from acp.schema import SetSessionConfigOptionResponse
 
-        return SetSessionConfigOptionResponse(config_options=options(self.model))
+        return SetSessionConfigOptionResponse(config_options=options(self.model, self.effort))
 
     async def set_session_mode(self, session_id, mode_id, **kw):
         return None
@@ -133,7 +154,7 @@ class FakeAgent:
 
     async def prompt(self, session_id, prompt, **kw):
         text = "".join(getattr(block, "text", "") for block in prompt)
-        log("prompt", session_id=session_id, text=text, model=self.model)
+        log("prompt", session_id=session_id, text=text, model=self.model, effort=self.effort)
         if "lose session" in text:
             with open(LOST, "a", encoding="utf-8") as handle:
                 handle.write(session_id + "\n")

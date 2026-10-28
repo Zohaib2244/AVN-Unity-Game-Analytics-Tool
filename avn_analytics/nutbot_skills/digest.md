@@ -10,4 +10,4 @@ Write a behaviour digest {args_or_default}.
 3. For each finding say what it suggests about why players behave this way, and what to test.
 4. Note events that look unused or unclear and which are worth adding to the event dictionary.
 
-Keep it to one screen. End by saving it with save_report titled with the date range.
+Keep it to one screen. End by offering it with propose_report titled with the date range.

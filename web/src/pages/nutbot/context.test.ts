@@ -29,6 +29,9 @@ describe('context chips', () => {
     expect(scopeLine(chips, new Set(['filters']))).toMatch(/^Same filters as the page · /);
     expect(scopeLine(chips, new Set(['range', 'filters']))).toBe('No page filters applied');
     expect(scopeLine(contextChips({ game, section: 'keys', filters: null }), new Set())).toBe('No page filters applied');
+    const withPlayer = contextChips({ game, section: 'players', filters: null, player: 'player-0123456789abcdefghij' });
+    expect(scopeLine(withPlayer, new Set())).toBe('No page filters applied · Player player-0…efghij');
+    expect(scopeLine(withPlayer, new Set(['player']))).toBe('No page filters applied');
   });
   it('builds the context the server receives, honouring left-out chips', () => {
     const full = buildContext({ game, section: 'levels', filters, player: 'p1' }, new Set());

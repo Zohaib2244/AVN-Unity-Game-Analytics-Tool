@@ -2,7 +2,11 @@
 // the Agent Client Protocol with this app's tools; answers stream back as newline-delimited JSON (see
 // avn_analytics/nutbot.py) and are kept in the server's own chat record, which this panel lists and reopens.
 // The shell owns the launcher, Ctrl+J and "Ask NutBot" (src/app/nutbot.tsx); this draws the panel.
+// The conversation lives here, mounted once in the shell: the panel is drawn at the side, or inside an
+// open player viewer's slot, and moving between them keeps the messages, the stream and the typed draft.
+// History, reports and settings are header views; the composer stays visible under every one of them.
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useRouterState, useSearch } from '@tanstack/react-router';
 import { NutBotPanel, useAppContainer, type AnswerBlock, type NbMessage, type SlashCommand } from '@avn/ui';
 import { queryClient, read, readKey, useRead, write } from '@/api';
@@ -18,7 +22,8 @@ import { storeGet, storeRemove, storeSet } from '@/lib/store';
 import type { Game, NutBotAction, NutBotChatRead, NutBotChatRow, NutBotEvent, NutBotInfo, NutBotLimits, NutBotPrefs, NutBotProposal, NutBotReportRow, NutBotStoredTool } from '@/lib/types';
 import { buildContext, contextChips, panelChips, scopeLine, suggestionsFor, type PageContext } from './context';
 import { Markdown } from './markdown';
-import { APPLY_KEY, applyMode, applyProposal, proposalKey, type Applied, type ApplyMode } from './proposals';
+import { effortLevels, pickEffort, pickModel } from './models';
+import { APPLY_KEY, applyMode, applyProposal, proposalKey, savesReport, type Applied, type ApplyMode } from './proposals';
 import { applyEvent, contextShare, emptyAnswer, fromStoredMessages, settle, type Answer, type ChatMessage } from './stream';
 
 const PREFS_KEY = 'avn-nutbot-prefs';
@@ -55,11 +60,12 @@ export function windowText(window: { name: string; used_percent: number | null; 
 }
 
 type TraceState = { open: boolean; tools?: NutBotStoredTool[]; loading?: boolean };
+type View = 'chat' | 'chats' | 'reports' | 'settings';
 
 /** The @avn/ui message for one answer. The answer being streamed shows its text as it arrives. */
 type ProposalControls = { applied: ReadonlySet<string>; apply: (proposal: NutBotProposal) => void; undo: (proposal: NutBotProposal) => void; saveReport?: (answer: Answer) => void };
 
-function toPanelMessage(message: ChatMessage, streaming: boolean, onOpen: (action: NutBotAction) => void, onLink: (path: string) => void, trace: { state?: TraceState; toggle?: () => void }, proposals: ProposalControls): NbMessage {
+function toPanelMessage(message: ChatMessage, streaming: boolean, onOpen: (action: NutBotAction) => void, onLink: (path: string) => void, trace: { state?: TraceState; toggle?: () => void }, proposals: ProposalControls, note?: ReactNode): NbMessage {
   if (message.role === 'user') return { role: 'user', text: message.text };
   const tools = message.tools.map((tool) => ({ name: tool.label, args: tool.name, status: tool.status ?? (tool.done ? 'done' as const : 'running' as const), ms: tool.ms }));
   const body: ReactNode[] = [];
@@ -68,18 +74,13 @@ function toPanelMessage(message: ChatMessage, streaming: boolean, onOpen: (actio
   if (message.error) body.push(<p key="error" className="nb-error" role="alert">{message.error}</p>);
   if (message.actions.length) body.push(<div key="actions" className="nb-actions">{message.actions.map((action, index) => <button key={index} type="button" className="btn sm nb-action" onClick={() => onOpen(action)}><Ico name="arrow" size={13} /> {action.title}</button>)}</div>);
   if (!streaming) {
-    const parts: string[] = [];
-    if (message.usage?.output_tokens != null) parts.push(`${number(message.usage.output_tokens)} tokens out`);
-    if (message.usage?.cost_usd) parts.push(`$${message.usage.cost_usd.toFixed(3)}`);
-    if (message.seconds) parts.push(`${message.seconds}s`);
-    if (message.resumed === false && message.id == null) parts.push('rebuilt from the saved chat');
-    body.push(
-      <div key="meta" className="nb-meta">
-        {parts.join(' · ')}
-        {proposals.saveReport && message.id != null && message.text ? <> · <button type="button" className="nb-link" onClick={() => proposals.saveReport!(message)}>Save as report</button></> : null}
-        {trace.toggle ? <> · <button type="button" className="nb-link" onClick={trace.toggle}>{trace.state?.open ? 'Hide trace' : 'Trace'}</button></> : null}
-      </div>,
-    );
+    // Under an answer: what to do with it, never tokens or cost (the Settings view has the allowance limits).
+    const links: ReactNode[] = [];
+    if (message.resumed === false && message.id == null) links.push(<span key="rebuilt">Rebuilt from the saved chat</span>);
+    if (proposals.saveReport && message.id != null && message.text) links.push(<button key="save" type="button" className="nb-link" onClick={() => proposals.saveReport!(message)}>Save as report</button>);
+    if (trace.toggle) links.push(<button key="trace" type="button" className="nb-link" onClick={trace.toggle}>{trace.state?.open ? 'Hide trace' : 'Trace'}</button>);
+    if (note) links.push(<span key="note">{note}</span>);
+    if (links.length) body.push(<div key="meta" className="nb-meta">{links.flatMap((link, index) => (index ? [<span key={`dot${index}`} aria-hidden="true"> · </span>, link] : [link]))}</div>);
     if (trace.state?.open) {
       body.push(
         <div key="trace" className="nb-trace">
@@ -107,12 +108,22 @@ function toPanelMessage(message: ChatMessage, streaming: boolean, onOpen: (actio
         </div>
       );
       return proposals.applied.has(proposalKey(proposal))
-        ? { type: 'custom', title: proposal.title, node: <p className="small muted">Applied. <button type="button" className="nb-link" onClick={() => proposals.undo(proposal)}>Undo</button></p> }
-        : { type: 'proposal', title: proposal.title, preview, confirmLabel: 'Apply', onConfirm: () => proposals.apply(proposal) };
+        ? { type: 'custom', title: proposal.title, node: <p className="small muted">{savesReport(proposal) ? 'Saved to Reports.' : 'Applied.'} <button type="button" className="nb-link" onClick={() => proposals.undo(proposal)}>Undo</button></p> }
+        : { type: 'proposal', title: proposal.title, preview, confirmLabel: savesReport(proposal) ? 'Save' : 'Apply', onConfirm: () => proposals.apply(proposal) };
     }) : undefined,
     scope: message.scope && !streaming && message.text ? message.scope : undefined,
     thought: !streaming ? message.seconds : undefined,
   };
+}
+
+/** The top of a header view: its name and the way back to the conversation. */
+function ViewHead({ title, onBack }: { title: string; onBack: () => void }): ReactElement {
+  return (
+    <div className="nb-view-head">
+      <h3>{title}</h3>
+      <button type="button" className="btn sm" onClick={onBack}>Back to chat</button>
+    </div>
+  );
 }
 
 export function NutBotHost(): ReactElement | null {
@@ -133,24 +144,35 @@ export function NutBotHost(): ReactElement | null {
   const controller = useRef<AbortController | null>(null);
   const [chatId, setChatIdState] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState('');
   const [off, setOff] = useState<Set<string>>(() => new Set());
   const [harness, setHarness] = useState('');
   const [model, setModel] = useState('');
+  const [effort, setEffort] = useState('');
   const [filters, setFilters] = useState<FilterState | null>(null);
-  const [panel, setPanel] = useState<'none' | 'chats' | 'usage' | 'reports'>('none');
+  const [view, setView] = useState<View>('chat');
   const [openReport, setOpenReport] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const [traces, setTraces] = useState<Record<number, TraceState>>({});
   const [mode, setModeState] = useState<ApplyMode>(applyMode);
   const appliedRef = useRef(new Map<string, Applied>());
-  const { open, setOpen, setUsable, pending, takePending } = nutbot;
+  const { open, setOpen, setUsable, pending, takePending, slot } = nutbot;
+  // Inside a player viewer the page behind it is inert: applying a card must not navigate away from it.
+  const embedded = slot != null;
+  const embeddedRef = useRef(embedded);
+  embeddedRef.current = embedded;
+  // The latest values for handlers that outlive a render (the Escape listener, a card applied after a stream).
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const chatIdRef = useRef(chatId);
+  chatIdRef.current = chatId;
   // A pinned headline on the Overview opens its report here.
   useEffect(() => {
     if (!open || !game) return;
     const wanted = storeGet<{ game: string; report: string }>('avn-nutbot-open-report');
     if (!wanted) return;
     storeRemove('avn-nutbot-open-report');
-    if (wanted.game === game.id) { setPanel('reports'); setOpenReport(wanted.report); }
+    if (wanted.game === game.id) { setView('reports'); setOpenReport(wanted.report); }
   }, [open, game]);
 
   // Availability: a game page, this person may use it, and the server has it switched on.
@@ -168,7 +190,7 @@ export function NutBotHost(): ReactElement | null {
     controller.current?.abort();
     messagesRef.current = [];
     setChatIdState(game ? storeGet<string>(currentKey(game)) : null);
-    setTraces({}); setBusy(false); setOpen(false); setPanel('none'); bump();
+    setTraces({}); setBusy(false); setOpen(false); setView('chat'); setDraft(''); bump();
   }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const chatPath = game && chatId ? `${chatsPath(game)}/${encodeURIComponent(chatId)}` : null;
@@ -183,6 +205,7 @@ export function NutBotHost(): ReactElement | null {
   }, [chatQuery.data, chatQuery.isError, chatId, busy, setChatId]);
 
   // The harness (assistant) and model: the chat's own, then the remembered choice, then the server default.
+  // Only models the agent reported are offered; a remembered one it no longer offers falls back.
   const available = useMemo(() => (info?.harnesses || []).filter((item) => item.available), [info]);
   const current = useMemo(() => info?.harnesses.find((h) => h.id === harness) ?? null, [info, harness]);
   useEffect(() => {
@@ -190,11 +213,13 @@ export function NutBotHost(): ReactElement | null {
     const prefs = nbPrefs();
     const chosen = [chatQuery.data?.chat.harness, prefs.harness, info.default, available[0]?.id].find((id) => available.some((item) => item.id === id)) || available[0]?.id || '';
     setHarness(chosen);
-    const item = info.harnesses.find((h) => h.id === chosen);
-    setModel(chatQuery.data?.chat.harness === chosen && chatQuery.data.chat.model ? chatQuery.data.chat.model : (prefs.models || {})[chosen] || item?.default_model || '');
+    const item = info.harnesses.find((h) => h.id === chosen) ?? null;
+    setModel(pickModel(item, chatQuery.data?.chat.harness === chosen && chatQuery.data.chat.model ? chatQuery.data.chat.model : (prefs.models || {})[chosen]));
   }, [info, available, gameId, open, chatQuery.data]);
-  const models = useMemo(() => { const list = current?.models?.length ? [...current.models] : []; if (model && !list.includes(model)) list.unshift(model); return list.length ? list : ['']; }, [current, model]);
-  const chooseHarness = (id: string) => { setHarness(id); const item = info?.harnesses.find((h) => h.id === id); setModel((nbPrefs().models || {})[id] || item?.default_model || ''); };
+  const models = useMemo(() => (current?.models?.length ? current.models : ['']), [current]);
+  const levels = useMemo(() => effortLevels(current, model), [current, model]);
+  useEffect(() => { setEffort((previous) => pickEffort(levels, previous || (nbPrefs().efforts || {})[harness])); }, [levels, harness]);
+  const chooseHarness = (id: string) => { setHarness(id); setEffort(''); setModel(pickModel(info?.harnesses.find((h) => h.id === id) ?? null, (nbPrefs().models || {})[id])); };
 
   // The page's filters live in localStorage; re-read them when the panel opens, the address changes and while open.
   const readFilters = useCallback(() => { const next = game ? filterState(game) : null; setFilters((previous) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next)); }, [game]);
@@ -204,16 +229,22 @@ export function NutBotHost(): ReactElement | null {
   const chips = useMemo(() => contextChips(page), [page]);
   const toggleContext = (id: string) => setOff((previous) => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
 
-  // Drawers slide left to sit beside the panel; the composer gets focus when it opens.
+  // At the side, drawers slide left to sit beside the panel; the composer gets focus when it opens.
   useEffect(() => {
     if (!appEl) return;
-    appEl.classList.toggle('nb-open', open);
+    appEl.classList.toggle('nb-open', open && !embedded);
     return () => appEl.classList.remove('nb-open');
-  }, [appEl, open]);
+  }, [appEl, open, embedded]);
   useEffect(() => {
     if (!open) return;
     const timer = setTimeout(() => appEl?.querySelector<HTMLTextAreaElement>('.nb .nb-in textarea')?.focus(), 50);
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && (event.target as Element | null)?.closest?.('.nb, .nb-extra')) { event.preventDefault(); close(); } };
+    // Escape: a menu in the composer first (it marks the event), then a header view, then the panel.
+    // Inside a player viewer the viewer owns Escape; its dialog has already handled the key.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || embeddedRef.current || !(event.target as Element | null)?.closest?.('.nb')) return;
+      event.preventDefault();
+      if (viewRef.current !== 'chat') setView('chat'); else close();
+    };
     document.addEventListener('keydown', onKey);
     return () => { clearTimeout(timer); document.removeEventListener('keydown', onKey); };
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -239,11 +270,12 @@ export function NutBotHost(): ReactElement | null {
     const key = proposalKey(proposal);
     if (appliedRef.current.has(key)) return;
     try {
-      const done = await applyProposal(game, proposal);
+      const done = await applyProposal(game, proposal, chatIdRef.current);
       appliedRef.current.set(key, done); bump();
-      if (!quiet) void navigate({ to: done.path });
-      toast(`Applied: ${proposal.title}`, { label: 'Undo', run: () => undoProposal(proposal) }, 'info');
-    } catch (error) { toast((error as Error).message || 'Could not apply that.', undefined, 'error'); }
+      // A report opens no page, and inside a player viewer the viewer stays: the page is there after Close.
+      if (!quiet && !savesReport(proposal) && !embeddedRef.current) void navigate({ to: done.path });
+      toast(savesReport(proposal) ? 'Saved to Reports' : `Applied: ${proposal.title}`, { label: 'Undo', run: () => undoProposal(proposal) }, 'info');
+    } catch (error) { toast((error as Error).message || (savesReport(proposal) ? 'Could not save the report.' : 'Could not apply that.'), undefined, 'error'); }
   }, [game, navigate, toast, undoProposal]);
   const setMode = (next: ApplyMode) => { setModeState(next); storeSet(APPLY_KEY, next); };
   const openLink = useCallback((path: string) => { void navigate({ to: path }); }, [navigate]);
@@ -257,20 +289,23 @@ export function NutBotHost(): ReactElement | null {
   const send = useCallback(async (raw: string) => {
     const text = raw.trim();
     if (busy || !text || !game) return;
+    setView('chat');
     const prefs = nbPrefs();
     const messages = messagesRef.current;
     messages.push({ role: 'user', text });
-    const answer: Answer = emptyAnswer(scopeLine(contextChips({ ...page, filters: filterState(game) }), off));
+    // The context is taken now: browsing to another player later doesn't change this question or its scope line.
+    const asked: PageContext = { ...page, filters: filterState(game) };
+    const answer: Answer = emptyAnswer(scopeLine(contextChips(asked), off));
     messages.push(answer);
     setBusy(true); bump();
     const abort = new AbortController(); controller.current = abort;
-    storeSet(PREFS_KEY, { ...prefs, harness, models: { ...(prefs.models || {}), [harness]: model } });
+    storeSet(PREFS_KEY, { ...prefs, harness, models: { ...(prefs.models || {}), [harness]: model }, efforts: { ...(prefs.efforts || {}), [harness]: effort } });
     const started = Date.now();
     let newChat: string | null = null;
     try {
       const response = await fetch(`/v1/games/${encodeURIComponent(game.id)}/nutbot/chat`, {
         method: 'POST', credentials: 'same-origin', signal: abort.signal, headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, harness, model: model || undefined, chat_id: chatId || undefined, context: buildContext({ ...page, filters: filterState(game) }, off) }),
+        body: JSON.stringify({ message: text, harness, model: model || undefined, effort: effort || undefined, chat_id: chatId || undefined, context: buildContext(asked, off) }),
       });
       if (!response.ok || !response.body) { const error = (await response.json().catch(() => ({}))) as { detail?: unknown }; throw new Error(typeof error.detail === 'string' ? error.detail : 'NutBot could not answer.'); }
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
@@ -284,7 +319,7 @@ export function NutBotHost(): ReactElement | null {
           if (!line) continue;
           let event: NutBotEvent; try { event = JSON.parse(line) as NutBotEvent; } catch { continue; }
           const chat = applyEvent(answer, event);
-          if (chat && chat.chatId !== chatId) { newChat = chat.chatId; setChatId(chat.chatId); }
+          if (chat && chat.chatId !== chatId) { newChat = chat.chatId; setChatId(chat.chatId); chatIdRef.current = chat.chatId; }
           bump();
         }
       }
@@ -295,9 +330,10 @@ export function NutBotHost(): ReactElement | null {
       answer.seconds = answer.seconds || Math.round((Date.now() - started) / 100) / 10;
       controller.current = null; setBusy(false); bump();
       if (newChat || chatId) refreshChats();
-      if (applyMode() === 'auto' && !abort.signal.aborted) for (const proposal of answer.proposals) await applyOne(proposal);
+      // "Applies itself" covers what NutBot builds for the pages; a report is only ever saved by pressing Save.
+      if (applyMode() === 'auto' && !abort.signal.aborted) for (const proposal of answer.proposals) if (!savesReport(proposal)) await applyOne(proposal);
     }
-  }, [busy, game, harness, model, page, off, chatId, setChatId, refreshChats, applyOne]);
+  }, [busy, game, harness, model, effort, page, off, chatId, setChatId, refreshChats, applyOne]);
 
   // Questions asked from the command palette arrive through the context.
   useEffect(() => {
@@ -306,8 +342,8 @@ export function NutBotHost(): ReactElement | null {
     if (text) void send(text);
   }, [pending, usable, busy, takePending, send]);
 
-  const newChat = () => { if (busy) return; messagesRef.current = []; setChatId(null); setTraces({}); setPanel('none'); bump(); };
-  const openChat = (id: string) => { if (busy) return; messagesRef.current = []; setTraces({}); setChatId(id); setPanel('none'); bump(); };
+  const newChat = () => { if (busy) return; messagesRef.current = []; setChatId(null); setTraces({}); setView('chat'); bump(); };
+  const openChat = (id: string) => { if (busy) return; messagesRef.current = []; setTraces({}); setChatId(id); setView('chat'); bump(); };
   const stop = () => controller.current?.abort();
   const renameChat = async () => {
     if (!game || !renaming) return;
@@ -342,7 +378,7 @@ export function NutBotHost(): ReactElement | null {
   };
 
   const reportsPath = game ? `/v1/games/${encodeURIComponent(game.id)}/nutbot/reports` : null;
-  const reportsQuery = useRead<{ reports: NutBotReportRow[] }>(reportsPath, { enabled: Boolean(usable && open && panel === 'reports') });
+  const reportsQuery = useRead<{ reports: NutBotReportRow[] }>(reportsPath, { enabled: Boolean(usable && open && view === 'reports') });
   const reportQuery = useRead<NutBotReportRow>(reportsPath && openReport ? `${reportsPath}/${encodeURIComponent(openReport)}` : null, { enabled: Boolean(usable && openReport) });
   const reports = reportsQuery.data?.reports ?? [];
   const saveReport = useCallback(async (answer: Answer) => {
@@ -368,115 +404,142 @@ export function NutBotHost(): ReactElement | null {
   };
   const commands = useMemo<SlashCommand[]>(() => (info?.skills || []).map((skill) => ({ name: `/${skill.name}`, description: skill.args ? `${skill.summary} · ${skill.args}` : skill.summary })), [info]);
 
-  const limitsQuery = useRead<NutBotLimits>('/v1/nutbot/limits', { enabled: usable && open && panel === 'usage' });
+  const limitsQuery = useRead<NutBotLimits>('/v1/nutbot/limits', { enabled: usable && open && view === 'settings' });
 
   if (!game || !usable) return null;
   const all = messagesRef.current;
   const lastAnswer = [...all].reverse().find((item): item is Answer => item.role === 'assistant');
   const share = contextShare(lastAnswer);
+  const heavy = !busy && share != null && share >= HEAVY_CONTEXT
+    ? <>Context {Math.round(share * 100)}% full · <button type="button" className="nb-link" onClick={newChat}>New chat</button> answers faster</>
+    : undefined;
   const messages = all.map((message, index) => toPanelMessage(message, busy && index === all.length - 1, openAction, openLink,
     message.role === 'assistant' && message.id != null && me.is_admin ? { state: traces[message.id], toggle: () => void toggleTrace(message.id!) } : {},
-    { applied: new Set(appliedRef.current.keys()), apply: (proposal) => void applyOne(proposal), undo: (proposal) => void undoProposal(proposal), saveReport: (answer) => void saveReport(answer) }));
-  return (
-    <div className="nb-dock" hidden={!open}>
-      <NutBotPanel
-        open={open} onClose={close} messages={messages} busy={busy} onSend={(text, picked) => void send(picked?.command ? `${picked.command.name} ${text}`.trim() : text)} commands={commands} onStop={stop} onNew={newChat}
-        context={panelChips(chips, off)} onToggleContext={toggleContext} suggestions={suggestionsFor(section)}
-        subtitle={`${game.name} · ${platformLabel(game.platform)}${chatQuery.data?.chat.title && chatQuery.data.chat.id === chatId ? ` · ${chatQuery.data.chat.title}` : ''}`} face={<NbFace state={busy ? 'thinking' : 'idle'} />}
-      />
-      {open ? (
-        <div className="nb-extra" role="group" aria-label="NutBot settings">
-          {available.length ? (
-            <>
-              <label className="nb-field">Assistant
-                <select className="nb-harness" value={harness} onChange={(event) => chooseHarness(event.target.value)} disabled={busy}>
-                  {(info?.harnesses || []).map((item) => <option key={item.id} value={item.id} disabled={!item.available} title={item.reason || ''}>{item.label}{item.available ? '' : ' (not set up)'}</option>)}
-                </select></label>
-              <label className="nb-field">Model
-                <select className="nb-model" value={model} onChange={(event) => setModel(event.target.value)} disabled={busy}>
-                  {models.map((item) => <option key={item} value={item}>{item || 'default'}{current?.cheap_model && item === current.cheap_model ? ' · cheap' : ''}</option>)}
-                </select></label>
-              <div className="nb-tools">
-                {current?.cheap_model && model !== current.cheap_model ? <button type="button" className="btn sm" onClick={() => setModel(current.cheap_model!)} disabled={busy} title="A smaller model for quick questions">Cheap</button> : null}
-                <button type="button" className="btn sm" aria-pressed={panel === 'chats'} onClick={() => setPanel(panel === 'chats' ? 'none' : 'chats')}>Chats{chats.length ? ` (${chats.length})` : ''}</button>
-                <button type="button" className="btn sm" aria-pressed={mode === 'auto'} onClick={() => setMode(mode === 'auto' ? 'ask' : 'auto')} title="Apply what NutBot builds for the pages straight away (with Undo), or wait for you to press Apply">{mode === 'auto' ? 'Applies itself' : 'Asks first'}</button>
-                <button type="button" className="btn sm" aria-pressed={panel === 'reports'} onClick={() => setPanel(panel === 'reports' ? 'none' : 'reports')}>Reports</button>
-                <button type="button" className="btn sm" aria-pressed={panel === 'usage'} onClick={() => setPanel(panel === 'usage' ? 'none' : 'usage')}>Usage</button>
-              </div>
-              {share != null ? (
-                <p className={`nb-context${share >= HEAVY_CONTEXT ? ' heavy' : ''}`}>
-                  <span className="nb-bar" aria-hidden="true"><span style={{ width: `${Math.round(share * 100)}%` }} /></span>
-                  Context {Math.round(share * 100)}% full{share >= HEAVY_CONTEXT ? ' · a new chat answers faster and costs less' : ''}
-                </p>
-              ) : null}
-              {panel === 'chats' ? (
-                <div className="nb-chats" role="region" aria-label="Recent chats">
-                  {listQuery.isLoading ? <p className="small muted">Loading your chats…</p> : chats.length ? chats.slice(0, 12).map((chat) => (
-                    <div key={chat.id} className={`nb-chat-row${chat.id === chatId ? ' current' : ''}`}>
-                      {renaming?.id === chat.id ? (
-                        <form className="nb-rename" onSubmit={(event) => { event.preventDefault(); void renameChat(); }}>
-                          <input value={renaming.title} maxLength={80} autoFocus onChange={(event) => setRenaming({ id: chat.id, title: event.target.value })} onBlur={() => void renameChat()} aria-label="Chat title" />
-                        </form>
-                      ) : (
-                        <button type="button" className="nb-chat-open" onClick={() => openChat(chat.id)} disabled={busy}>
-                          <span className="nb-chat-title">{chat.title || 'Untitled chat'}</span>
-                          <span className="small muted">{agoText(chat.updated_at)} · {number(chat.messages)} messages · {chat.harness}</span>
-                        </button>
-                      )}
-                      <button type="button" className="btn sm icon" title="Rename" aria-label="Rename chat" onClick={() => setRenaming({ id: chat.id, title: chat.title })}><Ico name="edit" size={13} /></button>
-                      <button type="button" className="btn sm icon" title="Delete" aria-label="Delete chat" onClick={() => void deleteChat(chat)}><Ico name="close" size={13} /></button>
-                    </div>
-                  )) : <p className="small muted">No chats yet for this game. Ask something and it will be kept here.</p>}
-                </div>
-              ) : null}
-              {panel === 'reports' ? (
-                <div className="nb-reports" role="region" aria-label="Saved reports">
-                  {reportsQuery.isLoading ? <p className="small muted">Loading the reports…</p> : reports.length ? reports.slice(0, 20).map((report) => (
-                    <div key={report.id} className={`nb-report${report.id === openReport ? ' current' : ''}`}>
-                      <div className="nb-chat-row">
-                        <button type="button" className="nb-chat-open" onClick={() => setOpenReport(report.id === openReport ? null : report.id)} aria-expanded={report.id === openReport}>
-                          <span className="nb-chat-title">{report.pinned ? '📌 ' : ''}{report.title}</span>
-                          <span className="small muted">{agoText(report.updated_at)} · {report.email}{report.headline ? ` · ${report.headline.title}: ${report.headline.value}` : ''}</span>
-                        </button>
-                        <button type="button" className="btn sm" aria-pressed={report.pinned} title={report.headline ? 'Show its headline on the Overview' : 'Reports with a headline can be pinned to the Overview'} disabled={!report.headline} onClick={() => void changeReport(report, { pinned: !report.pinned })}>{report.pinned ? 'Unpin' : 'Pin'}</button>
-                        <button type="button" className="btn sm icon" title="Delete" aria-label="Delete report" onClick={() => void deleteReport(report)}><Ico name="close" size={13} /></button>
-                      </div>
-                      {report.id === openReport ? <div className="nb-report-body nb-md">{reportQuery.data?.id === report.id ? <Markdown source={reportQuery.data.body || ''} onOpen={openLink} /> : <p className="small muted">Loading…</p>}</div> : null}
-                    </div>
-                  )) : <p className="small muted">No reports yet. Ask for one with /level-review or /digest, or press “Save as report” under an answer.</p>}
-                </div>
-              ) : null}
-              {panel === 'usage' ? (
-                <div className="nb-usage" role="region" aria-label="NutBot usage">
-                  {Object.entries(limitsQuery.data?.agents ?? {}).map(([id, agent]) => {
-                    const label = info?.harnesses.find((h) => h.id === id)?.label || id;
-                    if (agent.error || !agent.windows.length) return <p key={id} className="small muted">{label}: allowance unknown{agent.error ? ` (${agent.error})` : ''}.</p>;
-                    return agent.windows.map((window) => {
-                      const warn = window.used_percent != null && window.used_percent >= (limitsQuery.data?.warn_percent ?? 80);
-                      return (
-                        <p key={`${id}-${window.name}`} className={`nb-window${warn ? ' warn' : ''}`}>
-                          <span className="nb-bar" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.round(window.used_percent ?? 0))}%` }} /></span>
-                          {label} · {windowText(window)}{warn ? ' · nearly used up' : ''}
-                        </p>
-                      );
-                    });
-                  })}
-                  {limitsQuery.isLoading ? <p className="small muted">Checking the agents' allowances…</p> : null}
-                  {limitsQuery.isError ? <p className="small muted" role="alert">Could not check the allowance limits. <button type="button" className="btn sm" onClick={() => void limitsQuery.refetch()}>Retry</button></p> : null}
-                  {limitsQuery.isSuccess && !Object.keys(limitsQuery.data?.agents ?? {}).length ? <p className="small muted">No allowance limits are available.</p> : null}
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <div className="nb-setup-help">
-              <h3>NutBot isn’t set up on this server yet</h3>
-              <p>An admin needs to connect an assistant (Claude, Codex or OpenCode). The steps are in the README under “NutBot”.</p>
-              {(info?.harnesses || []).map((item) => <p key={item.id} className="small muted"><strong>{item.label}:</strong> {item.reason}</p>)}
+    { applied: new Set(appliedRef.current.keys()), apply: (proposal) => void applyOne(proposal), undo: (proposal) => void undoProposal(proposal), saveReport: (answer) => void saveReport(answer) },
+    message === lastAnswer ? heavy : undefined));
+  const toggleView = (next: View) => setView(view === next ? 'chat' : next);
+  const back = () => setView('chat');
+  // Without a working assistant the settings view explains the setup and is what the panel shows.
+  const shown: View = available.length ? view : 'settings';
+  const headerButton = (id: View, label: string, icon: 'clock' | 'file' | 'settings') => (
+    <button type="button" className="icon-btn" aria-label={label} title={label} aria-pressed={shown === id} onClick={() => toggleView(id)}><Ico name={icon} size={16} /></button>
+  );
+
+  const settingsView = (
+    <div className="nb-pane" role="region" aria-label="NutBot settings">
+      <ViewHead title="Settings" onBack={back} />
+      {available.length ? (
+        <>
+          <label className="nb-field">Assistant
+            <select className="nb-harness" value={harness} onChange={(event) => chooseHarness(event.target.value)} disabled={busy}>
+              {(info?.harnesses || []).map((item) => <option key={item.id} value={item.id} disabled={!item.available} title={item.reason || ''}>{item.label}{item.available ? '' : ' (not set up)'}</option>)}
+            </select></label>
+          <label className="nb-field">Model
+            <select className="nb-model" value={model} onChange={(event) => setModel(event.target.value)} disabled={busy}>
+              {models.map((item) => <option key={item} value={item}>{item || 'The agent’s default'}</option>)}
+            </select></label>
+          {levels.length ? (
+            <label className="nb-field">Effort
+              <select className="nb-effort" value={effort} onChange={(event) => setEffort(event.target.value)} disabled={busy}>
+                <option value="">Default</option>
+                {levels.map((level) => <option key={level.value} value={level.value}>{level.name}</option>)}
+              </select></label>
+          ) : null}
+          <div className="nb-field">
+            <span id="nb-apply-label">Cards NutBot builds for the pages</span>
+            <div className="segmented" role="group" aria-labelledby="nb-apply-label">
+              <button type="button" aria-pressed={mode === 'ask'} onClick={() => setMode('ask')}>Ask first</button>
+              <button type="button" aria-pressed={mode === 'auto'} onClick={() => setMode('auto')}>Apply straight away</button>
             </div>
-          )}
-          <p className="nb-foot small muted">NutBot can read this game’s data. It asks before saving anything. Answers can be wrong: check the numbers that matter.</p>
+          </div>
+          {share != null ? (
+            <p className={`nb-context${share >= HEAVY_CONTEXT ? ' heavy' : ''}`}>
+              <span className="nb-bar" aria-hidden="true"><span style={{ width: `${Math.round(share * 100)}%` }} /></span>
+              This chat’s context: {Math.round(share * 100)}% full
+            </p>
+          ) : null}
+          <div className="nb-usage" role="region" aria-label="Allowance limits">
+            <h4>Allowance limits</h4>
+            {Object.entries(limitsQuery.data?.agents ?? {}).map(([id, agent]) => {
+              const label = info?.harnesses.find((h) => h.id === id)?.label || id;
+              if (agent.error || !agent.windows.length) return <p key={id} className="small muted">{label}: allowance unknown{agent.error ? ` (${agent.error})` : ''}.</p>;
+              return agent.windows.map((window) => {
+                const warn = window.used_percent != null && window.used_percent >= (limitsQuery.data?.warn_percent ?? 80);
+                return (
+                  <p key={`${id}-${window.name}`} className={`nb-window${warn ? ' warn' : ''}`}>
+                    <span className="nb-bar" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.round(window.used_percent ?? 0))}%` }} /></span>
+                    {label} · {windowText(window)}{warn ? ' · nearly used up' : ''}
+                  </p>
+                );
+              });
+            })}
+            {limitsQuery.isLoading ? <p className="small muted">Checking the agents' allowances…</p> : null}
+            {limitsQuery.isError ? <p className="small muted" role="alert">Could not check the allowance limits. <button type="button" className="btn sm" onClick={() => void limitsQuery.refetch()}>Retry</button></p> : null}
+            {limitsQuery.isSuccess && !Object.keys(limitsQuery.data?.agents ?? {}).length ? <p className="small muted">No allowance limits are available.</p> : null}
+          </div>
+        </>
+      ) : (
+        <div className="nb-setup-help">
+          <h4>NutBot isn’t set up on this server yet</h4>
+          <p>An admin needs to connect an assistant (Claude, Codex or OpenCode). The steps are in the README under “NutBot”.</p>
+          {(info?.harnesses || []).map((item) => <p key={item.id} className="small muted"><strong>{item.label}:</strong> {item.reason}</p>)}
         </div>
-      ) : null}
+      )}
     </div>
   );
+
+  const chatsView = (
+    <div className="nb-pane" role="region" aria-label="Chat history">
+      <ViewHead title="Chats" onBack={back} />
+      {listQuery.isLoading ? <p className="small muted">Loading your chats…</p> : chats.length ? chats.map((chat) => (
+        <div key={chat.id} className={`nb-chat-row${chat.id === chatId ? ' current' : ''}`}>
+          {renaming?.id === chat.id ? (
+            <form className="nb-rename" onSubmit={(event) => { event.preventDefault(); void renameChat(); }}>
+              <input value={renaming.title} maxLength={80} autoFocus onChange={(event) => setRenaming({ id: chat.id, title: event.target.value })} onBlur={() => void renameChat()} aria-label="Chat title" />
+            </form>
+          ) : (
+            <button type="button" className="nb-chat-open" onClick={() => openChat(chat.id)} disabled={busy} aria-current={chat.id === chatId ? 'true' : undefined}>
+              <span className="nb-chat-title">{chat.title || 'Untitled chat'}</span>
+              <span className="small muted">{agoText(chat.updated_at)} · {number(chat.messages)} messages · {chat.harness}</span>
+            </button>
+          )}
+          <button type="button" className="btn sm icon" title="Rename" aria-label={`Rename ${chat.title || 'chat'}`} onClick={() => setRenaming({ id: chat.id, title: chat.title })}><Ico name="edit" size={13} /></button>
+          <button type="button" className="btn sm icon" title="Delete" aria-label={`Delete ${chat.title || 'chat'}`} onClick={() => void deleteChat(chat)}><Ico name="close" size={13} /></button>
+        </div>
+      )) : <p className="small muted">No chats yet for this game.</p>}
+    </div>
+  );
+
+  const reportsView = (
+    <div className="nb-pane nb-reports" role="region" aria-label="Saved reports">
+      <ViewHead title="Reports" onBack={back} />
+      {reportsQuery.isLoading ? <p className="small muted">Loading the reports…</p> : reports.length ? reports.map((report) => (
+        <div key={report.id} className={`nb-report${report.id === openReport ? ' current' : ''}`}>
+          <div className="nb-chat-row">
+            <button type="button" className="nb-chat-open" onClick={() => setOpenReport(report.id === openReport ? null : report.id)} aria-expanded={report.id === openReport}>
+              <span className="nb-chat-title">{report.pinned ? '📌 ' : ''}{report.title}</span>
+              <span className="small muted">{agoText(report.updated_at)} · {report.email}{report.headline ? ` · ${report.headline.title}: ${report.headline.value}` : ''}</span>
+            </button>
+            <button type="button" className="btn sm" aria-pressed={report.pinned} title={report.headline ? 'Show its headline on the Overview' : 'Reports with a headline can be pinned to the Overview'} disabled={!report.headline} onClick={() => void changeReport(report, { pinned: !report.pinned })}>{report.pinned ? 'Unpin' : 'Pin'}</button>
+            <button type="button" className="btn sm icon" title="Delete" aria-label={`Delete ${report.title}`} onClick={() => void deleteReport(report)}><Ico name="close" size={13} /></button>
+          </div>
+          {report.id === openReport ? <div className="nb-report-body nb-md">{reportQuery.data?.id === report.id ? <Markdown source={reportQuery.data.body || ''} onOpen={openLink} /> : <p className="small muted">Loading…</p>}</div> : null}
+        </div>
+      )) : <p className="small muted">No saved reports.</p>}
+    </div>
+  );
+
+  const panel = (
+    <NutBotPanel
+      open={open} onClose={close} messages={messages} busy={busy} onSend={(text, picked) => void send(picked?.command ? `${picked.command.name} ${text}`.trim() : text)} commands={commands} onStop={stop} onNew={newChat}
+      context={panelChips(chips, off)} onToggleContext={toggleContext} suggestions={suggestionsFor(section)}
+      subtitle={`${game.name} · ${platformLabel(game.platform)}${chatQuery.data?.chat.title && chatQuery.data.chat.id === chatId ? ` · ${chatQuery.data.chat.title}` : ''}`} face={<NbFace state={busy ? 'thinking' : 'idle'} />}
+      actions={<>{headerButton('chats', 'Chat history', 'clock')}{headerButton('reports', 'Reports', 'file')}{headerButton('settings', 'Settings', 'settings')}</>}
+      view={shown === 'chats' ? chatsView : shown === 'reports' ? reportsView : shown === 'settings' ? settingsView : undefined}
+      embedded={embedded} draft={draft} onDraftChange={setDraft}
+    />
+  );
+  // One conversation, drawn in one place: inside the open player viewer, or as the side panel.
+  if (slot) return createPortal(panel, slot);
+  return <div className="nb-dock" hidden={!open}>{panel}</div>;
 }

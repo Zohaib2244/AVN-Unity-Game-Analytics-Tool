@@ -56,6 +56,7 @@ class Settings:
     # Where the agents keep their sign-ins and transcripts (HOME for the adapters); empty = in data.
     nutbot_home_dir: str = ""
     nutbot_limit_warn: int = 80  # warn when an agent's allowance window is this % used
+    nutbot_hide_models: tuple[str, ...] = ()  # lowercase shell-style patterns never offered
     # The ACP adapters (path or glob; empty = look on PATH) and, for Claude and Codex, the CLI
     # the adapter should run (empty = the one the adapter bundles or finds).
     nutbot_claude_acp: str = ""
@@ -140,6 +141,11 @@ class Settings:
             nutbot_trust_logins=_flag("AVN_NUTBOT_TRUST_LOGINS", False),
             nutbot_home_dir=_text("AVN_NUTBOT_HOME"),
             nutbot_limit_warn=int(_text("AVN_NUTBOT_LIMIT_WARN", "80")),
+            nutbot_hide_models=tuple(
+                item.strip().lower()
+                for item in _text("AVN_NUTBOT_HIDE_MODELS").split(",")
+                if item.strip()
+            ),
             nutbot_claude_acp=_text("AVN_NUTBOT_CLAUDE_ACP"),
             nutbot_claude_bin=_text("AVN_NUTBOT_CLAUDE_BIN"),
             nutbot_claude_model=_text("AVN_NUTBOT_CLAUDE_MODEL", "sonnet"),

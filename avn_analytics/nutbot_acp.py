@@ -15,6 +15,7 @@ and `opencode auth login`, run with HOME pointing at it.
 
 import asyncio
 import contextlib
+import fnmatch
 import glob
 import json
 import os
@@ -87,6 +88,7 @@ class Turn:
     prompt: str
     system: str
     model: str
+    effort: str = ""  # the agent's effort (thought level) setting; empty leaves its default
     session_id: str | None = None  # the agent's own session to continue, if any
     replay: str = ""  # the earlier chat as text, used when that session can't be continued
     resumed: bool = False
@@ -105,7 +107,6 @@ class AgentSpec:
     adapter_name = ""  # the adapter's executable name on PATH
     login_file = ""  # the sign-in the CLI leaves in NutBot's home
     env_vars = ()  # environment variables that also count as a sign-in
-    fallback_models = ()
 
     def __init__(self, settings):
         self.settings = settings
@@ -164,7 +165,6 @@ class ClaudeSpec(AgentSpec):
     adapter_name = "claude-agent-acp"
     login_file = ".claude/.credentials.json"
     env_vars = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
-    fallback_models = ("sonnet", "opus", "haiku")
 
     def adapter_spec(self):
         return self.settings.nutbot_claude_acp
@@ -213,7 +213,6 @@ class CodexSpec(AgentSpec):
     adapter_name = "codex-acp"
     login_file = ".codex/auth.json"
     env_vars = ("CODEX_API_KEY", "OPENAI_API_KEY")
-    fallback_models = ()
 
     def adapter_spec(self):
         return self.settings.nutbot_codex_acp
@@ -266,7 +265,6 @@ class OpenCodeSpec(AgentSpec):
         "OPENROUTER_API_KEY",
         "GOOGLE_GENERATIVE_AI_API_KEY",
     )
-    fallback_models = ()
 
     def adapter_spec(self):
         return self.settings.nutbot_opencode_bin
@@ -497,6 +495,25 @@ def models_from_options(options):
     return [v["value"] for o in options for v in o["values"] if o.get("category") == "model"]
 
 
+def current_of(options, category):
+    """The value a session has for the first option of `category` ("model", "thought_level")."""
+    return next((o["current"] for o in options if o.get("category") == category), None)
+
+
+def efforts_from_options(options):
+    """The effort levels offered for the session's current model: [{value, name}]."""
+    for option in options:
+        if option.get("category") == "thought_level":
+            return [dict(value) for value in option["values"]]
+    return []
+
+
+def hidden_model(settings, model):
+    """True when `model` matches one of AVN_NUTBOT_HIDE_MODELS (shell-style, any case)."""
+    name = (model or "").lower()
+    return bool(name) and any(fnmatch.fnmatchcase(name, p) for p in settings.nutbot_hide_models)
+
+
 # ---------------------------------------------------------------------------- the harness
 
 
@@ -515,21 +532,34 @@ class AcpHarness:
     # ---- listing
 
     def describe(self, spec):
+        """What the browser may offer: only the models the agent itself reported, minus hidden ones.
+
+        Until the agent has answered a probe nothing is listed and the configured default (or the
+        agent's own) is used.
+        """
         ok, reason = spec.status()
         probe = self.probed.get(spec.id) or {}
-        models = probe.get("models") or list(spec.fallback_models)
-        default = spec.default_model()
-        if default and default not in models:
-            models = [default, *models]
+        models = [m for m in probe.get("models") or [] if not hidden_model(self.settings, m)]
+        configured = spec.default_model()
+        configured = "" if hidden_model(self.settings, configured) else configured
+        if not models:
+            default = configured
+        elif configured in models:
+            default = configured
+        else:
+            current = probe.get("current")
+            default = current if current in models else models[0]
+        efforts = probe.get("efforts") or {}
         return {
             "id": spec.id,
             "label": spec.label,
             "available": ok,
             "reason": reason,
-            "default_model": default or (models[0] if models else None),
+            "default_model": default or None,
             "cheap_model": spec.cheap_model() or None,
             "models": models if ok else [],
-            "models_from": "agent" if probe.get("models") else "fallback",
+            "efforts": {m: efforts[m] for m in models if efforts.get(m)} if ok else {},
+            "models_from": "agent" if models else "settings",
             "probe_error": probe.get("error", ""),
         }
 
@@ -541,17 +571,16 @@ class AcpHarness:
         """Ask the agent which models and settings it offers (a session with no prompt)."""
         if not spec.status()[0]:
             return
-        result = {"at": time.time(), "options": [], "models": [], "error": ""}
+        result = {"at": time.time(), "options": [], "models": [], "efforts": {}, "error": ""}
         try:
             async with asyncio.timeout(PROBE_SECONDS):
-                options = await self._probe(spec)
-            result["options"] = options
-            result["models"] = models_from_options(options)
+                await self._probe(spec, result)
         except Exception as error:  # noqa: BLE001 - the agent is outside our control
             result["error"] = scrub(str(error))[:300]
         self.probed[spec.id] = result
 
-    async def _probe(self, spec):
+    async def _probe(self, spec, result):
+        """Fills `result` as it goes, so a slow agent still leaves the models it already listed."""
         home, work = self._dirs(spec)
         client = TurnClient(Turn(token="", prompt="", system="", model=""), asyncio.Queue(), [])
         async with spawn_agent_process(
@@ -562,10 +591,24 @@ class AcpHarness:
             )
             session = await conn.new_session(cwd=str(work), mcp_servers=[])
             options = _options(session.config_options)
+            current = current_of(options, "model")
+            result.update(options=options, models=models_from_options(options), current=current)
+            if current:
+                result["efforts"][current] = efforts_from_options(options)
+            # Effort levels differ per model: switch the empty session through each model once.
+            model_option = next((o for o in options if o.get("category") == "model"), None)
+            if model_option and not spec.set_model_through_meta():
+                for model in result["models"]:
+                    if model in result["efforts"]:
+                        continue
+                    response = await conn.set_config_option(
+                        config_id=model_option["id"], session_id=session.session_id, value=model
+                    )
+                    switched = _options(getattr(response, "config_options", None))
+                    result["efforts"][model] = efforts_from_options(switched)
             with contextlib.suppress(Exception):
                 await conn.close_session(session_id=session.session_id)
             process.terminate()
-            return options
 
     # ---- a turn
 
@@ -595,6 +638,7 @@ class AcpHarness:
                         return
                     session_id = await self._open(conn, spec, turn, work, client)
                     await self._choose_model(conn, spec, turn, session_id)
+                    await self._choose_effort(conn, turn, session_id)
                 prompt = turn.prompt
                 if turn.replay and not turn.resumed:
                     prompt = f"{turn.replay}\n\n---\n\n{turn.prompt}"
@@ -603,13 +647,25 @@ class AcpHarness:
                 turn.usage = _usage(response)
                 if turn.config_options:
                     probe = self.probed.setdefault(
-                        spec.id, {"at": time.time(), "options": [], "models": [], "error": ""}
+                        spec.id,
+                        {
+                            "at": time.time(),
+                            "options": [],
+                            "models": [],
+                            "efforts": {},
+                            "error": "",
+                        },
                     )
                     probe.update(
                         at=time.time(),
                         options=turn.config_options,
                         models=models_from_options(turn.config_options),
                     )
+                    current = current_of(turn.config_options, "model")
+                    if current:
+                        probe.setdefault("efforts", {})[current] = efforts_from_options(
+                            turn.config_options
+                        )
                 with contextlib.suppress(Exception):
                     async with asyncio.timeout(5):
                         await conn.close_session(session_id=session_id)
@@ -667,6 +723,22 @@ class AcpHarness:
             if any(v["value"] == turn.model for v in option["values"]):
                 response = await conn.set_config_option(
                     config_id=option["id"], session_id=session_id, value=turn.model
+                )
+                turn.config_options = _options(getattr(response, "config_options", None))
+            return
+
+    async def _choose_effort(self, conn, turn, session_id):
+        """Sets the effort when the session's model offers that level; otherwise leaves it."""
+        if not turn.effort:
+            return
+        for option in turn.config_options:
+            if option.get("category") != "thought_level":
+                continue
+            if option["current"] != turn.effort and any(
+                v["value"] == turn.effort for v in option["values"]
+            ):
+                response = await conn.set_config_option(
+                    config_id=option["id"], session_id=session_id, value=turn.effort
                 )
                 turn.config_options = _options(getattr(response, "config_options", None))
             return

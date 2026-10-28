@@ -11,4 +11,4 @@ Review {args_or_default}.
 4. Compare the leavers with players who went on using compare_cohorts (for example never completed level N vs completed it) and say what differs: sessions, play time, platform, version, country.
 5. Check the neighbours: does the drop start one level earlier, or is the next level the problem?
 
-Write the review: the finding and its numbers first, then the likely reasons (separate what the data shows from your guess), then one or two specific, testable changes and the number that will show whether each worked. If the sample is small, say so. End by saving it with save_report (title like "Level 12 review") with a headline such as the level's exit share.
+Write the review: the finding and its numbers first, then the likely reasons (separate what the data shows from your guess), then one or two specific, testable changes and the number that will show whether each worked. If the sample is small, say so. End by offering it with propose_report (title like "Level 12 review") with a headline such as the level's exit share.

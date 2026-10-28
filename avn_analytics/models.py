@@ -706,6 +706,7 @@ class NutBotChat(StrictModel):
     message: Annotated[str, Field(min_length=1, max_length=4000)]
     harness: Annotated[str, Field(max_length=20)] | None = None
     model: Annotated[str, Field(max_length=80)] | None = None
+    effort: Annotated[str, Field(max_length=40)] | None = None
     chat_id: UUID | None = None
     context: dict = Field(default_factory=dict)
 

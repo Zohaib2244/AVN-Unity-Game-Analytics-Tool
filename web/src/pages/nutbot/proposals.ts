@@ -19,7 +19,10 @@ export const proposalKey = (proposal: NutBotProposal): string => `${proposal.kin
 
 export type Applied = { path: string; undo: () => Promise<void> };
 
-const KINDS: Record<NutBotProposal['kind'], string> = { players: 'players', funnel: 'funnels', highlight: 'players', levels: 'levels', groups: 'levels' };
+const KINDS: Record<NutBotProposal['kind'], string> = { players: 'players', funnel: 'funnels', highlight: 'players', levels: 'levels', groups: 'levels', report: 'overview' };
+
+/** A report is kept, not shown on a page: saving it never opens a page and "Applies itself" never saves one. */
+export const savesReport = (proposal: NutBotProposal): boolean => proposal.kind === 'report';
 export const proposalPage = (proposal: NutBotProposal): string => KINDS[proposal.kind];
 
 const restore = (key: string, before: unknown): void => storePush(key, before ?? null);
@@ -30,11 +33,16 @@ function setDates(game: Game, payload: { start?: string; end?: string }): () => 
   return () => saveFilters(game, before);
 }
 
-/** Applies one proposal for `game`. The caller navigates to `path` and offers the undo. */
-export async function applyProposal(game: Game, proposal: NutBotProposal): Promise<Applied> {
+/** Applies one proposal for `game`. The caller navigates to `path` and offers the undo. `chatId` ties a saved report to its chat. */
+export async function applyProposal(game: Game, proposal: NutBotProposal, chatId?: string | null): Promise<Applied> {
   const payload = proposal.payload as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
   const path = gamePath(game, proposalPage(proposal));
   switch (proposal.kind) {
+    case 'report': {
+      const base = `/v1/games/${encodeURIComponent(game.id)}/nutbot/reports`;
+      const saved = await write<{ id: string }>(base, { method: 'POST', body: JSON.stringify({ title: payload.title, body: payload.body, headline: payload.headline || undefined, chat_id: chatId || undefined }) });
+      return { path, undo: async () => { await write(`${base}/${encodeURIComponent(saved.id)}`, { method: 'DELETE' }); } };
+    }
     case 'players': {
       const key = `avn-players-view-${game.id}`;
       const before = storeGet<Record<string, unknown>>(key);
