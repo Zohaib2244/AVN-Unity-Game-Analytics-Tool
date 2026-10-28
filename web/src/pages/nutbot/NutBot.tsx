@@ -15,7 +15,7 @@ import { filterState, saveFilters, type FilterState } from '@/lib/filters';
 import { agoText, number, platformLabel } from '@/lib/format';
 import { gamePath } from '@/lib/games';
 import { storeGet, storeRemove, storeSet } from '@/lib/store';
-import type { Game, NutBotAction, NutBotChatRead, NutBotChatRow, NutBotEvent, NutBotInfo, NutBotLimits, NutBotPrefs, NutBotProposal, NutBotReportRow, NutBotStoredTool, NutBotUsageReport } from '@/lib/types';
+import type { Game, NutBotAction, NutBotChatRead, NutBotChatRow, NutBotEvent, NutBotInfo, NutBotLimits, NutBotPrefs, NutBotProposal, NutBotReportRow, NutBotStoredTool } from '@/lib/types';
 import { buildContext, contextChips, panelChips, scopeLine, suggestionsFor, type PageContext } from './context';
 import { Markdown } from './markdown';
 import { APPLY_KEY, applyMode, applyProposal, proposalKey, type Applied, type ApplyMode } from './proposals';
@@ -368,7 +368,6 @@ export function NutBotHost(): ReactElement | null {
   };
   const commands = useMemo<SlashCommand[]>(() => (info?.skills || []).map((skill) => ({ name: `/${skill.name}`, description: skill.args ? `${skill.summary} · ${skill.args}` : skill.summary })), [info]);
 
-  const usageQuery = useRead<NutBotUsageReport>('/v1/nutbot/usage?days=7', { enabled: usable && open && panel === 'usage' });
   const limitsQuery = useRead<NutBotLimits>('/v1/nutbot/limits', { enabled: usable && open && panel === 'usage' });
 
   if (!game || !usable) return null;
@@ -378,12 +377,8 @@ export function NutBotHost(): ReactElement | null {
   const messages = all.map((message, index) => toPanelMessage(message, busy && index === all.length - 1, openAction, openLink,
     message.role === 'assistant' && message.id != null && me.is_admin ? { state: traces[message.id], toggle: () => void toggleTrace(message.id!) } : {},
     { applied: new Set(appliedRef.current.keys()), apply: (proposal) => void applyOne(proposal), undo: (proposal) => void undoProposal(proposal), saveReport: (answer) => void saveReport(answer) }));
-  const usageRows = usageQuery.data?.rows ?? [];
-  const today = new Date().toISOString().slice(0, 10);
-  const sum = (rows: typeof usageRows, key: 'answers' | 'input_tokens' | 'output_tokens' | 'cost_usd') => rows.reduce((total, row) => total + (row[key] || 0), 0);
-  const todayRows = usageRows.filter((row) => row.day === today);
   return (
-    <>
+    <div className="nb-dock" hidden={!open}>
       <NutBotPanel
         open={open} onClose={close} messages={messages} busy={busy} onSend={(text, picked) => void send(picked?.command ? `${picked.command.name} ${text}`.trim() : text)} commands={commands} onStop={stop} onNew={newChat}
         context={panelChips(chips, off)} onToggleContext={toggleContext} suggestions={suggestionsFor(section)}
@@ -453,8 +448,6 @@ export function NutBotHost(): ReactElement | null {
               ) : null}
               {panel === 'usage' ? (
                 <div className="nb-usage" role="region" aria-label="NutBot usage">
-                  <p><strong>Today:</strong> {number(sum(todayRows, 'answers'))} of {number(info?.daily_limit ?? 0)} answers · {number(sum(todayRows, 'input_tokens') + sum(todayRows, 'output_tokens'))} tokens{sum(todayRows, 'cost_usd') ? ` · $${sum(todayRows, 'cost_usd').toFixed(2)}` : ''}</p>
-                  <p><strong>Last 7 days:</strong> {number(sum(usageRows, 'answers'))} answers · {number(sum(usageRows, 'input_tokens') + sum(usageRows, 'output_tokens'))} tokens{sum(usageRows, 'cost_usd') ? ` · $${sum(usageRows, 'cost_usd').toFixed(2)}` : ''}</p>
                   {Object.entries(limitsQuery.data?.agents ?? {}).map(([id, agent]) => {
                     const label = info?.harnesses.find((h) => h.id === id)?.label || id;
                     if (agent.error || !agent.windows.length) return <p key={id} className="small muted">{label}: allowance unknown{agent.error ? ` (${agent.error})` : ''}.</p>;
@@ -469,6 +462,8 @@ export function NutBotHost(): ReactElement | null {
                     });
                   })}
                   {limitsQuery.isLoading ? <p className="small muted">Checking the agents' allowances…</p> : null}
+                  {limitsQuery.isError ? <p className="small muted" role="alert">Could not check the allowance limits. <button type="button" className="btn sm" onClick={() => void limitsQuery.refetch()}>Retry</button></p> : null}
+                  {limitsQuery.isSuccess && !Object.keys(limitsQuery.data?.agents ?? {}).length ? <p className="small muted">No allowance limits are available.</p> : null}
                 </div>
               ) : null}
             </>
@@ -482,6 +477,6 @@ export function NutBotHost(): ReactElement | null {
           <p className="nb-foot small muted">NutBot can read this game’s data. It asks before saving anything. Answers can be wrong: check the numbers that matter.</p>
         </div>
       ) : null}
-    </>
+    </div>
   );
 }

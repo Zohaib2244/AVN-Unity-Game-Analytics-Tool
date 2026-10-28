@@ -18,17 +18,38 @@
 .rule-list{display:flex;flex-direction:column;align-items:flex-start}
 .rule-list .rule-row{align-self:stretch}
 
-/* NutBot (src/pages/nutbot): the settings strip under the @avn/ui panel, markdown answers, shortcut buttons */
-.nb-extra{position:absolute;z-index:67;right:0;bottom:0;width:min(420px,96%);display:flex;flex-wrap:wrap;gap:8px 10px;align-items:flex-end;padding:8px 14px calc(8px + env(safe-area-inset-bottom,0px));background:var(--panel);border-top:var(--bw) solid var(--line);border-left:var(--bw) solid var(--line-strong);font-size:var(--fs-sm);color:var(--dim)}
-.nb-extra .nb-field{display:grid;gap:3px;flex:1;min-width:0;font-size:var(--fs-sm);color:var(--muted)}
+/* NutBot owns one viewport-height column. Settings reserve space instead of covering the composer. */
+.nb-dock{position:fixed;z-index:66;inset:0 0 0 auto;width:min(420px,96vw);display:flex;flex-direction:column;background:var(--panel);border-left:var(--bw) solid var(--line-strong)}
+.nb-dock[hidden]{display:none}
+.nb-dock>.nb{position:relative;inset:auto;flex:1;min-height:0;width:100%;border:0;border-radius:0;box-shadow:none}
+.nb-dock .nb-h,.nb-dock .nb-ctx,.nb-dock .nb-in{flex-shrink:0}
+.nb-dock .nb-list{min-height:0;overscroll-behavior:contain}
+.nb-dock .nb-h small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nb-dock .nb-hello{padding:8px 0;text-align:left}
+.nb-dock .nb-hello p{margin:0;text-align:left}
+.nb-dock .nb-sug{align-items:stretch;width:100%}
+.nb-dock .nb-sug .preset{border-style:solid}
+/* The old progress-bar grid and textarea rules must not size the shared PromptBar. */
+.nb-dock .nb-in{display:block;padding:10px 12px}
+.nb-dock .pbar{display:block;min-width:0}
+.nb-dock .nb-in .pbar-in{flex:none;min-height:44px;max-height:110px;padding:0 2px;border:0;border-radius:0;background:none;font-size:var(--fs-body);line-height:22px;box-shadow:none}
+.nb-dock .nb-in .pbar-in:focus{border:0;box-shadow:none;outline:none}
+.nb-dock .pbar-hint{line-height:1.5}
+.nb-dock .pbar-menu{max-height:240px;overflow:auto}
+.nb-dock .pbar .pbar-glow{height:var(--h,34px);border-radius:var(--r-ctl);background:var(--raise)}
+.nb-extra{flex-shrink:0;min-height:0;max-height:45%;overflow:auto;overscroll-behavior:contain;display:flex;flex-wrap:wrap;gap:8px 10px;align-items:flex-end;padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));background:var(--panel);border-top:var(--bw) solid var(--line);font-size:var(--fs-sm);color:var(--dim)}
+.nb-extra .nb-field{display:grid;gap:4px;flex:1 0 calc(50% - 5px);min-width:0;margin:0;font-size:var(--fs-sm);color:var(--muted)}
 .nb-extra select{width:100%;min-height:30px;padding:0 8px;border-radius:var(--r-ctl);border:var(--bw) solid var(--line);background:var(--nested);color:var(--text);font:inherit;font-size:var(--fs-sm)}
 .nb-extra .nb-stop{align-self:flex-end}
-.nb-extra .nb-foot{flex-basis:100%;margin:0;font-size:var(--fs-micro);color:var(--dim)}
+.nb-extra .nb-foot{flex-basis:100%;margin:0;padding:0;font-size:var(--fs-micro);color:var(--dim);text-align:left}
 .nb-extra .nb-setup-help{flex-basis:100%;display:grid;gap:4px;color:var(--text)}
 .nb-extra .nb-setup-help h3{font-size:var(--fs-md);margin:0}
 .nb-extra .nb-setup-help p{margin:0;font-size:var(--fs-sm);color:var(--muted)}
-.app.nb-open .nb .nb-hint{margin-bottom:104px}
-@container app (max-width:620px){.nb-extra{width:100%;border-left:0}}
+@container app (max-width:620px){
+  .nb-dock{top:4dvh;width:100%;border-left:0;border-top:var(--bw) solid var(--line-strong);border-radius:var(--r-card) var(--r-card) 0 0;overflow:hidden}
+  .nb-dock .icon-btn,.nb-dock .pbar-tool,.nb-dock .pbar-pick,.nb-dock .pbar-send,.nb-dock .pbar-opt,.nb-extra .btn,.nb-extra select{min-height:44px}
+  .nb-dock .pbar-tool,.nb-dock .pbar-send{width:44px}
+}
 .nb-md{display:flex;flex-direction:column;gap:8px;overflow-wrap:anywhere}
 .nb-md p{margin:0}
 .nb-md ol{margin:0;padding-left:18px;font-size:var(--fs-md);display:flex;flex-direction:column;gap:4px}
@@ -48,7 +69,7 @@
 .nb-b .nb-trace summary{cursor:pointer;color:var(--muted)}
 .nb-b .nb-trace pre{margin:4px 0 0;max-height:160px;overflow:auto;background:var(--nested);border:var(--bw) solid var(--line);border-radius:var(--r-ctl);padding:6px;font-size:var(--fs-micro);white-space:pre-wrap;overflow-wrap:anywhere}
 /* The settings strip: chats, usage and the context meter */
-.nb-extra .nb-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end}
+.nb-extra .nb-tools{flex-basis:100%;display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end}
 .nb-extra .nb-context,.nb-extra .nb-window{flex-basis:100%;display:flex;align-items:center;gap:8px;margin:0;font-size:var(--fs-micro);color:var(--dim)}
 .nb-extra .nb-context.heavy,.nb-extra .nb-window.warn{color:var(--warn)}
 .nb-extra .nb-bar{flex:0 0 72px;height:6px;border-radius:3px;background:var(--nested);border:var(--bw) solid var(--line);overflow:hidden}

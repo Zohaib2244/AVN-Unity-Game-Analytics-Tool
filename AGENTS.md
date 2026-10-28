@@ -70,6 +70,9 @@ tests through `scripts/check.sh` (or `. scripts/_env.sh` first); a bare
 
 ## Design preferences
 
+- NutBot keeps the message field and Send visible above its settings; controls reserve their own space and never overlap or squeeze labels into slivers.
+- NutBot Usage shows allowance limits and reset times only; omit token, cost and answer totals.
+
 - Player details open in a centred viewer for focused reading and quick browsing; never move them to the screen edge or stack them beside NutBot as another sidebar.
 - Undo and notification actions keep the current page and player viewer open; picker positions follow their trigger through scrolling.
 - Home opens Games with a browser-local Continue toast. Remember the last page separately for each account and workspace; selections and filters stay browser-specific.
