@@ -388,6 +388,15 @@ class WorkerControl(StrictModel):
     desired: Literal["running", "stopped"]
 
 
+class DeleteVersions(StrictModel):
+    """Delete every event these app versions sent; `confirm` is the game's bundle ID."""
+
+    versions: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=200)
+    ]
+    confirm: Annotated[str, Field(max_length=255)]
+
+
 class EnvironmentFix(StrictModel):
     """Count events a build sent as `from_environment` as `to_environment` instead."""
 

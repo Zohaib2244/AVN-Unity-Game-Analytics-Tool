@@ -3778,3 +3778,38 @@ def test_usr1_prints_every_thread_stack_and_keeps_running(capfd):
         assert "test_usr1_prints_every_thread_stack" in capfd.readouterr().err
     finally:
         faulthandler.unregister(signal.SIGUSR1)
+
+
+def test_deleting_a_versions_events_keeps_the_others_and_their_facts_in_step(backend, monkeypatch):
+    import time
+
+    from avn_analytics import cleanup
+
+    monkeypatch.setattr(cleanup, "WINDOW", 2)  # several short transactions
+    admin, ingest, settings = backend
+    game = register(admin)
+    old = [event(device_id=f"old-{n}", app_version="1.0") for n in range(5)]
+    new = [event(device_id="new", app_version="2.0"), event(device_id="new", app_version="2.0")]
+    assert send(ingest, game, [*old, *new]).status_code == 200
+    base = f"/v1/games/{game['id']}"
+    listed = admin.get(f"{base}/versions", headers=AUTH).json()
+    by_version = {row["app_version"]: row for row in listed["versions"]}
+    assert (by_version["1.0"]["events"], by_version["1.0"]["players"]) == (5, 5)
+    assert by_version["2.0"]["events"] == 2
+
+    wrong = {"versions": ["1.0"], "confirm": "nope"}
+    assert admin.post(f"{base}/versions/delete", headers=AUTH, json=wrong).status_code == 400
+    right = {"versions": ["1.0"], "confirm": game["bundle_id"]}
+    assert admin.post(f"{base}/versions/delete", headers=AUTH, json=right).status_code == 202
+    for _ in range(200):
+        listed = admin.get(f"{base}/versions", headers=AUTH).json()
+        if not listed["deleting"]:
+            break
+        time.sleep(0.02)
+    assert [(row["app_version"], row["events"]) for row in listed["versions"]] == [("2.0", 2)]
+    path = settings.data_dir / "games" / f"{game['id']}.sqlite3"
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT count(*) FROM events").fetchone()[0] == 2
+        assert db.execute("SELECT count(*) FROM analytics_facts").fetchone()[0] == 2
+    actions = [row["action"] for row in admin.get("/v1/audit", headers=AUTH).json()]
+    assert "events.delete" in actions and "events.deleted" in actions

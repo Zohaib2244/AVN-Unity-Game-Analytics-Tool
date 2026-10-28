@@ -1,5 +1,5 @@
 // Game settings (avn-ux pages.md "Settings"): key numbers, icon, who can see the game, game information,
-// analysis thresholds, environment fixes, event activity, workspace move and the Danger zone. Archiving
+// analysis thresholds, environment fixes, event activity, workspace move, data by version and the Danger zone. Archiving
 // is reversible (at once, Undo in the toast); deleting asks for the bundle ID.
 import { useRef, useState, type ReactElement } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
@@ -16,6 +16,7 @@ import { Field, FormError, useSubmit } from '@/components/forms';
 import { GameAvatar } from '@/components/GameAvatar';
 import { Ico } from '@/components/icons';
 import { removeIcon, uploadIcon } from './gameIcon';
+import { VersionDataPanel } from './VersionData';
 
 const WRONG = ['development', 'test', 'debug'];
 
@@ -256,6 +257,7 @@ export function GameSettingsPage({ game }: { game: Game }): ReactElement {
               </div>
             </section>
           ) : null}
+          {manage ? <VersionDataPanel game={game} bundleId={detail.bundle_id} /> : null}
           {manage ? (
             <section className="panel section-spacing danger-zone">
               <div className="panel-header"><div><h2>Danger zone</h2><p>Changes here affect live data collection.</p></div></div>

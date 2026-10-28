@@ -30,6 +30,7 @@ from starlette.background import BackgroundTask
 from . import (
     avn_events_standard,
     avn_events_standard_status,
+    cleanup,
     custom_events,
     device_specs,
     dictionary_import,
@@ -53,6 +54,7 @@ from .models import (
     Batch,
     CustomEvent,
     CustomEventTier,
+    DeleteVersions,
     EnvironmentFix,
     EventActivityQuery,
     EventDefinition,
@@ -575,6 +577,21 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     def delete_environment_fix(game_id: UUID, fix_id: int, principal: Manager):
         insights.delete_environment_fix(storage, str(game_id), fix_id)
         accounts.audit(principal, "environment.unfix", str(game_id), str(fix_id))
+
+    @admin_api.get("/v1/games/{game_id}/versions")
+    def list_versions(game_id: UUID, principal: Current):
+        return cleanup.versions(storage, str(game_id))
+
+    @admin_api.post("/v1/games/{game_id}/versions/delete", status_code=202)
+    def delete_versions(game_id: UUID, body: DeleteVersions, principal: Manager):
+        listed = ", ".join(sorted(body.versions))
+
+        def done(removed):
+            accounts.audit(principal, "events.deleted", str(game_id), f"{removed} · {listed}")
+
+        result = cleanup.start(storage, str(game_id), body.versions, body.confirm, done)
+        accounts.audit(principal, "events.delete", str(game_id), listed)
+        return result
 
     @admin_api.patch("/v1/games/{game_id}")
     def update_game(game_id: UUID, update: GameUpdate, principal: Manager):

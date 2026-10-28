@@ -31,6 +31,7 @@ const PATHS: Record<string, string> = {
   sparkle: '<path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"/><path d="M19 16v4m-2-2h4"/>',
   trend: '<path d="m3 6 6 6 4-4 8 8"/><path d="M21 11v5h-5"/>',
   exit: '<path d="M10 4H5v16h5"/><path d="m15 8 4 4-4 4M19 12H9"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v6m4-6v6"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
   alert: '<path d="M12 3 2.5 20h19Z"/><path d="M12 10v4m0 3h.01"/>',
   flag: '<path d="M5 21V4"/><path d="M5 4h12l-2 4 2 4H5"/>',

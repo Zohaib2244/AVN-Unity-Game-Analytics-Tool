@@ -17,7 +17,7 @@ const ACTION_LABELS: Record<string, string> = {
   'key.create': 'Created an API key', 'key.delete': 'Deleted an API key',
   'dictionary.set': 'Edited the event dictionary', 'dictionary.delete': 'Removed a dictionary entry',
   'export.download': 'Exported data', 'user.add': 'Added a person', 'user.role': 'Changed a role',
-  'user.remove': 'Removed a person', 'workspace.create': 'Created a workspace', 'workspace.rename': 'Renamed a workspace', 'workspace.delete': 'Deleted a workspace', 'game.move': 'Moved a game', 'environment.fix': 'Re-counted a build’s environment', 'environment.unfix': 'Undid an environment re-count', 'access.set': 'Changed a person’s games', 'access.game': 'Changed who sees a game', 'analytics.start': 'Started analytics processing', 'analytics.stop': 'Stopped analytics processing',
+  'user.remove': 'Removed a person', 'workspace.create': 'Created a workspace', 'workspace.rename': 'Renamed a workspace', 'workspace.delete': 'Deleted a workspace', 'game.move': 'Moved a game', 'environment.fix': 'Re-counted a build’s environment', 'environment.unfix': 'Undid an environment re-count', 'events.delete': 'Started deleting a version’s events', 'events.deleted': 'Deleted a version’s events', 'access.set': 'Changed a person’s games', 'access.game': 'Changed who sees a game', 'analytics.start': 'Started analytics processing', 'analytics.stop': 'Stopped analytics processing',
 };
 const gameLabel = (game: Game): string => `${game.name} · ${platformLabel(game.platform)}`;
 const personName = (person: Pick<TeamPerson, 'name' | 'email'>): string => person.name || person.email.split('@')[0]!;
