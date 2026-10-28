@@ -172,7 +172,7 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
                   </tr></thead>
                   <tbody>
                     {sorted.slice(current * size, (current + 1) * size).map((row) => (
-                      <tr key={row.level} data-level-row={row.level} className={`${highlight?.level === row.level ? 'level-highlight ' : ''}${row.completion != null && !row.low_sample && row.completion < 60 ? 'level-hard' : ''}`}
+                      <tr key={row.level} data-level-row={row.level} className={`${highlight?.level === row.level ? 'level-highlight' : ''}`}
                         onClick={(event) => openRow(event, row.level)}
                         onPointerOver={(event) => { if (event.pointerType === 'mouse') void prefetch(drillPagePath(game, filters, scope, row.level, { group: levelDrillGroup(row), sort: 'exit_at', lastAction: null }, 0)); }}>
                         <td className="level-number-cell">

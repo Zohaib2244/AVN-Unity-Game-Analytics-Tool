@@ -49,7 +49,8 @@ export function filterState(game: { id: string }): FilterState {
   const saved = (storeGet<Partial<FilterState>>(key(game)) || {}) as Partial<FilterState>;
   return {
     range: saved.range || null,
-    timezone: saved.timezone === 'utc' ? 'utc' : 'local',
+    // Always local time: there is no switch for UTC any more, so a saved choice must not apply unseen.
+    timezone: 'local',
     hideTest: saved.hideTest ?? true,
     // Builds can no longer be picked, so an old saved choice is dropped rather than left narrowing the numbers unseen.
     environment: saved.environment || [], app_version: saved.app_version || [], build: [], country: saved.country || [], platform: saved.platform || [],

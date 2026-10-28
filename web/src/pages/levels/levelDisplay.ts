@@ -10,8 +10,8 @@ export type CountsShown = 'flag' | 'hover' | 'always';
 export type LevelDisplay = { columns: Record<LevelColumn, boolean>; style: DropStyle; counts: CountsShown; dropFlag: number; quitFlag: number };
 
 export const DEFAULT_DISPLAY: LevelDisplay = {
-  columns: { started: true, finished: false, drop: true, failquit: true, tries: false, fails: false, time: true },
-  style: 'cell', counts: 'flag', dropFlag: 25, quitFlag: 10,
+  columns: { started: true, finished: true, drop: true, failquit: false, tries: false, fails: true, time: true },
+  style: 'cell', counts: 'flag', dropFlag: 10, quitFlag: 10,
 };
 export const FLAG_RANGE = { drop: { min: 5, max: 60 }, quit: { min: 0, max: 50 } } as const;
 export const displayKey = (game: { id: string }): string => `avn-level-display-${game.id}`;

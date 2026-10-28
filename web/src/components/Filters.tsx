@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, t
 import { AnimatePresence, motion } from 'motion/react';
 import { Popover, Segmented } from '@avn/ui';
 import { useRead } from '@/api';
-import { useTheme } from '@/app/theme';
 import { dimensionText, number, prettyDay } from '@/lib/format';
 import { gameURL } from '@/lib/games';
 import { DIMENSION_LABELS, MENU_DIMENSIONS, activeFilters, choiceOf, filterState, saveFilters, timezoneOffset, withChoice, type ActiveFilters, type Dimension, type DimensionChoice, type Facets, type FilterState } from '@/lib/filters';
@@ -38,7 +37,6 @@ export function useFilters(game: Pick<Game, 'id'>): [ActiveFilters, (update: (st
 
 export function FilterBar({ game, state, onChange, context, children }: { game: Pick<Game, 'id'>; state: ActiveFilters; onChange: (update: (state: ActiveFilters) => ActiveFilters) => void; context?: FilterContext; children?: ReactNode }): ReactElement {
   const { toast } = useNotify();
-  const { density, setDensity } = useTheme();
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const facetsQuery = useRead<Facets>(facetsPath(game, state));
@@ -95,8 +93,6 @@ export function FilterBar({ game, state, onChange, context, children }: { game: 
             { value: 'all', label: 'All builds' },
           ]} />
         </div>
-        <Segmented label="Time zone" value={state.timezone} onChange={(timezone) => set({ timezone })} options={[{ value: 'local', label: 'Local' }, { value: 'utc', label: 'UTC' }]} />
-        <div className="density-switch"><Segmented label="Row density" value={density} onChange={setDensity} options={[{ value: 'roomy', label: 'Roomy' }, { value: 'compact', label: 'Compact' }]} /></div>
         {children}
         <button ref={button} type="button" className="btn filters-open" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}><Ico name="funnel" size={14} /> Filters {active ? <span className="count">{active}</span> : null}</button>
       </div>

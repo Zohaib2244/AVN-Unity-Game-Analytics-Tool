@@ -9,7 +9,7 @@
     var palette = read('avn-palette');
     if (['slate', 'moss', 'hibiscus', 'white', 'chiral', 'dora'].indexOf(palette) < 0) palette = 'nutmeg';
     root.setAttribute('data-theme', theme);
-    root.setAttribute('data-density', read('avn-density') === 'compact' ? 'compact' : 'roomy');
+    root.setAttribute('data-density', 'roomy'); // one density: the Roomy/Compact switch was removed
     if (palette === 'nutmeg') root.removeAttribute('data-palette'); else root.setAttribute('data-palette', palette);
     if (document.readyState !== 'loading') paintIcon();
   }
