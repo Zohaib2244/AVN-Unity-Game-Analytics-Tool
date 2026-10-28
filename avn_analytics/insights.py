@@ -267,7 +267,13 @@ def published_builds(storage, game_id, start, end):
                 TEST_ENVIRONMENTS,
             )
         ]
-    return sorted(published, key=version_key, reverse=True)
+    # Releases are numbered x.y.z. Anything else (a stray "2.3") can still be picked in the filter
+    # menu but is never "the latest build"; with no numbered release, every version counts.
+    return sorted(
+        [value for value in published if is_release_version(value)] or published,
+        key=version_key,
+        reverse=True,
+    )
 
 
 def latest_build(storage, game_id, start, end):
@@ -854,6 +860,11 @@ PLAYER_SORTS = {
     "playtime": "total_play_seconds",
     "version": "version_key(app_version)",
 }
+
+
+def is_release_version(value):
+    """True for a release number written x.y.z (digits only), how builds are numbered."""
+    return re.fullmatch(r"\d+\.\d+\.\d+", str(value or "")) is not None
 
 
 @lru_cache(maxsize=4096)

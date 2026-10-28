@@ -34,7 +34,7 @@ export const choiceOf = (state: Pick<FilterState, 'exclude'> & Partial<Record<Di
   return out.length ? { mode: 'not', values: out } : { mode: 'in', values: state[dimension] ?? [] };
 };
 /** The state with one category set to a choice; the other side is emptied so the two never combine. */
-export function withChoice<T extends FilterState>(state: T, dimension: Dimension, choice: DimensionChoice): T {
+export function withChoice<T extends Pick<FilterState, Dimension | 'exclude'>>(state: T, dimension: Dimension, choice: DimensionChoice): T {
   const exclude = { ...state.exclude, [dimension]: choice.mode === 'not' ? choice.values : [] };
   return { ...state, [dimension]: choice.mode === 'in' ? choice.values : [], exclude };
 }

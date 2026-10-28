@@ -3737,17 +3737,31 @@ def test_prepared_mode_keeps_the_cache_for_other_dashboard_families(
 def test_latest_build_is_the_newest_published_version_not_a_test_build(backend):
     admin, ingest, _ = backend
     game = register(admin)
-    # 1.9 and 1.10 are live (1.10 is newer, though "1.9" sorts later as text); 2.0 is editor-only
-    _send_as(ingest, game, "production", [event(device_id="a", app_version="1.9")])
-    _send_as(ingest, game, "production", [event(device_id="b", app_version="1.10")])
-    _send_as(ingest, game, "editor", [event(device_id="dev", app_version="2.0")])
+    # 1.0.9 and 1.0.10 are live (1.0.10 is newer, though "1.0.9" sorts later as text); 2.0.0 is
+    # editor-only; "9.9" is not written x.y.z, so it is never the latest build despite its number
+    _send_as(ingest, game, "production", [event(device_id="a", app_version="1.0.9")])
+    _send_as(ingest, game, "production", [event(device_id="b", app_version="1.0.10")])
+    _send_as(ingest, game, "production", [event(device_id="odd", app_version="9.9")])
+    _send_as(ingest, game, "editor", [event(device_id="dev", app_version="2.0.0")])
     base = f"/v1/games/{game['id']}/insights/facets"
     days = {"start": "2026-10-04", "end": "2026-10-04"}
     facets = admin.get(base, headers=AUTH, params=days).json()
-    assert facets["latest_app_version"] == "1.10"
-    # "the build before" is the next published one: never the editor-only 2.0, and 1.9 before 1.10
-    assert facets["previous_app_version"] == "1.9"
+    assert facets["latest_app_version"] == "1.0.10"
+    # "the build before" is the next published one: never the editor-only 2.0.0 or the odd 9.9
+    assert facets["previous_app_version"] == "1.0.9"
+    assert "9.9" in {
+        item["value"] for item in facets["app_version"]
+    }  # still selectable in the menu
     # a range with no events has no latest build, and the dashboards then show every version
     empty = {"start": "2026-10-10", "end": "2026-10-10"}
     assert admin.get(base, headers=AUTH, params=empty).json()["latest_app_version"] is None
     assert admin.get(base, headers=AUTH, params=empty).json()["previous_app_version"] is None
+
+
+def test_a_game_with_no_numbered_release_still_has_a_latest_build(backend):
+    admin, ingest, _ = backend
+    game = register(admin, "com.avn.odd-versions")
+    _send_as(ingest, game, "production", [event(device_id="a", app_version="2.3")])
+    days = {"start": "2026-10-04", "end": "2026-10-04"}
+    facets = admin.get(f"/v1/games/{game['id']}/insights/facets", headers=AUTH, params=days).json()
+    assert facets["latest_app_version"] == "2.3"

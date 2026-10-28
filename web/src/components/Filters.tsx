@@ -12,7 +12,8 @@ import { DateRange, resolveRange } from './DateRange';
 import { useNotify } from './feedback';
 import { Ico, type IcoName } from './icons';
 import { OptionList } from './OptionList';
-import { POP, SPRING, SWAP } from '@/lib/motion';
+import { POP } from '@/lib/motion';
+import { isReleaseVersion, sortVersions } from '@/lib/versions';
 
 /** The filter choices (and the latest and previous published builds) for a game and range. */
 export const facetsPath = (game: Pick<Game, 'id'>, state: Pick<ActiveFilters, 'range' | 'timezone'>): string => `${gameURL(game)}/insights/facets?${new URLSearchParams({ start: state.range.from, end: state.range.to, tz_offset: String(timezoneOffset(state)) })}`;
@@ -23,6 +24,21 @@ const DIMENSION_ICONS: Record<Dimension, IcoName> = { environment: 'flask', app_
 export function choiceText(dimension: Dimension, choice: DimensionChoice): string {
   const names = choice.values.map((value) => dimensionText(dimension, value));
   return names.length <= 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+}
+
+/** What the Filters menu edits: a copy, applied only when Done is pressed. */
+type Draft = Pick<FilterState, 'hideTest' | 'environment' | 'app_version' | 'build' | 'country' | 'platform' | 'exclude' | 'versionMode'>;
+const draftOf = (state: FilterState): Draft => ({ hideTest: state.hideTest, environment: state.environment, app_version: state.app_version, build: state.build, country: state.country, platform: state.platform, exclude: state.exclude, versionMode: state.versionMode });
+
+/** One category, "only these" or "everything except"; a hand-picked version list is the 'custom' build mode. */
+function choose<T extends Draft>(state: T, dimension: Dimension, next: DimensionChoice): T {
+  const changed = withChoice(state, dimension, next);
+  return dimension === 'app_version' ? { ...changed, versionMode: next.values.length ? 'custom' : 'all' } : changed;
+}
+/** Latest, previous or all builds. */
+function chooseBuild<T extends Draft>(state: T, mode: 'latest' | 'previous' | 'all', facets: Facets): T {
+  const wanted = mode === 'latest' ? facets.latest_app_version : mode === 'previous' ? facets.previous_app_version : null;
+  return withChoice({ ...state, versionMode: mode }, 'app_version', { mode: 'in', values: wanted ? [wanted] : [] });
 }
 
 export type FilterContext = { anonymous_events?: number; excluded_events?: number; low_sample?: boolean; players?: number; minimum_players?: number };
@@ -48,33 +64,19 @@ export function FilterBar({ game, state, onChange, context, children }: { game: 
     const builds = wanted ? [wanted] : [];
     if (builds.join() !== state.app_version.join()) onChange((s) => ({ ...s, app_version: builds }));
   }, [facetsQuery.data, state.versionMode, state.app_version, onChange]);
-  const chooseBuild = (mode: 'latest' | 'previous' | 'all') => onChange((s) => withChoice({ ...s, versionMode: mode }, 'app_version', { mode: 'in', values: mode === 'latest' ? [facets.latest_app_version].filter((v): v is string => !!v) : mode === 'previous' ? [facets.previous_app_version].filter((v): v is string => !!v) : [] }));
-
   const set = (patch: Partial<Omit<FilterState, 'range'>> & { range?: ActiveFilters['range'] }) => onChange((s) => ({ ...s, ...patch }));
-  // One category, "only these" or "everything except"; a hand-picked version list is the 'custom' build mode.
-  const setChoice = (dimension: Dimension, choice: DimensionChoice) => onChange((s) => ({ ...withChoice(s, dimension, choice), ...(dimension === 'app_version' ? { versionMode: choice.mode === 'in' && choice.values.length ? 'custom' : choice.mode === 'not' && choice.values.length ? 'custom' : 'all' } : {}) }));
   const removeCategory = (dimension: Dimension) => {
     const before = state;
-    setChoice(dimension, { mode: 'in', values: [] });
-    setModes((m) => ({ ...m, [dimension]: 'in' }));
+    onChange((s) => choose(s, dimension, { mode: 'in', values: [] }));
     toast(`Removed filter: ${DIMENSION_LABELS[dimension]}`, { label: 'Undo', run: () => onChange(() => before) }, 'info');
   };
   const clear = (announce: boolean) => {
     const before = state;
     onChange((s) => ({ ...s, environment: [], app_version: [], build: [], country: [], platform: [], exclude: {}, versionMode: 'all' }));
-    setModes({});
     if (announce) toast('Cleared all filters', { label: 'Undo', run: () => onChange(() => before) }, 'info');
   };
-  // The mode shown for a category: what is applied, or what was just picked while nothing is ticked yet.
-  const [modes, setModes] = useState<Partial<Record<Dimension, 'in' | 'not'>>>({});
   const [category, setCategory] = useState<Dimension>('country');
-  const choice = (dimension: Dimension): DimensionChoice => { const applied = choiceOf(state, dimension); return applied.values.length ? applied : { mode: modes[dimension] ?? 'in', values: [] }; };
   const openOn = (dimension: Dimension) => { setCategory(dimension); setOpen(true); };
-  const options = useMemo(() => Object.fromEntries(MENU_DIMENSIONS.map((dimension) => {
-    const values = [...new Set([...(facets[dimension] || []).map((item) => item.value), ...choiceOf(state, dimension).values])];
-    const counts = Object.fromEntries((facets[dimension] || []).map((item) => [item.value, item.players]));
-    return [dimension, values.map((item) => ({ value: item, label: dimensionText(dimension, item), count: number(counts[item] || 0) }))];
-  })), [facets, state]);
   const chips = MENU_DIMENSIONS.map((dimension) => ({ dimension, ...choiceOf(state, dimension) })).filter((chip) => chip.values.length);
   const active = activeFilters(state);
   const hidden = state.hideTest && !state.environment.length;
@@ -86,7 +88,7 @@ export function FilterBar({ game, state, onChange, context, children }: { game: 
       <div className="filter-bar">
         <DateRange compact value={state.range} onChange={(range) => set({ range })} />
         <div className="build-switch">
-        <Segmented label="Build" value={state.versionMode} onChange={(mode) => { if (mode === 'latest' || mode === 'previous' || mode === 'all') chooseBuild(mode); }}
+        <Segmented label="Build" value={state.versionMode} onChange={(mode) => { if (mode === 'latest' || mode === 'previous' || mode === 'all') onChange((s) => chooseBuild(s, mode, facets)); }}
           options={[
             { value: 'latest', label: facets.latest_app_version ? `Latest ${facets.latest_app_version}` : 'Latest' },
             ...(facets.previous_app_version || state.versionMode === 'previous' ? [{ value: 'previous' as const, label: facets.previous_app_version ? `Previous ${facets.previous_app_version}` : 'Previous' }] : []),
@@ -121,35 +123,53 @@ export function FilterBar({ game, state, onChange, context, children }: { game: 
         </span>
       </div>
       <Popover position="fixed" open={open} onClose={() => setOpen(false)} anchor={button} width={340} className="filter-pop">
-        <div className="pop-scroll filter-sheet">
-          <label className="opt"><input type="checkbox" className="cb-in" checked={state.hideTest} disabled={!!state.environment.length} onChange={(e) => set({ hideTest: e.target.checked })} /><span className="ot">Hide editor &amp; development data</span></label>
-          <div className="filter-tabs" role="tablist" aria-label="Filter by">
-            {MENU_DIMENSIONS.map((dimension) => { const applied = choiceOf(state, dimension); return (
-              <button key={dimension} type="button" role="tab" aria-selected={category === dimension} className="filter-tab" onClick={() => setCategory(dimension)}>
-                {category === dimension ? <motion.span layoutId="filter-tab-pill" className="filter-tab-pill" transition={SPRING} /> : null}
-                <Ico name={DIMENSION_ICONS[dimension]} size={13} /><span>{DIMENSION_LABELS[dimension].replace('Device platform', 'Platform').replace('App version', 'Version')}</span>
-                {applied.values.length ? <i className={applied.mode === 'not' ? 'out' : ''}>{applied.mode === 'not' ? '≠' : ''}{applied.values.length}</i> : null}
-              </button>
-            ); })}
-          </div>
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div key={category} {...SWAP}>
-              <Segmented label={`${DIMENSION_LABELS[category]}: include or leave out`} value={choice(category).mode}
-                onChange={(mode) => { const now = choice(category); setModes((m) => ({ ...m, [category]: mode })); if (now.values.length) setChoice(category, { mode, values: now.values }); }}
-                options={[{ value: 'in', label: 'Only these' }, { value: 'not', label: 'Everything except' }]} />
-              {category === 'app_version' && choice(category).mode === 'in' ? (
-                <label className="opt"><input type="checkbox" className="cb-in" checked={state.versionMode === 'latest'} disabled={!facets.latest_app_version} onChange={(e) => (e.target.checked ? chooseBuild('latest') : chooseBuild('all'))} /><span className="ot">Latest published build</span><span className="oc">{facets.latest_app_version || '—'}</span></label>
-              ) : null}
-              <OptionList key={`${category}-${choice(category).mode}`} options={options[category] ?? []} selected={choice(category).values} out={choice(category).mode === 'not'} searchLabel={`Search ${DIMENSION_LABELS[category].toLowerCase()}`}
-                onChange={(values) => setChoice(category, { mode: choice(category).mode, values })} />
-            </motion.div>
-          </AnimatePresence>
-        </div>
-        <div className="pop-foot">
-          <button type="button" className="filter-clear" disabled={!choice(category).values.length} onClick={() => { setChoice(category, { mode: 'in', values: [] }); setModes((m) => ({ ...m, [category]: 'in' })); }}>Clear {DIMENSION_LABELS[category].toLowerCase()}</button>
-          <button type="button" className="btn primary" onClick={() => setOpen(false)}>Done</button>
-        </div>
+        <FilterMenu state={state} facets={facets} initial={category} onDone={(draft) => { onChange((s) => ({ ...s, ...draft })); setOpen(false); }} />
       </Popover>
+    </>
+  );
+}
+
+/** The Filters menu. It edits a copy and applies it on Done; closing any other way leaves the filters as they were. */
+function FilterMenu({ state, facets, initial, onDone }: { state: ActiveFilters; facets: Facets; initial: Dimension; onDone: (draft: Draft) => void }): ReactElement {
+  const [draft, setDraft] = useState<Draft>(() => draftOf(state));
+  const [category, setCategory] = useState<Dimension>(initial);
+  // The mode shown for a category: what is ticked, or what was just picked while nothing is ticked yet.
+  const [modes, setModes] = useState<Partial<Record<Dimension, 'in' | 'not'>>>({});
+  const choice = (dimension: Dimension): DimensionChoice => { const picked = choiceOf(draft, dimension); return picked.values.length ? picked : { mode: modes[dimension] ?? 'in', values: [] }; };
+  const options = useMemo(() => Object.fromEntries(MENU_DIMENSIONS.map((dimension) => {
+    const values = [...new Set([...(facets[dimension] || []).map((item) => item.value), ...choiceOf(draft, dimension).values])];
+    const counts = Object.fromEntries((facets[dimension] || []).map((item) => [item.value, item.players]));
+    const ordered = dimension === 'app_version' ? sortVersions(values) : values;
+    return [dimension, ordered.map((item) => ({ value: item, label: dimensionText(dimension, item), count: number(counts[item] || 0), ...(dimension === 'app_version' && !isReleaseVersion(item) ? { flag: 'not x.y.z', hint: 'Not written x.y.z, so it is never picked as the latest build' } : {}) }))];
+  })), [facets, draft]);
+  const current = choice(category);
+  return (
+    <>
+      <div className="pop-scroll filter-sheet">
+        <label className="opt"><input type="checkbox" className="cb-in" checked={draft.hideTest} disabled={!!draft.environment.length} onChange={(e) => setDraft((d) => ({ ...d, hideTest: e.target.checked }))} /><span className="ot">Hide editor &amp; development data</span></label>
+        <div className="filter-tabs" role="tablist" aria-label="Filter by">
+          {MENU_DIMENSIONS.map((dimension) => { const picked = choiceOf(draft, dimension); return (
+            <button key={dimension} type="button" role="tab" aria-selected={category === dimension} className="filter-tab" onClick={() => setCategory(dimension)}>
+              <Ico name={DIMENSION_ICONS[dimension]} size={13} /><span>{DIMENSION_LABELS[dimension].replace('Device platform', 'Platform').replace('App version', 'Version')}</span>
+              {picked.values.length ? <i className={picked.mode === 'not' ? 'out' : ''}>{picked.mode === 'not' ? '≠' : ''}{picked.values.length}</i> : null}
+            </button>
+          ); })}
+        </div>
+        <motion.div key={category} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.12 }}>
+          <Segmented label={`${DIMENSION_LABELS[category]}: include or leave out`} value={current.mode}
+            onChange={(mode) => { setModes((m) => ({ ...m, [category]: mode })); if (current.values.length) setDraft((d) => choose(d, category, { mode, values: current.values })); }}
+            options={[{ value: 'in', label: 'Only these' }, { value: 'not', label: 'Everything except' }]} />
+          {category === 'app_version' && current.mode === 'in' ? (
+            <label className="opt"><input type="checkbox" className="cb-in" checked={draft.versionMode === 'latest'} disabled={!facets.latest_app_version} onChange={(e) => setDraft((d) => chooseBuild(d, e.target.checked ? 'latest' : 'all', facets))} /><span className="ot">Latest published build</span><span className="oc">{facets.latest_app_version || '—'}</span></label>
+          ) : null}
+          <OptionList key={`${category}-${current.mode}`} options={options[category] ?? []} selected={current.values} out={current.mode === 'not'} searchLabel={`Search ${DIMENSION_LABELS[category].toLowerCase()}`}
+            onChange={(values) => setDraft((d) => choose(d, category, { mode: current.mode, values }))} />
+        </motion.div>
+      </div>
+      <div className="pop-foot">
+        <button type="button" className="filter-clear" disabled={!current.values.length} onClick={() => { setDraft((d) => choose(d, category, { mode: 'in', values: [] })); setModes((m) => ({ ...m, [category]: 'in' })); }}>Clear {DIMENSION_LABELS[category].toLowerCase()}</button>
+        <button type="button" className="btn primary" onClick={() => onDone(draft)}>Done</button>
+      </div>
     </>
   );
 }

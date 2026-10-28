@@ -4,7 +4,7 @@
 import { useMemo, useState, type ReactElement } from 'react';
 import { Ico } from './icons';
 
-export type OptionItem = { value: string; label: string; count?: number | string; hint?: string; disabled?: boolean };
+export type OptionItem = { value: string; label: string; count?: number | string; hint?: string; disabled?: boolean; /** A small warning tag after the label (the hint says why). */ flag?: string };
 
 export function OptionList({ options, selected, onChange, out = false, searchLabel, rows = 6, empty = 'Nothing matches' }: {
   options: OptionItem[];
@@ -31,7 +31,7 @@ export function OptionList({ options, selected, onChange, out = false, searchLab
           return (
             <label key={item.value} className={`opt${out && on ? ' out' : ''}`} title={item.hint}>
               <input type="checkbox" className="cb-in" checked={on} disabled={item.disabled} onChange={(event) => toggle(item.value, event.target.checked)} />
-              <span className="ot">{item.label}</span>
+              <span className="ot">{item.label}{item.flag ? <span className="opt-flag">{item.flag}</span> : null}</span>
               {item.count != null ? <span className="oc">{item.count}</span> : null}
             </label>
           );
