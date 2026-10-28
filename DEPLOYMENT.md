@@ -271,6 +271,7 @@ To move to a new disk: stop, `rsync -a ./data/ /new/disk/avn-data/`, set `AVN_HO
 | Container exits with "SQLite temporary storage is unavailable" | The configured `SQLITE_TMPDIR` cannot be created or written by the container UID, or its disk is full. Correct the mount, ownership or capacity before restarting. |
 | Events never show up, SDK says "offline" | Device has no connectivity, or the endpoint URL in the SDK config is wrong (check `AVNGameAnalytics.LastStatus`). |
 | `country` is always `null` | Not behind Cloudflare, or a proxy drops the `CF-IPCountry` header. |
+| Admin hangs: **503** "Exceeded concurrency limit", `unhealthy`, almost no CPU | Requests are stuck waiting on something. **Before restarting**, run `docker compose kill -s USR1 admin`, then `docker compose logs --tail 400 admin`: it prints every thread's stack (what each request is waiting on) and keeps running. Save that output, then restart. |
 
 ## Running without Docker
 

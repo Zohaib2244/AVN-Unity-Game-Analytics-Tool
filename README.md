@@ -548,7 +548,7 @@ Environment variables (see `.env.example`):
 | `AVN_ANALYTICS_REFRESH_SECONDS` | `10` | Worker refresh interval for prepared answers (1–3600 seconds) |
 | `AVN_ANALYTICS_FRESHNESS_SECONDS` | `60` | Maximum prepared-answer age before live fallback (5–86400 seconds); configure admin and worker identically |
 | `AVN_ANALYTICS_ACTIVE_VIEWS` | `12` | Maximum retained prepared specifications per game (1–100); unused specifications expire after 24 hours |
-| `AVN_ANALYTICS_STORAGE_BYTES` | `268435456` | Global logical budget for prepared answers and player contributions (1 MiB–10 GiB); raw events and stable facts are outside this derived-answer budget |
+| `AVN_ANALYTICS_STORAGE_BYTES` | `1073741824` | Global logical budget for prepared answers and player contributions (1 MiB–10 GiB); raw events and stable facts are outside this derived-answer budget |
 | `AVN_MAX_BODY_BYTES` | `1048576` | Largest accepted request body |
 | `AVN_HOST_DATA_DIR` | `./data` | Host folder holding all data |
 | `AVN_UID` / `AVN_GID` | `1000` | User that owns the data folder |

@@ -487,6 +487,10 @@ def _histories(connection, start, end, filters, source):
 LEVEL_BATCH = 200  # players whose facts are read per query
 
 
+class BatchTooBig(ValueError):
+    """player_rows read more than its row or byte allowance; retry with fewer players."""
+
+
 def scanned_players(connection, start, end, filters, scope, until=None, max_players=None):
     """The players a facts level scan covers, in player order (before deciding who counts).
 
@@ -547,13 +551,13 @@ def player_rows(
             if check and read % 1024 == 0:
                 check()
             if max_rows is not None and read > max_rows:
-                raise ValueError("A player batch exceeds the prepared history memory budget")
+                raise BatchTooBig("A player batch exceeds the prepared history memory budget")
             if max_bytes is not None:
                 used_bytes += 1024 + sum(
                     len(value.encode()) for value in row if isinstance(value, str)
                 )
                 if used_bytes > max_bytes:
-                    raise ValueError("A player batch exceeds the prepared history memory budget")
+                    raise BatchTooBig("A player batch exceeds the prepared history memory budget")
             if row["player"] != player:
                 if events:
                     yield player, events

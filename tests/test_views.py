@@ -255,6 +255,27 @@ def test_storage_budget_rejects_work_and_keeps_live_answers_available(prepared, 
     assert journeys.level_progress(storage, game, *days, HIDE_TEST) == expected
 
 
+def test_a_batch_over_its_allowance_is_split_instead_of_failing_forever(prepared, monkeypatch):
+    storage, game, days = prepared
+    expected = journeys.level_progress(storage, game, *days, HIDE_TEST)
+    # Any two players together exceed the batch allowance; each fits on their own.
+    monkeypatch.setattr(views, "BATCH_ROWS", 1)
+    finish(storage, game, limit=400)
+    assert not views.has_errors(storage, game)
+    assert journeys.level_progress(storage, game, *days, HIDE_TEST) == expected
+
+
+def test_a_single_player_over_the_solo_allowance_reports_the_budget(prepared, monkeypatch):
+    storage, game, days = prepared
+    journeys.level_progress(storage, game, *days, HIDE_TEST)
+    monkeypatch.setattr(views, "BATCH_ROWS", 1)
+    monkeypatch.setattr(views, "SOLO_ROWS", 1)
+    worker = materialize.Worker(storage, identity="test")
+    for _ in range(10):
+        worker.tick()
+    assert "memory budget" in materialize.describe(storage)["error"]["message"]
+
+
 def test_stopping_during_reduction_rolls_back_the_entire_batch(prepared, monkeypatch):
     storage, game, days = prepared
     journeys.level_progress(storage, game, *days, HIDE_TEST)

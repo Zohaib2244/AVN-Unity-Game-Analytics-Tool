@@ -20,6 +20,9 @@ from . import analytics
 VERSION = 1
 EXPIRY = 86400
 BATCH_PLAYERS = 20
+# What one Levels step may read: a batch of players, or a single heavy player on their own.
+BATCH_ROWS, BATCH_BYTES = 25_000, 16 * 1024 * 1024
+SOLO_ROWS, SOLO_BYTES = 200_000, 128 * 1024 * 1024
 MAX_SECONDS = 30.0
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS analytics_views (
@@ -275,6 +278,36 @@ def refresh(worker, game_id, revision):
         raise error
 
 
+def _level_contributions(connection, key, queued, parts, reader, check, max_rows, max_bytes):
+    """Each queued player's packed Levels contribution, read within the row and byte allowance."""
+    from . import journeys
+
+    start, end, filters, scope, mark = parts
+    contributions = []
+    for player, events in journeys.player_rows(
+        connection,
+        [item["player"] for item in queued],
+        start,
+        end,
+        filters,
+        mark,
+        check=check,
+        max_rows=max_rows,
+        max_bytes=max_bytes,
+    ):
+        check()
+        if len(events) > journeys.MAX_FUNNEL_EVENTS:
+            raise ValueError("Levels history exceeds the existing event limit")
+        counted = journeys.counted_rows(player, events, scope)
+        value = (
+            journeys.player_levels(*counted, scope, start, reader)
+            if counted
+            else {"progress": {}, "groups": {}, "observed": []}
+        )
+        contributions.append((key, player, pack(value), len(events)))
+    return contributions
+
+
 def _fenced(connection, worker, row):
     """A resumed/superseded worker cannot overwrite another worker's staging or publication."""
     meta = analytics.read_meta(connection)
@@ -428,40 +461,26 @@ def _refresh(worker, game_id, revision, row, began):
             ).fetchall()
             if queued:
                 reader = journeys._Reader(stories.Labeler(snapshot.get_dictionary(game_id)))
-                contributions = []
-                for player, events in journeys.player_rows(
-                    connection,
-                    [item["player"] for item in queued],
-                    start,
-                    end,
-                    filters,
-                    mark,
-                    check=lambda: _guard(worker, revision, began),
-                    max_rows=25_000,
-                    max_bytes=16 * 1024 * 1024,
-                ):
-                    _guard(worker, revision, began)
-                    if len(events) > journeys.MAX_FUNNEL_EVENTS:
-                        raise ValueError("Levels history exceeds the existing event limit")
-                    counted = journeys.counted_rows(player, events, scope)
-                    if counted:
-                        contributions.append(
-                            (
-                                key,
-                                player,
-                                pack(journeys.player_levels(*counted, scope, start, reader)),
-                                len(events),
-                            )
+                while True:
+                    # Players with long histories can push a batch past its allowance: halve the
+                    # batch until it fits, so one heavy player never stalls the view.
+                    alone = len(queued) == 1
+                    try:
+                        contributions = _level_contributions(
+                            connection,
+                            key,
+                            queued,
+                            (start, end, filters, scope, mark),
+                            reader,
+                            lambda: _guard(worker, revision, began),
+                            SOLO_ROWS if alone else BATCH_ROWS,
+                            SOLO_BYTES if alone else BATCH_BYTES,
                         )
-                    else:
-                        contributions.append(
-                            (
-                                key,
-                                player,
-                                pack({"progress": {}, "groups": {}, "observed": []}),
-                                len(events),
-                            )
-                        )
+                        break
+                    except journeys.BatchTooBig:
+                        if alone:
+                            raise
+                        queued = queued[: len(queued) // 2]
                 if (
                     sum(len(item[2]) + len(str(item[1]).encode()) + 256 for item in contributions)
                     > remaining

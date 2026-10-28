@@ -35,7 +35,7 @@ class Settings:
     analytics_refresh_seconds: int = 10
     analytics_freshness_seconds: int = 60
     analytics_active_views: int = 12
-    analytics_storage_bytes: int = 268_435_456
+    analytics_storage_bytes: int = 1_073_741_824
     public_ingest_url: str = ""
     # Team access. Enabled when both the Cloudflare Access team domain and the application's
     # audience tag are set; otherwise every request is an admin (the original single-user mode).
@@ -119,7 +119,7 @@ class Settings:
             analytics_refresh_seconds=int(_text("AVN_ANALYTICS_REFRESH_SECONDS", "10")),
             analytics_freshness_seconds=int(_text("AVN_ANALYTICS_FRESHNESS_SECONDS", "60")),
             analytics_active_views=int(_text("AVN_ANALYTICS_ACTIVE_VIEWS", "12")),
-            analytics_storage_bytes=int(_text("AVN_ANALYTICS_STORAGE_BYTES", "268435456")),
+            analytics_storage_bytes=int(_text("AVN_ANALYTICS_STORAGE_BYTES", "1073741824")),
             public_ingest_url=os.environ.get("AVN_PUBLIC_INGEST_URL", "").rstrip("/"),
             access_team_domain=os.environ.get("AVN_ACCESS_TEAM_DOMAIN", "")
             .strip()

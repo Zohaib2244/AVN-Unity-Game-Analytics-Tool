@@ -1,6 +1,8 @@
 import asyncio
+import faulthandler
 import json
 import logging
+import signal
 import sqlite3
 import zlib
 from contextlib import asynccontextmanager
@@ -1346,9 +1348,18 @@ def _facets_with_builds(storage, game_id, days):
     }
 
 
+def dump_on_signal():
+    """`kill -USR1` the server to print every thread's stack to the log, to see what a hung
+    server is waiting on before restarting it. The server keeps running."""
+    if hasattr(signal, "SIGUSR1"):
+        faulthandler.register(signal.SIGUSR1, all_threads=True)
+
+
 def create_ingest_app():
+    dump_on_signal()
     return create_app(Settings.from_env())
 
 
 def create_admin_app():
+    dump_on_signal()
     return create_app(Settings.from_env(), admin=True)

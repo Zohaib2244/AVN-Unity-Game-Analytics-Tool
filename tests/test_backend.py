@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from avn_analytics import device_specs
-from avn_analytics.api import BodyLimit, create_app
+from avn_analytics.api import BodyLimit, create_app, dump_on_signal
 from avn_analytics.config import Settings
 from avn_analytics.exports import period_bounds
 from avn_analytics.models import Batch
@@ -3765,3 +3765,16 @@ def test_a_game_with_no_numbered_release_still_has_a_latest_build(backend):
     days = {"start": "2026-10-04", "end": "2026-10-04"}
     facets = admin.get(f"/v1/games/{game['id']}/insights/facets", headers=AUTH, params=days).json()
     assert facets["latest_app_version"] == "2.3"
+
+
+def test_usr1_prints_every_thread_stack_and_keeps_running(capfd):
+    import faulthandler
+    import os
+    import signal
+
+    dump_on_signal()
+    try:
+        os.kill(os.getpid(), signal.SIGUSR1)
+        assert "test_usr1_prints_every_thread_stack" in capfd.readouterr().err
+    finally:
+        faulthandler.unregister(signal.SIGUSR1)
