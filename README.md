@@ -294,74 +294,39 @@ shared rules. Mappings apply consistently across all analytics pages and never r
 ## Add AVN events with an AI agent
 
 New games, or games whose events should be cleaned up, can use the **AVN events standard**: a
-fixed set of event names, states and parameters (`LEVEL_ANALYSIS`, `AD_ANALYSIS`, `ECONOMY_ANALYSIS`, `APP_ANALYSIS`, `TUTORIAL_ANALYSIS`,
-`FTUE_ANALYSIS`, `POWERUP_ANALYSIS`, `SCREEN_ANALYSIS`, `IAP_ANALYSIS`, `PLAYER_ANALYSIS`,
-`DEVICE_ANALYSIS`), so every game sends the same shapes and
-the dashboards map them on their own. The standard lives in
-[`avn_analytics/avn_events_standard/`](avn_analytics/avn_events_standard/): `avn_events_standard.md` to read,
-`avn_events_standard.json` for agents and tools, and `AGENT_PROMPT.md`, the prompt that adds it to a
-Unity game.
+fixed set of event names, states and parameters (`LEVEL_ANALYSIS`, `AD_ANALYSIS`, `ECONOMY_ANALYSIS`,
+`APP_ANALYSIS`, `TUTORIAL_ANALYSIS`, `POWERUP_ANALYSIS`, `SCREEN_ANALYSIS`, `IAP_ANALYSIS`,
+`PLAYER_ANALYSIS`, `DEVICE_ANALYSIS`), so every game sends the same shapes. The standard is one
+Markdown file: the built-in one is
+[`avn_analytics/avn_events_standard/avn_events_standard.md`](avn_analytics/avn_events_standard/avn_events_standard.md),
+next to `AGENT_PROMPT.md`, the prompt that adds it to a Unity game.
 
-**Event setup → Add AVN Events** picks the tiers (core is always
-included; standard and extended are optional), lists the events they bring, and downloads
-`avn-events-setup.zip` with the prompt and the standard, or copies the prompt. Unzip it in the
-game project's root and run the prompt with any coding agent. The agent adds one file
-(`Assets/AVNEvents/AvnEvents.cs`) on top of the SDK package's helpers, keeps existing analytics untouched, and writes
-`avn-events-profile.json` with the game's vocabulary and anything it could not implement. Once a
-test build sends events, the Event setup page suggests Level started, completed, failed and
-restarted from `LEVEL_ANALYSIS` by itself. Over the API: `GET /v1/events-standard?tiers=standard` and
-`GET /v1/events-standard/download?tiers=standard`.
+**Event setup → Add AVN Events** downloads `avn-events-setup.zip` with the prompt and the standard,
+or copies the prompt. Unzip it in the game project's root and run the prompt with any coding agent.
+The agent adds one file (`Assets/AVNEvents/AvnEvents.cs`) on top of the SDK package's helpers, keeps
+existing analytics untouched, and writes `avn-events-profile.json` with the game's vocabulary and
+anything it could not implement.
 
-### Events your game sends that the standard doesn't have
+**Settings → Events standard** changes the standard for the workspace: **Upload .md** replaces it
+(no commit or deploy needed), **Use built-in** goes back. The first line must name the version
+(`# AVN events standard — version 5`) and each event is a `# EVENT_NAME` heading with `### State`
+headings under it. Uploads and resets are in the activity log. Over the API:
+`GET`, `PUT` (the file as the body) and `DELETE /v1/workspaces/{id}/standard`, and
+`GET /v1/workspaces/{id}/standard/download`.
 
-**Add AVN Events** also lists, for the open game, every event it has sent that is neither in the
-standard nor a custom event (the SDK's `session_start`, `session_end` and `first_open` are left
-out) under **Sent, not in the standard**. For each one you can:
+Nothing checks a game against the standard: while a game is in development its events change daily,
+so the **Event dictionary** shows what it really sends and **Mappings** what the dashboards read. Two
+things do follow from it:
 
-- **Add to standard** (admin only): opens the custom event editor already filled in from what the
-  game sent: its `STATE` values as states, and each parameter with its type and whether every
-  event of that state carried it. Add a description and save; the event joins the standard and
-  moves to the custom list with a *Sent* count.
-- **Ignore**: hide it for this game only. It is listed under **Ignored** with a **Restore**
-  button; the events themselves stay in the data.
-
-Old builds keep sending their own events long after nobody plays them, so the **Events sent by**
-selector limits this list (and the *Sent* counts) to one app version, or to that version and the
-ones first seen after it (**and newer versions**, on by default). It starts on the newest version
-that has players and follows new builds as they ship; each version shows its player count and when
-it was last seen. Events that only older versions sent are not listed; a line under the list
-counts them, and **Ignore them** hides them all for this game (they are under **Ignored**, so
-nothing is lost). The editor's starting point is built from the chosen versions only, and each
-event shows which versions sent it. Versions are ordered by when they were first seen, so
-unusual version strings need no special handling. Over the API,
-`GET /v1/games/{id}/standard?version=1.4.2&newer=true` (`version=@latest` for the newest with
-players) and `POST /v1/games/{id}/standard/ignore-older`.
-
-Only events named in `UPPER_SNAKE` can be added, because the standard's names are exact (an event
-like `daily_gift_claimed` can only be ignored). Lowercase or otherwise invalid parameter keys and
-states are left out of the starting point. The event table under **Show the events** has a *Sent
-by this game* column, and each custom event shows whether this game has sent it. Over the API:
-`GET /v1/games/{id}/standard`, `PUT` and `DELETE /v1/games/{id}/standard/ignored/{NAME}`.
-
-### Custom events
-
-Events the standard doesn't cover can be added from **Event setup → Add AVN Events → Custom events →
-Add event**: a name (`UPPER_SNAKE`), what it tracks, one or more states (`PascalCase`, with when
-each is sent) and their parameters (`UPPER_SNAKE` key, `int`, `float` or `string`, required or not,
-optional list of allowed values). The page checks the same naming rules as the standard and the
-server refuses names that clash with a built-in event. Custom events are stored with the
-workspace data, not in the repository, and join every download as the `custom` tier: they are in
-the downloaded `avn_events_standard.json`, in a *Custom events* section of `avn_events_standard.md`, and in the
-prompt's tier line, so an agent sets them up with the rest. Only the admin can add, edit or delete
-them. Deleting one only removes it from future downloads; games already sending it, and the events
-already stored, are not touched. Over the API: `GET /v1/events-standard/custom`,
-`PUT /v1/events-standard/custom/{NAME}` and `DELETE /v1/events-standard/custom/{NAME}`.
-
-**Promote to core** moves a custom event into the core tier: it is then in every download, even
-when custom events are left out, and is marked *(core)* in the guide. **Demote to custom** puts it
-back, and editing a promoted event keeps it core. The spec's `version` does not change when you
-promote or demote, as with any other custom event. Over the API:
-`PUT /v1/events-standard/custom/{NAME}/tier` with `{"tier": "core"}` or `{"tier": "custom"}`.
+- **Level mappings fill themselves in.** The first time a game sends `LEVEL_ANALYSIS` with a `STATE`
+  and a `LEVEL_NUMBER`, Level started, completed, failed and restarted are mapped to it as the
+  standard defines them, so the Levels pages work without setup. This happens once, and only when no
+  event of the game is mapped to a level moment yet: hand-made mappings, and mappings you later
+  remove, are left alone.
+- **Update standard.** The SDK stamps each batch with the standard version the game follows. When a
+  game's newest events follow an older version than the workspace's, its overview and Add AVN Events
+  show a quiet *Update standard* notice (it can be dismissed). Everything keeps working meanwhile.
+  Over the API: `GET /v1/games/{id}/standard`.
 
 ## Fill the dictionary with an AI agent
 

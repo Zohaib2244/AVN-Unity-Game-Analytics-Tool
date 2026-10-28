@@ -17,7 +17,6 @@ from fastapi import (
     FastAPI,
     Header,
     HTTPException,
-    Path,
     Query,
     Request,
     Response,
@@ -29,9 +28,7 @@ from starlette.background import BackgroundTask
 
 from . import (
     avn_events_standard,
-    avn_events_standard_status,
     cleanup,
-    custom_events,
     device_specs,
     dictionary_import,
     events,
@@ -52,8 +49,6 @@ from .models import (
     AnalyticsThresholdOverrides,
     AnalyticsThresholds,
     Batch,
-    CustomEvent,
-    CustomEventTier,
     DeleteVersions,
     EnvironmentFix,
     EventActivityQuery,
@@ -63,7 +58,6 @@ from .models import (
     FunnelQuery,
     GameCreate,
     GameUpdate,
-    IgnoreOlder,
     ImportPrepare,
     ImportRequest,
     JourneyPlayersQuery,
@@ -711,42 +705,66 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         accounts.audit(principal, "dictionary.import_undo", str(game_id), str(batch_id))
         return result
 
-    Tiers = Annotated[list[Literal["core", "standard", "extended", "custom"]], Query(max_length=4)]
+    def workspace_seen(principal, workspace_id):
+        if not principal.sees_workspace(workspace_id):
+            raise HTTPException(404, "Workspace not found")
+        return workspace_id
 
-    @admin_api.get("/v1/events-standard")
-    def avn_events_standard_summary(tiers: Tiers = ["core", "standard"]):  # noqa: B006
-        return avn_events_standard.summary(tiers, custom_events.load(storage))
+    def workspace_managed(principal, workspace_id):
+        if not principal.manages_games_in(workspace_id):
+            raise HTTPException(403, "Only admins and team leads can do this")
+        return workspace_id
 
-    @admin_api.get("/v1/events-standard/custom")
-    def custom_events_list():
-        return [{"name": name, **body} for name, body in custom_events.load(storage).items()]
+    @admin_api.get("/v1/workspaces/{workspace_id}/standard")
+    def workspace_standard(workspace_id: UUID, principal: Current):
+        return avn_events_standard.describe(storage, workspace_seen(principal, str(workspace_id)))
 
-    CustomName = Annotated[str, Path(min_length=1, max_length=40)]
-
-    @admin_api.put("/v1/events-standard/custom/{name}")
-    def custom_event_save(name: CustomName, body: CustomEvent, principal: TeamAdmin):
+    @admin_api.put("/v1/workspaces/{workspace_id}/standard")
+    async def upload_standard(workspace_id: UUID, request: Request, principal: Current):
+        chosen = workspace_managed(principal, str(workspace_id))
         try:
-            custom_events.save(
-                storage, name, body.model_dump(), avn_events_standard.spec()["events"].keys()
+            version = avn_events_standard.upload(
+                storage, chosen, await request.body(), principal.email or principal.name
             )
-        except custom_events.CustomEventError as error:
+        except avn_events_standard.StandardError as error:
             raise HTTPException(422, str(error)) from error
-        accounts.audit(principal, "standard.custom_event_save", name)
-        return {"name": name, **body.model_dump()}
+        accounts.audit(principal, "standard.upload", None, f"version {version}")
+        return avn_events_standard.describe(storage, chosen)
 
-    @admin_api.put("/v1/events-standard/custom/{name}/tier")
-    def custom_event_tier(name: CustomName, body: CustomEventTier, principal: TeamAdmin):
-        if not custom_events.set_tier(storage, name, body.tier):
-            raise HTTPException(404, "No such custom event")
-        accounts.audit(principal, "standard.custom_event_tier", name, body.tier)
-        return {"name": name, "tier": body.tier}
+    @admin_api.delete("/v1/workspaces/{workspace_id}/standard")
+    def reset_standard(workspace_id: UUID, principal: Current):
+        chosen = workspace_managed(principal, str(workspace_id))
+        avn_events_standard.reset(storage, chosen)
+        accounts.audit(principal, "standard.reset", None, "built-in")
+        return avn_events_standard.describe(storage, chosen)
 
-    @admin_api.delete("/v1/events-standard/custom/{name}")
-    def custom_event_delete(name: CustomName, principal: TeamAdmin):
-        if not custom_events.delete(storage, name):
-            raise HTTPException(404, "No such custom event")
-        accounts.audit(principal, "standard.custom_event_delete", name)
-        return {"deleted": name}
+    @admin_api.get("/v1/workspaces/{workspace_id}/standard/download")
+    def download_standard(workspace_id: UUID, principal: Current):
+        text = avn_events_standard.text_for(storage, workspace_seen(principal, str(workspace_id)))
+        return Response(
+            avn_events_standard.bundle(text),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": 'attachment; filename="avn-events-setup.zip"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @admin_api.get("/v1/games/{game_id}/standard")
+    def game_standard(game_id: UUID):
+        """Which standard version the game's newest events follow, and the workspace's."""
+        storage.get_game(str(game_id))
+        workspace_id = accounts.workspace_of_game(str(game_id))
+        with storage.connect(storage.game_path(str(game_id))) as connection:
+            sent = avn_events_standard.game_version(connection)
+        current = avn_events_standard.version_of(
+            avn_events_standard.text_for(storage, workspace_id)
+        )
+        return {
+            "game_version": sent,
+            "workspace_version": current,
+            "outdated": sent is not None and current is not None and sent < current,
+        }
 
     @admin_api.get("/v1/sdk")
     def sdk_info():
@@ -759,48 +777,6 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             media_type="application/octet-stream",
             filename=sdk_package.FILENAME,
             headers={"Cache-Control": "no-store"},
-        )
-
-    @admin_api.get("/v1/games/{game_id}/standard")
-    def game_standard(game_id: UUID, version: str = "", newer: bool = False):
-        try:
-            return avn_events_standard_status.status(
-                storage, str(game_id), custom_events.load(storage), version, newer
-            )
-        except LookupError as error:
-            raise HTTPException(404, str(error)) from error
-
-    @admin_api.post("/v1/games/{game_id}/standard/ignore-older")
-    def standard_ignore_older(game_id: UUID, body: IgnoreOlder, principal: Current):
-        try:
-            count = avn_events_standard_status.ignore_older(
-                storage, str(game_id), body.version, body.newer
-            )
-        except LookupError as error:
-            raise HTTPException(404, str(error)) from error
-        accounts.audit(principal, "standard.ignore_older", str(game_id), f"{count} events")
-        return {"ignored": count}
-
-    @admin_api.put("/v1/games/{game_id}/standard/ignored/{name}", status_code=204)
-    def standard_ignore(game_id: UUID, name: Name, principal: Current):
-        storage.get_game(str(game_id))
-        avn_events_standard_status.ignore(storage, str(game_id), name)
-        accounts.audit(principal, "standard.ignore", str(game_id), name)
-
-    @admin_api.delete("/v1/games/{game_id}/standard/ignored/{name}", status_code=204)
-    def standard_unignore(game_id: UUID, name: Name, principal: Current):
-        avn_events_standard_status.ignore(storage, str(game_id), name, on=False)
-        accounts.audit(principal, "standard.unignore", str(game_id), name)
-
-    @admin_api.get("/v1/events-standard/download")
-    def avn_events_standard_download(tiers: Tiers = ["core", "standard"]):  # noqa: B006
-        return Response(
-            avn_events_standard.bundle(tiers, custom_events.load(storage)),
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": 'attachment; filename="avn-events-setup.zip"',
-                "Cache-Control": "no-store",
-            },
         )
 
     @admin_api.get("/v1/games/{game_id}/dictionary/drafts")

@@ -11,6 +11,7 @@ import { FormError, useSubmit, type Values } from '@/components/forms';
 import { Ico } from '@/components/icons';
 import { SdkPanel } from './settings/SdkPanel';
 import { ProcessingPanel } from './settings/Processing.tsx';
+import { StandardPanel } from './settings/StandardPanel';
 
 /** Theme and palette buttons; the choice lives on <html> and is saved in this browser only. */
 export function Appearance(): ReactElement {
@@ -59,7 +60,8 @@ function ThresholdsForm({ thresholds, canManage, workspace }: { thresholds: Anal
 }
 
 export function SettingsPage(): ReactElement {
-  const { me, overview, workspace } = useSession();
+  const { me, overview, workspace, canManageGames } = useSession();
+  const standardWorkspace = workspace || me.workspaces[0]?.id || '';
   const thresholds = overview.analytics_thresholds;
   return (
     <>
@@ -67,6 +69,7 @@ export function SettingsPage(): ReactElement {
       <div className="section-grid">
         <div>
           <SdkPanel />
+          {standardWorkspace ? <StandardPanel workspace={standardWorkspace} canManage={canManageGames} /> : null}
           <Appearance />
           <ThresholdsForm key={`${thresholds.levels_min_players}-${thresholds.funnels_min_players}`} thresholds={thresholds} canManage={me.can_manage_team} workspace={workspace} />
           {me.can_manage_team ? <ProcessingPanel /> : null}

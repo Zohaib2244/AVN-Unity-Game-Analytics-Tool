@@ -317,13 +317,7 @@ export type ImportResult = { summary: { fields_changed: number } };
 export type ImportHistoryItem = { id: string; created_at: string; actor: string; summary: { fields_changed: number }; options: { mode: string; status: string }; undone_at?: string | null };
 export type ImportUndoResult = { reverted: number; kept: string[] };
 
-/* ─── The AVN events standard and custom events ─── */
-export type CustomParam = { key: string; type: string; required: boolean; note: string; values: string[] };
-export type CustomState = { name: string; trigger: string; params: CustomParam[] };
-export type CustomEvent = { name: string; purpose: string; tier: 'core' | 'custom' | string; states: CustomState[] };
-export type StandardVersion = { version: string; players: number; last_seen: string };
-export type UnlistedEvent = { name: string; events: number; last_seen: string; versions: string[]; valid_name: boolean; states: Array<{ name: string; params: Array<{ key: string; type: string; required: boolean }> }> };
-export type StandardStatus = { sent: Record<string, { events: number }>; versions: StandardVersion[]; unlisted: UnlistedEvent[]; total_unlisted: number; ignored: Array<{ name: string; events: number }>; older_only: Array<{ name: string; events: number }> };
-export type StandardSummary = { events: Array<{ name: string; tier: string; states: string[] }>; prompt: string };
-/** Which app versions the standard counts are for: '' = all, '@latest' = the newest with players, or one version. */
-export type VersionChoice = { version: string; newer: boolean };
+/* ─── The AVN events standard: one Markdown file per workspace ─── */
+export type StandardEvent = { name: string; states: string[] };
+export type WorkspaceStandard = { version: number | null; builtin_version: number | null; source: 'builtin' | 'uploaded'; uploaded_at: string | null; uploaded_by: string | null; events: StandardEvent[]; prompt: string };
+export type GameStandard = { game_version: number | null; workspace_version: number | null; outdated: boolean };

@@ -16,6 +16,7 @@ import { ActiveUsers } from './overview/ActiveUsers';
 import { BreakdownTable } from './overview/BreakdownTable';
 import { DailyChart } from './overview/DailyChart';
 import { MappingNotice } from './overview/MappingNotice';
+import { StandardNotice } from './event-setup/StandardNotice';
 import { PinnedReports } from './overview/Pinned';
 import { SectionTiles, SetupChecklist, useFacts } from './overview/Setup';
 import { signed, toggleValue } from './overview/maths';
@@ -48,6 +49,7 @@ export function GameOverviewPage({ game }: { game: Game }): ReactElement {
       <Heading title={game.name} subtitle={`${platformLabel(game.platform)} · ${game.bundle_id}`} actions={<Link className="button primary" to={gamePath(game, 'exports')}><Ico name="export" size={15} /> Export data</Link>} />
       {game.archived_at ? <div className="archived-banner"><Ico name="lock" size={18} /><div><strong>Archived.</strong> Collection is paused for this platform.</div><Link className="button" to={gamePath(game, 'settings')}>Game settings</Link></div> : null}
       <MappingNotice game={game} />
+      <StandardNotice game={game} />
       <FilterBar game={game} state={state} onChange={onChange} context={data ? { ...data.context, players: data.players } : undefined} />
       {data ? <SetupChecklist game={game} data={data} facts={facts} /> : null}
       {data?.anomalies.length ? (

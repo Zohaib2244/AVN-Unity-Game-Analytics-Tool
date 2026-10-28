@@ -1155,9 +1155,8 @@ dialog.import-dialog,dialog.custom-event-dialog{width:min(980px,calc(100vw - 32p
 .import-count{color:var(--text-muted)}
 .import-text{display:flex;gap:8px;align-items:flex-start;margin:0;text-transform:none;letter-spacing:0;font-family:var(--font-body);cursor:pointer}
 .import-text input{width:auto;margin-top:5px;accent-color:var(--accent-orange)}
-.import-choices.standard-tiers{grid-template-columns:repeat(3,minmax(0,1fr))}
 .import-choice:has(input:disabled){cursor:default}
-@media(max-width:640px){.import-choices,.import-choices.standard-tiers{grid-template-columns:1fr}}
+@media(max-width:640px){.import-choices{grid-template-columns:1fr}}
 .import-table td:first-child{min-width:250px}
 .import-text code{white-space:nowrap}
 
@@ -1201,7 +1200,6 @@ th{position:relative}
 .setup-flow li:not(:last-child)::after{content:"→";margin-left:6px;color:var(--text-muted-dim)}
 .setup-flow svg{flex:none;color:var(--accent-orange)}
 .import-choice small{margin-top:0}
-.import-choices.standard-tiers{margin-bottom:14px}
 .mapping-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 24px;margin:0 0 16px}
 .mapping-progress{display:flex;align-items:center;gap:14px;color:var(--text-muted)}
 .mapping-progress strong{color:var(--text-primary);font-size:var(--fs-lead);font-weight:600}
@@ -1234,30 +1232,6 @@ progress.mapping-meter::-moz-progress-bar{background:var(--accent-orange)}
 }
 
 /* ─── Custom events ─── */
-.custom-events{margin:0 0 18px;padding:14px 16px;border:1px solid var(--line);border-radius:12px}
-.custom-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0}
-.custom-head h3{display:flex;align-items:center;gap:8px;font-size:var(--fs-md);font-weight:600;margin:0}
-.custom-head h3 svg{color:var(--accent-orange)}
-.custom-events>p{margin:10px 0 0}
-.custom-list{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:2px}
-.custom-list li{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;padding:6px 0;border-top:1px solid var(--line)}
-.custom-actions{margin-left:auto;display:inline-flex;gap:2px}
-.custom-form .custom-top{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:0 14px}
-.custom-state{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0 0 12px}
-.custom-state legend{padding:0 8px;color:var(--text-muted);font-size:var(--fs-sm)}
-.custom-state-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr) auto;gap:0 14px;align-items:end}
-.custom-param{display:grid;grid-template-columns:minmax(120px,1.2fr) 90px auto minmax(110px,1fr) minmax(110px,1.2fr) auto;gap:8px;align-items:center;margin:0 0 8px}
-.custom-state-head .icon-button{margin-bottom:12px}
-.custom-param input,.custom-param select{width:100%}
-.custom-param .check-row{margin:0;white-space:nowrap}
-.custom-form .field.wide{min-width:0}
-@media(max-width:800px){.custom-form .custom-top,.custom-state-head{grid-template-columns:1fr}.custom-param{grid-template-columns:1fr 1fr;padding-bottom:8px;border-bottom:1px solid var(--line)}}
-.unlisted-events{border-color:var(--accent-orange)}
-.unlisted-events .custom-list:first-of-type{margin-top:12px}
-.custom-list .button{margin:0}
-.version-filter{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 20px;margin:16px 0}
-.version-filter .inline-field select{min-width:min(100%,320px)}
-.version-filter .check-row{margin:0;min-height:44px;font-family:var(--font-ui);font-size:var(--fs-body)}
 /* Levels toolbars: a labelled field and the buttons beside it line up on the control, not on the
    label, and every control in a row is the same height. */
 :is(.level-explore,.levels-panel) :is(.level-saved-views,.levels-navigation,.level-analysis-controls,.quiet-actions){align-items:flex-end}
@@ -1272,8 +1246,6 @@ progress.mapping-meter::-moz-progress-bar{background:var(--accent-orange)}
 .levels-grid tr:has(.level-toggle[aria-expanded="true"])>td{background:color-mix(in srgb,var(--accent-orange) 7%,var(--bg-card))}
 .levels-grid>tbody>tr:not(.level-detail):has(.level-toggle[aria-expanded="true"])>td:first-child{background:color-mix(in srgb,var(--accent-orange) 7%,var(--bg-card));box-shadow:inset 3px 0 var(--accent-orange)}
 .levels-grid .level-toggle[aria-expanded="true"]{color:var(--accent-orange)}
-.older-note{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:12px 0 0}
-.older-note .button{margin:0}
 .sdk-actions{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0 0}
 
 /* ─── Audit pass: touch, wrapping, safe areas, timeline polish ─── */

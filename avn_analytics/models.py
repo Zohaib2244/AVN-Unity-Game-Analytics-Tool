@@ -760,37 +760,3 @@ class WorkspaceCreate(StrictModel):
 
 class WorkspaceMove(StrictModel):
     workspace_id: UUID
-
-
-class CustomParam(StrictModel):
-    key: Annotated[str, Field(min_length=1, max_length=40)]
-    type: Literal["int", "float", "string"]
-    required: bool = False
-    note: Annotated[str, Field(max_length=200)] = ""
-    values: Annotated[list[Annotated[str, Field(max_length=40)]], Field(max_length=30)] = []
-
-
-class CustomState(StrictModel):
-    name: Annotated[str, Field(min_length=1, max_length=40)]
-    trigger: Annotated[str, Field(max_length=300)] = ""
-    params: Annotated[list[CustomParam], Field(max_length=30)] = []
-
-
-class CustomEvent(StrictModel):
-    """An event added to the AVN events standard from the website."""
-
-    purpose: Annotated[str, Field(max_length=300)] = ""
-    states: Annotated[list[CustomState], Field(min_length=1, max_length=30)]
-
-
-class IgnoreOlder(StrictModel):
-    """Ignore the events only older app versions sent (the chosen version, and optionally newer)."""
-
-    version: Annotated[str, Field(min_length=1, max_length=100)]
-    newer: bool = False
-
-
-class CustomEventTier(StrictModel):
-    """Promote a custom event to the core tier, or demote it back to custom."""
-
-    tier: Literal["custom", "core"]

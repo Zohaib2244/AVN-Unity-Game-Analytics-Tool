@@ -1,18 +1,18 @@
 # Prompt: set up AVN events in a Unity game
 
-Run this in the game's repository with any coding agent, with `avn_events_standard.json` and
-`avn_events_standard.md` in the repository root. The website's **Event setup → Add AVN
-Events** downloads all three with the tiers filled in. Everything between the lines is the
-prompt.
+Run this in the game's repository with any coding agent, with `avn_events_standard.md` in the
+repository root. The website's **Event setup → Add AVN Events** downloads both. Everything
+between the lines is the prompt.
 
 ---
 
-You are adding AVN Analytics events to this Unity game. The contract is `avn_events_standard.json`
-(AVN events standard, version 3). Follow it exactly. Two different games set up with this prompt
-must produce the same event names, keys and enum values, so there is no room for your own naming,
-extra events or "improvements".
+You are adding AVN Analytics events to this Unity game. The contract is `avn_events_standard.md`
+(the AVN events standard; its version is in its first line). Follow it exactly. Two different games
+set up with this prompt must produce the same event names, keys and enum values, so there is no
+room for your own naming, extra events or "improvements".
 
-Tiers to implement: **core, standard** (change this line to choose).
+Implement every event and state the game has a feature for, core tier first. Skip what the game
+doesn't have (no store, no tutorials) and say so in the report.
 
 ## Hard rules
 
@@ -22,7 +22,7 @@ Tiers to implement: **core, standard** (change this line to choose).
    int 0/1. The only extra keys allowed are up to 5 game extras on `LEVEL_ANALYSIS Started`.
 3. Closed enums are sent exactly as written in the spec. Game vocabulary (screens, placements,
    tutorials, powerups, currencies, ECONOMY_ANALYSIS `DETAIL`, SCREEN_ANALYSIS `ACTION`) is built with the spec's
-   `naming_rules`; prefer the spec's listed names whenever one fits.
+   naming rules; prefer the spec's listed names whenever one fits.
 4. Unknown values are omitted, never sent as `None`, `null`, `unknown` or `""`.
 5. Never send player names, emails or typed text. Never send amounts outside `ECONOMY_ANALYSIS`.
 6. Do not change gameplay, rewards, prices, ad timing or existing analytics (Firebase, ByteBrew,
@@ -40,13 +40,14 @@ Tiers to implement: **core, standard** (change this line to choose).
 
 Do these steps in order and do not skip any.
 
-1. **Read** `avn_events_standard.json` fully. Check that the AVN SDK package is imported:
+1. **Read** `avn_events_standard.md` fully, including Conventions, Common parameters and every
+   event's Rules. Check that the AVN SDK package is imported:
    `Assets/AVNAnalytics/Scripts/` holds `AVNGameAnalytics.cs`, and `Scripts/Events/` holds
    `AvnSender.cs`, `AvnAttempt.cs`, `AvnAds.cs`, `AvnMemory.cs` and `AvnRuntime.cs` (namespace
    `AVNAnalytics.Events`). Read all of them. If they are missing, stop and tell the user to import
    `AVNAnalytics.unitypackage` (website: Settings, Unity SDK). Find how the game calls
    `AVNGameAnalytics.Initialize()`.
-2. **Inventory the game.** For every spec event and state in the chosen tiers, find the exact code
+2. **Inventory the game.** For every spec event and state, find the exact code
    location (file, class, method) where its trigger happens. Also collect the game vocabulary:
    every level flow, result screen, ad call site, currency change, tutorial, powerup, menu and
    popup, store callback and app focus/pause handler.
@@ -59,19 +60,22 @@ Do these steps in order and do not skip any.
      the game's current 1-based level (or null).
    - `AvnAttempt` keeps the level attempt: `Begin(level)`, `EndWithResult()`, `EndWithoutResult()`,
      `TakeChoice(out info)`, `Revive()`, `NotePowerupUsed()`, `TakeRecovered(...)`. It owns the attempt
-     id, the attempt number, active seconds and the force-close recovery. Set
-     `AvnAttempt.ProgressProvider` to a function returning the board progress 0-100.
+     id, the attempt number, active seconds and the force-close recovery. If the game has
+     neither a level timer nor a countable unit (moves, balls, waves), set
+     `AvnAttempt.ProgressProvider` to a function returning the board progress 0-100; otherwise
+     send `LEVEL_TIME`/`TIME_LEFT` and `MOVES_START`/`MOVES_LEFT` as the spec says, read from the
+     game where the level starts and ends.
    - `AvnAds` keeps ad state per `AD_ID`: `Ask`, `Begin`, `Find`, `End`, the `TimedOut` and
      `NotReady` events. Set `AvnAds.IsReady` to a function telling whether the ad network has an ad of
      a format loaded.
    - `AvnMemory` keeps "first time on this install" flags (`FirstTime`) and timers (`StartTimer`,
-     `StopTimer`) for tutorials, screens and FTUE.
+     `StopTimer`) for tutorials and screens.
    - `AvnRuntime` raises `Launched`, `Backgrounded`, `Foregrounded`, `Quitting`. The game sets
      `AvnRuntime.PurchaseActive` while a store dialog is open.
 
    Key names and enum strings exist only in `AvnEvents.cs`; game code passes structs and enums,
-   never strings for keys. Complete the skeleton below with one method per event and state in the
-   chosen tiers (`LevelStarted`, `LevelCompleted`, `AdShow`, `EconomyEarned`, `ScreenOpened`, ...).
+   never strings for keys. Complete the skeleton below with one method per event and state the
+   game has (`LevelStarted`, `LevelCompleted`, `AdShow`, `EconomyEarned`, `ScreenOpened`, ...).
    Name methods `<Event><State>` in PascalCase. Add one struct per shared parameter set in the spec,
    following the pattern of the ones given. The skeleton shows the pattern, not every key: take keys,
    types and required flags from the spec.
@@ -97,9 +101,9 @@ Do these steps in order and do not skip any.
            [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
            static void Init()
            {
-               AVNGameAnalytics.StandardVersion = 3;                     // the spec version above
+               AVNGameAnalytics.StandardVersion = 5;                     // the spec version (first line)
                AvnSender.CurrentLevel = () => /* the game's current level, or null */ null;
-               AvnAttempt.ProgressProvider = () => /* board progress 0-100 */ 0;
+               AvnAttempt.ProgressProvider = () => /* board progress 0-100, only without time or moves */ 0;
                AvnAds.IsReady = format => /* is an ad of this format loaded */ false;
 
                // AppLaunch, AppForeground and AdFailed are written like AppBackground and AdShow below.
@@ -111,14 +115,14 @@ Do these steps in order and do not skip any.
            }
 
            // Level attempts. Begin() makes the id and attempt number; the result closes the clock.
-           public static void LevelStarted(int level /*, LevelSource source, game extras */)
+           public static void LevelStarted(int level /*, LevelSource source, LEVEL_TIME, MOVES_START, game extras */)
            {
                AvnAttempt.Begin(level);
                AvnMemory.StartTimer("level");
                // Send("LEVEL_ANALYSIS", "Started", Progress(AvnAttempt.Current()) + spec keys + extras);
            }
 
-           public static void LevelCompleted(/* spec result keys: MOVES, SKIP_OFFERED ... */)
+           public static void LevelCompleted(/* spec result keys: TIME_LEFT, MOVES_LEFT, SKIP_OFFERED ... */)
            {
                if (!AvnAttempt.InProgress) return;                       // one result per attempt
                Send("LEVEL_ANALYSIS", "Completed", Result(AvnAttempt.EndWithResult()));
@@ -153,7 +157,7 @@ Do these steps in order and do not skip any.
 
            static Dictionary<string, object> Progress(AvnAttemptInfo x) => new Dictionary<string, object> {
                ["ATTEMPT_ID"] = x.Id, ["ATTEMPT"] = x.Attempt, ["LEVEL_NUMBER"] = x.Level,
-               ["SECONDS"] = x.Seconds, ["PROGRESS_PCT"] = x.ProgressPct };
+               ["SECONDS"] = x.Seconds };                               // + PROGRESS_PCT, or TIME_LEFT / MOVES_LEFT
 
            static Dictionary<string, object> Result(AvnAttemptInfo x)
            {
@@ -172,24 +176,32 @@ Do these steps in order and do not skip any.
            }
 
            // The only exit. Game code never calls AvnSender or AVNGameAnalytics directly.
-           static void Send(string name, string state, Dictionary<string, object> p) =>
+           // While an attempt is open (Started until its Choice or Left), every event carries its
+           // ATTEMPT_ID: ads, powerups, coins, screens, app and tutorial events too.
+           static void Send(string name, string state, Dictionary<string, object> p)
+           {
+               if (AvnAttempt.InProgress && !p.ContainsKey("ATTEMPT_ID")) p["ATTEMPT_ID"] = AvnAttempt.Current().Id;
                AvnSender.Send(name, state, p);
+           }
        }
    }
    ```
 5. **Call the sender** from the locations in step 2. Keep each call a single line where possible.
    Guard against duplicates: one result per attempt (until a revive), one `Choice` per result,
-   one `Closed` or `Failed` per `AD_ID`, one terminal state per tutorial run, FTUE_ANALYSIS steps once per
-   install.
+   one `Closed` or `Failed` per `AD_ID`, one terminal state per tutorial run.
 6. **Handle the hard cases:**
-   - Revive keeps the same `ATTEMPT_ID` and may produce another result.
+   - Revive keeps the same `ATTEMPT_ID` and may produce another result. `SECONDS`, `REVIVES`,
+     `POWERUPS_USED` and `ADS_SHOWN` keep adding up across the attempt; `TIME_LEFT` and
+     `MOVES_LEFT` are what remains at that result.
+   - The attempt stays open through the result screen until `Choice` (or `Left`): ads, revives and
+     rewards there carry its `ATTEMPT_ID`. Events after the `Choice` carry none.
    - On `AvnRuntime.Launched`, call `AvnAttempt.TakeRecovered(out info, out hadResult)`. If the
      previous run died inside an attempt (`hadResult` false), send `LEVEL_ANALYSIS Left` with
      `REASON=Killed`, `RECOVERED=1` and the saved attempt values. If it died with a result but no
      choice (`hadResult` true), send `LEVEL_ANALYSIS Choice` with `ACTION=Abandoned`. The
      `APP_ANALYSIS Launch` event takes `PREV_EXIT` from the same signal.
    - `SECONDS` (level) excludes time in background and in fullscreen ads; `AvnAttempt` already
-     does this. Do not time levels yourself.
+     does this. Do not time levels yourself. `TIME_LEFT` is the game's own level clock.
    - Ad callbacks may arrive out of order or not at all. Look the ad up with `AvnAds.Find`, close it
      with `AvnAds.End` and send `Closed` or `Failed` only when `End` returns true (a duplicate
      callback returns false). `AvnAds.TimedOut` fires after 180 seconds without a close: send
@@ -199,15 +211,14 @@ Do these steps in order and do not skip any.
    - `APP_ANALYSIS Background` and `Foreground` come from `AvnRuntime`; the cause is `Ad` while an
      ad is open and `Purchase` while `AvnRuntime.PurchaseActive` is true. Set that flag around every
      store dialog.
-   - Tutorials, screens and FTUE steps: use `AvnMemory.StartTimer`/`StopTimer` for durations (a
+   - Tutorials and screens: use `AvnMemory.StartTimer`/`StopTimer` for durations (a
      `StopTimer` that returns false drops a second terminal state) and `AvnMemory.FirstTime` for
      "once per install".
 7. **Write the profile** `Assets/AVNEvents/avn-events-profile.json`, exactly in this shape:
 
    ```json
    {
-     "standard_version": 3,
-     "tiers": ["core", "standard"],
+     "standard_version": 5,
      "vocabulary": {
        "screens": [],
        "placements": [],
@@ -216,6 +227,7 @@ Do these steps in order and do not skip any.
        "currencies": [],
        "economy_details": [],
        "screen_actions": [],
+       "moves_unit": "",
        "level_extras": {}
      },
      "events": {
@@ -233,7 +245,7 @@ Do these steps in order and do not skip any.
    }
    ```
 
-   `events` lists every event and state of the chosen tiers, each with `status` `done`,
+   `events` lists every event and state of the spec, each with `status` `done`,
    `not_applicable` or `omitted` and `where` (Class.Method). List vocabulary values sorted
    alphabetically.
 8. **Check your work** before finishing:

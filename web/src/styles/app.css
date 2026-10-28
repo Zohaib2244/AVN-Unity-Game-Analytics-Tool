@@ -356,3 +356,7 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
 /* Game settings → Data by version */
 .version-deleting{display:flex;gap:8px;align-items:center;margin-bottom:12px;color:var(--text-muted)}
 .version-actions{display:flex;justify-content:space-between;align-items:center;gap:12px}
+
+/* Event setup → Add AVN Events: which standard is handed out */
+.standard-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 14px}
+.standard-line .muted{font-size:var(--fs-label)}

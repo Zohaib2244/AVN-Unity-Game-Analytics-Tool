@@ -1,4 +1,4 @@
-// Event setup: three tabs, open any of them in any order. Add AVN Events (the standard and custom events), Fill
+// Event setup: three tabs, open any of them in any order. Add AVN Events (the standard's setup files), Fill
 // Dictionary (the import flow), Mappings (which events stand for the moments the dashboards use). The tab is
 // remembered per game, and the address can name it (#install, #fill, #mappings) or a mapping (?event=, ?concept=).
 import { useState, type KeyboardEvent, type ReactElement } from 'react';

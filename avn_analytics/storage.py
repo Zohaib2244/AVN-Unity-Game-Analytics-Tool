@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from . import analytics, insights, materialize, views
+from . import analytics, avn_events_standard, insights, materialize, views
 from .config import Settings
 from .models import Batch, EventDefinition, GameCreate, GameUpdate, timestamp
 from .readcache import ReadCache
@@ -28,6 +28,7 @@ class Storage:
         self.root = settings.data_dir
         # Slow dashboard reads, and the larger scans behind the level pages (see readcache.py).
         self.reads = ReadCache(settings.read_cache_seconds, 300)
+        self._levels_mapped = set()  # games whose standard level mappings were already looked at
         self.scans = ReadCache(settings.read_cache_seconds, 12)
 
     @contextmanager
@@ -187,6 +188,10 @@ class Storage:
                 name TEXT NOT NULL COLLATE NOCASE UNIQUE,
                 definition TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS standard_setup (
+                step TEXT PRIMARY KEY,
+                done_at TEXT NOT NULL
             );
         """)
         if connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0:
@@ -551,7 +556,38 @@ class Storage:
                 "ON CONFLICT(session_id) DO UPDATE SET environment=excluded.environment",
                 environments.items(),
             )
+            if game_id not in self._levels_mapped and any(
+                avn_events_standard.follows_level_shape(event) for event in batch.resolved
+            ):
+                self.map_standard_levels(connection)
+                self._levels_mapped.add(game_id)
         return {"accepted": accepted, "duplicates": len(rows) - accepted, "server_ts": server_ts}
+
+    def map_standard_levels(self, connection):
+        """Once per game: map LEVEL_ANALYSIS to the level moments, as the standard defines them.
+
+        Only when no event is mapped to a level moment yet, so a game the team mapped by hand is
+        left alone, and only once, so mappings the team later removes stay removed.
+        """
+        step = "level_mappings"
+        if connection.execute("SELECT 1 FROM standard_setup WHERE step=?", (step,)).fetchone():
+            return
+        definitions = {
+            row["name"]: json.loads(row["definition"])
+            for row in connection.execute("SELECT * FROM dictionary")
+        }
+        mapped = any(
+            rule.get("action", "").startswith("level_")
+            for definition in definitions.values()
+            for rule in definition.get("canonical", [])
+        )
+        if not mapped:
+            existing = definitions.get(avn_events_standard.LEVEL_EVENT, {})
+            definition = EventDefinition(
+                **{**existing, "canonical": avn_events_standard.LEVEL_MAPPINGS}
+            )
+            self.write_definition(connection, avn_events_standard.LEVEL_EVENT, definition)
+        connection.execute("INSERT INTO standard_setup VALUES (?, ?)", (step, timestamp()))
 
     @staticmethod
     def write_definition(connection, name, definition: EventDefinition):
