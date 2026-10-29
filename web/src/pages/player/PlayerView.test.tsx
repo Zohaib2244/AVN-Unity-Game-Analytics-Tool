@@ -1,19 +1,12 @@
-import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render as renderPlain, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ActiveFilters } from '@/lib/filters';
 import type { Game } from '@/lib/types';
-import { NutBotProvider, useNutBot } from '@/app/nutbot';
-import { PlayerViewer } from './PlayerView';
+import { PlayerPage, PlayerViewer } from './PlayerView';
 
-/** Renders inside the app's NutBot context, as in the shell; `usable` switches the assistant on. */
-function NutBotOn({ usable, children }: { usable: boolean; children: ReactNode }): ReactElement {
-  const nutbot = useNutBot();
-  useEffect(() => { nutbot.setUsable(usable); }, [usable]); // eslint-disable-line react-hooks/exhaustive-deps
-  return <>{children}{nutbot.slot ? <span data-testid="slot-owner">{nutbot.slot.className}</span> : null}</>;
-}
-const render = (ui: ReactElement, usable = false) => renderPlain(ui, { wrapper: ({ children }) => <NutBotProvider><NutBotOn usable={usable}>{children}</NutBotOn></NutBotProvider> });
+const render = renderPlain;
 
 const { navigate, toast, toastError } = vi.hoisted(() => ({ navigate: vi.fn(), toast: vi.fn(), toastError: vi.fn() }));
 vi.mock('@tanstack/react-router', () => ({ useLocation: () => ({ pathname: '/games/g1/levels' }), useNavigate: () => navigate }));
@@ -98,23 +91,32 @@ describe('PlayerViewer', () => {
     expect(screen.getByRole('dialog', { name: 'Player details' })).toBeVisible();
   });
 
-  it('offers NutBot inside the viewer, gives it the viewer slot, and starts each player on the player', async () => {
-    const user = userEvent.setup();
-    const props = { game, filters, onClose: () => {} };
-    const { rerender } = render(<PlayerViewer {...props} player="player-one" />, true);
-    const dialog = screen.getByRole('dialog', { name: 'Player details' });
-    await user.click(within(dialog).getByRole('button', { name: 'Ask NutBot' }));
-    expect(dialog).toHaveClass('with-nb');
-    expect(screen.getByTestId('slot-owner')).toHaveTextContent('player-view-chat');
-    expect(within(dialog).getByRole('button', { name: 'NutBot' })).toHaveAttribute('aria-pressed', 'true');
-    expect(within(dialog).queryByRole('button', { name: 'Ask NutBot' })).toBeNull();
-    rerender(<PlayerViewer {...props} player="player-two" />);
-    expect(within(dialog).getByRole('button', { name: 'Player' })).toHaveAttribute('aria-pressed', 'true');
-    rerender(<PlayerViewer {...props} player={null} />);
-    await waitFor(() => expect(screen.queryByTestId('slot-owner')).toBeNull());
-  });
-  it('shows no NutBot button where the assistant is not available', () => {
+  it('has no NutBot in the viewer', () => {
     render(<PlayerViewer game={game} player="player-one" filters={filters} onClose={() => {}} />);
     expect(screen.queryByRole('button', { name: 'Ask NutBot' })).toBeNull();
+  });
+
+  it('the copy icon turns into a tick and says what was copied', async () => {
+    const user = userEvent.setup();
+    render(<PlayerViewer game={game} player="player-one" filters={filters} onClose={() => {}} />);
+    await user.click(screen.getByRole('button', { name: 'Copy player ID' }));
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeVisible();
+    expect(toast).toHaveBeenCalledWith('Player ID copied.');
+  });
+});
+
+describe('PlayerPage', () => {
+  it('shows the player in the page with a way back, and browses without a dialog', async () => {
+    const user = userEvent.setup();
+    const onBack = vi.fn();
+    const load = vi.fn(async () => ({ id: 'player-two' }));
+    render(<PlayerPage game={game} player="player-one" filters={filters} browse={{ index: 0, total: 2, load }} onBack={onBack} />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText('player-one')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Raw events' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: 'Next ›' }));
+    expect(load).toHaveBeenCalledWith(1);
+    await user.click(screen.getByRole('button', { name: '← Players' }));
+    expect(onBack).toHaveBeenCalled();
   });
 });

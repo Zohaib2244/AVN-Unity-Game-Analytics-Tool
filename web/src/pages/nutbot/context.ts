@@ -1,7 +1,8 @@
 // "Looking at": what the assistant is told about the page. Every chip except the game can be left out
 // and put back; the scope line under each answer says which of them were used.
 import type { ContextChip } from '@avn/ui';
-import { DIMENSIONS, type FilterState } from '@/lib/filters';
+import { PRESETS, resolveRange } from '@/components/DateRange';
+import { DIMENSIONS, type DayRange, type Facets, type FilterState } from '@/lib/filters';
 import { dimensionText, platformLabel, prettyDay, shortId } from '@/lib/format';
 import { storeGet } from '@/lib/store';
 import type { Game, NutBotContext, NutBotFunnel } from '@/lib/types';
@@ -59,4 +60,43 @@ export function buildContext({ game, section, filters, player }: PageContext, of
     player: off.has('player') ? undefined : player || undefined,
     funnel: funnel || undefined,
   };
+}
+
+/** What the person changed in the @ list for the next question only: the page, the days, the versions. */
+export type ContextEdit = { page?: string; range?: DayRange; versions?: string[] };
+
+/** The page as the next question will see it: the edits laid over what the page shows. */
+export function applyEdit(page: PageContext, edit: ContextEdit): PageContext {
+  const filters = page.filters && (edit.range || edit.versions)
+    ? { ...page.filters, range: edit.range ?? page.filters.range, ...(edit.versions ? { app_version: edit.versions } : {}) }
+    : page.filters;
+  return { ...page, section: edit.page ?? page.section, filters };
+}
+
+const VERSION_CHOICES = (facets: Facets | undefined): Array<{ id: string; label: string }> => [
+  ...(facets?.latest_app_version ? [{ id: 'latest', label: `Latest build ${facets.latest_app_version}` }] : []),
+  ...(facets?.previous_app_version ? [{ id: 'previous', label: `Previous build ${facets.previous_app_version}` }] : []),
+  { id: 'all', label: 'All versions' },
+];
+
+/** The edit an @ choice makes: 'page' takes a page, 'range' a preset, 'filters' latest / previous / all versions. */
+export function editFor(chip: string, option: string, facets: Facets | undefined, previous: ContextEdit): ContextEdit {
+  if (chip === 'page') return { ...previous, page: option };
+  if (chip === 'range') return { ...previous, range: resolveRange(option) };
+  if (chip === 'filters') {
+    const wanted = option === 'latest' ? facets?.latest_app_version : option === 'previous' ? facets?.previous_app_version : null;
+    return { ...previous, versions: wanted ? [wanted] : [] };
+  }
+  return previous;
+}
+
+/** The chips with what the @ list can offer on each: what it is, and the values it can be changed to. */
+export function editableChips(chips: Chip[], off: ReadonlySet<string>, edit: ContextEdit, facets: Facets | undefined): ContextChip[] {
+  return panelChips(chips, off).map((chip) => {
+    if (chip.id === 'page') return { ...chip, kind: 'Page', options: Object.entries(NB_PAGES).map(([id, label]) => ({ id, label })), choice: undefined };
+    if (chip.id === 'range') return { ...chip, kind: 'Dates', options: PRESETS.map(([id, label]) => ({ id, label })), choice: edit.range?.preset };
+    if (chip.id === 'filters') return { ...chip, kind: 'Version and filters', options: VERSION_CHOICES(facets) };
+    if (chip.id === 'player') return { ...chip, kind: 'Player' };
+    return chip;
+  });
 }

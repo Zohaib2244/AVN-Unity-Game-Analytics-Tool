@@ -877,3 +877,10 @@ def test_player_group_tools_compare_list_and_propose(tools):
     assert admin.get(base).json()[0]["name"] == "Fast starters"  # proposing saved nothing
     error, text = call(nutbot, run, "get_context")
     assert "published_builds" in json.loads(text)
+
+
+def test_answers_lead_with_the_finding_not_with_ruled_out_causes(bot):
+    admin, _, _ = bot
+    prompt = admin.app.state.nutbot.system_prompt()
+    assert "question that was asked" in prompt
+    assert "ruling out causes nobody mentioned" in prompt

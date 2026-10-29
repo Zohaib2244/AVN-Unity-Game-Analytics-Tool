@@ -93,6 +93,29 @@ export type LevelCurve = {
 /** The drop to the next level that counts for the picture: only levels with enough players and a next level. */
 export const levelDrop = (row: Pick<LevelRow, 'transition' | 'low_sample'>): number | null => (row.transition?.available && !row.low_sample ? row.transition.drop_percent : null);
 
+/** The levels the chart zooms to: from and to level numbers, inclusive. */
+export type LevelWindow = { from: number; to: number };
+/** The rows inside the window; the whole list when there is none or the window holds fewer than three levels. */
+export function zoomedLevels(levels: LevelRow[], window: LevelWindow | null): LevelRow[] {
+  if (!window) return levels;
+  const inside = levels.filter((row) => row.level >= window.from && row.level <= window.to);
+  return inside.length >= 3 ? inside : levels;
+}
+/**
+ * The window one step in (half of the levels shown, around their middle) or out (twice as many). Out that
+ * reaches every level is no window (null).
+ */
+export function zoomWindow(levels: LevelRow[], from: number, to: number, direction: 'in' | 'out'): LevelWindow | null {
+  const all = levels.map((row) => row.level).sort((a, b) => a - b);
+  const shown = all.filter((level) => level >= from && level <= to);
+  if (!shown.length) return null;
+  const size = direction === 'in' ? Math.max(5, Math.ceil(shown.length / 2)) : shown.length * 2;
+  if (size >= all.length) return null;
+  const middle = Math.round((shown.length - 1) / 2);
+  const start = Math.max(0, Math.min(all.length - size, all.indexOf(shown[middle]!) - Math.floor(size / 2)));
+  return { from: all[start]!, to: all[start + size - 1]! };
+}
+
 // The curve (the two steepest drops marked) and one heat cell per level, h0 (no next level) to h6 (the biggest drop).
 export function levelCurve(levels: LevelRow[]): LevelCurve | null {
   const rows = levels.filter((row) => row.started != null);

@@ -1,11 +1,26 @@
 // Pure helpers for one player's raw timeline: sessions and gaps, parameter chips, noise rules, presets,
 // highlight rules and the folding of repeated events. No React here, so the tests run on plain data.
-import { conditionGroup, eventCondition, HIGHLIGHT_COLORS, highlightMatches } from '@/lib/conditions';
+import { type ConditionNode, conditionGroup, eventCondition, HIGHLIGHT_COLORS, highlightMatches, paramCondition } from '@/lib/conditions';
 import type { TimelineHighlight } from '@/lib/player-events';
 import type { JourneyEvent } from '@/lib/types';
 
-/** Quick highlights for the things studied most: [key, label, event-name pattern, fallback keyword, colour]. */
-export const HIGHLIGHT_PRESETS: Array<[string, string, RegExp, string, string]> = [['levels', 'Levels', /^level/i, 'level', 'cyan'], ['screens', 'Screens', /^screen/i, 'screen', 'violet'], ['ads', 'Ads', /^ads?(_|$)/i, 'ad_', 'gold']];
+/**
+ * The highlights worth one click, by what a game usually sends: an event-name pattern and, where the event
+ * carries several kinds of thing, a parameter (name pattern) whose value (pattern) picks the kind. A preset is
+ * offered only when this player's events contain it; colours are the highlight colours.
+ */
+export type HighlightPreset = { key: string; group: string; label: string; color: string; event: RegExp; param?: RegExp; value?: RegExp };
+export const HIGHLIGHT_PRESETS: HighlightPreset[] = [
+  { key: 'level-started', group: 'Levels', label: 'Level started', color: 'cyan', event: /^level/i, param: /^(state|stage|status|action)$/i, value: /^(start|started|begin|began)$/i },
+  { key: 'level-completed', group: 'Levels', label: 'Level completed', color: 'green', event: /^level/i, param: /^(state|stage|status|action)$/i, value: /^(complete|completed|finish|finished|win|won|success)$/i },
+  { key: 'level-failed', group: 'Levels', label: 'Level failed', color: 'pink', event: /^level/i, param: /^(state|stage|status|action)$/i, value: /^(fail|failed|lose|lost|defeat|defeated)$/i },
+  { key: 'ad-interstitial', group: 'Ads', label: 'Interstitial ads', color: 'gold', event: /^ads?(_|$)/i, param: /ad_?type|^type$/i, value: /inter/i },
+  { key: 'ad-rewarded', group: 'Ads', label: 'Rewarded ads', color: 'orange', event: /^ads?(_|$)/i, param: /ad_?type|^type$/i, value: /reward/i },
+  { key: 'ad-app-open', group: 'Ads', label: 'App open ads', color: 'violet', event: /^ads?(_|$)/i, param: /ad_?type|^type$/i, value: /app_?open/i },
+  { key: 'screens', group: 'Other', label: 'Screens', color: 'violet', event: /^screen/i },
+  { key: 'economy', group: 'Other', label: 'Economy', color: 'gold', event: /^economy/i },
+  { key: 'tutorial', group: 'Other', label: 'Tutorial', color: 'cyan', event: /^tutorial/i },
+];
 export const MAX_HIGHLIGHTS = 20;
 
 /** Parameters you never read (random IDs, counters) are hidden by default; keys are matched case-insensitively. */
@@ -69,12 +84,30 @@ export function newHighlight(count: number, firstEvent?: string): TimelineHighli
   return { label: `Highlight ${count + 1}`, color: HIGHLIGHT_COLORS[count % HIGHLIGHT_COLORS.length]![0], enabled: true, conditions: conditionGroup([eventCondition(firstEvent)]) };
 }
 
-/** A quick highlight ("+ Levels"): every event whose name matches the preset pattern, or a "contains" on the keyword when none does. */
-export function presetHighlight(preset: (typeof HIGHLIGHT_PRESETS)[number], eventNames: string[]): TimelineHighlight {
-  const [, label, pattern, keyword, color] = preset;
-  const names = eventNames.filter((name) => pattern.test(name));
-  const conditions = names.length ? names.map((name) => eventCondition(name)) : [{ ...eventCondition(keyword), op: 'contains' }];
-  return { label, color, enabled: true, conditions: { match: 'any', conditions } };
+/**
+ * The highlight a preset makes for this player's events: its event names, and for a preset with a parameter
+ * the values of that parameter that match, as the player's events spell them. Null when the player has
+ * none of it (so it is not offered); a parameter the events never carry leaves the preset on the event alone.
+ */
+export function presetHighlight(preset: HighlightPreset, catalog: Catalog): TimelineHighlight | null {
+  const events = catalog.events.filter((event) => preset.event.test(event.name));
+  if (!events.length) return null;
+  const names: ConditionNode[] = events.map((event) => eventCondition(event.name));
+  const eventPart: ConditionNode = names.length === 1 ? names[0]! : { match: 'any', conditions: names };
+  const tests: ConditionNode[] = [];
+  if (preset.param && preset.value) {
+    for (const event of events) {
+      for (const param of event.params) {
+        if (!preset.param.test(param.key)) continue;
+        for (const value of param.values) if (preset.value.test(value)) tests.push({ ...paramCondition(param.key), value });
+      }
+    }
+    const carriesParam = events.some((event) => event.params.some((param) => preset.param!.test(param.key)));
+    if (carriesParam && !tests.length) return null;
+  }
+  const unique = tests.filter((test, index) => tests.findIndex((other) => JSON.stringify(other) === JSON.stringify(test)) === index);
+  const conditions = unique.length ? [eventPart, unique.length === 1 ? unique[0]! : { match: 'any' as const, conditions: unique }] : [eventPart];
+  return { label: preset.label, color: preset.color, enabled: true, conditions: { match: 'all', conditions } };
 }
 
 /** How many events a highlight takes, in how many sessions, and its share of the scoped events. */

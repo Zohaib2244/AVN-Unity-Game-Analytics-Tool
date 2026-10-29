@@ -1,6 +1,6 @@
 // Players: a sortable list with custom event-based columns and "only players who…" rules. The rules are
 // remembered per game (`avn-players-view-<id>`), edited in the drawer and always shown in the rule bar
-// above the data. `?player=` opens one player in the centred viewer over the list.
+// above the data. `?player=` shows one player as a page in place of the list (Back returns to it).
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactElement, type ReactNode } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { Drawer } from '@avn/ui';
@@ -13,7 +13,7 @@ import { number, relativeTime } from '@/lib/format';
 import { gamePath, gameURL } from '@/lib/games';
 import { storeGet, storeSet, useStorePushed } from '@/lib/store';
 import type { Catalog, EventRule, Game, PlayerRow, PlayersResult } from '@/lib/types';
-import { PlayerViewer, type PlayerBrowse } from './player/PlayerView';
+import { PlayerPage, type PlayerBrowse } from './player/PlayerView';
 import { RuleList, paramKeys, ruleOptions } from '@/components/EventRule';
 import { PlayerRuleBar } from './players/PlayerRuleBar';
 import { PlayersTable } from './players/PlayersTable';
@@ -92,7 +92,7 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
   };
   const fold = (name: string) => setView((v) => ({ ...v, fold: { ...v.fold, [name]: !v.fold[name] } }));
 
-  // The player viewer keeps the list's place; Previous / Next walk this page of players.
+  // Previous / Next on a player walk this page of players; Back returns to the list as it was.
   const open = useCallback((id: string, index: number, rows: PlayerRow[]) => {
     setBrowse({ index, total: rows.length, load: async (position: number) => (rows[position] ? { id: rows[position].player } : undefined) });
     void navigate({ to: gamePath(game, 'players'), search: { ...query, player: id }, resetScroll: false });
@@ -101,6 +101,7 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
 
   const active = body.conditions.length + body.metrics.length;
   const options = sortOptions(body.metrics);
+  if (player) return <PlayerPage game={game} player={player} filters={filters} browse={browse} onBack={close} />;
   return (
     <>
       <Heading title="Players" subtitle="A player uses user_id when available, otherwise device_id. Open one to read their events, sort the list, or add event-based columns." />
@@ -148,7 +149,6 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
         </div>
       </Drawer>
 
-      <PlayerViewer game={game} player={player} filters={filters} browse={browse} onClose={close} />
     </>
   );
 }

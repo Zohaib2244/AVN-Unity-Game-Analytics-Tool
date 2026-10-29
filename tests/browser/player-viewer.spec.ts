@@ -2,7 +2,7 @@ import { test, expect, installPlayerFixture } from '../../web/e2e/player-fixture
 
 for (const theme of ['dark', 'light']) {
   for (const palette of ['nutmeg', 'slate']) {
-    test(`centred player viewer · ${theme} · ${palette}`, async ({ page }, info) => {
+    test(`centred player viewer from Levels · ${theme} · ${palette}`, async ({ page }, info) => {
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));
       if (theme === 'light' && palette === 'slate') await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -14,7 +14,7 @@ for (const theme of ['dark', 'light']) {
         localStorage.setItem('avn-story-view-viewer-game', JSON.stringify('info'));
       }, { theme, palette });
 
-      for (const section of ['levels?level=12', 'players']) {
+      for (const section of ['levels?level=12']) {
         await page.goto(`/games/viewer-game/${section}`);
         const trigger = page.locator('a.row-title').first();
         await expect(trigger).toBeVisible();
@@ -83,3 +83,63 @@ for (const theme of ['dark', 'light']) {
     });
   }
 }
+
+test('a player opened from Players is a page with a way back, not a popup', async ({ page, context }, info) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await installPlayerFixture(page, { rich: true });
+  await page.addInitScript(() => { localStorage.setItem('avn-boot-day', new Date().toISOString().slice(0, 10)); });
+  await page.goto('/games/viewer-game/players');
+  await page.locator('a.row-title').first().click();
+  const view = page.locator('.player-page');
+  await expect(view).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(view.locator('.player-view-id')).toHaveText('player-one');
+  await expect(view.getByRole('button', { name: 'Raw events', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  expect(new URL(page.url()).searchParams.get('player')).toBe('player-one');
+
+  // The copy icon confirms itself: a tick, then back.
+  await view.getByRole('button', { name: 'Copy player ID' }).click();
+  await expect(view.getByRole('button', { name: 'Copied' })).toBeVisible();
+  await expect(view.getByRole('button', { name: 'Copy player ID' })).toBeVisible();
+
+  // Ready-made highlights: levels as started / completed / failed, ads by kind; only started events light up.
+  await expect(view.locator('.journey-events li').first()).toBeAttached();
+  const group = view.getByRole('group', { name: 'Highlights', exact: true });
+  await expect(group.getByRole('button', { name: /Level started/ })).toBeVisible();
+  await expect(group.getByRole('button', { name: /Rewarded ads/ })).toBeVisible();
+  await expect(group.getByRole('button', { name: /App open ads/ })).toHaveCount(0);
+  await group.getByRole('button', { name: /Level started/ }).click();
+  await expect(group.getByRole('button', { name: /Level started/ })).toHaveAttribute('aria-pressed', 'true');
+  expect(await view.locator('.journey-events li.timeline-match').count()).toBe(12);
+  await group.getByRole('button', { name: /Level started/ }).click();
+  expect(await view.locator('.journey-events li.timeline-match').count()).toBe(0);
+
+  // Sessions are listed beside the timeline.
+  const rail = view.getByRole('complementary', { name: 'Sessions' });
+  if (page.viewportSize()!.width > 900) {
+    await expect(rail).toBeVisible();
+    await rail.getByRole('button', { name: /Session 2/ }).click();
+    await expect(view.locator('.journey-session')).toHaveCount(1);
+  }
+
+  // Event Analysis keeps the picked event beside the list.
+  await view.getByRole('button', { name: 'Event Analysis', exact: true }).click();
+  await view.getByRole('button', { name: 'LEVEL_ANALYSIS', exact: true }).click();
+  const detail = view.getByLabel('Selected event');
+  await expect(detail.getByRole('button', { name: 'STATE', exact: true })).toBeVisible();
+  const list = (await view.locator('.ea-list').boundingBox())!;
+  const side = (await detail.boundingBox())!;
+  if (page.viewportSize()!.width > 900) expect(Math.abs(side.y - list.y)).toBeLessThan(40);
+  await page.screenshot({ path: info.outputPath('player-page-analysis.png'), animations: 'disabled' });
+
+  // Next / Previous walk the list; Back returns to it.
+  await view.getByRole('button', { name: 'Next ›', exact: true }).click();
+  await expect(view.locator('.player-view-id')).toHaveText('player-two');
+  await view.getByRole('button', { name: '← Players', exact: true }).click();
+  await expect(page.locator('a.row-title').first()).toBeVisible();
+  expect(new URL(page.url()).searchParams.has('player')).toBe(false);
+  expect(errors).toEqual([]);
+});
+

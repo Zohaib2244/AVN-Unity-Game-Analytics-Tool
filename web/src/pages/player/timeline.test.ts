@@ -1,6 +1,7 @@
 // The raw timeline's pure helpers, checked against the old player timeline (insights.js renderRawEvents,
 // conditions.js, player-events.js): sessions and gaps, value chips, session summaries, folding, presets.
 import { describe, expect, it } from 'vitest';
+import { highlightMatches } from '@/lib/conditions';
 import type { JourneyEvent } from '@/lib/types';
 import {
   buildCatalog, chipTitle, chipValue, defaultParamState, foldRuns, highlightSummary, HIGHLIGHT_PRESETS, matchesFilter, newHighlight, parameterChooser,
@@ -117,8 +118,12 @@ describe('matchesFilter', () => {
 });
 
 describe('highlights', () => {
-  it('uses the old presets, in the old order and colours', () => {
-    expect(HIGHLIGHT_PRESETS.map((p) => [p[0], p[1], p[4]])).toEqual([['levels', 'Levels', 'cyan'], ['screens', 'Screens', 'violet'], ['ads', 'Ads', 'gold']]);
+  it('offers levels as started, completed and failed, and ads by kind', () => {
+    expect(HIGHLIGHT_PRESETS.map((p) => [p.key, p.group])).toEqual([
+      ['level-started', 'Levels'], ['level-completed', 'Levels'], ['level-failed', 'Levels'],
+      ['ad-interstitial', 'Ads'], ['ad-rewarded', 'Ads'], ['ad-app-open', 'Ads'],
+      ['screens', 'Other'], ['economy', 'Other'], ['tutorial', 'Other'],
+    ]);
   });
 
   it('a new highlight takes the next colour and the first event name', () => {
@@ -128,29 +133,47 @@ describe('highlights', () => {
     expect(rule.conditions.conditions[0]).toEqual({ field: 'event', param: '', op: 'eq', value: 'LEVEL_START' });
   });
 
-  it('a preset matches every event name by pattern, or falls back to a contains on the keyword', () => {
-    const levels = presetHighlight(HIGHLIGHT_PRESETS[0]!, ['LEVEL_START', 'LEVEL_END', 'AD_SHOW']);
-    expect(levels).toMatchObject({ label: 'Levels', color: 'cyan', enabled: true, conditions: { match: 'any' } });
-    expect(levels.conditions.conditions.map((c) => (c as { value: string }).value)).toEqual(['LEVEL_START', 'LEVEL_END']);
-    const ads = presetHighlight(HIGHLIGHT_PRESETS[2]!, ['SHOP_OPEN']);
-    expect(ads.conditions.conditions).toEqual([{ field: 'event', param: '', op: 'contains', value: 'ad_' }]);
+  const preset = (key: string) => HIGHLIGHT_PRESETS.find((item) => item.key === key)!;
+  const played = [
+    ev('LEVEL_ANALYSIS', 's1', '2026-01-01T10:00:00Z', { LEVEL_NUMBER: 1, STATE: 'Started' }, 1),
+    ev('LEVEL_ANALYSIS', 's1', '2026-01-01T10:00:20Z', { LEVEL_NUMBER: 1, STATE: 'Completed' }, 1),
+    ev('LEVEL_ANALYSIS', 's1', '2026-01-01T10:00:21Z', { ACTION: 'Next', STATE: 'Choice' }, 1),
+    ev('AD_ANALYSIS', 's1', '2026-01-01T10:00:30Z', { AD_TYPE: 'interstitial', STAGE: 'shown' }),
+    ev('AD_ANALYSIS', 's2', '2026-01-01T11:00:00Z', { AD_TYPE: 'rewarded', STAGE: 'shown' }),
+  ];
+
+  it('a level preset takes only the started, completed or failed events, not every level event', () => {
+    const catalog = buildCatalog(played);
+    const started = presetHighlight(preset('level-started'), catalog)!;
+    expect(started).toMatchObject({ label: 'Level started', enabled: true });
+    expect(played.filter((event) => highlightMatches(event, started)).map((event) => event.params.STATE)).toEqual(['Started']);
+    const completed = presetHighlight(preset('level-completed'), catalog)!;
+    expect(played.filter((event) => highlightMatches(event, completed)).map((event) => event.params.STATE)).toEqual(['Completed']);
+    expect(highlightMatches(played[2]!, started)).toBe(false);
+  });
+
+  it('ads split into interstitial, rewarded and app open by their type', () => {
+    const catalog = buildCatalog(played);
+    const inter = presetHighlight(preset('ad-interstitial'), catalog)!;
+    const rewarded = presetHighlight(preset('ad-rewarded'), catalog)!;
+    expect(played.filter((event) => highlightMatches(event, inter)).map((event) => event.params.AD_TYPE)).toEqual(['interstitial']);
+    expect(played.filter((event) => highlightMatches(event, rewarded)).map((event) => event.params.AD_TYPE)).toEqual(['rewarded']);
+  });
+
+  it('a preset is not offered when the player has none of it', () => {
+    const catalog = buildCatalog(played);
+    expect(presetHighlight(preset('level-failed'), catalog)).toBeNull();
+    expect(presetHighlight(preset('ad-app-open'), catalog)).toBeNull();
+    expect(presetHighlight(preset('economy'), catalog)).toBeNull();
+    expect(presetHighlight(preset('screens'), buildCatalog([ev('SCREEN_OPEN', 's', '2026-01-01T10:00:00Z')]))).toMatchObject({ label: 'Screens' });
   });
 
   it('counts a highlight over the scoped events, its sessions and the share', () => {
-    const [first] = timelineSessions([
-      ev('LEVEL_START', 's1', '2026-01-01T10:00:00Z', {}, 1),
-      ev('AD_SHOW', 's1', '2026-01-01T10:00:10Z'),
-      ev('LEVEL_START', 's2', '2026-01-01T11:00:00Z', {}, 2),
-    ]).flatMap((s) => s.items);
-    const scoped = [first!];
-    const rule = presetHighlight(HIGHLIGHT_PRESETS[0]!, ['LEVEL_START']);
-    const all = timelineSessions([
-      ev('LEVEL_START', 's1', '2026-01-01T10:00:00Z', {}, 1),
-      ev('AD_SHOW', 's1', '2026-01-01T10:00:10Z'),
-      ev('LEVEL_START', 's2', '2026-01-01T11:00:00Z', {}, 2),
-    ]).flatMap((s) => s.items);
-    expect(highlightSummary(all, rule)).toEqual({ hits: 2, inSessions: 2, share: (100 * 2) / 3 });
-    expect(highlightSummary(scoped, rule)).toEqual({ hits: 1, inSessions: 1, share: 100 });
+    const all = timelineSessions(played).flatMap((s) => s.items);
+    const rule = presetHighlight(preset('ad-interstitial'), buildCatalog(played))!;
+    const rewarded = presetHighlight(preset('ad-rewarded'), buildCatalog(played))!;
+    expect(highlightSummary(all, rule)).toEqual({ hits: 1, inSessions: 1, share: 20 });
+    expect(highlightSummary(all.slice(0, 4), rewarded)).toEqual({ hits: 0, inSessions: 0, share: 0 });
   });
 
   it('knows which session holds the focused event', () => {

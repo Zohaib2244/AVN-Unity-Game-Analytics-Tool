@@ -11,7 +11,7 @@ export type LevelDisplay = { columns: Record<LevelColumn, boolean>; style: DropS
 
 export const DEFAULT_DISPLAY: LevelDisplay = {
   columns: { started: true, finished: true, drop: true, failquit: false, tries: false, fails: true, time: true },
-  style: 'cell', counts: 'flag', dropFlag: 10, quitFlag: 10,
+  style: 'cell', counts: 'flag', dropFlag: 5, quitFlag: 10,
 };
 export const FLAG_RANGE = { drop: { min: 5, max: 60 }, quit: { min: 0, max: 50 } } as const;
 export const displayKey = (game: { id: string }): string => `avn-level-display-${game.id}`;

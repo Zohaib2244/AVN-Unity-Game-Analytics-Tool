@@ -301,25 +301,6 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
       <p className="timeline-focus-note panel-body" role="status" hidden={analysis || !focus}>
         {focus ? (focusIndex >= 0 ? <><span>{focus.label} is marked in the timeline.</span><button type="button" className="button small-button" onClick={() => jumpTo(focusIndex)}>Go to it</button></> : <span>{complete ? `${focus.label} is not in these dates.` : `Finding ${focus.label.toLowerCase()}…`}</span>) : null}
       </p>
-      <div className="session-picker panel-body" hidden={sessions.length < 2}>{sessionPicker()}</div>
-      <div className="param-bar panel-body" hidden={analysis}>
-        <div className="segmented" role="group" aria-label="Parameters shown">
-          <button type="button" aria-pressed={!paramState.showAll} onClick={() => setShowAll(false)}>Hide noise</button>
-          <button type="button" aria-pressed={paramState.showAll} onClick={() => setShowAll(true)}>Show all</button>
-        </div>
-        <Disclosure name="param-chooser" disclosures={disclosures} className="param-chooser" summary={<>Choose parameters <span className="small muted">{number(hidden.size)} hidden</span></>}>
-          <div className="param-list">
-            <p className="help">Untick parameters you never read. Clicking a parameter name in the timeline hides it too. Remembered for this game in this browser; a parameter used by a highlight stays visible.</p>
-            <div className="param-grid">
-              {parameterChooser(events, hidden).map(({ name, key, count }) => (
-                <label key={name} className="check-row"><input type="checkbox" checked={!hidden.has(name)} onChange={(event) => toggleParam(name, event.target.checked)} /> <code>{key}</code> <span className="small muted">{number(count)}</span></label>
-              ))}
-            </div>
-            <button type="button" className="button small-button" onClick={resetParams}>Reset to default</button>
-          </div>
-        </Disclosure>
-        <label className="check-row" htmlFor={groupId}><input id={groupId} type="checkbox" checked={paramState.group} onChange={(event) => updateParams((state) => ({ ...state, group: event.target.checked }))} /> Group repeated events</label>
-      </div>
       <HighlightSetup game={game} rules={rules} catalog={catalog} counts={counts} complete={complete} freshRule={freshRule} disclosures={disclosures} hidden={analysis || mode !== 'highlight'} commit={commit} />
       <div className="highlight-summary panel-body" hidden={summaryHidden}>
         <div className="highlight-cards">
@@ -344,32 +325,55 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
           <span className="small muted">Latest</span>
         </div>
       </div>
-      <div className="highlight-navigation" hidden={navHidden}>
-        <label htmlFor={navId}>Navigate</label>
-        <div className="highlight-navigation-controls">
-          <select id={navId} value={selection} onChange={(event) => { setNavSelection(event.target.value); setCurrent(-1); }}>
-            <option value="all">All highlights</option>
-            {rules.map((rule, index) => <option key={index} value={index}>{highlightName(rule, index)}</option>)}
-          </select>
-          <div className="highlight-navigation-buttons" role="group" aria-label="Navigate matching events">
-            <button type="button" className="button" title="Shortcut: K" disabled={!matchIndices.length} onClick={() => jumpTo(highlightNavigationIndex(matchIndices, current, false))}>← Previous</button>
-            <button type="button" className="button" title="Shortcut: J" disabled={!matchIndices.length} onClick={() => jumpTo(highlightNavigationIndex(matchIndices, current, true))}>Next →</button>
+      <div className="tl-layout">
+        <aside className="tl-rail" hidden={sessions.length < 2} aria-label="Sessions">{sessionPicker()}</aside>
+        <div className="tl-main">
+          <div className="tl-toolbar" hidden={analysis}>
+          <div className="tl-nav" hidden={navHidden}>
+            <label htmlFor={navId}>Navigate</label>
+            <select id={navId} value={selection} onChange={(event) => { setNavSelection(event.target.value); setCurrent(-1); }}>
+              <option value="all">All highlights</option>
+              {rules.map((rule, index) => <option key={index} value={index}>{highlightName(rule, index)}</option>)}
+            </select>
+            <div className="highlight-navigation-buttons" role="group" aria-label="Navigate matching events">
+              <button type="button" className="button" title="Shortcut: K" disabled={!matchIndices.length} onClick={() => jumpTo(highlightNavigationIndex(matchIndices, current, false))}>← Previous</button>
+              <button type="button" className="button" title="Shortcut: J" disabled={!matchIndices.length} onClick={() => jumpTo(highlightNavigationIndex(matchIndices, current, true))}>Next →</button>
+            </div>
+            <span role="status" aria-live="polite">{`${position < 0 ? '0' : number(position + 1)} / ${number(matchIndices.length)} matching events${complete ? '' : ' · loading timeline…'}`}</span>
+            <span className="small muted">Keys: J next · K previous</span>
           </div>
-          <span role="status" aria-live="polite">{`${position < 0 ? '0' : number(position + 1)} / ${number(matchIndices.length)} matching events${complete ? '' : ' · loading timeline…'}`}</span>
-          <span className="small muted">Keys: J next · K previous</span>
+          <div className="param-bar" hidden={analysis}>
+            <div className="segmented" role="group" aria-label="Parameters shown">
+              <button type="button" aria-pressed={!paramState.showAll} onClick={() => setShowAll(false)}>Hide noise</button>
+              <button type="button" aria-pressed={paramState.showAll} onClick={() => setShowAll(true)}>Show all</button>
+            </div>
+            <Disclosure name="param-chooser" disclosures={disclosures} className="param-chooser" summary={<>Choose parameters <span className="small muted">{number(hidden.size)} hidden</span></>}>
+              <div className="param-list">
+                <p className="help">Untick parameters you never read. Clicking a parameter name in the timeline hides it too. Remembered for this game in this browser; a parameter used by a highlight stays visible.</p>
+                <div className="param-grid">
+                  {parameterChooser(events, hidden).map(({ name, key, count }) => (
+                    <label key={name} className="check-row"><input type="checkbox" checked={!hidden.has(name)} onChange={(event) => toggleParam(name, event.target.checked)} /> <code>{key}</code> <span className="small muted">{number(count)}</span></label>
+                  ))}
+                </div>
+                <button type="button" className="button small-button" onClick={resetParams}>Reset to default</button>
+              </div>
+            </Disclosure>
+            <label className="check-row" htmlFor={groupId}><input id={groupId} type="checkbox" checked={paramState.group} onChange={(event) => updateParams((state) => ({ ...state, group: event.target.checked }))} /> Group repeated events</label>
+          </div>
+            <div className="toolbar" hidden={analysis || mode !== 'filter'}>
+              <div className="search"><Ico name="search" size={16} /><input ref={searchRef} id={searchId} type="search" aria-label="Filter events" placeholder="Filter by event or parameter…" value={filterText} onChange={(event) => setFilterText(event.target.value)} /></div>
+            </div>
+          </div>
+          <p className={joinClass('help panel-body', failure && 'error')} role="status" hidden={analysis}>
+            {failure || `${number(events.length)} events ${complete ? 'in the full selected date range' : 'loaded · loading the rest of the timeline…'}`}
+          </p>
+          {analysis ? (
+            <EventAnalysis events={items} session={shownSession} complete={complete} failure={failure} timezone={timezone} onJump={jumpFromAnalysis} onHighlight={highlightFromAnalysis} onRetry={() => setAttempt((count) => count + 1)} />
+          ) : (
+            <div className="panel-body" id="journey" ref={listRef}>{renderSessions()}</div>
+          )}
         </div>
       </div>
-      <div className="toolbar" hidden={analysis || mode !== 'filter'}>
-        <div className="search"><Ico name="search" size={16} /><input ref={searchRef} id={searchId} type="search" aria-label="Filter events" placeholder="Filter by event or parameter…" value={filterText} onChange={(event) => setFilterText(event.target.value)} /></div>
-      </div>
-      <p className={joinClass('help panel-body', failure && 'error')} role="status" hidden={analysis}>
-        {failure || `${number(events.length)} events ${complete ? 'in the full selected date range' : 'loaded · loading the rest of the timeline…'}`}
-      </p>
-      {analysis ? (
-        <EventAnalysis events={items} session={shownSession} complete={complete} failure={failure} timezone={timezone} onJump={jumpFromAnalysis} onHighlight={highlightFromAnalysis} onRetry={() => setAttempt((count) => count + 1)} />
-      ) : (
-        <div className="panel-body" id="journey" ref={listRef}>{renderSessions()}</div>
-      )}
     </section>
   );
 }

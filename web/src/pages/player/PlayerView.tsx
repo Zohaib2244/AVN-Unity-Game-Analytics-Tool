@@ -1,20 +1,18 @@
-// A centred player viewer over the list: summary, dates, then Raw events, Event Analysis or Player info.
-// `?player=` opens it; Previous / Next walk the original list, which keeps its place behind the viewer.
-// NutBot: the dialog makes the page behind it inert, so the same conversation is drawn inside the viewer
-// (its slot) beside the player on wide screens, or as a Player / NutBot switch on narrow ones.
+// One player: summary, dates, then Raw events, Event Analysis or Player info. `?player=` opens it. From the
+// Levels page it is a centred viewer over the level (no NutBot there: the dialog makes the page inert);
+// from the Players list it is the page itself, so NutBot stays usable in its side panel.
+// Previous / Next walk the list the player was opened from.
 import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { useLocation, useNavigate } from '@tanstack/react-router';
-import { Button, DialogShell } from '@avn/ui';
+import { DialogShell } from '@avn/ui';
 import { useRead } from '@/api';
-import { useNutBot } from '@/app/nutbot';
 import { DateRange, resolveRange } from '@/components/DateRange';
 import { QueryRegion, Skeleton, useNotify } from '@/components/feedback';
-import { Ico } from '@/components/icons';
+import { CopyButton } from '@/components/CopyButton';
 import type { ActiveFilters, DayRange } from '@/lib/filters';
 import { timezoneOffset } from '@/lib/filters';
 import { analysisDate, duration, number, type Timezone } from '@/lib/format';
 import { gameURL } from '@/lib/games';
-import { copyText } from '@/lib/store';
 import type { Game, PlayerStory } from '@/lib/types';
 import { PlayerInformation } from './DeviceInfo';
 import { RawTimeline } from './RawTimeline';
@@ -23,21 +21,60 @@ import { RawTimeline } from './RawTimeline';
 export type PlayerBrowse = { index: number; total: number; load: (position: number) => Promise<{ id: string } | undefined> };
 type PlayerTab = 'raw' | 'analysis' | 'info';
 
-export function PlayerViewer({ game, player, filters, browse, onClose }: { game: Game; player: string | null; filters: ActiveFilters; browse?: PlayerBrowse; onClose: () => void }): ReactElement {
-  const open = player != null;
+/** Previous / Next over the list the player was opened from; the address follows the player shown. */
+function BrowseBar({ browse, player }: { browse: PlayerBrowse; player: string }): ReactElement {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { toast, toastError } = useNotify();
-  const [index, setIndex] = useState(browse?.index ?? 0);
+  const { toastError } = useNotify();
+  const [index, setIndex] = useState(browse.index);
   const [browsing, setBrowsing] = useState(false);
+  useEffect(() => { setIndex(browse.index); }, [browse]);
+  const go = async (direction: number) => {
+    if (browsing) return;
+    const next = index + direction;
+    if (next < 0 || next >= browse.total) return;
+    setBrowsing(true);
+    try {
+      const found = await browse.load(next);
+      if (!found) throw new Error('This player list changed. Go back to the list to refresh it.');
+      setIndex(next);
+      void navigate({ to: pathname, search: (previous: Record<string, unknown>) => ({ ...previous, player: found.id }), replace: true, resetScroll: false });
+    } catch (error) {
+      toastError(error);
+    } finally {
+      setBrowsing(false);
+    }
+  };
+  return (
+    <div className="player-browse" data-player={player}>
+      <button type="button" className="button small-button" onClick={() => void go(-1)} disabled={browsing || index === 0}>‹ Previous</button>
+      <span aria-live="polite">{browsing ? 'Loading player…' : `${number(index + 1)} of ${number(browse.total)}`}</span>
+      <button type="button" className="button small-button" onClick={() => void go(1)} disabled={browsing || index >= browse.total - 1}>Next ›</button>
+    </div>
+  );
+}
+
+/** The player as a page of its own (the Players list): back to the list, the ID with its copy button, then the details. */
+export function PlayerPage({ game, player, filters, browse, onBack }: { game: Game; player: string; filters: ActiveFilters; browse?: PlayerBrowse; onBack: () => void }): ReactElement {
+  return (
+    <section className="player-page" aria-label="Player details">
+      <header className="player-page-head">
+        <button type="button" className="button small-button" onClick={onBack}>← Players</button>
+        <div className="player-view-identity">
+          <span className="player-view-id mono">{player}</span>
+          <CopyButton text={player} label="Copy player ID" done="Player ID copied." />
+        </div>
+        {browse ? <BrowseBar browse={browse} player={player} /> : null}
+      </header>
+      <div className="player-page-body"><PlayerDetails game={game} player={player} filters={filters} /></div>
+    </section>
+  );
+}
+
+export function PlayerViewer({ game, player, filters, browse, onClose }: { game: Game; player: string | null; filters: ActiveFilters; browse?: PlayerBrowse; onClose: () => void }): ReactElement {
+  const open = player != null;
   const body = useRef<HTMLDivElement>(null);
-  const nutbot = useNutBot();
-  const chatting = open && nutbot.usable && nutbot.open;
-  // On a narrow viewer only one of the two shows; every player opening starts on the player.
-  const [pane, setPane] = useState<'player' | 'chat'>('player');
-  useEffect(() => { setIndex(browse?.index ?? 0); }, [browse]);
-  useEffect(() => { if (body.current) body.current.scrollTop = 0; setPane('player'); }, [player]);
-  const askNutBot = () => { nutbot.setOpen(true); setPane('chat'); };
+  useEffect(() => { if (body.current) body.current.scrollTop = 0; }, [player]);
 
   // Radix has no Dialog.Trigger here: the row lives on the page and the URL controls opening.
   // Restore its focus after the dialog finishes handing focus back on close.
@@ -65,59 +102,23 @@ export function PlayerViewer({ game, player, filters, browse, onClose }: { game:
     return () => { if (frame != null) cancelAnimationFrame(frame); };
   }, [open]);
 
-  const go = async (direction: number) => {
-    if (!browse || browsing) return;
-    const next = index + direction;
-    if (next < 0 || next >= browse.total) return;
-    setBrowsing(true);
-    try {
-      const found = await browse.load(next);
-      if (!found) throw new Error('This player list changed. Close and reopen the group to refresh it.');
-      setIndex(next);
-      void navigate({ to: pathname, search: (previous: Record<string, unknown>) => ({ ...previous, player: found.id }), replace: true, resetScroll: false });
-    } catch (error) {
-      toastError(error);
-    } finally {
-      setBrowsing(false);
-    }
-  };
-
   return (
-    <DialogShell
-      open={open}
-      onOpenChange={(next) => { if (!next) onClose(); }}
-      title="Player details"
-      className={chatting ? 'with-nb' : undefined}
-    >
-      <div className={`player-view${chatting ? ` with-nb pane-${pane}` : ''}`}>
+    <DialogShell open={open} onOpenChange={(next) => { if (!next) onClose(); }} title="Player details">
+      <div className="player-view">
         <header className="player-view-head">
           <div className="player-view-identity">
             <span className="player-view-id mono">{player}</span>
-            {player ? <Button variant="ghost" size="sm" aria-label="Copy player ID" title="Copy player ID" onClick={async () => { toast((await copyText(player)) ? 'Player ID copied.' : 'Select the player ID and copy it manually.'); }}><Ico name="copy" size={16} /></Button> : null}
+            {player ? <CopyButton text={player} label="Copy player ID" done="Player ID copied." /> : null}
           </div>
           <div className="player-view-tools">
-            {nutbot.usable && !chatting ? <Button size="sm" onClick={askNutBot}>Ask NutBot</Button> : null}
-            {chatting ? (
-              <div className="segmented player-view-panes" role="group" aria-label="Show">
-                <button type="button" aria-pressed={pane === 'player'} onClick={() => setPane('player')}>Player</button>
-                <button type="button" aria-pressed={pane === 'chat'} onClick={() => setPane('chat')}>NutBot</button>
-              </div>
-            ) : null}
             <button type="button" className="button small-button player-view-close" onClick={onClose}>Close ×</button>
           </div>
-          {browse && player ? (
-            <div className="player-browse">
-              <button type="button" className="button small-button" onClick={() => void go(-1)} disabled={browsing || index === 0}>‹ Previous</button>
-              <span aria-live="polite">{browsing ? 'Loading player…' : `${number(index + 1)} of ${number(browse.total)}`}</span>
-              <button type="button" className="button small-button" onClick={() => void go(1)} disabled={browsing || index >= browse.total - 1}>Next ›</button>
-            </div>
-          ) : null}
+          {browse && player ? <BrowseBar browse={browse} player={player} /> : null}
         </header>
         <div className="player-view-main">
           <div className="player-view-body" ref={body}>
             {player ? <PlayerDetails game={game} player={player} filters={filters} /> : null}
           </div>
-          {chatting ? <div className="player-view-chat" ref={nutbot.setSlot} /> : null}
         </div>
       </div>
     </DialogShell>

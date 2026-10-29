@@ -18,29 +18,39 @@
 .rule-list{display:flex;flex-direction:column;align-items:flex-start}
 .rule-list .rule-row{align-self:stretch}
 
-/* NutBot owns one viewport-height column at the side, or the chat column of an open player viewer
-   (.player-view-chat). History, reports and settings are header views (.nb-pane) above the composer. */
+/* NutBot owns one viewport-height column at the side. History, reports and settings are header views
+   (.nb-pane) above the composer. */
 .nb-dock{position:fixed;z-index:66;inset:0 0 0 auto;width:min(420px,96vw);display:flex;flex-direction:column;background:var(--panel);border-left:var(--bw) solid var(--line-strong)}
 .nb-dock[hidden]{display:none}
+.nb-dock.wide{width:min(760px,60vw);box-shadow:-24px 0 50px -24px rgba(0,0,0,.45)}
+/* Locked: docked, and the page makes room for it. Unlocked: a floating card over the page, nothing moves. */
+@container app (min-width: 901px) {
+  .app.nb-open{padding-right:min(420px,96vw)}
+}
+@media (min-width:621px){
+  .nb-dock.floating{inset:12px 12px 12px auto;border:var(--bw) solid var(--line-strong);border-radius:var(--r-card);box-shadow:0 24px 60px -20px rgba(0,0,0,.5);overflow:hidden}
+}
+.nb-dock .nb-h{gap:6px}
+.nb-dock .nb-h .nb-face{margin-left:4px}
 .nb-dock>.nb{position:relative;inset:auto;flex:1;min-height:0;width:100%;border:0;border-radius:0;box-shadow:none}
-:is(.nb-dock,.player-view-chat) :is(.nb-h,.nb-ctx,.nb-in){flex-shrink:0}
-:is(.nb-dock,.player-view-chat) :is(.nb-list,.nb-view){min-height:0;overscroll-behavior:contain}
-:is(.nb-dock,.player-view-chat) .nb-h small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-:is(.nb-dock,.player-view-chat) .nb-h .icon-btn[aria-pressed="true"]{background:var(--raise);color:var(--text)}
-:is(.nb-dock,.player-view-chat) .nb-hello{padding:8px 0;text-align:left}
-:is(.nb-dock,.player-view-chat) .nb-hello p{margin:0;text-align:left}
-:is(.nb-dock,.player-view-chat) .nb-sug{align-items:stretch;width:100%}
-:is(.nb-dock,.player-view-chat) .nb-sug .preset{border-style:solid}
+.nb-dock :is(.nb-h,.nb-ctx,.nb-in){flex-shrink:0}
+.nb-dock :is(.nb-list,.nb-view){min-height:0;overscroll-behavior:contain}
+.nb-dock .nb-h small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nb-dock .nb-h .icon-btn[aria-pressed="true"]{background:var(--raise);color:var(--text)}
+.nb-dock .nb-hello{padding:8px 0;text-align:left}
+.nb-dock .nb-hello p{margin:0;text-align:left}
+.nb-dock .nb-sug{align-items:stretch;width:100%}
+.nb-dock .nb-sug .preset{border-style:solid}
 /* The old progress-bar grid and textarea rules must not size the shared PromptBar. */
-:is(.nb-dock,.player-view-chat) .nb-in{display:block;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));border-top:var(--bw) solid var(--line)}
-:is(.nb-dock,.player-view-chat) .pbar{display:block;min-width:0}
-:is(.nb-dock,.player-view-chat) .nb-in .pbar-in{flex:none;min-height:44px;max-height:110px;padding:0 2px;border:0;border-radius:0;background:none;font-size:var(--fs-body);line-height:22px;box-shadow:none}
-:is(.nb-dock,.player-view-chat) .nb-in .pbar-in:focus{border:0;box-shadow:none;outline:none}
-:is(.nb-dock,.player-view-chat) .pbar-hint{display:none}
-:is(.nb-dock,.player-view-chat) .pbar-opt:has(.pbar-name.mono)>.ic{display:none}
-:is(.nb-dock,.player-view-chat) .pbar-menu{max-height:240px;overflow:auto}
-:is(.nb-dock,.player-view-chat) .pbar-desc{white-space:normal}
-:is(.nb-dock,.player-view-chat) .pbar .pbar-glow{height:var(--h,34px);border-radius:var(--r-ctl);background:var(--raise)}
+.nb-dock .nb-in{display:block;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));border-top:var(--bw) solid var(--line)}
+.nb-dock .pbar{display:block;min-width:0}
+.nb-dock .nb-in .pbar-in{flex:none;min-height:44px;max-height:110px;padding:0 2px;border:0;border-radius:0;background:none;font-size:var(--fs-body);line-height:22px;box-shadow:none}
+.nb-dock .nb-in .pbar-in:focus{border:0;box-shadow:none;outline:none}
+.nb-dock .pbar-hint{display:none}
+.nb-dock .pbar-opt:has(.pbar-name.mono)>.ic{display:none}
+.nb-dock .pbar-menu{max-height:240px;overflow:auto}
+.nb-dock .pbar-desc{white-space:normal}
+.nb-dock .pbar .pbar-glow{height:var(--h,34px);border-radius:var(--r-ctl);background:var(--raise)}
 /* Header views: one column, a title with the way back, then plain rows. */
 .nb-pane{display:flex;flex-direction:column;gap:12px;font-size:var(--fs-sm);color:var(--text)}
 .nb-view-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -53,8 +63,8 @@
 .nb-pane .nb-setup-help p{margin:0;font-size:var(--fs-sm);color:var(--muted)}
 @container app (max-width:620px){
   .nb-dock{top:4dvh;width:100%;border-left:0;border-top:var(--bw) solid var(--line-strong);border-radius:var(--r-card) var(--r-card) 0 0;overflow:hidden}
-  :is(.nb-dock,.player-view-chat) :is(.icon-btn,.pbar-tool,.pbar-pick,.pbar-send,.pbar-opt,.nb-pane .btn,.nb-pane select,.segmented button){min-height:44px}
-  :is(.nb-dock,.player-view-chat) :is(.pbar-tool,.pbar-send){width:44px}
+  .nb-dock :is(.icon-btn,.pbar-tool,.pbar-pick,.pbar-send,.pbar-opt,.nb-pane .btn,.nb-pane select,.segmented button,.nb-meta .nb-link){min-height:44px}
+  .nb-dock :is(.pbar-tool,.pbar-send){width:44px}
 }
 .nb-md{display:flex;flex-direction:column;gap:8px;overflow-wrap:anywhere}
 .nb-md p{margin:0}
@@ -68,7 +78,9 @@
 .nb-b .nb-wait{color:var(--dim)}
 .nb-b .nb-error{color:var(--bad);font-size:var(--fs-sm)}
 .nb-b .nb-actions{display:flex;flex-wrap:wrap;gap:6px}
-.nb-b .nb-meta{font-size:var(--fs-micro);color:var(--dim)}
+.nb-b .nb-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:var(--fs-sm);color:var(--dim)}
+.nb-b .nb-meta .nb-link{display:inline-flex;align-items:center;min-height:34px;padding:0 14px;border:var(--bw) solid var(--line-strong);border-radius:var(--r-ctl);background:var(--nested);color:var(--text);font-size:var(--fs-sm);text-decoration:none}
+.nb-b .nb-meta .nb-link:hover{background:var(--raise)}
 .nb-b .nb-notice{margin:0;font-size:var(--fs-sm);color:var(--warn)}
 .nb-b .nb-link{background:none;border:0;padding:0;color:var(--accent);font:inherit;font-size:var(--fs-micro);cursor:pointer;text-decoration:underline}
 .nb-b .nb-trace{display:grid;gap:4px;font-size:var(--fs-sm)}
@@ -132,29 +144,17 @@ body:has(.dlg > .player-view) { overflow: hidden; }
 .player-view-identity { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .player-view-identity .btn { flex: none; }
 .player-view-tools { position: absolute; top: 16px; right: 24px; display: flex; align-items: center; gap: 8px; }
-.player-view-panes { display: none; }
-/* NutBot inside the viewer: one wider centred viewer, the player on the left and the conversation on the right. */
-.dlg.with-nb:has(> .player-view) { width: min(1560px, calc(100vw - 48px)); }
-.dlg.with-nb:has(> .player-view) > h2 { padding-right: 140px; }
+/* The viewer is used from Levels only, which has no NutBot: the player takes the whole width. */
 .player-view-main { display: flex; flex: 1; min-height: 0; }
 .player-view-main > .player-view-body { min-width: 0; }
-.player-view-chat { flex: 0 0 min(420px, 36%); min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: var(--bw) solid var(--line); }
-.player-view-chat > .nb { flex: 1; min-height: 0; border: 0; border-radius: 0; }
-@media (max-width: 1100px) {
-  .player-view-panes { display: inline-flex; }
-  .player-view.pane-player .player-view-chat, .player-view.pane-chat .player-view-body { display: none; }
-  .player-view-chat { flex: 1; border-left: 0; }
-}
 .player-view .player-browse { margin-left: auto; flex-wrap: wrap; font-size: var(--fs-sm); }
 .player-view-body { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; overscroll-behavior: contain; padding: 20px 24px 24px; }
-.player-view .highlight-navigation { top: 0; }
 .player-view .journey-params { min-width: 0; }
 @media (max-width: 620px) {
   .dlg:has(> .player-view) { width: calc(100vw - 16px); height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); }
   .dlg:has(> .player-view) > h2 { padding: 16px 112px 0 16px; }
   .player-view-head { padding: 8px 16px 12px; }
-  .dlg:has(> .player-view) > h2, .dlg.with-nb:has(> .player-view) > h2 { padding-right: 16px; }
-  .player-view-tools { position: static; order: -1; width: 100%; justify-content: flex-end; flex-wrap: wrap; }
+    .player-view-tools { position: static; order: -1; width: 100%; justify-content: flex-end; flex-wrap: wrap; }
   .player-view .player-browse { order: initial; width: 100%; margin: 0; justify-content: space-between; }
   .player-view-body { padding: 16px; }
 }
@@ -402,3 +402,84 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
 /* Event setup → Add AVN Events: which standard is handed out */
 .standard-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 14px}
 .standard-line .muted{font-size:var(--fs-label)}
+
+/* A player as a page (Players list): the way back, the ID, Previous / Next, then the details. */
+.player-page { display: flex; flex-direction: column; gap: 16px; --tl-top: 52px; }
+.player-page-head { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.player-page-head .player-browse { margin-left: auto; font-size: var(--fs-sm); }
+.player-page-body { min-width: 0; }
+.copy-done { color: var(--ok); }
+
+/* Highlights: ready-made ones to switch on, grouped by what they mark. */
+.hl-picker { display: grid; gap: 10px; padding-top: 14px; }
+.hl-picker[hidden] { display: none; }
+.hl-picker-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.hl-picker-head .button { margin-left: auto; }
+.hl-group { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; align-items: start; }
+.hl-group-name { padding-top: 8px; font-size: var(--fs-sm); color: var(--muted); }
+.hl-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.hl-chip { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; border: var(--bw) solid var(--line); border-radius: var(--r-ctl); background: var(--nested); color: var(--text); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.hl-chip:hover { border-color: var(--line-strong); }
+.hl-chip .highlight-dot { opacity: .45; }
+.hl-chip.on { border-color: var(--highlight-color); background: color-mix(in srgb, var(--highlight-color) 12%, var(--nested)); font-weight: 600; }
+.hl-chip.on .highlight-dot { opacity: 1; }
+.hl-count { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 500; }
+@media (max-width: 620px) { .hl-group { grid-template-columns: 1fr; gap: 4px; } .hl-group-name { padding-top: 0; } .hl-chip { min-height: 44px; } }
+
+/* The timeline: sessions listed down the left, the controls and events beside them. */
+.tl-layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 20px; align-items: start; padding: 14px 24px 24px; --tl-top: 0px; }
+.tl-layout:has(> .tl-rail[hidden]) { grid-template-columns: minmax(0, 1fr); }
+.tl-rail { position: sticky; top: var(--tl-top, 0px); display: grid; gap: 8px; max-height: calc(100dvh - 160px); overflow: auto; overscroll-behavior: contain; padding: 2px; }
+.tl-rail[hidden] { display: none; }
+.tl-rail .session-picker-label { font-size: var(--fs-micro); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.tl-rail .session-chips { flex-direction: column; flex-wrap: nowrap; max-height: none; overflow: visible; gap: 6px; padding: 0; }
+.tl-rail .session-chip { width: 100%; }
+.tl-main { min-width: 0; }
+.tl-main .panel-body { padding-left: 0; padding-right: 0; }
+.tl-toolbar { position: sticky; top: var(--tl-top, 0px); z-index: 3; display: grid; gap: 8px; padding: 10px 0; background: var(--panel); border-bottom: var(--bw) solid var(--line); }
+.tl-toolbar[hidden], .tl-nav[hidden] { display: none; }
+.tl-nav { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; font-size: var(--fs-sm); }
+.tl-nav > label { margin: 0; color: var(--muted); }
+.raw-timeline .tl-nav :is(select, .button) { min-height: 36px; height: 36px; }
+.tl-nav select { width: auto; min-width: 150px; max-width: 100%; line-height: 1.2; padding-block: 0; }
+.tl-nav .highlight-navigation-buttons { gap: 6px; }
+.tl-toolbar .param-bar { padding: 0; gap: 10px 18px; align-items: center; }
+.tl-toolbar .toolbar { padding: 0; }
+@media (max-width: 900px) {
+  .tl-layout { grid-template-columns: minmax(0, 1fr); padding: 12px 16px 20px; }
+  .tl-rail { position: static; max-height: none; }
+  .tl-rail :is(.session-picker-label, .session-chips) { display: none; }
+  .tl-rail .compact-session-picker { display: flex; }
+  .tl-toolbar { position: static; }
+}
+
+/* Event Analysis: the events on the left, the picked one read on the right, so nothing opens below. */
+.ea-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; align-items: start; }
+.ea-list { max-height: min(68dvh, 640px); overflow: auto; border: var(--bw) solid var(--line); border-radius: var(--r-card); }
+.ea-detail { position: sticky; top: var(--tl-top, 0px); max-height: min(68dvh, 640px); overflow: auto; overscroll-behavior: contain; padding: 14px; border: var(--bw) solid var(--line); border-radius: var(--r-card); background: var(--nested); }
+.ea-detail .analysis-event-detail { margin: 0; border: 0; display: grid; gap: 10px; }
+.ea-detail-head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.ea-detail-head h3 { margin: 0; overflow-wrap: anywhere; }
+.ea-detail-head p { margin: 2px 0 0; }
+.ea-detail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ea-section-label { font-size: var(--fs-micro); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.ea-params { display: flex; flex-wrap: wrap; gap: 6px; }
+.ea-param { min-height: 32px; padding: 0 10px; border: var(--bw) solid var(--line); border-radius: var(--r-ctl); background: var(--panel); color: var(--text); font: inherit; font-family: var(--font-mono); font-size: var(--fs-sm); cursor: pointer; }
+.ea-param[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); font-weight: 600; }
+.ea-param[data-filtered]::after { content: " •"; color: var(--accent); }
+.ea-detail .analysis-values { margin: 0; }
+.ea-detail .analysis-occurrences { max-height: 260px; overflow: auto; }
+.event-analysis-table tr.current td { background: var(--raise); }
+.ea-hint { margin: 0; padding: 24px 8px; text-align: center; }
+@media (max-width: 900px) {
+  .ea-layout { grid-template-columns: minmax(0, 1fr); }
+  .ea-list { max-height: 40dvh; }
+  .ea-detail { position: static; max-height: none; }
+}
+
+/* Levels summary chart: zoom controls and the dragged selection. */
+.curve-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.curve-tools .small { margin-right: auto; }
+.curve-tools .btn { min-width: 34px; }
+.level-curve { user-select: none; }
+.curve-select { fill: var(--accent); opacity: .14; stroke: var(--accent); stroke-width: 1; pointer-events: none; }

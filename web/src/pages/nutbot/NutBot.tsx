@@ -2,11 +2,10 @@
 // the Agent Client Protocol with this app's tools; answers stream back as newline-delimited JSON (see
 // avn_analytics/nutbot.py) and are kept in the server's own chat record, which this panel lists and reopens.
 // The shell owns the launcher, Ctrl+J and "Ask NutBot" (src/app/nutbot.tsx); this draws the panel.
-// The conversation lives here, mounted once in the shell: the panel is drawn at the side, or inside an
-// open player viewer's slot, and moving between them keeps the messages, the stream and the typed draft.
+// The conversation lives here, mounted once in the shell, so the messages, the stream and the typed draft
+// survive the panel closing and opening.
 // History, reports and settings are header views; the composer stays visible under every one of them.
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactElement, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate, useRouterState, useSearch } from '@tanstack/react-router';
 import { NutBotPanel, useAppContainer, type AnswerBlock, type NbMessage, type SlashCommand } from '@avn/ui';
 import { queryClient, read, readKey, useRead, write } from '@/api';
@@ -15,18 +14,24 @@ import { useNutBot } from '@/app/nutbot';
 import { useSession } from '@/app/session';
 import { useNotify } from '@/components/feedback';
 import { Ico } from '@/components/icons';
-import { filterState, saveFilters, type FilterState } from '@/lib/filters';
+import { facetsPath } from '@/components/Filters';
+import { resolveRange } from '@/components/DateRange';
+import { filterState, saveFilters, type Facets, type FilterState } from '@/lib/filters';
 import { agoText, number, platformLabel } from '@/lib/format';
 import { gamePath } from '@/lib/games';
 import { storeGet, storeRemove, storeSet } from '@/lib/store';
 import type { Game, NutBotAction, NutBotChatRead, NutBotChatRow, NutBotEvent, NutBotInfo, NutBotLimits, NutBotPrefs, NutBotProposal, NutBotReportRow, NutBotStoredTool } from '@/lib/types';
-import { buildContext, contextChips, panelChips, scopeLine, suggestionsFor, type PageContext } from './context';
+import { applyEdit, buildContext, contextChips, editableChips, editFor, scopeLine, suggestionsFor, type ContextEdit, type PageContext } from './context';
 import { Markdown } from './markdown';
 import { effortLevels, pickEffort, pickModel } from './models';
 import { APPLY_KEY, applyMode, applyProposal, proposalKey, savesReport, type Applied, type ApplyMode } from './proposals';
 import { applyEvent, contextShare, emptyAnswer, fromStoredMessages, settle, type Answer, type ChatMessage } from './stream';
 
 const PREFS_KEY = 'avn-nutbot-prefs';
+const LAYOUT_KEY = 'avn-nutbot-layout';
+/** How the panel sits: locked = docked at the side, pushing the page; unlocked = floating over it. Wide = a roomier column. */
+type Layout = { locked: boolean; wide: boolean };
+const loadLayout = (): Layout => ({ locked: true, wide: false, ...(storeGet<Partial<Layout>>(LAYOUT_KEY) || {}) });
 const HEAVY_CONTEXT = 0.6; // past this share of the agent's context window, suggest a new chat
 const currentKey = (game: Pick<Game, 'id'>) => `avn-nutbot-current-${game.id}`;
 const nbPrefs = (): NutBotPrefs => storeGet<NutBotPrefs>(PREFS_KEY) || {};
@@ -80,7 +85,7 @@ function toPanelMessage(message: ChatMessage, streaming: boolean, onOpen: (actio
     if (proposals.saveReport && message.id != null && message.text) links.push(<button key="save" type="button" className="nb-link" onClick={() => proposals.saveReport!(message)}>Save as report</button>);
     if (trace.toggle) links.push(<button key="trace" type="button" className="nb-link" onClick={trace.toggle}>{trace.state?.open ? 'Hide trace' : 'Trace'}</button>);
     if (note) links.push(<span key="note">{note}</span>);
-    if (links.length) body.push(<div key="meta" className="nb-meta">{links.flatMap((link, index) => (index ? [<span key={`dot${index}`} aria-hidden="true"> · </span>, link] : [link]))}</div>);
+    if (links.length) body.push(<div key="meta" className="nb-meta">{links}</div>);
     if (trace.state?.open) {
       body.push(
         <div key="trace" className="nb-trace">
@@ -151,16 +156,15 @@ export function NutBotHost(): ReactElement | null {
   const [effort, setEffort] = useState('');
   const [filters, setFilters] = useState<FilterState | null>(null);
   const [view, setView] = useState<View>('chat');
+  const [layout, setLayoutState] = useState<Layout>(loadLayout);
+  const setLayout = (change: Partial<Layout>) => setLayoutState((previous) => { const next = { ...previous, ...change }; storeSet(LAYOUT_KEY, next); return next; });
+  const [edit, setEdit] = useState<ContextEdit>({});
   const [openReport, setOpenReport] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const [traces, setTraces] = useState<Record<number, TraceState>>({});
   const [mode, setModeState] = useState<ApplyMode>(applyMode);
   const appliedRef = useRef(new Map<string, Applied>());
-  const { open, setOpen, setUsable, pending, takePending, slot } = nutbot;
-  // Inside a player viewer the page behind it is inert: applying a card must not navigate away from it.
-  const embedded = slot != null;
-  const embeddedRef = useRef(embedded);
-  embeddedRef.current = embedded;
+  const { open, setOpen, setUsable, pending, takePending } = nutbot;
   // The latest values for handlers that outlive a render (the Escape listener, a card applied after a stream).
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -190,7 +194,7 @@ export function NutBotHost(): ReactElement | null {
     controller.current?.abort();
     messagesRef.current = [];
     setChatIdState(game ? storeGet<string>(currentKey(game)) : null);
-    setTraces({}); setBusy(false); setOpen(false); setView('chat'); setDraft(''); bump();
+    setTraces({}); setBusy(false); setOpen(false); setView('chat'); setDraft(''); setEdit({}); bump();
   }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const chatPath = game && chatId ? `${chatsPath(game)}/${encodeURIComponent(chatId)}` : null;
@@ -198,10 +202,21 @@ export function NutBotHost(): ReactElement | null {
   const listQuery = useRead<{ chats: NutBotChatRow[] }>(game ? chatsPath(game) : null, { enabled: Boolean(game && usable && open) });
   const chats = listQuery.data?.chats ?? [];
   // The stored messages replace the local copy whenever a chat (re)loads and nothing is streaming.
+  // A copy fetched while the answer was still streaming (a new chat is fetched as soon as it has an id)
+  // holds only the question: it must not replace the answer that has just arrived, which has no stored id yet.
+  // The refresh after the stream brings the stored copy with the answer in it.
   useEffect(() => {
     if (busy) return;
-    if (chatQuery.data && chatQuery.data.chat.id === chatId) { messagesRef.current = fromStoredMessages(chatQuery.data.messages); bump(); }
-    else if (chatQuery.isError && chatId) { setChatId(null); messagesRef.current = []; bump(); }
+    if (chatQuery.data && chatQuery.data.chat.id === chatId) {
+      const local = messagesRef.current;
+      const newest = local[local.length - 1];
+      if (newest?.role === 'assistant' && newest.id == null && chatQuery.data.messages.length < local.length) {
+        // Ask again shortly, a few times, for the copy that has the answer in it.
+        const timers = [600, 1800, 4000].map((delay) => setTimeout(() => void chatQuery.refetch(), delay));
+        return () => timers.forEach(clearTimeout);
+      }
+      messagesRef.current = fromStoredMessages(chatQuery.data.messages); bump();
+    } else if (chatQuery.isError && chatId) { setChatId(null); messagesRef.current = []; bump(); }
   }, [chatQuery.data, chatQuery.isError, chatId, busy, setChatId]);
 
   // The harness (assistant) and model: the chat's own, then the remembered choice, then the server default.
@@ -225,23 +240,45 @@ export function NutBotHost(): ReactElement | null {
   const readFilters = useCallback(() => { const next = game ? filterState(game) : null; setFilters((previous) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next)); }, [game]);
   useEffect(() => { readFilters(); }, [readFilters, href, open]);
   useEffect(() => { if (!open) return; const timer = setInterval(readFilters, 1500); return () => clearInterval(timer); }, [open, readFilters]);
-  const page: PageContext = useMemo(() => ({ game, section, filters, player: search.player || null }), [game, section, filters, search.player]);
+  const seen: PageContext = useMemo(() => ({ game, section, filters, player: search.player || null }), [game, section, filters, search.player]);
+  // What the @ list changed (page, days, version) lies over what the page shows, for the next question only.
+  const page = useMemo(() => applyEdit(seen, edit), [seen, edit]);
   const chips = useMemo(() => contextChips(page), [page]);
+  const facetsQuery = useRead<Facets>(game && filters && open && usable ? facetsPath(game, { ...filters, range: filters.range ?? resolveRange('30') }) : null);
+  const editable = useMemo(() => editableChips(chips, off, edit, facetsQuery.data), [chips, off, edit, facetsQuery.data]);
+  const changeContext = (id: string, option?: string) => {
+    if (option === undefined) { toggleContext(id); return; }
+    setOff((previous) => { if (!previous.has(id)) return previous; const next = new Set(previous); next.delete(id); return next; });
+    setEdit((previous) => editFor(id, option, facetsQuery.data, previous));
+  };
   const toggleContext = (id: string) => setOff((previous) => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
 
-  // At the side, drawers slide left to sit beside the panel; the composer gets focus when it opens.
+  // Locked, the panel is docked and the page (and its drawers) make room beside it; unlocked, it floats over
+  // the page and leaves everything where it is. Wide is a roomy panel over the page, so it never moves it.
+  // The composer gets focus when it opens.
+  const docked = layout.locked;
   useEffect(() => {
     if (!appEl) return;
-    appEl.classList.toggle('nb-open', open && !embedded);
+    appEl.classList.toggle('nb-open', open && docked && !layout.wide);
     return () => appEl.classList.remove('nb-open');
-  }, [appEl, open, embedded]);
+  }, [appEl, open, docked, layout.wide]);
+  // A floating panel gives way when the page behind it is used.
+  useEffect(() => {
+    if (!open || docked) return;
+    const away = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (target?.closest?.('.nb-dock, .nb-launcher, [role="dialog"], [role="listbox"], .toast, [data-radix-popper-content-wrapper]')) return;
+      close();
+    };
+    document.addEventListener('pointerdown', away);
+    return () => document.removeEventListener('pointerdown', away);
+  }, [open, docked]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!open) return;
     const timer = setTimeout(() => appEl?.querySelector<HTMLTextAreaElement>('.nb .nb-in textarea')?.focus(), 50);
     // Escape: a menu in the composer first (it marks the event), then a header view, then the panel.
-    // Inside a player viewer the viewer owns Escape; its dialog has already handled the key.
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || embeddedRef.current || !(event.target as Element | null)?.closest?.('.nb')) return;
+      if (event.key !== 'Escape' || event.defaultPrevented || !(event.target as Element | null)?.closest?.('.nb')) return;
       event.preventDefault();
       if (viewRef.current !== 'chat') setView('chat'); else close();
     };
@@ -272,19 +309,21 @@ export function NutBotHost(): ReactElement | null {
     try {
       const done = await applyProposal(game, proposal, chatIdRef.current);
       appliedRef.current.set(key, done); bump();
-      // A report opens no page, and inside a player viewer the viewer stays: the page is there after Close.
-      if (!quiet && !savesReport(proposal) && !embeddedRef.current) void navigate({ to: done.path });
+      // A report opens no page.
+      if (!quiet && !savesReport(proposal)) void navigate({ to: done.path });
       toast(savesReport(proposal) ? 'Saved to Reports' : `Applied: ${proposal.title}`, { label: 'Undo', run: () => undoProposal(proposal) }, 'info');
     } catch (error) { toast((error as Error).message || (savesReport(proposal) ? 'Could not save the report.' : 'Could not apply that.'), undefined, 'error'); }
   }, [game, navigate, toast, undoProposal]);
   const setMode = (next: ApplyMode) => { setModeState(next); storeSet(APPLY_KEY, next); };
   const openLink = useCallback((path: string) => { void navigate({ to: path }); }, [navigate]);
 
-  const refreshChats = useCallback(() => {
+  // The chat list and one chat's stored copy; a chat created by the answer just streamed has no path in this render yet.
+  const refreshChats = useCallback((id?: string | null) => {
     if (!game) return;
     void queryClient.invalidateQueries({ queryKey: readKey(chatsPath(game)) });
-    if (chatPath) void queryClient.invalidateQueries({ queryKey: readKey(chatPath) });
-  }, [game, chatPath]);
+    const wanted = id ?? chatIdRef.current;
+    if (wanted) void queryClient.invalidateQueries({ queryKey: readKey(`${chatsPath(game)}/${encodeURIComponent(wanted)}`) });
+  }, [game]);
 
   const send = useCallback(async (raw: string) => {
     const text = raw.trim();
@@ -294,10 +333,10 @@ export function NutBotHost(): ReactElement | null {
     const messages = messagesRef.current;
     messages.push({ role: 'user', text });
     // The context is taken now: browsing to another player later doesn't change this question or its scope line.
-    const asked: PageContext = { ...page, filters: filterState(game) };
+    const asked: PageContext = applyEdit({ ...seen, filters: filterState(game) }, edit);
     const answer: Answer = emptyAnswer(scopeLine(contextChips(asked), off));
     messages.push(answer);
-    setBusy(true); bump();
+    setEdit({}); setBusy(true); bump();
     const abort = new AbortController(); controller.current = abort;
     storeSet(PREFS_KEY, { ...prefs, harness, models: { ...(prefs.models || {}), [harness]: model }, efforts: { ...(prefs.efforts || {}), [harness]: effort } });
     const started = Date.now();
@@ -329,11 +368,11 @@ export function NutBotHost(): ReactElement | null {
       settle(answer, abort.signal.aborted);
       answer.seconds = answer.seconds || Math.round((Date.now() - started) / 100) / 10;
       controller.current = null; setBusy(false); bump();
-      if (newChat || chatId) refreshChats();
+      if (newChat || chatId) refreshChats(newChat || chatId);
       // "Applies itself" covers what NutBot builds for the pages; a report is only ever saved by pressing Save.
       if (applyMode() === 'auto' && !abort.signal.aborted) for (const proposal of answer.proposals) if (!savesReport(proposal)) await applyOne(proposal);
     }
-  }, [busy, game, harness, model, effort, page, off, chatId, setChatId, refreshChats, applyOne]);
+  }, [busy, game, harness, model, effort, seen, edit, off, chatId, setChatId, refreshChats, applyOne]);
 
   // Questions asked from the command palette arrive through the context.
   useEffect(() => {
@@ -421,6 +460,14 @@ export function NutBotHost(): ReactElement | null {
   const back = () => setView('chat');
   // Without a working assistant the settings view explains the setup and is what the panel shows.
   const shown: View = available.length ? view : 'settings';
+  const lockLabel = layout.locked ? 'Unlock: float over the page' : 'Lock: keep beside the page';
+  const leading = (
+    <>
+      <button type="button" className="icon-btn nb-hide" aria-label="Hide NutBot" title="Hide NutBot (Ctrl J)" onClick={close}><Ico name="panel" size={18} /></button>
+      <button type="button" className="icon-btn nb-lock" aria-label={lockLabel} title={lockLabel} aria-pressed={layout.locked} onClick={() => setLayout({ locked: !layout.locked })}><Ico name={layout.locked ? 'lock' : 'unlock'} size={16} /></button>
+    </>
+  );
+  const widthLabel = layout.wide ? 'Narrower' : 'Wider';
   const headerButton = (id: View, label: string, icon: 'clock' | 'file' | 'settings') => (
     <button type="button" className="icon-btn" aria-label={label} title={label} aria-pressed={shown === id} onClick={() => toggleView(id)}><Ico name={icon} size={16} /></button>
   );
@@ -532,14 +579,13 @@ export function NutBotHost(): ReactElement | null {
   const panel = (
     <NutBotPanel
       open={open} onClose={close} messages={messages} busy={busy} onSend={(text, picked) => void send(picked?.command ? `${picked.command.name} ${text}`.trim() : text)} commands={commands} onStop={stop} onNew={newChat}
-      context={panelChips(chips, off)} onToggleContext={toggleContext} suggestions={suggestionsFor(section)}
+      context={editable} onToggleContext={toggleContext} onContext={changeContext} suggestions={suggestionsFor(section)}
       subtitle={`${game.name} · ${platformLabel(game.platform)}${chatQuery.data?.chat.title && chatQuery.data.chat.id === chatId ? ` · ${chatQuery.data.chat.title}` : ''}`} face={<NbFace state={busy ? 'thinking' : 'idle'} />}
-      actions={<>{headerButton('chats', 'Chat history', 'clock')}{headerButton('reports', 'Reports', 'file')}{headerButton('settings', 'Settings', 'settings')}</>}
+      leading={leading} closeButton={false}
+      actions={<>{headerButton('chats', 'Chat history', 'clock')}{headerButton('reports', 'Reports', 'file')}{headerButton('settings', 'Settings', 'settings')}<button type="button" className="icon-btn nb-width" aria-label={widthLabel} title={widthLabel} aria-pressed={layout.wide} onClick={() => setLayout({ wide: !layout.wide })}><Ico name={layout.wide ? 'shrink' : 'expand'} size={16} /></button></>}
       view={shown === 'chats' ? chatsView : shown === 'reports' ? reportsView : shown === 'settings' ? settingsView : undefined}
-      embedded={embedded} draft={draft} onDraftChange={setDraft}
+      draft={draft} onDraftChange={setDraft}
     />
   );
-  // One conversation, drawn in one place: inside the open player viewer, or as the side panel.
-  if (slot) return createPortal(panel, slot);
-  return <div className="nb-dock" hidden={!open}>{panel}</div>;
+  return <div className={`nb-dock${docked ? '' : ' floating'}${layout.wide ? ' wide' : ''}`} hidden={!open}>{panel}</div>;
 }

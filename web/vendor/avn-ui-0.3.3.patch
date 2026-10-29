@@ -1,8 +1,8 @@
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index e7844f5..51aba6b 100644
+index e7844f5..fe75b13 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -33,3 +33,13 @@
+@@ -33,3 +33,18 @@
  - `@avn/ui` 0.1.0: React + TypeScript + Motion components with tests.
  - `scripts/check-style.mjs`, `examples/minimal.html` (style/palette/theme previewer), `board/index.html` (live board).
  - Docs: README, using in a project, changing the UX, adding a style.
@@ -16,6 +16,11 @@ index e7844f5..51aba6b 100644
 +
 +- NutBot panel: header `actions`, a `view` that replaces the conversation while the composer stays, an `embedded` mode for drawing it inside a dialog, and an app-kept `draft` so the typed text survives the panel moving.
 +- Dialogs: `className`, and Escape closes an open menu inside the dialog (a prompt bar's / or @ list) before the dialog.
++
++## 0.3.3
++
++- Prompt bar: the / and @ lists lay each row out as a name with its description under it (two lines at most), so a long description can no longer run over the next row. With `onContext`, @ edits the context instead of only mentioning it: a chip with `options` opens its choices (`kind`, `choice`), any other chip is left out or put back.
++- NutBot panel: `leading` header buttons (hide, lock) away from the screen edge, `closeButton={false}` when the app puts close there, and `onContext`.
 diff --git a/board/index.html b/board/index.html
 index 87f4793..e7a7711 100644
 --- a/board/index.html
@@ -42,37 +47,61 @@ index c13454d..f152ac0 100644
        "dependencies": {
          "@radix-ui/react-dialog": "^1.1.0",
 diff --git a/packages/ui/package.json b/packages/ui/package.json
-index 86cbd21..2fdcd6a 100644
+index 86cbd21..b5d29d8 100644
 --- a/packages/ui/package.json
 +++ b/packages/ui/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@avn/ui",
 -  "version": "0.3.0",
-+  "version": "0.3.2",
++  "version": "0.3.3",
    "description": "Shared React components for AVN dashboards and tools (plain CSS, Motion animation)",
    "type": "module",
    "license": "UNLICENSED",
 diff --git a/packages/ui/src/assistant.tsx b/packages/ui/src/assistant.tsx
-index 6bcaa7e..e1c52f0 100644
+index 6bcaa7e..da15f4c 100644
 --- a/packages/ui/src/assistant.tsx
 +++ b/packages/ui/src/assistant.tsx
-@@ -155,6 +155,9 @@ export type PromptBarProps = {
+@@ -34,7 +34,14 @@ export type NbMessage =
+   | { role: 'user'; text: string }
+   | { role: 'bot'; tools: ToolCall[]; text?: ReactNode; blocks?: AnswerBlock[]; scope?: string; pin?: Pin; done: boolean; /** seconds spent, when the app knows */ thought?: number };
+ 
+-export type ContextChip = { id: string; label: string; /** the game chip can't be left out */ fixed?: boolean; off?: boolean };
++export type ContextOption = { id: string; label: string };
++export type ContextChip = {
++  id: string; label: string;
++  /** the game chip can't be left out */ fixed?: boolean; off?: boolean;
++  /** What it is, for the @ list ("Dates"); the label says what it is now. */ kind?: string;
++  /** Other values it can take for this question; picking one edits it (see `onContext`). */ options?: ContextOption[];
++  /** The option in use, when it is one of `options`. */ choice?: string;
++};
+ export type SlashCommand = { name: string; description: string; run?: () => void };
+ 
+ const toolStatus = (t: ToolCall): ToolStatus => t.status ?? (t.done ? 'done' : 'running');
+@@ -155,8 +162,17 @@ export type PromptBarProps = {
    placeholder?: string;
    hint?: ReactNode;
    autoFocus?: boolean;
 +  /** The typed text, when the app keeps it (so it survives the bar moving); otherwise kept here. */
 +  draft?: string;
 +  onDraftChange?: (text: string) => void;
++  /**
++   * When given, @ edits the context instead of only mentioning it: a chip with options opens its choices,
++   * any other chip is left out or put back; called with the chip id and, for a choice, the option id.
++   */
++  onContext?: (id: string, option?: string) => void;
  };
  
++const NONE: never[] = [];
  const ARROW = 'M12 4.5L18.5 11H14.25V19.5H9.75V11H5.5Z';
-@@ -167,11 +170,17 @@ export function parseToken(draft: string): { kind: 'at' | 'slash'; query: string
+ const SQUARE = 'M6 6H18V18H6Z';
+ 
+@@ -167,33 +183,52 @@ export function parseToken(draft: string): { kind: 'at' | 'slash'; query: string
    return { kind: m[2] === '@' ? 'at' : 'slash', query: (m[3] ?? '').toLowerCase(), start: m.index + (m[1] ?? '').length };
  }
  
 -export function PromptBar({ busy, onSend, onStop, context = [], commands = [], placeholder = 'Ask about what you’re looking at…', hint, autoFocus }: PromptBarProps): ReactElement {
-+export function PromptBar({ busy, onSend, onStop, context = [], commands = [], placeholder = 'Ask about what you’re looking at…', hint, autoFocus, draft: kept, onDraftChange }: PromptBarProps): ReactElement {
++export function PromptBar({ busy, onSend, onStop, context = NONE, commands = NONE, placeholder = 'Ask about what you’re looking at…', hint, autoFocus, draft: kept, onDraftChange, onContext }: PromptBarProps): ReactElement {
    const reduce = useReducedMotion();
    const inputRef = useRef<HTMLTextAreaElement>(null);
    const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -87,7 +116,91 @@ index 6bcaa7e..e1c52f0 100644
    const [plus, setPlus] = useState(false);
    const [dismissed, setDismissed] = useState(false);
    const [active, setActive] = useState(0);
-@@ -227,7 +236,7 @@ export function PromptBar({ busy, onSend, onStop, context = [], commands = [], p
+   const [picked, setPicked] = useState<string[]>([]);
+   const [cmd, setCmd] = useState<SlashCommand | undefined>();
+   const [glow, setGlow] = useState({ y: 0, h: 34 });
++  const [sub, setSub] = useState<string | null>(null);
+ 
+   const token = dismissed ? null : parseToken(draft);
+-  const open: 'at' | 'slash' | null = plus ? 'at' : token?.kind ?? null;
++  const open: 'at' | 'slash' | null = plus || (sub && onContext) ? 'at' : token?.kind ?? null;
+   const query = plus ? '' : token?.query ?? '';
+-  const list = useMemo(() => {
++  type Row = { key: string; name: string; desc: string; icon: IconName; chip?: ContextChip; cmd?: SlashCommand; more?: boolean; choose?: { chip: ContextChip; option: string }; toggle?: ContextChip; back?: boolean; current?: boolean };
++  const list = useMemo<Row[]>(() => {
++    if (open === 'at' && onContext) {
++      const chip = sub ? context.find((c) => c.id === sub) : undefined;
++      if (chip?.options) {
++        return [
++          { key: `${chip.id}:back`, name: chip.kind ?? 'Back', desc: '', icon: 'back', back: true },
++          ...chip.options.map((o) => ({ key: `${chip.id}:${o.id}`, name: o.label, desc: o.id === chip.choice ? 'In use' : '', icon: 'at' as IconName, choose: { chip, option: o.id }, current: o.id === chip.choice })),
++          { key: `${chip.id}:toggle`, name: chip.off ? 'Use it again' : 'Leave it out', desc: chip.off ? 'Left out of this question' : 'Ask without it', icon: chip.off ? 'plus' : 'x', toggle: chip },
++        ];
++      }
++      return context.filter((c) => !c.fixed && `${c.kind ?? ''} ${c.label}`.toLowerCase().includes(query)).map((c) => ({ key: c.id, name: c.kind ?? c.label, desc: c.off ? `${c.label} · left out` : c.label, icon: 'at' as IconName, chip: c, more: !!c.options }));
++    }
+     if (open === 'at') return context.filter((c) => !c.fixed && c.label.toLowerCase().includes(query)).map((c) => ({ key: c.id, name: c.label, desc: picked.includes(c.id) ? 'Added' : 'Add to the question', icon: 'at' as IconName, chip: c }));
+     if (open === 'slash') return commands.filter((c) => c.name.replace(/^\//, '').toLowerCase().startsWith(query)).map((c) => ({ key: c.name, name: c.name, desc: c.description, icon: 'slash' as IconName, cmd: c }));
+     return [];
+-  }, [open, query, context, commands, picked]);
++  }, [open, query, context, commands, picked, onContext, sub]);
+   const cursor = Math.min(active, Math.max(0, list.length - 1));
+   const canSend = draft.trim().length > 0 || picked.length > 0 || !!cmd;
+   const armed = busy || canSend;
+ 
+   useLayoutEffect(() => {
+     const row = rowRefs.current[cursor];
+-    if (row) setGlow({ y: row.offsetTop, h: row.offsetHeight });
++    if (row) setGlow((g) => (g.y === row.offsetTop && g.h === row.offsetHeight ? g : { y: row.offsetTop, h: row.offsetHeight }));
+   }, [open, cursor, list]);
+   useLayoutEffect(() => {
+     const el = inputRef.current;
+@@ -202,12 +237,33 @@ export function PromptBar({ busy, onSend, onStop, context = [], commands = [], p
+     el.style.height = `${Math.min(el.scrollHeight, 22 * 5)}px`;
+   }, [draft]);
+   useEffect(() => { if (autoFocus) inputRef.current?.focus(); }, [autoFocus]);
++  useEffect(() => { if (!open) setSub(null); }, [open]);
++  // Escape closes an open list wherever the focus is (a click on the list or its button can leave it elsewhere).
++  useEffect(() => {
++    if (!open) return;
++    const escape = (event: globalThis.KeyboardEvent) => {
++      if (event.key !== 'Escape' || event.defaultPrevented) return;
++      event.preventDefault();
++      setDismissed(true); setPlus(false); setSub(null);
++    };
++    document.addEventListener('keydown', escape, true);
++    return () => document.removeEventListener('keydown', escape, true);
++  }, [open]);
+ 
+   const focus = () => inputRef.current?.focus({ preventScroll: true });
+-  const pick = (row: (typeof list)[number]) => {
++  const pick = (row: Row) => {
+     const head = token ? draft.slice(0, token.start) : draft;
+-    if ('chip' in row && row.chip) { setPicked((p) => (p.includes(row.chip.id) ? p : [...p, row.chip.id])); setDraft(head); }
+-    else if ('cmd' in row && row.cmd) { setCmd(row.cmd); setDraft(head); }
++    if (onContext && open === 'at') {
++      if (row.back) { setSub(null); setActive(0); focus(); return; }
++      if (row.more && row.chip) { setSub(row.chip.id); setActive(0); setDraft(head); focus(); return; }
++      if (row.choose) onContext(row.choose.chip.id, row.choose.option);
++      else if (row.chip) onContext(row.chip.id);
++      else if (row.toggle) onContext(row.toggle.id);
++      setDraft(head); setSub(null); setPlus(false); setDismissed(false); focus();
++      return;
++    }
++    if (row.chip) { const id = row.chip.id; setPicked((p) => (p.includes(id) ? p : [...p, id])); setDraft(head); }
++    else if (row.cmd) { setCmd(row.cmd); setDraft(head); }
+     setPlus(false); setDismissed(false); focus();
+   };
+   const send = () => {
+@@ -220,22 +276,25 @@ export function PromptBar({ busy, onSend, onStop, context = [], commands = [], p
+       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setActive((cursor + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length); return; }
+       if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') { e.preventDefault(); pick(list[cursor]!); return; }
+     }
+-    if (e.key === 'Escape') { if (open) { e.preventDefault(); setDismissed(true); setPlus(false); } return; }
++    if (e.key === 'Escape') { if (open) { e.preventDefault(); setDismissed(true); setPlus(false); setSub(null); } return; }
+     if (e.key === 'Backspace' && !draft && (cmd || picked.length)) { e.preventDefault(); if (cmd) setCmd(undefined); else setPicked((p) => p.slice(0, -1)); return; }
+     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
+   };
    const pickedChips = picked.map((id) => context.find((c) => c.id === id)).filter(Boolean) as ContextChip[];
  
    return (
@@ -96,12 +209,40 @@ index 6bcaa7e..e1c52f0 100644
        {open ? (
          <div className="pbar-menu" role="listbox" aria-label={open === 'at' ? 'Add context' : 'Commands'}>
            <i className={cx('pbar-glow', list.length > 0 && 'on')} aria-hidden="true" style={{ ['--y' as string]: `${glow.y}px`, ['--h' as string]: `${glow.h}px` }} />
-@@ -353,35 +362,37 @@ export type NutBotPanelProps = {
+           {list.map((row, i) => (
+             <button key={row.key} ref={(el) => { rowRefs.current[i] = el; }} type="button" role="option" aria-selected={i === cursor} className="pbar-opt" onMouseDown={(e) => e.preventDefault()} onPointerEnter={() => setActive(i)} onClick={() => pick(row)}>
+               <Icon name={row.icon} />
+-              <span className={cx('pbar-name', open === 'slash' && 'mono')}>{row.name}</span>
+-              <span className="pbar-desc">{row.desc}</span>
++              <span className="pbar-txt">
++                <span className={cx('pbar-name', open === 'slash' && 'mono')}>{row.name}</span>
++                {row.desc ? <span className="pbar-desc">{row.desc}</span> : null}
++              </span>
++              {row.more ? <span className="pbar-more" aria-hidden="true">›</span> : row.current ? <Icon name="check" className="ic tick" /> : null}
+             </button>
+           ))}
+           {list.length === 0 ? <div className="pbar-empty">{open === 'at' ? 'Nothing else to add.' : `No command matches “/${query}”.`}</div> : null}
+@@ -255,7 +314,7 @@ export function PromptBar({ busy, onSend, onStop, context = [], commands = [], p
+           value={draft}
+           placeholder={placeholder}
+           aria-label="Message NutBot"
+-          onChange={(e) => { setDraft(e.target.value); setDismissed(false); setPlus(false); setActive(0); }}
++          onChange={(e) => { setDraft(e.target.value); setDismissed(false); setPlus(false); setSub(null); setActive(0); }}
+           onKeyDown={onKey}
+         />
+         <div className="pbar-row">
+@@ -353,35 +412,44 @@ export type NutBotPanelProps = {
    onPin?: (pin: Pin) => void;
    /** The assistant's icon (the style's NutBot pixel icon). */
    face?: ReactNode;
 +  /** Extra header buttons (history, settings…), shown before New conversation. */
 +  actions?: ReactNode;
++  /** Header buttons at the start of the header, away from the screen edge (hide, lock). */
++  leading?: ReactNode;
++  /** False when the app puts the close button in `leading`. Default true. */
++  closeButton?: boolean;
++  /** Called with the context choices of the @ list; see PromptBar. */
++  onContext?: (id: string, option?: string) => void;
 +  /** Shown instead of the context row and the conversation (history, settings…); the composer stays. */
 +  view?: ReactNode;
 +  /** Drawn inside another surface (a dialog) instead of sliding in as the side panel. */
@@ -116,7 +257,7 @@ index 6bcaa7e..e1c52f0 100644
   * this renders context chips, the thought line with call chips, answer blocks, proposal cards and the prompt bar.
   */
 -export function NutBotPanel({ open, onClose, messages, busy, onSend, onStop, onNew, context, onToggleContext, suggestions, commands, subtitle = 'Answers with this app’s tools · asks before changing anything', onPin, face }: NutBotPanelProps): ReactElement {
-+export function NutBotPanel({ open, onClose, messages, busy, onSend, onStop, onNew, context, onToggleContext, suggestions, commands, subtitle = 'Answers with this app’s tools · asks before changing anything', onPin, face, actions, view, embedded, draft, onDraftChange }: NutBotPanelProps): ReactElement {
++export function NutBotPanel({ open, onClose, messages, busy, onSend, onStop, onNew, context, onToggleContext, suggestions, commands, subtitle = 'Answers with this app’s tools · asks before changing anything', onPin, face, actions, leading, closeButton = true, onContext, view, embedded, draft, onDraftChange }: NutBotPanelProps): ReactElement {
    const reduce = useReducedMotion();
    const listRef = useRef<HTMLDivElement>(null);
 -  useEffect(() => { listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight }); }, [messages, open]);
@@ -143,18 +284,19 @@ index 6bcaa7e..e1c52f0 100644
 +  const inner = (
 +    <>
 +      <div className="nb-h">
++        {leading}
 +        <span className={cx('nb-face', busy && 'think')}>{face}</span>
 +        <span className="sp1"><b>NutBot</b><small>{subtitle}</small></span>
 +        {actions}
 +        <button type="button" className="icon-btn" aria-label="New conversation" title="New conversation" onClick={onNew}><Icon name="edit" /></button>
-+        <button type="button" className="icon-btn" aria-label="Close NutBot" title="Close NutBot" onClick={onClose}><Icon name="x" /></button>
++        {closeButton ? <button type="button" className="icon-btn" aria-label="Close NutBot" title="Close NutBot" onClick={onClose}><Icon name="x" /></button> : null}
 +      </div>
 +      {view ? <div className="nb-view">{view}</div> : (
 +        <>
            <div className="nb-ctx">
              <span>Looking at</span>
              {context.map((c) => (
-@@ -418,9 +429,25 @@ export function NutBotPanel({ open, onClose, messages, busy, onSend, onStop, onN
+@@ -418,9 +486,25 @@ export function NutBotPanel({ open, onClose, messages, busy, onSend, onStop, onN
                </div>
              )}
            </div>
@@ -163,7 +305,7 @@ index 6bcaa7e..e1c52f0 100644
 -          </div>
 +        </>
 +      )}
-+      <div className="nb-in"><PromptBar busy={busy} onSend={onSend} onStop={onStop} context={context.filter((c) => !c.off)} commands={commands} draft={draft} onDraftChange={onDraftChange} hint="Enter to send · Shift + Enter for a new line · @ adds context · / commands · Ctrl J opens or closes" /></div>
++      <div className="nb-in"><PromptBar busy={busy} onSend={onSend} onStop={onStop} context={onContext ? context : context.filter((c) => !c.off)} commands={commands} draft={draft} onDraftChange={onDraftChange} onContext={onContext} hint="Enter to send · Shift + Enter for a new line · @ adds context · / commands · Ctrl J opens or closes" /></div>
 +    </>
 +  );
 +  if (embedded) return open ? <section className="nb nb-embedded" aria-label="NutBot">{inner}</section> : <></>;
@@ -261,10 +403,10 @@ index 8f151a6..8e714bf 100644
        </div>
      </>
 diff --git a/packages/ui/test/cards.test.tsx b/packages/ui/test/cards.test.tsx
-index cbd02fc..db7db47 100644
+index cbd02fc..a3fb6dc 100644
 --- a/packages/ui/test/cards.test.tsx
 +++ b/packages/ui/test/cards.test.tsx
-@@ -247,4 +247,24 @@ describe('NutBot', () => {
+@@ -247,4 +247,66 @@ describe('NutBot', () => {
      render(panel({ open: false }));
      expect(screen.queryByLabelText('NutBot')).toBeNull();
    });
@@ -287,6 +429,48 @@ index cbd02fc..db7db47 100644
 +    expect(screen.queryByText('Level 12.')).toBeNull();
 +    expect(screen.queryByText('Looking at')).toBeNull();
 +    expect(screen.getByLabelText('Message NutBot')).toBeInTheDocument();
++  });
++  it('@ edits the context: a chip with options opens its choices, any other is left out or put back', async () => {
++    const user = userEvent.setup();
++    const onContext = vi.fn();
++    const chips = [
++      { id: 'game', label: 'Sand Smash', fixed: true },
++      { id: 'range', label: 'Sep 29 → Oct 28', kind: 'Dates', options: [{ id: '7', label: 'Last 7 days' }, { id: '30', label: 'Last 30 days' }], choice: '30' },
++      { id: 'page', label: 'Levels', kind: 'Page', off: true },
++    ];
++    render(panel({ context: chips, onContext }));
++    const box = screen.getByLabelText('Message NutBot');
++    await user.type(box, '@');
++    expect(screen.getByRole('option', { name: /Dates/ })).toBeInTheDocument();
++    expect(screen.getByRole('option', { name: /Levels · left out/ })).toBeInTheDocument();
++    await user.click(screen.getByRole('option', { name: /Dates/ }));
++    expect(screen.getByRole('option', { name: /Last 30 days/ })).toHaveTextContent('In use');
++    await user.click(screen.getByRole('option', { name: /Last 7 days/ }));
++    expect(onContext).toHaveBeenLastCalledWith('range', '7');
++    expect(box).toHaveValue('');
++    await user.type(box, '@');
++    await user.click(screen.getByRole('option', { name: /Page/ }));
++    expect(onContext).toHaveBeenLastCalledWith('page');
++  });
++  it('Escape closes the / list and the @ list', async () => {
++    const user = userEvent.setup();
++    render(panel({ commands: [{ name: '/digest', description: 'What players have been doing lately: habits, loops, unused features, changes · optional: a date range' }] }));
++    const box = screen.getByLabelText('Message NutBot');
++    await user.type(box, '/');
++    expect(screen.getByRole('listbox', { name: 'Commands' })).toBeInTheDocument();
++    await user.keyboard('{Escape}');
++    expect(screen.queryByRole('listbox')).toBeNull();
++    await user.clear(box);
++    await user.type(box, '/');
++    expect(screen.getByRole('listbox', { name: 'Commands' })).toBeInTheDocument();
++    (document.activeElement as HTMLElement).blur();
++    await user.keyboard('{Escape}');
++    expect(screen.queryByRole('listbox')).toBeNull();
++  });
++  it('leading header buttons come first and the close button can move into them', () => {
++    render(panel({ leading: <button type="button">Hide NutBot</button>, closeButton: false }));
++    expect(screen.getByRole('button', { name: 'Hide NutBot' })).toBeInTheDocument();
++    expect(screen.queryByRole('button', { name: 'Close NutBot' })).toBeNull();
 +  });
  });
 diff --git a/packages/ui/test/overlays.test.tsx b/packages/ui/test/overlays.test.tsx
@@ -371,7 +555,7 @@ index 3bd52b3..7d55050 100644
 +  });
 +});
 diff --git a/ux/assets/components.css b/ux/assets/components.css
-index a227c2e..460b9e8 100644
+index a227c2e..ee258d3 100644
 --- a/ux/assets/components.css
 +++ b/ux/assets/components.css
 @@ -511,6 +511,7 @@ button.join:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
@@ -390,18 +574,43 @@ index a227c2e..460b9e8 100644
  .nb-hello { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
  .nb-hello h3 { font-family: var(--font-px); font-weight: var(--w-display); font-size: 19px; }
  .nb-hello p { color: var(--muted); font-size: 13px; }
+@@ -912,11 +914,13 @@ button.join:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
+ .pbar-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 2; padding: 4px; border-radius: 12px; background: var(--panel); border: var(--bw) solid var(--line-strong); box-shadow: 0 16px 40px -14px rgba(0, 0, 0, .55); transform-origin: bottom left; animation: pop .18s var(--ease) both; }
+ .pbar-glow { position: absolute; left: 4px; right: 4px; top: var(--y, 0px); height: var(--h, 34px); border-radius: 8px; background: var(--raise); opacity: 0; pointer-events: none; transition: top .18s var(--ease), height .18s var(--ease), opacity .12s; }
+ .pbar-glow.on { opacity: 1; }
+-.pbar-opt { position: relative; z-index: 1; display: flex; align-items: center; gap: 9px; width: 100%; height: 34px; padding: 0 9px; border: 0; border-radius: 8px; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
++.pbar-opt { position: relative; z-index: 1; display: flex; align-items: center; gap: 9px; width: 100%; min-height: 34px; padding: 6px 9px; border: 0; border-radius: 8px; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+ .pbar-opt .ic { width: 15px; height: 15px; color: var(--dim); }
+-.pbar-name { font-weight: 600; white-space: nowrap; }
++.pbar-txt { display: flex; flex: 1; flex-direction: column; min-width: 0; }
++.pbar-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++.pbar-more { margin-left: auto; color: var(--dim); }
+ .pbar-name.mono { font-weight: 500; }
+-.pbar-desc { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++.pbar-desc { color: var(--dim); font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+ .pbar-opt .tick { margin-left: auto; }
+ .pbar-opt[aria-selected="true"] .tick { color: var(--accent); }
+ .pbar-empty { padding: 10px 12px; font-size: 12.5px; color: var(--dim); }
 diff --git a/ux/references/assistant.md b/ux/references/assistant.md
-index 73e6f7c..7870f00 100644
+index 73e6f7c..ecb8517 100644
 --- a/ux/references/assistant.md
 +++ b/ux/references/assistant.md
-@@ -5,6 +5,7 @@ it answers with **that app's components**. The look comes from the style.
+@@ -5,8 +5,9 @@ it answers with **that app's components**. The look comes from the style.
  
  ## Where it lives
  - A panel on the right (`.nb`, ≈420 px); the page stays usable beside it. An open drawer slides left to sit next to it. Phone: bottom sheet.
 +- A modal viewer (player details) can't share the page with the panel: the same conversation moves inside the viewer (`embedded`), with the typed draft kept, and returns to the side when the viewer closes. History, reports and settings open as header views above the composer, never under it.
  - Opens from the NutBot button, **Ctrl/Cmd + J**, or "Ask NutBot" in the command palette.
- - Composer is a **prompt bar** (`.pbar`): a textarea that grows to five lines; a **+** button and typing **@** open the context list (game, page, range, player, session: the same chips as "Looking at"); typing **/** opens the app's commands (`/funnel`, `/players`, `/export` …); ↑ ↓ move a glow between rows, Enter or Tab picks, Esc closes. Enter sends, Shift + Enter new line. The send arrow **morphs into a stop square** while NutBot works; pressing it stops. New-conversation button. Conversations are kept per game.
+-- Composer is a **prompt bar** (`.pbar`): a textarea that grows to five lines; a **+** button and typing **@** open the context list (game, page, range, player, session: the same chips as "Looking at"); typing **/** opens the app's commands (`/funnel`, `/players`, `/export` …); ↑ ↓ move a glow between rows, Enter or Tab picks, Esc closes. Enter sends, Shift + Enter new line. The send arrow **morphs into a stop square** while NutBot works; pressing it stops. New-conversation button. Conversations are kept per game.
++- Composer is a **prompt bar** (`.pbar`): a textarea that grows to five lines; a **+** button and typing **@** open the context list (game, page, range, player, session: the same chips as "Looking at"); typing **/** opens the app's commands (`/funnel`, `/players`, `/export` …); ↑ ↓ move a glow between rows, Enter or Tab picks, Esc closes. Each list row is a name with its description under it (two lines at most); a long description never runs over the next row. The @ list can edit as well as mention: a chip with choices (dates, page, version) opens them, any other is left out or put back (`onContext`). Enter sends, Shift + Enter new line. The send arrow **morphs into a stop square** while NutBot works; pressing it stops. New-conversation button. Conversations are kept per game.
  
+ ## Context
+ - A **"Looking at"** row of chips: game, page, range, version/filters, and the open player or session. Each (except the game) can be left out with × and put back with +.
+@@ -60,3 +61,4 @@ Any answer with a headline value can be **pinned to Overview** as a tile.
+ 
+ Implementation: tools return data; the reply carries structured blocks the UI
+ renders (not just markdown), and write tools return a proposal the UI confirms.
++- The panel's header keeps its hide and lock buttons at the start (`leading`), away from the screen edge the panel sits on; with `closeButton={false}` the close control lives there too.
 diff --git a/ux/references/feedback.md b/ux/references/feedback.md
 index 18ce621..67f33bc 100644
 --- a/ux/references/feedback.md

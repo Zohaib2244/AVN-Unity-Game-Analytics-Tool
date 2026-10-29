@@ -8,7 +8,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('Undo restores a hidden parameter without closing player details', async ({ page }) => {
-  await page.goto('/games/viewer-game/players?player=player-one');
+  await page.goto('/games/viewer-game/levels?level=12&player=player-one');
   const dialog = page.getByRole('dialog', { name: 'Player details', exact: true });
   const parameter = dialog.locator('.chip-key[title="Hide score in every event"]').first();
   await parameter.click();
@@ -95,8 +95,8 @@ test('Continue toast offers each browser its own last view while Home and direct
 
   // An explicit shared link wins over memory. In-app Home does not bounce back.
   await page.goto('/games/viewer-game/players?player=player-two');
-  await expect(page.getByRole('dialog', { name: 'Player details' })).toBeVisible();
-  await page.getByRole('button', { name: 'Close ×', exact: true }).click();
+  await expect(page.locator('.player-page .player-view-id')).toHaveText('player-two');
+  await page.getByRole('button', { name: '← Players', exact: true }).click();
   if (info.project.name === 'phone') {
     await page.getByRole('button', { name: /Switch game$/ }).click();
     await page.locator('.game-pop').getByRole('button', { name: 'All games', exact: true }).click();

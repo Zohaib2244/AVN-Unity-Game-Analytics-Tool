@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { duration, number, percent } from '@/lib/format';
 import type { LevelRow, LevelTransition } from '@/lib/types';
-import { DRILL_PAGE, cleanNavigation, clampPage, dropChange, dropChangeLabel, dropText, lastDidDetails, lastDidLabel, levelCurve, levelDrillGroup, levelDrop, levelHighlights, levelsNote, pageCount, pageSizeOf, pickReleases, releaseChoices, sortLevels } from './levelMath';
+import { DRILL_PAGE, cleanNavigation, clampPage, dropChange, dropChangeLabel, dropText, lastDidDetails, lastDidLabel, levelCurve, levelDrillGroup, levelDrop, levelHighlights, levelsNote, pageCount, pageSizeOf, pickReleases, releaseChoices, sortLevels, zoomedLevels, zoomWindow } from './levelMath';
 
 const transition = (over: Partial<LevelTransition> = {}): LevelTransition => ({
   available: true, next_level: 2, drop_percent: 20, total_drop: 10, net_change: 0, left: 0, finished_stopped: 0, kept_going: 0, unknown_progress: 0, failed: 0, failed_left: 0, failed_kept_playing: 0, fail_drop_percent: null, ...over,
@@ -203,5 +203,23 @@ describe('comparing releases', () => {
     expect(dropChangeLabel(-3.5, false)).toEqual({ tone: 'gain', text: '↓ −3.5 pp · less drop' });
     expect(dropChangeLabel(0, false)).toEqual({ tone: 'muted', text: '0 pp · unchanged' });
     expect(dropChangeLabel(5, true)).toEqual({ tone: 'muted', text: '↑ +5 pp · more drop · small sample' });
+  });
+});
+
+describe('chart zoom', () => {
+  const rows = Array.from({ length: 40 }, (_, index) => ({ level: index + 1, started: 100 - index } as unknown as LevelRow));
+  it('shows every level without a window, and only the window with one', () => {
+    expect(zoomedLevels(rows, null)).toHaveLength(40);
+    expect(zoomedLevels(rows, { from: 10, to: 19 }).map((row) => row.level)).toEqual([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+    expect(zoomedLevels(rows, { from: 10, to: 11 })).toHaveLength(40);
+  });
+  it('steps in to half the levels around the middle, and out to twice as many', () => {
+    const inward = zoomWindow(rows, 1, 40, 'in')!;
+    expect(inward.to - inward.from + 1).toBe(20);
+    const again = zoomWindow(rows, inward.from, inward.to, 'in')!;
+    expect(again.to - again.from + 1).toBe(10);
+    expect(zoomWindow(rows, again.from, again.to, 'out')).toEqual(expect.objectContaining({ from: expect.any(Number) }));
+    expect(zoomWindow(rows, 1, 30, 'out')).toBeNull();
+    expect(zoomWindow(rows, 1, 6, 'in')).toEqual({ from: 2, to: 6 });
   });
 });

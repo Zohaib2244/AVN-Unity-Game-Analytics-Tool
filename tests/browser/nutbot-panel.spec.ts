@@ -201,54 +201,120 @@ test('a report card saves nothing until Save is pressed', async ({ page }) => {
   expect(JSON.parse(posted[0]!)).toMatchObject({ title: 'Level 12 review', body: 'Level 12 loses everyone.' });
 });
 
-test('the same NutBot conversation moves into the player viewer and back', async ({ page }, info) => {
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
-  const sent = await mockNutBot(page);
-  await page.goto('/games/viewer-game/levels?level=12');
-  await page.locator('a.row-title').first().click();
-  const dialog = page.getByRole('dialog', { name: 'Player details', exact: true });
-  await expect(dialog.getByRole('button', { name: 'Raw events', exact: true })).toHaveAttribute('aria-pressed', 'true');
-
-  // Asking from the viewer draws NutBot inside it (the page behind is inert); the viewer stays centred.
-  await dialog.getByRole('button', { name: 'Ask NutBot', exact: true }).click();
-  const panel = dialog.locator('.nb');
-  const field = panel.getByRole('textbox', { name: 'Message NutBot' });
-  await expect(field).toBeFocused();
-  await expect(page.locator('.nb-dock')).toHaveCount(0);
-  await expect(panel.locator('.nb-ctx')).toContainText('Player player-one');
-  const bounds = (await dialog.boundingBox())!;
-  const viewport = page.viewportSize()!;
-  expect(Math.abs(bounds.x + bounds.width / 2 - viewport.width / 2)).toBeLessThan(2);
-  await expectComposerLayout(page, panel);
-  await field.fill('What did this player do last?');
+test('a new chat keeps its answer on screen after the chat is saved', async ({ page }) => {
+  // The chat is fetched as soon as the stream names it, while only the question is stored; the answer must not vanish.
+  const text = 'The first levels lose players in small steps.';
+  const stream = `${JSON.stringify({ type: 'chat', id: 'c1', title: 'First levels', harness: 'codex' })}\n${JSON.stringify({ type: 'text', text })}\n{"type":"done","seconds":1}\n`;
+  await mockNutBot(page, stream);
+  let reads = 0;
+  const row = { id: 'c1', game_id: 'viewer-game', email: '', title: 'First levels', harness: 'codex', model: 'standard', agent_session: '', created_at: '', updated_at: '', deleted: false, messages: 1 };
+  await page.route('**/nutbot/chats/c1', async (route) => {
+    reads++;
+    const messages = reads === 1
+      ? [{ id: 1, role: 'user', text: 'Why do players leave?' }]
+      : [{ id: 1, role: 'user', text: 'Why do players leave?' }, { id: 2, role: 'assistant', text, tools: [], actions: [], scope: '', error: '', seconds: 1, harness: 'codex', model: 'standard', usage: {}, context: {}, created_at: '' }];
+    if (reads === 1) await new Promise((resolve) => setTimeout(resolve, 400));
+    await route.fulfill({ json: { chat: { ...row, messages: messages.length }, messages } });
+  });
+  await page.goto('/games/viewer-game/levels');
+  await page.locator('.nb-launcher').click();
+  const field = page.getByRole('textbox', { name: 'Message NutBot' });
+  await field.fill('Why do players leave?');
   await field.press('Enter');
-  await expect(panel.locator('.nb-md')).toContainText('The selected levels have two players.');
-  expect(JSON.parse(sent[0]!).context.player).toBe('player-one');
-  await expect(panel.locator('.nb-mf')).toContainText('Player player-one');
-  await page.screenshot({ path: info.outputPath('nutbot-in-player.png'), animations: 'disabled' });
+  await expect(page.locator('.nb-md')).toContainText(text);
+  await page.waitForTimeout(1500);
+  await expect(page.locator('.nb-md')).toContainText(text);
+  expect(reads).toBeGreaterThan(1);
+  // What to do with the answer is a real button, not a small link.
+  await expect(page.getByRole('button', { name: 'Save as report', exact: true })).toBeVisible();
+  expect((await page.getByRole('button', { name: 'Save as report', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(32);
+});
 
-  // A narrow viewer switches between the player and NutBot; a new player starts on the player again.
-  if (viewport.width <= 1100) {
-    await dialog.getByRole('button', { name: 'Player', exact: true }).click();
-    await expect(panel).toBeHidden();
-    await dialog.getByRole('button', { name: 'NutBot', exact: true }).click();
-  }
-  await field.fill('Half-typed');
-  // Escape in the composer's open menu closes the menu, not the viewer.
-  await field.fill('Half-typed /');
-  await expect(panel.getByRole('listbox', { name: 'Commands' })).toBeVisible();
-  await field.press('Escape');
-  await expect(dialog).toBeVisible();
-  await field.fill('Half-typed');
+test('the / list reads without overlapping, and Escape closes it wherever the focus is', async ({ page }, info) => {
+  await mockNutBot(page);
+  await page.route('**/v1/nutbot', (route) => route.fulfill({ json: {
+    enabled: true, default: 'codex', daily_limit: 100, warn_percent: 80, harnesses: [HARNESS],
+    skills: [
+      { name: 'digest', summary: 'What players have been doing lately: habits, loops, unused features, changes', args: 'optional: a date range' },
+      { name: 'exits', summary: 'Where and why players stop playing', args: 'optional: a date range' },
+      { name: 'level-review', summary: 'Review one level (or the worst levels): where players leave, why, what to change', args: 'a level' },
+    ],
+  } }));
+  await page.goto('/games/viewer-game/levels');
+  await page.locator('.nb-launcher').click();
+  const field = page.getByRole('textbox', { name: 'Message NutBot' });
+  await field.fill('/');
+  const rows = page.getByRole('listbox', { name: 'Commands' }).getByRole('option');
+  await expect(rows).toHaveCount(3);
+  const boxes = await rows.evaluateAll((items) => items.map((item) => { const box = item.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, inner: item.scrollHeight <= item.clientHeight + 1 }; }));
+  for (let index = 1; index < boxes.length; index++) expect(boxes[index]!.top).toBeGreaterThanOrEqual(boxes[index - 1]!.bottom - 1);
+  for (const box of boxes) expect(box.inner).toBe(true);
+  await page.screenshot({ path: info.outputPath('nutbot-commands.png'), animations: 'disabled' });
+  await page.locator('.nb-h').click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('listbox', { name: 'Commands' })).toBeHidden();
+  await expect(page.locator('.nb-dock')).toBeVisible();
+});
 
-  // Closing the viewer brings the same conversation and draft back to the side panel.
-  await dialog.getByRole('button', { name: 'Close ×', exact: true }).click();
-  await expect(dialog).toBeHidden();
+test('@ changes the dates for the next question only', async ({ page }) => {
+  const sent = await mockNutBot(page);
+  await page.goto('/games/viewer-game/levels');
+  await page.locator('.nb-launcher').click();
+  const field = page.getByRole('textbox', { name: 'Message NutBot' });
+  await field.fill('@');
+  const menu = page.getByRole('listbox', { name: 'Add context' });
+  await menu.getByRole('option', { name: /Dates/ }).click();
+  await menu.getByRole('option', { name: 'Last 7 days' }).click();
+  await expect(page.locator('.nb-ctx')).not.toContainText('Last 30');
+  await field.fill('How were the last days?');
+  await field.press('Enter');
+  await expect(page.locator('.nb-md')).toBeVisible();
+  const first = JSON.parse(sent[0]!).context.range;
+  expect(Date.parse(first.to) - Date.parse(first.from)).toBe(6 * 86400000);
+  await field.fill('And now?');
+  await field.press('Enter');
+  await expect(page.locator('.nb-md').nth(1)).toBeVisible();
+  const second = JSON.parse(sent[1]!).context.range;
+  expect(Date.parse(second.to) - Date.parse(second.from)).toBeGreaterThan(6 * 86400000);
+});
+
+test('NutBot hides from the top left, floats when unlocked and can be made wider', async ({ page }, info) => {
+  await mockNutBot(page);
+  await page.goto('/games/viewer-game/levels');
+  await page.locator('.nb-launcher').click();
   const dock = page.locator('.nb-dock');
   await expect(dock).toBeVisible();
-  await expect(dock.locator('.nb-u')).toHaveText('What did this player do last?');
-  await expect(dock.getByRole('textbox', { name: 'Message NutBot' })).toHaveValue('Half-typed');
-  await expect(dock.locator('.nb-ctx')).not.toContainText('Player player-one');
-  expect(errors).toEqual([]);
+  const hide = dock.getByRole('button', { name: 'Hide NutBot', exact: true });
+  // The hide control is at the start of the header, not at the screen edge (the panel slides in first).
+  await expect.poll(async () => (await hide.boundingBox())!.x - (await dock.boundingBox())!.x).toBeLessThan(40);
+  await expect(dock.getByRole('button', { name: 'Close NutBot' })).toHaveCount(0);
+  const wide = page.viewportSize()!.width > 900;
+  const app = page.locator('.app');
+  if (wide) await expect(app).toHaveClass(/nb-open/);
+  // Unlocked, the panel floats over the page and the page keeps its room.
+  await dock.getByRole('button', { name: /^Unlock/ }).click();
+  await expect(dock).toHaveClass(/floating/);
+  await expect(app).not.toHaveClass(/nb-open/);
+  await page.screenshot({ path: info.outputPath('nutbot-floating.png'), animations: 'disabled' });
+  // Using the page behind it puts a floating panel away (on a phone the panel is a sheet over all of it: Escape does).
+  if (page.viewportSize()!.width > 620) await page.locator('main.content').click({ position: { x: 20, y: 20 } });
+  else await page.getByRole('textbox', { name: 'Message NutBot' }).press('Escape');
+  await expect(dock).toBeHidden();
+  await page.locator('.nb-launcher').click();
+  await expect(dock).toBeVisible();
+  await dock.getByRole('button', { name: /^Lock/ }).click();
+  if (wide) {
+    const before = (await dock.boundingBox())!.width;
+    await dock.getByRole('button', { name: 'Wider', exact: true }).click();
+    await expect.poll(async () => (await dock.boundingBox())!.width).toBeGreaterThan(before + 100);
+    // A wide panel lies over the page instead of squeezing it.
+    await expect(app).not.toHaveClass(/nb-open/);
+    await page.screenshot({ path: info.outputPath('nutbot-wide.png'), animations: 'disabled' });
+  }
+  await hide.click();
+  await expect(dock).toBeHidden();
+  // The choice is remembered.
+  await page.reload();
+  await page.locator('.nb-launcher').click();
+  await expect(page.locator('.nb-dock')).toBeVisible();
 });

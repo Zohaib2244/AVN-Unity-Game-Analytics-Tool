@@ -1,6 +1,7 @@
-// The highlight setup above a player's timeline (the old "Highlight rules" disclosure and the saved-rules
-// library): quick adds, one editor per rule, and the game's saved rules (insights/highlights, shared with the
-// team). Active selections stay in this browser; saving a rule is the only thing that reaches the server.
+// The highlight setup above a player's timeline: a chooser of ready-made highlights grouped by what they mark
+// (levels, ads, other), then the old "Highlight rules" disclosure with one editor per rule and the game's saved
+// rules (insights/highlights, shared with the team). Active selections stay in this browser; saving a rule is
+// the only thing that reaches the server.
 import { useState, type ReactElement } from 'react';
 import { errorMessage, useRead, write } from '@/api';
 import { HighlightEditor } from '@/components/ConditionEditor';
@@ -12,6 +13,8 @@ import type { TimelineHighlight } from '@/lib/player-events';
 import type { Game, SavedHighlight } from '@/lib/types';
 import { Disclosure, type Disclosures } from './Disclosure';
 import { type Catalog, highlightName, HIGHLIGHT_PRESETS, MAX_HIGHLIGHTS, newHighlight, presetHighlight } from './timeline';
+
+const GROUPS = ['Levels', 'Ads', 'Other'];
 
 export type HighlightSetupProps = {
   game: Game;
@@ -46,10 +49,13 @@ export function HighlightSetup({ game, rules, catalog, counts, complete, freshRu
     commit([...rules, newHighlight(rules.length, catalog.events[0]?.name)], rules.length);
     disclosures.set('highlight-setup', true);
   };
-  const addPreset = (preset: (typeof HIGHLIGHT_PRESETS)[number]) => {
-    if (rules.some((rule) => rule.label === preset[1])) { toast(`You already have a ${preset[1]} highlight.`); return; }
+  // A ready-made highlight is on while a rule carries its name; picking it again takes it off.
+  const offered = HIGHLIGHT_PRESETS.flatMap((preset) => { const rule = presetHighlight(preset, catalog); return rule ? [{ preset, rule }] : []; });
+  const togglePreset = (preset: (typeof HIGHLIGHT_PRESETS)[number], rule: TimelineHighlight) => {
+    const at = rules.findIndex((item) => item.label === preset.label);
+    if (at >= 0) { commit(rules.filter((_, position) => position !== at)); return; }
     if (rules.length >= MAX_HIGHLIGHTS) { toast('Use at most 20 highlights.'); return; }
-    commit([...rules, presetHighlight(preset, catalog.events.map((event) => event.name))]);
+    commit([...rules, rule]);
   };
 
   const browse = () => { if (loaded) void saved.refetch(); else setLoaded(true); setMessage(''); };
@@ -92,12 +98,32 @@ export function HighlightSetup({ game, rules, catalog, counts, complete, freshRu
   const status = message || (saved.isError ? errorMessage(saved.error) : '');
   return (
     <>
-      <div className="highlight-actions panel-body" hidden={hidden}>
-        <div className="highlight-add-row">
-          <button type="button" className="button small-button" id="highlight-add" disabled={rules.length >= MAX_HIGHLIGHTS} onClick={add}>+ Highlight</button>
-          <span className="small muted">Quick:</span>
-          {HIGHLIGHT_PRESETS.map((preset) => <button key={preset[0]} type="button" className="button small-button" onClick={() => addPreset(preset)}>+ {preset[1]}</button>)}
+      <div className="hl-picker panel-body" hidden={hidden} role="group" aria-label="Highlights">
+        <div className="hl-picker-head">
+          <strong>Highlights</strong>
+          <span className="small muted">{complete ? 'Pick what to mark in the timeline' : 'Loading the timeline…'}</span>
+          <button type="button" className="button small-button" id="highlight-add" disabled={rules.length >= MAX_HIGHLIGHTS} onClick={add}>+ Custom rule</button>
         </div>
+        {offered.length ? GROUPS.map((group) => {
+          const items = offered.filter(({ preset }) => preset.group === group);
+          return items.length ? (
+            <div className="hl-group" key={group}>
+              <span className="hl-group-name">{group}</span>
+              <div className="hl-chips">
+                {items.map(({ preset, rule }) => {
+                  const at = rules.findIndex((item) => item.label === preset.label);
+                  const on = at >= 0;
+                  return (
+                    <button key={preset.key} type="button" className={`hl-chip highlight-${preset.color}${on ? ' on' : ''}`} aria-pressed={on} onClick={() => togglePreset(preset, rule)}>
+                      <span className="highlight-dot" aria-hidden="true" />{preset.label}
+                      {on ? <span className="hl-count">{number(counts[at] ?? 0)}</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null;
+        }) : <p className="help">{complete ? 'This player has no events a ready-made highlight fits. Add a custom rule.' : 'Loading the timeline…'}</p>}
       </div>
       <Disclosure name="highlight-setup" disclosures={disclosures} className="panel-body highlight-setup" hidden={hidden} summary={<>Highlight rules <span className="small muted">{number(rules.length)} highlights</span></>}>
         <div className="highlight-setup-body">

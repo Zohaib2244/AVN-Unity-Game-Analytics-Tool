@@ -3,20 +3,25 @@
 // Drawn here rather than with @avn/ui's SurvivalCurve because that takes start counts only: the drop shown is the
 // server's start → start drop, small samples are never flagged and the chart sentence names the levels.
 // Pointing at the curve names the nearest level and its players; clicking opens that level.
-import { useState, type KeyboardEvent, type ReactElement } from 'react';
+// Zoom: drag across the curve to look at those levels only, or step in and out; Reset shows every level again.
+import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react';
 import { motion } from 'motion/react';
 import { number, percent } from '@/lib/format';
 import { EASE } from '@/lib/motion';
 import type { LevelRow } from '@/lib/types';
 import { heatOf } from './levelDisplay';
-import { levelCurve } from './levelMath';
+import { levelCurve, zoomedLevels, zoomWindow, type LevelWindow } from './levelMath';
 
 /** A dot on every level reads as noise once there are many levels; the line and the hovered level say enough. */
 const DOT_LIMIT = 40;
 
 export function LevelViz({ levels, dropFlag, onOpen }: { levels: LevelRow[]; dropFlag: number; onOpen: (level: number) => void }): ReactElement | null {
   const [near, setNear] = useState<number | null>(null);
-  const curve = levelCurve(levels);
+  const [window, setWindow] = useState<LevelWindow | null>(null);
+  const [drag, setDrag] = useState<{ from: number; to: number; x: number } | null>(null);
+  const dragged = useRef(false);
+  const shown = zoomedLevels(levels, window);
+  const curve = levelCurve(shown);
   if (!curve) return null;
   const { width, height, left, right, points } = curve;
   const showDots = points.length <= DOT_LIMIT;
@@ -27,6 +32,19 @@ export function LevelViz({ levels, dropFlag, onOpen }: { levels: LevelRow[]; dro
     const x = ((event.clientX - box.left) / box.width) * width;
     return Math.max(0, Math.min(points.length - 1, Math.round(((x - left) / (width - left - right)) * (points.length - 1))));
   };
+  const zoomTo = (next: LevelWindow | null) => { setWindow(next); setNear(null); setDrag(null); };
+  const begin = (event: PointerEvent<SVGSVGElement>) => { const index = nearest(event); dragged.current = false; setDrag({ from: index, to: index, x: event.clientX }); };
+  const move = (event: PointerEvent<SVGSVGElement>) => {
+    const index = nearest(event);
+    setNear(index);
+    if (drag && event.buttons) setDrag({ ...drag, to: index });
+  };
+  const finish = (event: PointerEvent<SVGSVGElement>) => {
+    if (!drag) return;
+    const [a, b] = [Math.min(drag.from, drag.to), Math.max(drag.from, drag.to)];
+    setDrag(null);
+    if (Math.abs(event.clientX - drag.x) > 8 && b - a >= 2) { dragged.current = true; zoomTo({ from: points[a]!.level, to: points[b]!.level }); }
+  };
   const step = (event: KeyboardEvent<SVGSVGElement>) => {
     const move = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
     if (move) { event.preventDefault(); setNear((current) => Math.max(0, Math.min(points.length - 1, (current ?? 0) + move))); }
@@ -36,9 +54,16 @@ export function LevelViz({ levels, dropFlag, onOpen }: { levels: LevelRow[]; dro
 
   return (
     <div className="level-curve-wrap">
+      <div className="curve-tools" role="group" aria-label="Zoom the chart">
+        <span className="small muted">{window ? `Levels ${points[0]!.level}–${points[points.length - 1]!.level}` : `All ${number(levels.length)} levels · drag across the chart to zoom`}</span>
+        <button type="button" className="btn sm" aria-label="Zoom in" disabled={points.length < 6} onClick={() => zoomTo(zoomWindow(levels, points[0]!.level, points[points.length - 1]!.level, 'in'))}>+</button>
+        <button type="button" className="btn sm" aria-label="Zoom out" disabled={!window} onClick={() => zoomTo(zoomWindow(levels, points[0]!.level, points[points.length - 1]!.level, 'out'))}>−</button>
+        {window ? <button type="button" className="btn sm" onClick={() => zoomTo(null)}>Reset zoom</button> : null}
+      </div>
       <svg className="level-curve" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={curve.summary} tabIndex={0}
-        onPointerMove={(event) => setNear(nearest(event))} onPointerLeave={() => setNear(null)} onBlur={() => setNear(null)} onKeyDown={step}
-        onClick={(event) => onOpen(points[nearest(event)]!.level)}>
+        onPointerDown={begin} onPointerMove={move} onPointerUp={finish} onPointerLeave={() => { setNear(null); setDrag(null); }} onBlur={() => setNear(null)} onKeyDown={step}
+        onClick={(event) => { if (dragged.current) { dragged.current = false; return; } onOpen(points[nearest(event)]!.level); }}>
+        {drag && drag.from !== drag.to ? <rect className="curve-select" x={points[Math.min(drag.from, drag.to)]!.x} width={points[Math.max(drag.from, drag.to)]!.x - points[Math.min(drag.from, drag.to)]!.x} y={0} height={height} /> : null}
         {curve.ticks.map((tick) => (
           <g key={tick.value}>
             <line className="chart-grid" x1={left} x2={width - right} y1={tick.y} y2={tick.y} />

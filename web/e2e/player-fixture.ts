@@ -2,7 +2,27 @@ import type { Page } from '@playwright/test';
 export { test, expect } from '@playwright/test';
 
 // Synthetic responses keep the browser regression independent of stored games and dates.
-export async function installPlayerFixture(page: Page, options: { levelCount?: number } = {}): Promise<void> {
+/** Three sessions of the kinds of event a game sends: levels with a state, ads by type, economy, tutorial. */
+function richJourney(at: string) {
+  const events: Array<{ event_id: string; name: string; client_ts: string; session_id: string; level: number | null; params: Record<string, unknown> }> = [];
+  const add = (session: number, offset: number, name: string, params: Record<string, unknown>, level: number | null = null) =>
+    events.push({ event_id: `rich-${events.length}`, name, client_ts: new Date(Date.parse(at) + session * 3600_000 + offset * 1000).toISOString(), session_id: `session-${session}`, level, params });
+  for (let session = 0; session < 3; session++) {
+    let t = 0;
+    for (let level = 1 + session * 4; level < 5 + session * 4; level++) {
+      add(session, t += 2, 'LEVEL_ANALYSIS', { ATTEMPT: 1, LEVEL_NUMBER: level, SECONDS: 0, STATE: 'Started', BALLS_START: 80 }, level);
+      if (level % 3 === 0) add(session, t += 15, 'LEVEL_ANALYSIS', { ATTEMPT: 1, LEVEL_NUMBER: level, SECONDS: 15, STATE: 'Failed' }, level);
+      add(session, t += 20, 'LEVEL_ANALYSIS', { ATTEMPT: 1, LEVEL_NUMBER: level, SECONDS: 20, STATE: 'Completed' }, level);
+      add(session, t += 1, 'LEVEL_ANALYSIS', { LEVEL_NUMBER: level, ACTION: 'Next', STATE: 'Choice' }, level);
+      add(session, t, 'ECONOMY_ANALYSIS', { CURRENCY: 'coins', AMOUNT: 20, BALANCE: 550 + level, SOURCE: 'level_reward', STATE: 'Earned' }, level);
+      if (level % 2 === 0) add(session, t += 3, 'AD_ANALYSIS', { AD_TYPE: level % 4 === 0 ? 'rewarded' : 'interstitial', STAGE: 'shown' });
+    }
+    add(session, t += 5, 'TUTORIAL_ANALYSIS', { TUTORIAL: 'powerup_auto_shoot', STATE: 'Shown', LEVEL_NUMBER: 5 });
+  }
+  return events;
+}
+
+export async function installPlayerFixture(page: Page, options: { levelCount?: number; rich?: boolean } = {}): Promise<void> {
   const at = '2026-10-24T10:00:00Z';
   const game = { id: 'viewer-game', name: 'Viewer test', bundle_id: 'com.example.viewer', platform: 'android', created_at: at, workspace_id: 'test' };
   const players = ['player-one', 'player-two'].map((player) => ({ player, events: 40, sessions: 1, avg_session_seconds: 780, total_play_seconds: 780, first_seen: at, last_seen: at, platform: 'android', app_version: '1.4.2', country: 'GB', environment: 'production', has_user_id: false, metrics: [] }));
@@ -20,6 +40,7 @@ export async function installPlayerFixture(page: Page, options: { levelCount?: n
     else if (path.endsWith('/levels')) json = { levels: Array.from({ length: options.levelCount ?? 1 }, (_, index) => ({ level: options.levelCount ? index + 1 : 12, started: 2, completed: 0, completion: 0, tries_per_player: 1, fails: 2, restarts: 0, median_seconds: 30, low_sample: false, transition: { available: true, next_level: options.levelCount ? index + 2 : 13, drop_percent: 100, total_drop: 2, left: 2, finished_stopped: 0, kept_going: 0, unknown_progress: 0, net_change: -2 } })), context: { anonymous_events: 0, minimum_players: 1 } };
     else if (path.endsWith('/levels/players')) json = { level: 12, group: 'left', total: 2, offset: 0, counts: { left: 2, finished_stopped: 0, kept_going: 0 }, last_actions: [], players: players.map((p) => ({ player: p.player, tries: 1, fails: 1, completed: false, exit_at: at, exit_event: 'level_fail', last_action: 'Level failed', next_action: 'Menu', last_event: null, session_seconds: 780, last_seen: at, came_back: false, app_version: '1.4.2' })) };
     else if (path.endsWith('/story')) json = { sessions: 1, events: 40, first_seen: at, last_seen: at, total_play_seconds: 780, average_session_seconds: 780, highest_level: 12, info: { device_id: url.searchParams.get('player'), platform: 'android', app_version: '1.4.2', properties: { device_model: 'Pixel 8' } } };
+    else if (path.endsWith('/journey') && options.rich) json = { snapshot: 40, truncated: false, events: richJourney(at) };
     else if (path.endsWith('/journey')) json = { snapshot: 40, truncated: false, events: Array.from({ length: 40 }, (_, index) => ({ event_id: `event-${index}`, name: index % 2 ? 'level_fail' : 'level_start', client_ts: new Date(Date.parse(at) + index * 20000).toISOString(), session_id: 'session-one', level: 12, params: { level: 12, reason: 'out_of_moves', score: 1200 } })) };
     await route.fulfill({ json });
   });

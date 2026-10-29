@@ -1,4 +1,4 @@
-import { contextChips, scopeLine, buildContext, panelChips } from './context';
+import { applyEdit, buildContext, contextChips, editFor, editableChips, panelChips, scopeLine } from './context';
 import type { FilterState } from '@/lib/filters';
 
 const game = { id: 'g1', name: 'Blocks', platform: 'android' };
@@ -40,5 +40,35 @@ describe('context chips', () => {
     const trimmed = buildContext({ game, section: 'levels', filters, player: 'p1' }, new Set(['page', 'range', 'filters', 'player']));
     expect(trimmed.page).toBeUndefined(); expect(trimmed.range).toBeUndefined(); expect(trimmed.player).toBeUndefined();
     expect(trimmed.filters).toEqual({ environments: [], app_versions: [], builds: [], countries: [], platforms: [] });
+  });
+  it('lets the @ list change the page, the days and the version for the next question only', () => {
+    const facets = { latest_app_version: '1.3.0', previous_app_version: '1.2.0' };
+    let edit = editFor('page', 'funnels', facets, {});
+    edit = editFor('range', '30', facets, edit);
+    edit = editFor('filters', 'latest', facets, edit);
+    expect(edit.page).toBe('funnels');
+    expect(edit.range).toMatchObject({ preset: '30' });
+    expect(edit.versions).toEqual(['1.3.0']);
+    const base = { game, section: 'levels', filters };
+    const asked = applyEdit(base, edit);
+    expect(asked.section).toBe('funnels');
+    expect(asked.filters!.app_version).toEqual(['1.3.0']);
+    expect(asked.filters!.range).toEqual(edit.range);
+    expect(asked.filters!.country).toEqual(['DE', 'FR', 'US']);
+    expect(applyEdit(base, {})).toEqual(base);
+    expect(buildContext(asked, new Set())).toMatchObject({ page: 'funnels', filters: { app_versions: ['1.3.0'] } });
+    expect(editFor('filters', 'all', facets, {}).versions).toEqual([]);
+  });
+  it('offers each chip what it can be changed to', () => {
+    const chips = contextChips({ game, section: 'levels', filters, player: 'p1' });
+    const offered = editableChips(chips, new Set(['page']), { range: { from: 'a', to: 'b', preset: '7' } }, { latest_app_version: '1.3.0', previous_app_version: null });
+    const by = (id: string) => offered.find((chip) => chip.id === id)!;
+    expect(by('page')).toMatchObject({ kind: 'Page', off: true });
+    expect(by('page').options!.map((option) => option.id)).toContain('funnels');
+    expect(by('range')).toMatchObject({ kind: 'Dates', choice: '7' });
+    expect(by('range').options!.map((option) => option.label)).toContain('Last 30 days');
+    expect(by('filters').options!.map((option) => option.id)).toEqual(['latest', 'all']);
+    expect(by('player')).toMatchObject({ kind: 'Player' });
+    expect(by('game').kind).toBeUndefined();
   });
 });
