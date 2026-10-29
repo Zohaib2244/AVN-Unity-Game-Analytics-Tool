@@ -8,10 +8,9 @@ data is hidden, and whether an event is undocumented (ask the team what it means
 guessing).
 
 Funnels count players who did the steps in order; journeys show what they did between two steps
-and where they stopped. Levels: completion, tries per player, fails, restarts and time per level;
-a spike in fails or in players whose last event is a level usually means difficulty or a UX
-problem. Leaving: look at what players did in their last session and compare leavers with
-players who went on. Ads and purchases: only the events say what was shown or bought; never
+and where they stopped. Levels: completion, tries per player, fails, restarts and time per level.
+Leaving: look at what players did in their last session and compare leavers with players who
+went on; let the data, not an assumed cause, say why. Ads and purchases: only the events say what was shown or bought; never
 invent prices.
 
 Reporting: lead with the finding and its numbers, then what it suggests, then one or two
