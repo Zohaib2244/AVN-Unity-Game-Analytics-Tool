@@ -831,9 +831,9 @@ tr.level-hard td{background:color-mix(in srgb,var(--status-down) 8%,transparent)
 .nb-mouth{stroke:var(--accent-orange);stroke-width:1.6;stroke-linecap:round;fill:none}
 .nb-antenna{stroke:var(--border);stroke-width:1.5}
 .nb-tip{fill:var(--accent-orange)}
-.nb-face.idle .nb-eye{animation:nb-blink 5s infinite}
-.nb-face.thinking .nb-eye{animation:nb-look .9s infinite alternate}
-.nb-face.thinking .nb-tip{animation:nb-pulse .8s infinite alternate}
+.nb-art.idle .nb-eye{animation:nb-blink 5s infinite}
+.nb-art.thinking .nb-eye{animation:nb-look .9s infinite alternate}
+.nb-art.thinking .nb-tip{animation:nb-pulse .8s infinite alternate}
 @keyframes nb-blink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}
 @keyframes nb-look{from{transform:translateX(-1.5px)}to{transform:translateX(1.5px)}}
 @keyframes nb-pulse{from{opacity:.3}to{opacity:1}}

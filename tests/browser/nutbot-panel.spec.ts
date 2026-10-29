@@ -278,32 +278,65 @@ test('@ changes the dates for the next question only', async ({ page }) => {
   expect(Date.parse(second.to) - Date.parse(second.from)).toBeGreaterThan(6 * 86400000);
 });
 
-test('NutBot hides from the top left, floats when unlocked and can be made wider', async ({ page }, info) => {
+test('NutBot pins from the top left, shows at the right edge when unpinned and can be made wider', async ({ page }, info) => {
   await mockNutBot(page);
   await page.goto('/games/viewer-game/levels');
   await page.locator('.nb-launcher').click();
   const dock = page.locator('.nb-dock');
   await expect(dock).toBeVisible();
-  const hide = dock.getByRole('button', { name: 'Hide NutBot', exact: true });
-  // The hide control is at the start of the header, not at the screen edge (the panel slides in first).
-  await expect.poll(async () => (await hide.boundingBox())!.x - (await dock.boundingBox())!.x).toBeLessThan(40);
+  // The panel names itself, so the launcher steps aside while it is open; the face is drawn in one frame.
+  await expect(page.locator('.nb-launcher')).toHaveCount(0);
+  await expect(dock.locator('.nb-h .nb-face')).toHaveCount(1);
+  await expect(dock.locator('.nb-h .nb-face > svg.nb-art')).toHaveCount(1);
+  const pin = dock.getByRole('button', { name: /^(Unpin|Pin) NutBot$/ });
+  // The pin (and, without a mouse, Hide) controls are at the start of the header, not at the screen edge
+  // (the panel slides in first).
+  await expect.poll(async () => (await pin.boundingBox())!.x - (await dock.boundingBox())!.x).toBeLessThan(90);
+  await expect(dock.locator('.nb-h > :first-child')).toHaveClass(/nb-(pin|hide)/);
+  await expect(pin).toHaveAttribute('aria-pressed', 'true');
   await expect(dock.getByRole('button', { name: 'Close NutBot' })).toHaveCount(0);
-  const wide = page.viewportSize()!.width > 900;
+  const width = page.viewportSize()!.width;
+  const mouse = !(await page.evaluate(() => matchMedia('(hover: none)').matches));
   const app = page.locator('.app');
-  if (wide) await expect(app).toHaveClass(/nb-open/);
-  // Unlocked, the panel floats over the page and the page keeps its room.
-  await dock.getByRole('button', { name: /^Unlock/ }).click();
+  if (width > 900) await expect(app).toHaveClass(/nb-open/);
+  // Unpinned, the panel floats over the page and the page keeps its room.
+  await pin.click();
+  await expect(pin).toHaveAttribute('aria-pressed', 'false');
   await expect(dock).toHaveClass(/floating/);
   await expect(app).not.toHaveClass(/nb-open/);
   await page.screenshot({ path: info.outputPath('nutbot-floating.png'), animations: 'disabled' });
-  // Using the page behind it puts a floating panel away (on a phone the panel is a sheet over all of it: Escape does).
-  if (page.viewportSize()!.width > 620) await page.locator('main.content').click({ position: { x: 20, y: 20 } });
-  else await page.getByRole('textbox', { name: 'Message NutBot' }).press('Escape');
-  await expect(dock).toBeHidden();
-  await page.locator('.nb-launcher').click();
+  if (mouse) {
+    // Moving the mouse away hides it; resting it on the right edge shows it again without taking the focus.
+    await expect(dock.getByRole('button', { name: 'Hide NutBot' })).toHaveCount(0);
+    const box = (await dock.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + 60);
+    await page.mouse.move(20, 300, { steps: 4 });
+    await expect(dock).toBeHidden();
+    await expect(page.locator('.nb-launcher')).toBeVisible();
+    await page.mouse.move(width - 2, 300, { steps: 4 });
+    await expect(dock).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Message NutBot' })).not.toBeFocused();
+    // A half-typed message keeps it open.
+    const field = page.getByRole('textbox', { name: 'Message NutBot' });
+    await field.fill('Why do players');
+    await page.mouse.move(20, 300, { steps: 4 });
+    await page.waitForTimeout(600);
+    await expect(dock).toBeVisible();
+    await field.fill('');
+    await page.mouse.move(width - 40, 300, { steps: 2 });
+    await page.mouse.move(20, 300, { steps: 4 });
+    await expect(dock).toBeHidden();
+    await page.locator('.nb-launcher').click();
+  } else {
+    // Without a mouse, Hide puts it away.
+    await dock.getByRole('button', { name: 'Hide NutBot', exact: true }).click();
+    await expect(dock).toBeHidden();
+    await page.locator('.nb-launcher').click();
+  }
   await expect(dock).toBeVisible();
-  await dock.getByRole('button', { name: /^Lock/ }).click();
-  if (wide) {
+  await dock.getByRole('button', { name: 'Pin NutBot', exact: true }).click();
+  await expect(dock).not.toHaveClass(/floating/);
+  if (width > 900) {
     const before = (await dock.boundingBox())!.width;
     await dock.getByRole('button', { name: 'Wider', exact: true }).click();
     await expect.poll(async () => (await dock.boundingBox())!.width).toBeGreaterThan(before + 100);
@@ -311,10 +344,13 @@ test('NutBot hides from the top left, floats when unlocked and can be made wider
     await expect(app).not.toHaveClass(/nb-open/);
     await page.screenshot({ path: info.outputPath('nutbot-wide.png'), animations: 'disabled' });
   }
-  await hide.click();
+  // Pinned, the panel stays when the mouse leaves; Escape puts it away.
+  if (mouse) { await page.mouse.move(20, 300, { steps: 4 }); await page.waitForTimeout(600); await expect(dock).toBeVisible(); }
+  await page.getByRole('textbox', { name: 'Message NutBot' }).press('Escape');
   await expect(dock).toBeHidden();
   // The choice is remembered.
   await page.reload();
   await page.locator('.nb-launcher').click();
   await expect(page.locator('.nb-dock')).toBeVisible();
+  await expect(page.locator('.nb-dock').getByRole('button', { name: 'Unpin NutBot', exact: true })).toBeVisible();
 });

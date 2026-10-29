@@ -29,9 +29,14 @@ import { applyEvent, contextShare, emptyAnswer, fromStoredMessages, settle, type
 
 const PREFS_KEY = 'avn-nutbot-prefs';
 const LAYOUT_KEY = 'avn-nutbot-layout';
-/** How the panel sits: locked = docked at the side, pushing the page; unlocked = floating over it. Wide = a roomier column. */
+/** How the panel sits: locked (pinned) = docked at the side, pushing the page; unlocked = floating over it, shown
+ *  while the mouse is on it or at the screen's right edge. Wide = a roomier column. */
 type Layout = { locked: boolean; wide: boolean };
 const loadLayout = (): Layout => ({ locked: true, wide: false, ...(storeGet<Partial<Layout>>(LAYOUT_KEY) || {}) });
+const EDGE_PX = 6; // how close to the right edge the mouse must rest to show the unpinned panel
+const EDGE_REST_MS = 120;
+const LEAVE_MS = 350; // how long the mouse may be away before the unpinned panel hides
+const LEAVE_MARGIN_PX = 16;
 const HEAVY_CONTEXT = 0.6; // past this share of the agent's context window, suggest a new chat
 const currentKey = (game: Pick<Game, 'id'>) => `avn-nutbot-current-${game.id}`;
 const nbPrefs = (): NutBotPrefs => storeGet<NutBotPrefs>(PREFS_KEY) || {};
@@ -40,16 +45,15 @@ const chatsPath = (game: Pick<Game, 'id'>) => `/v1/games/${encodeURIComponent(ga
 /** The face: a small robot that blinks when idle and looks around while thinking. */
 export function NbFace({ state }: { state: 'idle' | 'thinking' }): ReactElement {
   return (
-    <span className={`nb-face ${state}`} aria-hidden="true">
-      <svg viewBox="0 0 32 32" width="30" height="30">
-        <rect x="3" y="5" width="26" height="22" rx="6" className="nb-head" />
-        <rect x="9" y="12" width="4" height="6" rx="1.5" className="nb-eye nb-eye-l" />
-        <rect x="19" y="12" width="4" height="6" rx="1.5" className="nb-eye nb-eye-r" />
-        <path d="M11 22h10" className="nb-mouth" />
-        <path d="M16 5V2" className="nb-antenna" />
-        <circle cx="16" cy="2" r="1.4" className="nb-tip" />
-      </svg>
-    </span>
+    // The panel draws the frame (.nb-face); this is only the drawing inside it.
+    <svg viewBox="0 0 32 32" width="30" height="30" className={`nb-art ${state}`} aria-hidden="true">
+      <rect x="3" y="5" width="26" height="22" rx="6" className="nb-head" />
+      <rect x="9" y="12" width="4" height="6" rx="1.5" className="nb-eye nb-eye-l" />
+      <rect x="19" y="12" width="4" height="6" rx="1.5" className="nb-eye nb-eye-r" />
+      <path d="M11 22h10" className="nb-mouth" />
+      <path d="M16 5V2" className="nb-antenna" />
+      <circle cx="16" cy="2" r="1.4" className="nb-tip" />
+    </svg>
   );
 }
 
@@ -253,10 +257,14 @@ export function NutBotHost(): ReactElement | null {
   };
   const toggleContext = (id: string) => setOff((previous) => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
 
-  // Locked, the panel is docked and the page (and its drawers) make room beside it; unlocked, it floats over
-  // the page and leaves everything where it is. Wide is a roomy panel over the page, so it never moves it.
-  // The composer gets focus when it opens.
+  // Locked (pinned), the panel is docked and the page (and its drawers) make room beside it; unlocked, it floats
+  // over the page and leaves everything where it is. Wide is a roomy panel over the page, so it never moves it.
+  // The composer gets focus when it opens from the launcher, Ctrl+J or "Ask NutBot".
   const docked = layout.locked;
+  // Unpinned on a device with a mouse, the panel works like Zen's compact sidebar: resting the mouse on the
+  // screen's right edge shows it, moving the mouse away from it hides it again.
+  const hovers = useMemo(() => typeof window !== 'undefined' && window.matchMedia?.('(hover: hover) and (pointer: fine)').matches, []);
+  const peekRef = useRef(false);
   useEffect(() => {
     if (!appEl) return;
     appEl.classList.toggle('nb-open', open && docked && !layout.wide);
@@ -273,9 +281,52 @@ export function NutBotHost(): ReactElement | null {
     document.addEventListener('pointerdown', away);
     return () => document.removeEventListener('pointerdown', away);
   }, [open, docked]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The right edge: a short rest there (not a drag, not under a dialog) shows the unpinned panel.
+  useEffect(() => {
+    if (open || docked || !usable || !hovers) return;
+    let timer = 0;
+    const onMove = (event: PointerEvent) => {
+      const atEdge = event.pointerType === 'mouse' && event.buttons === 0 && event.clientX >= document.documentElement.clientWidth - EDGE_PX;
+      if (!atEdge) { clearTimeout(timer); timer = 0; return; }
+      if (timer || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      timer = window.setTimeout(() => { peekRef.current = true; setOpen(true); }, EDGE_REST_MS);
+    };
+    document.addEventListener('pointermove', onMove);
+    return () => { clearTimeout(timer); document.removeEventListener('pointermove', onMove); };
+  }, [open, docked, usable, hovers, setOpen]);
+  // Once the mouse has been on the unpinned panel, moving it away hides the panel again. It stays while a message
+  // is being typed, a button is held or one of its menus is open.
+  useEffect(() => {
+    if (!open || docked || !hovers) return;
+    let armed = false;
+    let timer = 0;
+    const onMove = (event: PointerEvent) => {
+      const box = document.querySelector('.nb-dock')?.getBoundingClientRect();
+      if (!box || event.pointerType !== 'mouse') return;
+      // The strip between the panel and the screen edge counts as the panel.
+      const inside = (event.clientX >= box.left - LEAVE_MARGIN_PX && event.clientY >= box.top - LEAVE_MARGIN_PX && event.clientY <= box.bottom + LEAVE_MARGIN_PX)
+        || Boolean((event.target as Element | null)?.closest?.('[role="listbox"], [data-radix-popper-content-wrapper]'));
+      if (inside) { armed = true; clearTimeout(timer); timer = 0; return; }
+      if (!armed || timer) return;
+      timer = window.setTimeout(() => {
+        timer = 0;
+        const active = document.activeElement;
+        const typing = active instanceof HTMLTextAreaElement && Boolean(active.closest('.nb-dock')) && active.value.trim() !== '';
+        if (typing || active?.closest?.('.nb-dock select')) return;
+        setOpen(false);
+      }, LEAVE_MS);
+    };
+    const onLeaveWindow = (event: PointerEvent) => { if (!event.relatedTarget) onMove(event); };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerout', onLeaveWindow);
+    return () => { clearTimeout(timer); document.removeEventListener('pointermove', onMove); document.removeEventListener('pointerout', onLeaveWindow); };
+  }, [open, docked, hovers, setOpen]);
   useEffect(() => {
     if (!open) return;
-    const timer = setTimeout(() => appEl?.querySelector<HTMLTextAreaElement>('.nb .nb-in textarea')?.focus(), 50);
+    // Shown by the screen edge, it leaves the focus where it was; opened on purpose, the composer gets it.
+    const peeked = peekRef.current;
+    peekRef.current = false;
+    const timer = peeked ? 0 : setTimeout(() => appEl?.querySelector<HTMLTextAreaElement>('.nb .nb-in textarea')?.focus(), 50);
     // Escape: a menu in the composer first (it marks the event), then a header view, then the panel.
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || !(event.target as Element | null)?.closest?.('.nb')) return;
@@ -285,7 +336,8 @@ export function NutBotHost(): ReactElement | null {
     document.addEventListener('keydown', onKey);
     return () => { clearTimeout(timer); document.removeEventListener('keydown', onKey); };
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-  const close = () => { setOpen(false); document.querySelector<HTMLButtonElement>('.nb-launcher')?.focus(); };
+  // The launcher is hidden while the panel is open (the panel has its own name), so focus returns once it is back.
+  const close = () => { setOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.nb-launcher')?.focus()); };
 
   const openAction = useCallback((action: NutBotAction) => {
     if (!game || action.game_id !== game.id) { toast('That belongs to another game.'); return; }
@@ -460,11 +512,16 @@ export function NutBotHost(): ReactElement | null {
   const back = () => setView('chat');
   // Without a working assistant the settings view explains the setup and is what the panel shows.
   const shown: View = available.length ? view : 'settings';
-  const lockLabel = layout.locked ? 'Unlock: float over the page' : 'Lock: keep beside the page';
+  // One sidebar button pins and unpins the panel (Zen's sidebar toggle). Unpinned, the mouse hides it; without a
+  // mouse (touch), a Hide button does.
+  const pinLabel = layout.locked ? 'Unpin NutBot' : 'Pin NutBot';
+  const pinTitle = layout.locked
+    ? (hovers ? 'Unpin: float over the page and hide when the mouse moves away (show it again at the right edge)' : 'Unpin: float over the page')
+    : 'Pin: keep beside the page';
   const leading = (
     <>
-      <button type="button" className="icon-btn nb-hide" aria-label="Hide NutBot" title="Hide NutBot (Ctrl J)" onClick={close}><Ico name="panel" size={18} /></button>
-      <button type="button" className="icon-btn nb-lock" aria-label={lockLabel} title={lockLabel} aria-pressed={layout.locked} onClick={() => setLayout({ locked: !layout.locked })}><Ico name={layout.locked ? 'lock' : 'unlock'} size={16} /></button>
+      {hovers ? null : <button type="button" className="icon-btn nb-hide" aria-label="Hide NutBot" title="Hide NutBot" onClick={close}><Ico name="close" size={16} /></button>}
+      <button type="button" className="icon-btn nb-pin" aria-label={pinLabel} title={pinTitle} aria-pressed={layout.locked} onClick={() => setLayout({ locked: !layout.locked })}><Ico name="panel" size={18} /></button>
     </>
   );
   const widthLabel = layout.wide ? 'Narrower' : 'Wider';
