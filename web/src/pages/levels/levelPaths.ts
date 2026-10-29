@@ -21,6 +21,8 @@ export function levelsQuery(state: ActiveFilters, scope: LevelScope): URLSearchP
 }
 export const levelsPath = (game: GameRef, state: ActiveFilters, scope: LevelScope): string => `${gameURL(game)}/insights/levels?${levelsQuery(state, scope)}`;
 
+export const featuresPath = (game: GameRef, state: ActiveFilters, scope: LevelScope): string => `${gameURL(game)}/insights/levels/features?${levelsQuery(state, scope)}`;
+
 /** Which players of a level are listed: the group, the order and, within a group, one last action. */
 export type DrillState = { group: LevelDrillGroup; sort: DrillSort; lastAction: string | null };
 export function drillQuery(state: ActiveFilters, scope: LevelScope, level: number, drill: DrillState, extra: Record<string, string | number> = {}): URLSearchParams {
@@ -41,7 +43,7 @@ export function resolvedFilters(game: GameRef): ActiveFilters {
 }
 /** The Levels page's first request. Null when the page would open a comparison. */
 export function levelsPrefetchPath(game: GameRef): string | null {
-  if (isCompareView(storeGet(viewKey(game))) || storeGet(viewKey(game)) === 'groups') return null;
+  if (isCompareView(storeGet(viewKey(game))) || storeGet(viewKey(game)) === 'groups' || storeGet(viewKey(game)) === 'features') return null;
   return levelsPath(game, resolvedFilters(game), cleanNavigation(storeGet(navigationKey(game))).scope);
 }
 /** The Overview's first request, for the same early start. */

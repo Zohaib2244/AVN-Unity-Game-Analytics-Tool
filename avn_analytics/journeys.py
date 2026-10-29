@@ -614,9 +614,11 @@ def player_levels(player, rows, latest, scope, start, reader):
     progress = {}
     opened, last_level = {}, None
     events = []
+    seen = _Features()
     for row in rows:
         params, info = reader.level(row["name"], row["params"], row["app_version"])
         events.append((row, info))
+        seen.step(len(events) - 1, row, params, info, last_level, scope == "first_session")
         if scope != "first_session" and not row["selected"]:
             continue
         if info is None:
@@ -649,7 +651,107 @@ def player_levels(player, rows, latest, scope, start, reader):
     if last_level is not None and last_level[1] in ("started", "restarted", "failed"):
         progress.setdefault(last_level[0], _new_progress())["quit"] += 1
     groups, observed = _player_transitions(player, events, latest, scope, start, reader)
-    return {"progress": progress, "groups": groups, "observed": observed}
+    return {
+        "progress": progress,
+        "groups": groups,
+        "observed": observed,
+        "features": seen.finish(events, groups),
+    }
+
+
+# What a level's numbers can be split by: (event, state, parameter) -> the kind of thing counted.
+FEATURE_EVENTS = {
+    ("AD_ANALYSIS", "Show"): (("ads", "FORMAT"), ("ad_placement", "PLACEMENT")),
+    ("POWERUP_ANALYSIS", "Used"): (("powerups", "POWERUP"),),
+}
+
+
+class _Features:
+    """What happened on each level (ads shown, powerups used, fail reasons) for one player, with
+    where the player's last meaningful event was, so the dashboards can say how often each thing
+    happened and what players who met it did next.
+
+    An event belongs to the level it names (LEVEL_NUMBER); one that names none, such as an
+    interstitial after a result, belongs to the level the player was last on.
+    """
+
+    def __init__(self):
+        self.counts = {}  # level -> {"kind|value": count}
+        self.last = None  # (level, keys) of the last event when it was one of these
+        self.starts = []  # (position, level, session) of every level start
+
+    def step(self, position, row, params, info, last_level, every_row):
+        if info and info[0] in ("started", "restarted"):
+            self.starts.append((position, info[1], row["session_id"]))
+        if not (every_row or row["selected"]):
+            if row["name"] not in NOT_AN_ACTION:
+                self.last = None
+            return
+        keys = []
+        if info and info[0] == "failed":
+            reason = stories.param_text(params, "FAIL_REASON")
+            keys.append(("fails", reason or "Unspecified"))
+            number = info[1]
+        else:
+            found = FEATURE_EVENTS.get((row["name"], stories.param_text(params, "STATE")))
+            if not found:
+                if row["name"] not in NOT_AN_ACTION:
+                    self.last = None
+                return
+            for kind, parameter in found:
+                value = stories.param_text(params, parameter)
+                if value:
+                    keys.append((kind, value))
+            number = next(
+                (
+                    stories._int(value)
+                    for key, value in params.items()
+                    if stories.LEVELISH_KEY.search(key) and stories._int(value) is not None
+                ),
+                last_level[0] if last_level else None,
+            )
+        if number is None or not keys:
+            return
+        mine = self.counts.setdefault(number, {})
+        names = [f"{kind}|{value}" for kind, value in keys]
+        for name in names:
+            mine[name] = mine.get(name, 0) + 1
+        self.last = (number, names)
+
+    def finish(self, events, groups):
+        """{level: {key: [count, dropped, left the session, left right after]}} for the levels
+        this player started in the range; "*" counts the player themselves."""
+        result = {}
+        for number, mine in groups.items():
+            if "started" not in mine:
+                continue
+            dropped = int("total_drop" in mine)
+            left = int(self._left_session(events, number))
+            row = result[number] = {"*": [1, dropped, left, 0]}
+            for name, count in self.counts.get(number, {}).items():
+                right = int(
+                    bool(dropped)
+                    and self.last is not None
+                    and self.last[0] == number
+                    and name in self.last[1]
+                )
+                row[name] = [count, dropped, left, right]
+        return result
+
+    def _left_session(self, events, number):
+        """True when no start of the next level follows the player's last event on this level in
+        the same session."""
+        last = max(
+            (index for index, (_, info) in enumerate(events) if info and info[1] == number),
+            default=None,
+        )
+        if last is None:
+            return False
+        session = events[last][0]["session_id"]
+        return not any(
+            position > last and level == number + 1 and at == session
+            for position, level, at in self.starts
+        )
 
 
 def _player_transitions(player, events, latest, scope, start, reader):
@@ -865,6 +967,7 @@ def _scan_levels(storage, game_id, start, end, filters, scope, definitions):
     return {
         "levels": totals.levels,
         "transitions": totals.transitions(),
+        "features": totals.features,
         "anonymous_events": anonymous_events,
         "too_many": too_many,
     }
@@ -889,6 +992,7 @@ class _LevelTotals:
         self.levels = {}
         self.groups = {}
         self.observed = set()
+        self.features = {}  # level -> key -> [players, times, dropped, left session, right after]
 
     def add(self, part):
         for number, mine in part["progress"].items():
@@ -922,6 +1026,15 @@ class _LevelTotals:
             for name, record in records.items():
                 target[name].append(record)
         self.observed.update(part["observed"])
+        for number, mine in part.get("features", {}).items():
+            target = self.features.setdefault(number, {})
+            for key, (count, dropped, left, right) in mine.items():
+                total = target.setdefault(key, [0, 0, 0, 0, 0])
+                total[0] += 1
+                total[1] += count
+                total[2] += dropped
+                total[3] += left
+                total[4] += right
 
     def transitions(self):
         result = {}
@@ -973,6 +1086,73 @@ def level_progress(storage, game_id, start, end, filters=None, scope="all"):
         raise HTTPException(400, TOO_MUCH["range"])
     threshold = storage.analytics_thresholds(game_id)["levels_min_players"]
     return render_levels(scan, threshold, scope)
+
+
+def level_features(storage, game_id, start, end, filters=None, scope="all"):
+    """Per level: how often each ad format or placement, powerup and fail reason happened, and
+    what the players who met it did next (drop, left the session, left right after it).
+
+    Counts are raw (players, times, ...), so a page can show any of them as numbers or shares.
+    """
+    storage.get_game(game_id)
+    _check_scope(scope)
+    try:
+        scan = _level_scan(storage, game_id, start, end, filters, scope)
+    except _TooMuch as error:
+        message = TOO_MUCH["range" if scope == "first_session" else error.kind]
+        raise HTTPException(400, message) from None
+    if scan["too_many"]:
+        raise HTTPException(400, TOO_MUCH["range"])
+    threshold = storage.analytics_thresholds(game_id)["levels_min_players"]
+    return render_features(scan, threshold, scope)
+
+
+def render_features(scan, threshold, scope):
+    names = {"ads": set(), "ad_placement": set(), "powerups": set(), "fails": set()}
+    levels = []
+    for number in sorted(scan.get("features", {})):
+        mine = scan["features"][number]
+        everyone = mine.get("*")
+        if not everyone or not everyone[0]:
+            continue
+        summary = scan["transitions"].get(number, {}).get("summary", {})
+        things = {}
+        for key, (players, times, dropped, left, right) in mine.items():
+            if key == "*":
+                continue
+            kind, value = key.split("|", 1)
+            names.setdefault(kind, set()).add(value)
+            things.setdefault(kind, {})[value] = {
+                "players": players,
+                "times": times,
+                "dropped": dropped,
+                "left_session": left,
+                "right_after": right,
+            }
+        levels.append(
+            {
+                "level": number,
+                "started": everyone[0],
+                "dropped": everyone[2],
+                "left_session": everyone[3],
+                # The next level was never started by anyone, so nobody could have "dropped".
+                "drop_available": bool(summary.get("available")),
+                "low_sample": everyone[0] < threshold,
+                "things": things,
+            }
+        )
+    totals = {kind: Counter() for kind in names}
+    for item in levels:
+        for kind, values in item["things"].items():
+            for value, counts in values.items():
+                totals[kind][value] += counts["players"]
+    return {
+        "levels": levels,
+        "kinds": {
+            kind: [value for value, _ in totals[kind].most_common()] for kind in sorted(names)
+        },
+        "context": {"minimum_players": threshold, "scope": scope},
+    }
 
 
 def render_levels(scan, threshold, scope):

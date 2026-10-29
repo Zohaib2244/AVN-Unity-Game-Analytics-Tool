@@ -201,6 +201,14 @@ export type LevelRow = {
   fails: number; restarts: number; median_seconds: number | null; low_sample: boolean; transition: LevelTransition | null;
 };
 export type LevelsResult = { levels: LevelRow[]; context: { anonymous_events: number; minimum_players: number; scope?: string } };
+/** What happened on a level (ads shown, powerups used, fail reasons) and what the players who met it did next. */
+export type LevelThing = { players: number; times: number; dropped: number; left_session: number; right_after: number };
+export type LevelFeatureKind = 'ads' | 'ad_placement' | 'powerups' | 'fails';
+export type LevelFeatureRow = {
+  level: number; started: number; dropped: number; left_session: number; drop_available: boolean; low_sample: boolean;
+  things: Partial<Record<LevelFeatureKind, Record<string, LevelThing>>>;
+};
+export type LevelFeatures = { levels: LevelFeatureRow[]; kinds: Partial<Record<LevelFeatureKind, string[]>>; context: { minimum_players: number; scope?: string } };
 export type LevelLastEvent = { text: string; gap: number | null; after: string | null; after_level: number | null };
 export type LevelPlayer = {
   player: string; tries: number; fails: number; completed: boolean; exit_at: string; exit_event: string;

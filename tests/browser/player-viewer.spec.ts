@@ -143,3 +143,28 @@ test('a player opened from Players is a page with a way back, not a popup', asyn
   expect(errors).toEqual([]);
 });
 
+
+test('Levels: Occurrence & drop shows ads, powerups and fail reasons and what players did next', async ({ page }) => {
+  await installPlayerFixture(page);
+  await page.goto('/games/viewer-game/levels');
+  await page.getByRole('button', { name: 'Occurrence & drop' }).click();
+  const table = page.getByRole('region', { name: 'Occurrence by level' });
+  await expect(table.getByRole('columnheader', { name: 'Interstitial' })).toBeVisible();
+  await expect(table.getByRole('row', { name: /^11 / })).toContainText('62%');
+  // Drop by: the chosen ad against players who didn't see it, for both ways of leaving at once.
+  await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: 'Drop by' }).click();
+  const drop = page.getByRole('region', { name: 'Drop by level' });
+  await expect(drop.getByRole('columnheader', { name: 'Never started next' })).toBeVisible();
+  await expect(drop.getByRole('columnheader', { name: 'Left the session' })).toBeVisible();
+  await expect(drop.getByRole('row', { name: /^11 / })).toContainText('+');
+  // One basis at a time.
+  await page.getByRole('group', { name: 'Left means' }).getByRole('button', { name: 'Left the session' }).click();
+  await expect(drop.getByRole('columnheader', { name: 'Never started next' })).toHaveCount(0);
+  await expect(drop.getByRole('columnheader', { name: 'Left right after' })).toHaveCount(0);
+  // Other subjects and the choice is remembered.
+  await page.getByRole('group', { name: 'Of' }).getByRole('button', { name: 'Fail reasons' }).click();
+  await expect(drop.getByRole('row', { name: /^11 / })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('group', { name: 'Of' }).getByRole('button', { name: 'Fail reasons' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('region', { name: 'Drop by level' })).toBeVisible();
+});

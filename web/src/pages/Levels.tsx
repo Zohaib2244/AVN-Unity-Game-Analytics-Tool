@@ -13,6 +13,7 @@ import { storeGet, storeSet, useStorePushed } from '@/lib/store';
 import type { Game, LevelsResult } from '@/lib/types';
 import { PlayerViewer, type PlayerBrowse } from './player/PlayerView';
 import { LevelCompare } from './levels/LevelCompare';
+import { LevelFeatures } from './levels/LevelFeatures';
 import { LevelPage } from './levels/LevelPage';
 import { LevelTable } from './levels/LevelTable';
 import { PlayerGroups } from './levels/PlayerGroups';
@@ -38,7 +39,7 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
   // With no view chosen yet, a game with two published builds opens on the latest build against the one before it.
   const facets = useRead<Facets>(facetsPath(game, filters));
   const chosen = search.view || storeGet<string>(viewKey(game));
-  const view: 'table' | 'compare' | 'groups' = pageLevel != null ? 'table' : chosen === 'groups' ? 'groups' : (chosen ? isCompareView(chosen) : !!facets.data?.previous_app_version) ? 'compare' : 'table';
+  const view: 'table' | 'compare' | 'groups' | 'features' = pageLevel != null ? 'table' : chosen === 'groups' ? 'groups' : chosen === 'features' ? 'features' : (chosen ? isCompareView(chosen) : !!facets.data?.previous_app_version) ? 'compare' : 'table';
   const deciding = pageLevel == null && !chosen && !facets.data && !facets.isError;
 
   const path = levelsPath(game, filters, nav.scope);
@@ -47,7 +48,7 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
   const memory = useMemo(() => new Map<number, DrillState>(), [path]);
 
   const listPath = gamePath(game, 'levels');
-  const chooseView = (next: 'table' | 'compare' | 'groups') => {
+  const chooseView = (next: 'table' | 'compare' | 'groups' | 'features') => {
     storeSet(viewKey(game), next);
     if (next === view && pageLevel == null) return;
     void navigate({ to: listPath, search: { view: next }, replace: true });
@@ -74,11 +75,14 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
       {view !== 'groups' ? <FilterBar game={game} state={filters} onChange={updateFilters} context={levels.data ? { anonymous_events: levels.data.context.anonymous_events } : {}} /> : null}
       <div className="range-modes route-tabs levels-views" role="group" aria-label="Levels view">
         <button type="button" aria-pressed={view === 'table'} onClick={() => chooseView('table')}>Level by level</button>
+        <button type="button" aria-pressed={view === 'features'} onClick={() => chooseView('features')}>Occurrence &amp; drop</button>
         <button type="button" aria-pressed={view === 'compare'} onClick={() => chooseView('compare')}>Compare releases</button>
         <button type="button" aria-pressed={view === 'groups'} onClick={() => chooseView('groups')}>Compare player groups</button>
       </div>
       {deciding ? <Skeleton kind="table" rows={6} columns={7} /> : view === 'groups' ? (
         <PlayerGroups game={game} filters={filters} onFilters={updateFilters} onOpenPlayer={openPlayer} />
+      ) : view === 'features' ? (
+        <LevelFeatures game={game} filters={filters} scope={nav.scope} onOpen={(level) => { setJump({ level }); chooseView('table'); }} />
       ) : view === 'compare' ? (
         <LevelCompare game={game} filters={filters} nav={nav} prefs={prefs} onPrefs={setPrefs} onRestore={restore} onJump={jumpFromCompare} />
       ) : pageLevel != null ? (

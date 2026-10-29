@@ -17,7 +17,7 @@ from datetime import datetime
 
 from . import analytics
 
-VERSION = 1
+VERSION = 2
 EXPIRY = 86400
 BATCH_PLAYERS = 20
 # What one Levels step may read: a batch of players, or a single heavy player on their own.
@@ -164,6 +164,7 @@ def answer(storage, game_id, kind, parts, compute):
 def restore_scan(scan):
     scan["levels"] = {int(key): value for key, value in scan["levels"].items()}
     scan["transitions"] = {int(key): value for key, value in scan["transitions"].items()}
+    scan["features"] = {int(key): value for key, value in scan.get("features", {}).items()}
     for level in scan["levels"].values():
         for field in ("other", "powerups"):
             level[field] = Counter(level[field])
@@ -302,7 +303,7 @@ def _level_contributions(connection, key, queued, parts, reader, check, max_rows
         value = (
             journeys.player_levels(*counted, scope, start, reader)
             if counted
-            else {"progress": {}, "groups": {}, "observed": []}
+            else {"progress": {}, "groups": {}, "observed": [], "features": {}}
         )
         contributions.append((key, player, pack(value), len(events)))
     return contributions
@@ -520,12 +521,13 @@ def _refresh(worker, game_id, revision, row, began):
                 if decoded_bytes > 64 * 1024 * 1024:
                     raise ValueError("Prepared Levels exceeds the bounded reducer memory budget")
                 value = json.loads(raw)
-                for field in ("progress", "groups"):
-                    value[field] = {int(k): v for k, v in value[field].items()}
+                for field in ("progress", "groups", "features"):
+                    value[field] = {int(k): v for k, v in value.get(field, {}).items()}
                 totals.add(value)
             result = {
                 "levels": totals.levels,
                 "transitions": totals.transitions(),
+                "features": totals.features,
                 "anonymous_events": stage["anonymous_events"],
                 "too_many": stage["too_many"],
             }

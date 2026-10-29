@@ -1084,6 +1084,19 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             storage, str(game_id), *day_range(start, end, tz_offset), chosen, scope
         )
 
+    @admin_api.get("/v1/games/{game_id}/insights/levels/features")
+    def insights_level_features(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        scope: Literal["all", "first_session"] = "all",
+        tz_offset: TimezoneOffset = 0,
+    ):
+        return journeys.level_features(
+            storage, str(game_id), *day_range(start, end, tz_offset), chosen, scope
+        )
+
     @admin_api.get("/v1/games/{game_id}/insights/levels/players")
     def insights_level_players(
         game_id: UUID,

@@ -3813,3 +3813,81 @@ def test_deleting_a_versions_events_keeps_the_others_and_their_facts_in_step(bac
         assert db.execute("SELECT count(*) FROM analytics_facts").fetchone()[0] == 2
     actions = [row["action"] for row in admin.get("/v1/audit", headers=AUTH).json()]
     assert "events.delete" in actions and "events.deleted" in actions
+
+
+def _lv(player, session, at, state, level, **extra):
+    return _played(
+        player, session, at, "LEVEL_ANALYSIS", {"STATE": state, "LEVEL_NUMBER": level, **extra}
+    )
+
+
+def test_level_features_count_ads_powerups_and_fail_reasons_and_what_players_did_next(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = [
+        # a sees an interstitial on level 1 and leaves right after it.
+        _lv("a", "a1", "04T09:00:00", "Started", 1),
+        _lv("a", "a1", "04T09:01:00", "Completed", 1),
+        _played(
+            "a",
+            "a1",
+            "04T09:01:30",
+            "AD_ANALYSIS",
+            {
+                "STATE": "Show",
+                "FORMAT": "Interstitial",
+                "PLACEMENT": "level_interstitial",
+                "LEVEL_NUMBER": 1,
+            },
+        ),
+        # b sees one with no level number (it belongs to the level just played) and goes on.
+        _lv("b", "b1", "04T09:00:00", "Started", 1),
+        _lv("b", "b1", "04T09:01:00", "Failed", 1, FAIL_REASON="OutOfMoves"),
+        _played(
+            "b",
+            "b1",
+            "04T09:01:10",
+            "POWERUP_ANALYSIS",
+            {"STATE": "Used", "POWERUP": "shuffle", "LEVEL_NUMBER": 1},
+        ),
+        _played(
+            "b",
+            "b1",
+            "04T09:01:30",
+            "AD_ANALYSIS",
+            {"STATE": "Show", "FORMAT": "Interstitial", "PLACEMENT": "level_interstitial"},
+        ),
+        _lv("b", "b1", "04T09:02:00", "Started", 2),
+        # c sees no ad and goes on in a later session.
+        _lv("c", "c1", "04T09:00:00", "Started", 1),
+        _lv("c", "c1", "04T09:01:00", "Completed", 1),
+        _lv("c", "c2", "04T12:00:00", "Started", 2),
+        # An ad closing is not a showing.
+        _played(
+            "c",
+            "c1",
+            "04T09:01:40",
+            "AD_ANALYSIS",
+            {
+                "STATE": "Closed",
+                "FORMAT": "Interstitial",
+                "PLACEMENT": "level_interstitial",
+                "LEVEL_NUMBER": 1,
+            },
+        ),
+    ]
+    assert send(ingest, game, records).is_success
+    data = admin.get(
+        f"/v1/games/{game['id']}/insights/levels/features",
+        params={"start": "2026-10-04", "end": "2026-10-04"},
+    ).json()
+    one = next(row for row in data["levels"] if row["level"] == 1)
+    assert (one["started"], one["dropped"], one["drop_available"]) == (3, 1, True)
+    ad = one["things"]["ads"]["Interstitial"]
+    assert ad == {"players": 2, "times": 2, "dropped": 1, "left_session": 1, "right_after": 1}
+    assert one["things"]["ad_placement"]["level_interstitial"]["players"] == 2
+    assert one["things"]["powerups"]["shuffle"]["players"] == 1
+    assert one["things"]["fails"]["OutOfMoves"]["players"] == 1
+    assert data["kinds"]["ads"] == ["Interstitial"]
+    # c left the first session without starting level 2 there, then came back and did.
+    assert one["left_session"] == 2 and one["dropped"] == 1
