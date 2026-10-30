@@ -394,3 +394,28 @@ def test_semantically_equal_filters_share_one_specification(prepared):
         views.answer(storage, game, "summary", (days, filters, 0), lambda: {})
     with storage.connect(storage.game_path(game)) as db:
         assert db.execute("SELECT count(*) FROM analytics_views").fetchone()[0] == 1
+
+
+def test_prepared_read_logs_fallback_and_hit(prepared, caplog):
+    storage, game, days = prepared
+    parts = (days, HIDE_TEST, 345)
+    with caplog.at_level("INFO", logger="avn_analytics.views"):
+        views.answer(storage, game, "summary", parts, lambda: "live")
+        assert "fallback=missing" in caplog.text
+        finish(storage, game)
+        caplog.clear()
+        views.answer(storage, game, "summary", parts, lambda: "live")
+        assert "source=prepared" in caplog.text
+        caplog.clear()
+        with storage.connect(storage.game_path(game)) as db:
+            db.execute("UPDATE analytics_views SET source_at=0")
+        assert views.answer(storage, game, "summary", parts, lambda: "live") == "live"
+        assert "fallback=expired" in caplog.text
+
+
+def test_default_read_mode_is_facts(monkeypatch, tmp_path):
+    from avn_analytics.config import Settings
+
+    monkeypatch.delenv("AVN_ANALYTICS_READ_MODE", raising=False)
+    assert Settings(data_dir=tmp_path).analytics_read_mode == "facts"
+    assert Settings.from_env().analytics_read_mode == "facts"

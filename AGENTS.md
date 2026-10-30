@@ -70,6 +70,7 @@ tests through `scripts/check.sh` (or `. scripts/_env.sh` first); a bare
 
 ## Design preferences
 
+- NutBot opens and closes with one smooth horizontal slide of the whole panel; no bounce, scale or nested panel animation.
 - NutBot keeps the message field and Send visible above its settings; controls reserve their own space and never overlap or squeeze labels into slivers.
 - NutBot Usage shows allowance limits and reset times only; omit token, cost and answer totals.
 - NutBot keeps chat history above the conversation, settings away from the composer, one slash per command, and no Cheap shortcut or bottom help paragraphs.

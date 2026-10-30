@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Rea
 import { useNavigate, useRouterState, useSearch } from '@tanstack/react-router';
 import { NutBotPanel, useAppContainer, type AnswerBlock, type NbMessage, type SlashCommand } from '@avn/ui';
 import { queryClient, read, readKey, useRead, write } from '@/api';
+import { NutBotDock } from './NutBotDock';
 import { useCurrentGame } from '@/app/GameSection';
 import { useNutBot } from '@/app/nutbot';
 import { useSession } from '@/app/session';
@@ -635,7 +636,7 @@ export function NutBotHost(): ReactElement | null {
 
   const panel = (
     <NutBotPanel
-      open={open} onClose={close} messages={messages} busy={busy} onSend={(text, picked) => void send(picked?.command ? `${picked.command.name} ${text}`.trim() : text)} commands={commands} onStop={stop} onNew={newChat}
+      embedded open onClose={close} messages={messages} busy={busy} onSend={(text, picked) => void send(picked?.command ? `${picked.command.name} ${text}`.trim() : text)} commands={commands} onStop={stop} onNew={newChat}
       context={editable} onToggleContext={toggleContext} onContext={changeContext} suggestions={suggestionsFor(section)}
       subtitle={`${game.name} · ${platformLabel(game.platform)}${chatQuery.data?.chat.title && chatQuery.data.chat.id === chatId ? ` · ${chatQuery.data.chat.title}` : ''}`} face={<NbFace state={busy ? 'thinking' : 'idle'} />}
       leading={leading} closeButton={false}
@@ -644,5 +645,5 @@ export function NutBotHost(): ReactElement | null {
       draft={draft} onDraftChange={setDraft}
     />
   );
-  return <div className={`nb-dock${docked ? '' : ' floating'}${layout.wide ? ' wide' : ''}`} hidden={!open}>{panel}</div>;
+  return <NutBotDock open={open} className={`nb-dock${docked ? '' : ' floating'}${layout.wide ? ' wide' : ''}`}>{panel}</NutBotDock>;
 }

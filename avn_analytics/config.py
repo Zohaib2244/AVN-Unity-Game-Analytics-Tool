@@ -25,7 +25,7 @@ class Settings:
     # Where dashboards read events (see analytics.py): legacy = the raw events' JSON; facts = the
     # analytics facts of games whose facts are complete (others stay on legacy); prepared = also
     # answers the analytics worker prepared in advance, when they are fresh.
-    analytics_read_mode: str = "legacy"
+    analytics_read_mode: str = "facts"
     # The analytics worker (materialize.py). Whether a new installation starts it (afterwards the
     # admin's Start/Stop on the website wins), how many events it copies per transaction, how
     # often it brings prepared answers up to date, and how old (in seconds of new events) a
@@ -114,7 +114,7 @@ class Settings:
             requests_per_minute=int(os.environ.get("AVN_REQUESTS_PER_MINUTE", "120")),
             max_export_bytes=int(os.environ.get("AVN_MAX_EXPORT_BYTES", "268435456")),
             read_cache_seconds=int(os.environ.get("AVN_READ_CACHE_SECONDS", "60")),
-            analytics_read_mode=_text("AVN_ANALYTICS_READ_MODE", "legacy").lower(),
+            analytics_read_mode=_text("AVN_ANALYTICS_READ_MODE", "facts").lower(),
             analytics_worker_default_enabled=_flag("AVN_ANALYTICS_WORKER_DEFAULT_ENABLED", True),
             analytics_batch_rows=int(_text("AVN_ANALYTICS_BATCH_ROWS", "5000")),
             analytics_refresh_seconds=int(_text("AVN_ANALYTICS_REFRESH_SECONDS", "10")),

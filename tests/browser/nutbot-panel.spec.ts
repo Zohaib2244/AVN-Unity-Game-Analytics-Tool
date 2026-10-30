@@ -354,3 +354,56 @@ test('NutBot pins from the top left, shows at the right edge when unpinned and c
   await expect(page.locator('.nb-dock')).toBeVisible();
   await expect(page.locator('.nb-dock').getByRole('button', { name: 'Unpin NutBot', exact: true })).toBeVisible();
 });
+
+test('NutBot slides as one solid panel in both directions', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await mockNutBot(page);
+  await page.goto('/games/viewer-game/levels');
+  await expect(page.locator('.nb-launcher')).toBeEnabled();
+
+  const sampleSlide = (opening: boolean) => page.evaluate(async (opening) => {
+    if (opening) document.querySelector<HTMLButtonElement>('.nb-launcher')!.click();
+    else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', ctrlKey: true, bubbles: true }));
+    const frames: Array<{ x: number; width: number; opacity: string; innerTransform: string; inert: boolean }> = [];
+    const began = performance.now();
+    await new Promise<void>((resolve) => {
+      const sample = () => {
+        const dock = document.querySelector<HTMLElement>('.nb-dock');
+        if (dock) {
+          const box = dock.getBoundingClientRect();
+          frames.push({ x: box.x, width: box.width, opacity: getComputedStyle(dock).opacity,
+            innerTransform: getComputedStyle(dock.querySelector('.nb')!).transform, inert: dock.hasAttribute('inert') });
+        }
+        if (performance.now() - began < 450) requestAnimationFrame(sample);
+        else resolve();
+      };
+      requestAnimationFrame(sample);
+    });
+    return frames;
+  }, opening);
+
+  const entering = await sampleSlide(true);
+  expect(entering.length).toBeGreaterThan(2);
+  expect(entering[0]!.x - entering.at(-1)!.x).toBeGreaterThan(40);
+  const field = page.getByRole('textbox', { name: 'Message NutBot' });
+  await field.fill('Keep this draft');
+  const exiting = await sampleSlide(false);
+  expect(exiting.length).toBeGreaterThan(2);
+  expect(exiting.at(-1)!.x - exiting[0]!.x).toBeGreaterThan(40);
+  expect(exiting.some((frame) => frame.inert)).toBe(true);
+  for (const frames of [entering, exiting]) {
+    expect(frames.every((frame) => frame.opacity === '1' && frame.innerTransform === 'none')).toBe(true);
+    expect(Math.max(...frames.map((frame) => frame.width)) - Math.min(...frames.map((frame) => frame.width))).toBeLessThan(1);
+  }
+  await expect(page.locator('.nb-dock')).toHaveCount(0);
+  await page.locator('.nb-launcher').click();
+  await expect(field).toHaveValue('Keep this draft');
+});
+
+test('NutBot respects reduced motion when opening and closing', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await openNutBot(page);
+  await expect(page.locator('.nb-dock')).toHaveCSS('transform', 'none');
+  await page.getByRole('textbox', { name: 'Message NutBot' }).press('Escape');
+  await expect(page.locator('.nb-dock')).toHaveCount(0);
+});

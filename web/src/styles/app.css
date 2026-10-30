@@ -21,7 +21,6 @@
 /* NutBot owns one viewport-height column at the side. History, reports and settings are header views
    (.nb-pane) above the composer. */
 .nb-dock{position:fixed;z-index:66;inset:0 0 0 auto;width:min(420px,96vw);display:flex;flex-direction:column;background:var(--panel);border-left:var(--bw) solid var(--line-strong)}
-.nb-dock[hidden]{display:none}
 .nb-dock.wide{width:min(760px,60vw);box-shadow:-24px 0 50px -24px rgba(0,0,0,.45)}
 /* Locked: docked, and the page makes room for it. Unlocked: a floating card over the page, nothing moves. */
 @container app (min-width: 901px) {

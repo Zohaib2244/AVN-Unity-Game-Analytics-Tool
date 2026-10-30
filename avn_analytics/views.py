@@ -7,6 +7,7 @@ context/definition changes discard staging. No read snapshot survives a worker t
 
 import hashlib
 import json
+import logging
 import sqlite3
 import time
 import zlib
@@ -16,6 +17,8 @@ from dataclasses import replace
 from datetime import datetime
 
 from . import analytics
+
+logger = logging.getLogger(__name__)
 
 VERSION = 2
 EXPIRY = 86400
@@ -115,6 +118,7 @@ def answer(storage, game_id, kind, parts, compute):
     if storage.settings.analytics_read_mode != "prepared":
         return compute()
     storage.get_game(game_id)
+    began = time.monotonic()
     normalized = json.loads(json.dumps(parts))
     filters_at = 2 if kind == "levels" else 1
     normalized[filters_at] = {
@@ -139,17 +143,26 @@ def answer(storage, game_id, kind, parts, compute):
                 "ORDER BY touched DESC, key LIMIT -1 OFFSET ?)",
                 (storage.settings.analytics_active_views,),
             )
-        eligible = (
-            row is not None
-            and row["answer"] is not None
-            and analytics.facts_ready(connection)
-            and now - row["source_at"] <= storage.settings.analytics_freshness_seconds
-            and row["fingerprint"] == fingerprint(storage, game_id, connection)
-            # Context changes reinterpret old events; unlike new events they cannot be stale.
-            and contexts_compatible(connection, row["contexts"], row["watermark"])
-        )
-    if eligible and _running(storage, now):
+        reason = None
+        if row is None or row["answer"] is None:
+            reason = "missing"
+        elif not analytics.facts_ready(connection):
+            reason = "facts_not_ready"
+        elif now - row["source_at"] > storage.settings.analytics_freshness_seconds:
+            reason = "expired"
+        elif row["fingerprint"] != fingerprint(storage, game_id, connection):
+            reason = "definitions_changed"
+        elif not contexts_compatible(connection, row["contexts"], row["watermark"]):
+            reason = "context_changed"
+    if reason is None and not _running(storage, now):
+        reason = "worker_unavailable"
+    if reason is None:
         result = unpack(row["answer"])
+        logger.info(
+            "analytics_read kind=%s source=prepared elapsed_ms=%.1f",
+            kind,
+            (time.monotonic() - began) * 1000,
+        )
         if kind == "levels":
             return restore_scan(result)
         # Confidence is presentation state, so a threshold edit needs no event rebuild.
@@ -158,7 +171,15 @@ def answer(storage, game_id, kind, parts, compute):
             minimum_players=threshold, low_sample=0 < result["players"] < threshold
         )
         return result
-    return compute()
+    try:
+        return compute()
+    finally:
+        logger.info(
+            "analytics_read kind=%s source=live fallback=%s elapsed_ms=%.1f",
+            kind,
+            reason,
+            (time.monotonic() - began) * 1000,
+        )
 
 
 def restore_scan(scan):

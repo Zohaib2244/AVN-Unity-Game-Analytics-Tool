@@ -268,3 +268,29 @@ Benchmark reports are synthetic evidence, not commands to run against a deployed
 The facts CLI's `status` and `prepare --dry-run` use read-only SQLite connections, including when
 analytics tables have not been installed. They do not initialize a missing data directory or schema.
 Regression tests verify unchanged database hashes on an older synthetic installation.
+
+## Dashboard read performance
+
+New configurations default to `facts`; existing explicit `legacy` settings still take precedence.
+Facts are used only after backfill and verification, with raw-event fallback for incomplete games.
+For persistent Overview and Levels answers, set `AVN_ANALYTICS_READ_MODE=prepared` in the
+deployment environment and keep the worker running. The owner applies deployment changes.
+Check worker lag against `AVN_ANALYTICS_FRESHNESS_SECONDS` before increasing retained views.
+
+The `avn_analytics.views` logger emits INFO records for prepared lookups: `kind`,
+`source`, and `elapsed_ms`. Live fallbacks additionally include `fallback`: missing,
+facts_not_ready, expired, definitions_changed, context_changed, or worker_unavailable.
+Elapsed time includes lookup and live computation on a miss. These records cover lookups
+that reach the prepared layer, not browser or response-cache hits; enable INFO for this logger
+in the server logging configuration when diagnosing misses. No player IDs or filter values
+are logged.
+
+Browser analytics remain fresh for 30 seconds; dictionary and saved funnel/group lists use five
+minutes. Writes invalidate affected game reads, with isolated invalidation for keys, saved
+funnels/groups and chat history. Global/access changes retain broad invalidation. Uncertain write
+failures also reconcile affected reads because the server may already have committed.
+Other browsers see configuration changes when their freshness window expires.
+
+Use `scripts/benchmark.py` with a synthetic scratch directory to compare cold and repeated
+reads and inspect query plans before adding indexes. Never run synthetic generation on a real
+data directory. Longer cache windows improve reuse, not the first computation.
