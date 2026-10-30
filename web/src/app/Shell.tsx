@@ -57,6 +57,7 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
   const [auto, setAuto] = useState<number>(() => Number(localStorage.getItem(AUTO_KEY) || 0));
   const bellButton = useRef<HTMLButtonElement>(null);
   const refreshButton = useRef<HTMLButtonElement>(null);
+  const refreshMenuButton = useRef<HTMLButtonElement>(null);
   const switchAnchor = useRef<HTMLElement | null>(null);
   const openSwitcher = useCallback((from?: HTMLElement | null) => {
     switchAnchor.current = from ?? document.querySelector<HTMLElement>('.crumbs > span:nth-child(2) > .crumb-link') ?? document.querySelector<HTMLElement>('.game-switch, .m-switch');
@@ -158,20 +159,19 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
             ) : <><span className="mark" aria-hidden="true"><BrandMark size={24} /></span><b>{title}</b></>}
             tools={<>
               <SearchButton onClick={() => setPalette(true)} />
-              <span className="refresh-wrap"><button ref={refreshButton} type="button" className={`icon-btn${refreshing ? ' spinning' : ''}`} aria-haspopup="menu" aria-expanded={refreshMenu} title="Refresh and auto-refresh" aria-label="Refresh and auto-refresh" onClick={() => setRefreshMenu((open) => !open)}><Ico name="refresh" size={16} />{auto ? <span className="auto-tag">{auto}m</span> : null}</button></span>
+              <span className="refresh-cluster"><span className="refresh-updated">Updated {relativeTime(updated)}</span><button ref={refreshButton} type="button" className={`icon-btn${refreshing ? ' spinning' : ''}`} title="Refresh now" aria-label="Refresh now" onClick={() => void refresh()}><Ico name="refresh" size={16} /></button><button ref={refreshMenuButton} type="button" className="icon-btn refresh-menu-button" aria-haspopup="menu" aria-expanded={refreshMenu} title="Refresh options" aria-label="Refresh options" onClick={() => setRefreshMenu((open) => !open)}><Ico name="chevron" size={13} /></button></span>
               <IconButton icon="link" label="Copy link to this view" onClick={() => void copyLink()} />
               <BellButton ref={bellButton} onClick={() => setBell((open) => !open)} />
               <button type="button" className="icon-btn" title="Switch light/dark theme" aria-label="Switch light/dark theme" onClick={toggleTheme}><Ico name={theme === 'light' ? 'moon' : 'sun'} size={16} /></button>
-              {nutbot.usable && !nutbot.open ? <button type="button" className="btn sm nb-launcher" onClick={nutbot.toggle}><Ico name="sparkle" size={14} /> NutBot</button> : null}
+              {nutbot.usable ? <button type="button" className="btn sm nb-launcher" aria-hidden={nutbot.open || undefined} tabIndex={nutbot.open ? -1 : undefined} onClick={nutbot.toggle}><Ico name="sparkle" size={14} /> NutBot</button> : null}
             </>} />
           <Page pageKey={pathname}>
             <div id="main">{children}</div>
-            <footer className="footnote"><span><Ico name="shield" size={13} /> Your data stays on your server.</span><button type="button" className="fresh" onClick={() => void refresh()} title="Refresh this page"><Ico name="refresh" size={13} /><span>Updated {relativeTime(updated)}</span></button></footer>
           </Page>
         </Workspace>
         <MoreSheet open={sheet} onClose={() => setSheet(false)} sections={sheetSections} onSelect={(id) => (game && labels[id] ? onNav(id) : onAccount(id))} />
-        <Popover position="fixed" open={refreshMenu} onClose={() => setRefreshMenu(false)} anchor={refreshButton} width={240}>
-          <div className="pop-scroll"><button type="button" className="opt" onClick={() => { setRefreshMenu(false); void refresh(); }}><span className="tick"><Ico name="refresh" size={15} /></span><span className="ot">Refresh now</span><span className="oc">this page</span></button><div className="pop-grp"><span className="eyebrow">Auto-refresh</span></div></div>
+        <Popover position="fixed" open={refreshMenu} onClose={() => setRefreshMenu(false)} anchor={refreshMenuButton} width={240}>
+          <div className="pop-scroll"><p className="refresh-updated">Updated {relativeTime(updated)}</p><button type="button" className="opt" onClick={() => { setRefreshMenu(false); void refresh(); }}><span className="tick"><Ico name="refresh" size={15} /></span><span className="ot">Refresh now</span><span className="oc">this page</span></button><div className="pop-grp"><span className="eyebrow">Auto-refresh</span></div></div>
           <SingleSelect options={[{ value: '0', label: 'Off' }, { value: '1', label: 'Every minute' }, { value: '5', label: 'Every 5 minutes' }, { value: '15', label: 'Every 15 minutes' }]} value={String(auto)} onChange={(value) => { setRefreshMenu(false); setAutoRefresh(Number(value)); }} />
         </Popover>
         <GameSwitcher open={switcher} onClose={() => setSwitcher(false)} anchor={switchAnchor} games={overview.games} current={game} onPick={(next) => navigate({ to: gamePath(next, section) })} onAll={() => navigate({ to: '/' })} onRegister={canManageGames ? () => navigate({ to: '/games/new' }) : undefined} />

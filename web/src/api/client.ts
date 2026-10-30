@@ -91,7 +91,7 @@ export function slowLoadMessage(seconds: number, usual: number | null = null): s
   if (seconds < 2) return '';
   const last = usual ? ` Last time it took about ${Math.max(1, Math.round(usual / 1000))} s.` : '';
   if (seconds < 10) return `Reading your events. The first load takes a few seconds, then this page opens instantly for a while.${last}`;
-  if (seconds < 30) return `Still working. This range has a lot of events; fewer days load faster.${last}`;
+  if (seconds < 30) return `Still loading analytics data for this range.${last}`;
   return 'This is taking longer than usual. It stops after a minute and lets you try again, or pick fewer days.';
 }
 

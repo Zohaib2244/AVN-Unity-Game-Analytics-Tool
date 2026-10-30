@@ -31,7 +31,22 @@ export function downloadCSV(name: string, rows: Array<Array<string | number | nu
 
 /** Copies text, telling the caller whether the browser allowed it. */
 export async function copyText(text: string): Promise<boolean> {
-  try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* HTTP previews need the selection-based fallback. */ }
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const field = document.createElement('textarea');
+  field.value = text;
+  field.readOnly = true;
+  field.className = 'clipboard-fallback';
+  // Keep the temporary selection inside an open modal's focus trap.
+  (active?.closest('[role="dialog"]') ?? document.body).appendChild(field);
+  try {
+    field.select();
+    return document.execCommand('copy');
+  } catch { return false; }
+  finally {
+    field.remove();
+    active?.focus({ preventScroll: true });
+  }
 }
 
 const PUSHED = 'avn-store-pushed';

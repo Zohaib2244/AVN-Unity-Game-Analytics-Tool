@@ -102,6 +102,7 @@ test('a player opened from Players is a page with a way back, not a popup', asyn
   // The copy icon confirms itself: a tick, then back.
   await view.getByRole('button', { name: 'Copy player ID' }).click();
   await expect(view.getByRole('button', { name: 'Copied' })).toBeVisible();
+  await expect(page.locator('.toast').filter({ hasText: 'Player ID copied.' })).toHaveCount(0);
   await expect(view.getByRole('button', { name: 'Copy player ID' })).toBeVisible();
 
   // Ready-made highlights: levels as started / completed / failed, ads by kind; only started events light up.
@@ -167,4 +168,39 @@ test('Levels: Occurrence & drop shows ads, powerups and fail reasons and what pl
   await page.reload();
   await expect(page.getByRole('group', { name: 'Of' }).getByRole('button', { name: 'Fail reasons' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('region', { name: 'Drop by level' })).toBeVisible();
+});
+
+test('background dismissal fades the player popup with its contents before removal', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('avn-boot-day', new Date().toISOString().slice(0, 10)));
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await installPlayerFixture(page);
+  await page.goto('/games/viewer-game/levels?level=12&player=player-one');
+  const dialog = page.getByRole('dialog', { name: 'Player details', exact: true });
+  await expect(dialog).toBeVisible();
+  const capture = page.evaluate(async () => {
+    const frames: Array<{ closed: boolean; opacity: number; player: string | null }> = [];
+    // Start timing at the actual click, after Playwright finishes delivering input.
+    await new Promise<void>((resolve) => {
+      document.addEventListener('pointerdown', () => resolve(), { once: true });
+      document.documentElement.setAttribute('data-player-close-capture', 'ready');
+    });
+    document.documentElement.removeAttribute('data-player-close-capture');
+    const began = performance.now();
+    await new Promise<void>((resolve) => {
+      const frame = () => {
+        const dialog = document.querySelector('.player-view-dialog');
+        if (dialog) frames.push({ closed: dialog.getAttribute('data-state') === 'closed', opacity: parseFloat(getComputedStyle(dialog).opacity), player: dialog.querySelector('.player-view-id')?.textContent ?? null });
+        if (performance.now() - began < 500) requestAnimationFrame(frame);
+        else resolve();
+      };
+      requestAnimationFrame(frame);
+    });
+    return frames;
+  });
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-player-close-capture'));
+  await page.mouse.click(4, 4);
+  const frames = await capture;
+  expect(frames.some((frame) => frame.closed && frame.opacity > 0 && frame.opacity < 1)).toBe(true);
+  expect(frames.filter((frame) => frame.closed).every((frame) => frame.player === 'player-one')).toBe(true);
+  await expect(dialog).toHaveCount(0);
 });

@@ -516,9 +516,7 @@ export function NutBotHost(): ReactElement | null {
   // One sidebar button pins and unpins the panel (Zen's sidebar toggle). Unpinned, the mouse hides it; without a
   // mouse (touch), a Hide button does.
   const pinLabel = layout.locked ? 'Unpin NutBot' : 'Pin NutBot';
-  const pinTitle = layout.locked
-    ? (hovers ? 'Unpin: float over the page and hide when the mouse moves away (show it again at the right edge)' : 'Unpin: float over the page')
-    : 'Pin: keep beside the page';
+  const pinTitle = pinLabel;
   const leading = (
     <>
       {hovers ? null : <button type="button" className="icon-btn nb-hide" aria-label="Hide NutBot" title="Hide NutBot" onClick={close}><Ico name="close" size={16} /></button>}

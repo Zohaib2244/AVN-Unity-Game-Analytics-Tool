@@ -74,7 +74,7 @@ tests through `scripts/check.sh` (or `. scripts/_env.sh` first); a bare
 - NutBot keeps the message field and Send visible above its settings; controls reserve their own space and never overlap or squeeze labels into slivers.
 - NutBot Usage shows allowance limits and reset times only; omit token, cost and answer totals.
 - NutBot keeps chat history above the conversation, settings away from the composer, one slash per command, and no Cheap shortcut or bottom help paragraphs.
-- Player details always start on Raw Events, keep a steady size across tabs, and offer a copy icon for the full player ID that turns into a tick with a toast.
+- Player details always start on Raw Events, keep a steady size across tabs, and offer a copy icon for the full player ID that briefly animates into a tick without a success toast. The Levels popup fades out when dismissed, including by clicking its background.
 
 - A player opened from Players is a page (NutBot stays usable beside it); the centred viewer is only for players opened from Levels, which does not show NutBot. Never move the viewer to the screen edge or stack it beside NutBot.
 - NutBot's sidebar (pin) button sits at the start of its header, never at the screen edge, and works like Zen's sidebar: pinned it docks and the page makes room; unpinned it floats, shows when the mouse rests on the screen's right edge and hides when the mouse moves away (touch devices get a Hide button instead). The launcher steps aside while the panel is open, so "NutBot" is never shown twice.

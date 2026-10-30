@@ -87,7 +87,7 @@ describe('PlayerViewer', () => {
     render(<PlayerViewer game={game} player="player-one" filters={filters} onClose={() => {}} />);
     await user.click(screen.getByRole('button', { name: 'Copy player ID' }));
     expect(writeText).toHaveBeenCalledWith('player-one');
-    expect(toast).toHaveBeenCalledWith('Player ID copied.');
+    expect(toast).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog', { name: 'Player details' })).toBeVisible();
   });
 
@@ -96,12 +96,12 @@ describe('PlayerViewer', () => {
     expect(screen.queryByRole('button', { name: 'Ask NutBot' })).toBeNull();
   });
 
-  it('the copy icon turns into a tick and says what was copied', async () => {
+  it('the copy icon confirms success in place without a toast', async () => {
     const user = userEvent.setup();
     render(<PlayerViewer game={game} player="player-one" filters={filters} onClose={() => {}} />);
     await user.click(screen.getByRole('button', { name: 'Copy player ID' }));
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeVisible();
-    expect(toast).toHaveBeenCalledWith('Player ID copied.');
+    expect(toast).not.toHaveBeenCalled();
   });
 });
 

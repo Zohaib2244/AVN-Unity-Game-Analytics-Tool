@@ -407,3 +407,34 @@ test('NutBot respects reduced motion when opening and closing', async ({ page })
   await page.getByRole('textbox', { name: 'Message NutBot' }).press('Escape');
   await expect(page.locator('.nb-dock')).toHaveCount(0);
 });
+
+test('NutBot reserves its launcher space and returns the page smoothly when unpinned', async ({ page }) => {
+  test.skip(page.viewportSize()!.width <= 900, 'Docked page layout is used on wide screens.');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await mockNutBot(page);
+  await page.goto('/games/viewer-game/levels');
+  const launcher = page.locator('.nb-launcher');
+  await expect(launcher).toBeVisible();
+  const before = await page.locator('.tools').boundingBox();
+  await launcher.click();
+  await expect(page.getByRole('textbox', { name: 'Message NutBot' })).toBeFocused();
+  await expect(launcher).toBeHidden();
+  expect((await page.locator('.tools').boundingBox())!.width).toBeCloseTo(before!.width, 0);
+  await expect.poll(() => page.locator('.app').evaluate((el) => parseFloat(getComputedStyle(el).paddingRight))).toBe(420);
+  const values = await page.evaluate(async () => {
+    document.querySelector<HTMLButtonElement>('.nb-pin')!.click();
+    const values: number[] = [];
+    const began = performance.now();
+    await new Promise<void>((resolve) => {
+      const frame = () => {
+        values.push(parseFloat(getComputedStyle(document.querySelector('.app')!).paddingRight));
+        if (performance.now() - began < 400) requestAnimationFrame(frame);
+        else resolve();
+      };
+      requestAnimationFrame(frame);
+    });
+    return values;
+  });
+  expect(values.some((value) => value > 5 && value < 415)).toBe(true);
+  expect(values.at(-1)).toBe(0);
+});

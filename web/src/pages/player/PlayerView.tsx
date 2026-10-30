@@ -73,8 +73,13 @@ export function PlayerPage({ game, player, filters, browse, onBack }: { game: Ga
 
 export function PlayerViewer({ game, player, filters, browse, onClose }: { game: Game; player: string | null; filters: ActiveFilters; browse?: PlayerBrowse; onClose: () => void }): ReactElement {
   const open = player != null;
+  // Radix retains the closing surface while it fades. Keep its contents steady until it unmounts.
+  const snapshot = useRef({ player, browse });
+  if (open) snapshot.current = { player, browse };
+  const shownPlayer = player ?? snapshot.current.player;
+  const shownBrowse = open ? browse : snapshot.current.browse;
   const body = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (body.current) body.current.scrollTop = 0; }, [player]);
+  useEffect(() => { if (player && body.current) body.current.scrollTop = 0; }, [player]);
 
   // Radix has no Dialog.Trigger here: the row lives on the page and the URL controls opening.
   // Restore its focus after the dialog finishes handing focus back on close.
@@ -93,31 +98,38 @@ export function PlayerViewer({ game, player, filters, browse, onClose }: { game:
     return () => { document.removeEventListener('click', remember, true); document.removeEventListener('keydown', remember, true); };
   }, [open]);
   useEffect(() => {
-    const frame = wasOpen.current && !open ? requestAnimationFrame(() => {
+    let frame: number | undefined;
+    const restore = () => { frame = requestAnimationFrame(() => {
       if (trigger.current?.isConnected) trigger.current.focus({ preventScroll: true });
       const spot = origin.current;
       if (spot && (window.scrollX !== spot.x || window.scrollY !== spot.y)) window.scrollTo({ left: spot.x, top: spot.y, behavior: 'instant' });
-    }) : null;
+    }); };
+    const closing = document.querySelector<HTMLElement>('.player-view-dialog[data-state="closed"]');
+    const animated = closing && getComputedStyle(closing).animationName === 'player-viewer-out';
+    if (wasOpen.current && !open) {
+      if (animated) closing.addEventListener('animationend', restore, { once: true });
+      else restore();
+    }
     wasOpen.current = open;
-    return () => { if (frame != null) cancelAnimationFrame(frame); };
+    return () => { closing?.removeEventListener('animationend', restore); if (frame != null) cancelAnimationFrame(frame); };
   }, [open]);
 
   return (
-    <DialogShell open={open} onOpenChange={(next) => { if (!next) onClose(); }} title="Player details">
+    <DialogShell open={open} onOpenChange={(next) => { if (!next) onClose(); }} title="Player details" className="player-view-dialog">
       <div className="player-view">
         <header className="player-view-head">
           <div className="player-view-identity">
-            <span className="player-view-id mono">{player}</span>
-            {player ? <CopyButton text={player} label="Copy player ID" done="Player ID copied." /> : null}
+            <span className="player-view-id mono">{shownPlayer}</span>
+            {shownPlayer ? <CopyButton text={shownPlayer} label="Copy player ID" done="Player ID copied." /> : null}
           </div>
           <div className="player-view-tools">
             <button type="button" className="button small-button player-view-close" onClick={onClose}>Close ×</button>
           </div>
-          {browse && player ? <BrowseBar browse={browse} player={player} /> : null}
+          {shownBrowse && shownPlayer ? <BrowseBar browse={shownBrowse} player={shownPlayer} /> : null}
         </header>
         <div className="player-view-main">
           <div className="player-view-body" ref={body}>
-            {player ? <PlayerDetails game={game} player={player} filters={filters} /> : null}
+            {shownPlayer ? <PlayerDetails game={game} player={shownPlayer} filters={filters} /> : null}
           </div>
         </div>
       </div>
