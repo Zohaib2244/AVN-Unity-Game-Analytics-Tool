@@ -68,6 +68,15 @@ def add_website(app):
     @app.middleware("http")
     async def browser_headers(request, call_next):
         response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/assets/build/") and response.status_code == 200:
+            # Built files are named after a hash of their content, so a new build is a new name
+            # and the old one can be kept for good (the page itself is never cached, below).
+            response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+        elif path.startswith("/assets/") and response.status_code in (200, 304):
+            # Fonts, icons and the theme script keep their names: reuse them, but ask each time
+            # (a small "not modified" answer when nothing changed).
+            response.headers.setdefault("Cache-Control", "no-cache")
         response.headers.setdefault("Cache-Control", "no-store")
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"

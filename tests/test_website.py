@@ -52,6 +52,18 @@ def test_pages_assets_and_api_separation(website):
     assert client.get("/assets/theme.js").status_code == 200
     assert client.get("/assets/icons/avn-analytics.svg").status_code == 200
     assert client.get("/v1/overview").status_code == 200
+    # Caching: the page and the API are never kept, hashed build files are kept for good, and
+    # the files that keep their names are checked each time (a 304 when they haven't changed).
+    assert client.get("/").headers["cache-control"] == "no-store"
+    assert client.get("/v1/overview").headers["cache-control"] == "no-store"
+    for src in scripts:
+        if src.startswith("/assets/build/"):
+            assert "immutable" in client.get(src).headers["cache-control"]
+    theme = client.get("/assets/theme.js")
+    assert theme.headers["cache-control"] == "no-cache"
+    again = client.get("/assets/theme.js", headers={"If-None-Match": theme.headers["etag"]})
+    assert again.status_code == 304 and again.headers["cache-control"] == "no-cache"
+    assert client.get("/assets/build/missing-00000000.js").headers["cache-control"] == "no-store"
     with TestClient(create_app(settings)) as ingest:
         assert ingest.get("/").status_code == 404
         assert ingest.get("/assets/theme.js").status_code == 404

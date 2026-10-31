@@ -40,6 +40,7 @@ Edit `.env`:
 | `SQLITE_TMPDIR` | SQLite query scratch directory **inside** the containers. Defaults to `/data/sqlite-tmp` on the disk-backed data mount; startup creates and write-checks it. If changed, mount a writable local disk at that location too. |
 | `AVN_REQUESTS_PER_MINUTE` | Per-API-key rate limit. Default 120; raise it if many players share one key. |
 | `AVN_READ_CACHE_SECONDS` | How long the dashboard reuses a slow answer. Default 60; `0` turns it off. New events appear once it has passed. |
+| `AVN_READ_DEADLINE_SECONDS` | The longest a dashboard read may run before the server stops it (the page then says it took too long). Default 120; `0` means no limit. A read is also stopped as soon as the browser has gone away. |
 | `AVN_ANALYTICS_READ_MODE` | `legacy` (default) reads the raw events; `facts` reads the analytics facts of each game whose facts are complete, with the same answers, faster; `prepared` also reuses fresh exact worker answers. See [the analytics pipeline](docs/analytics-pipeline.md) for the rollout. |
 | `AVN_BIND_HOST` | Address the ports bind to. Default `127.0.0.1` (this machine only); use `0.0.0.0` to listen on all interfaces, for example when a proxy on another host forwards to it. |
 | `AVN_INGEST_PORT` / `AVN_ADMIN_PORT` | Host ports. Defaults 8100 and 8101. |

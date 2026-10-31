@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from . import analytics, avn_events_standard, insights, materialize, views
+from . import analytics, avn_events_standard, insights, materialize, readbudget, views
 from .config import Settings
 from .models import Batch, EventDefinition, GameCreate, GameUpdate, timestamp
 from .readcache import ReadCache
@@ -35,11 +35,16 @@ class Storage:
     def connect(self, path):
         connection = sqlite3.connect(path, timeout=5)
         connection.row_factory = sqlite3.Row
+        budget = readbudget.watch(connection)  # only dashboard reads have one (readbudget.py)
         try:
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA synchronous=FULL")
             with connection:
                 yield connection
+        except sqlite3.OperationalError as error:
+            if budget is not None and budget.spent() and "interrupted" in str(error):
+                raise HTTPException(504, "This took too long. Try fewer days or retry.") from None
+            raise
         finally:
             connection.close()
 

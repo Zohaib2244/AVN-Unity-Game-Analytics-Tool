@@ -4,6 +4,7 @@ import json
 import sqlite3
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
@@ -3418,6 +3419,53 @@ def test_mapping_status_flags_missing_level_moments_and_silent_rules(backend):
     assert [(i["kind"], i["concept"], i["event"]) for i in status["issues"]] == [
         ("silent", "level_failed", "StageEnd")
     ]
+
+
+def test_mapping_status_never_reads_the_whole_history_for_event_setup_details(backend, monkeypatch):
+    """The overview notice runs on every visit. It needs only the verdict, so it must not run the
+    queries that count every event and parameter the game ever sent (those are for Event setup)."""
+    from avn_analytics import events
+
+    admin, ingest, _ = backend
+    game = register(admin)
+    base = f"/v1/games/{game['id']}"
+    send(
+        ingest,
+        game,
+        [
+            event(name="StageBegin", params={"stage": 1}),
+            event(name="StageEnd", params={"stage": 1}),
+            event(name="StageEnd", params={"stage": 2}, device_id="other"),
+        ],
+    )
+    assert admin.put(
+        f"{base}/dictionary/StageBegin/mappings",
+        json={"canonical": [{"action": "level_started", "number_param": "stage"}]},
+    ).is_success
+    storage = admin.app.state.storage
+    original = storage.connect
+    statements = []
+
+    @contextmanager
+    def traced(path):
+        with original(path) as connection:
+            connection.set_trace_callback(statements.append)
+            yield connection
+
+    monkeypatch.setattr(storage, "connect", traced)
+    status = admin.get(f"{base}/mappings/status").json()
+    monkeypatch.undo()
+    assert status["has_events"] is True
+    assert not [sql for sql in statements if "json_each" in sql or "GROUP BY" in sql], statements
+
+    light = events.mappings(storage, game["id"], detail=False)
+    full = events.mappings(storage, game["id"])
+    # The verdict reads the same rows either way; only Event setup's extras are left out.
+    assert light["concepts"] == full["concepts"]
+    assert light["scanned"] == full["scanned"] and light["conflicts"] == full["conflicts"]
+    assert light["events"] == [] and light["versions"] == []
+    assert {item["name"] for item in full["events"]} >= {"StageBegin", "StageEnd"}
+    assert full["versions"]
 
 
 def _conditional_activity(admin, game, conditions=None, **overrides):

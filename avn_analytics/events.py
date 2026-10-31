@@ -397,10 +397,13 @@ def _suggestions(name, params, examples, app_version):
     return rules
 
 
-def mappings(storage, game_id, app_version=""):
+def mappings(storage, game_id, app_version="", detail=True):
     """Which of the dashboards' shared moments each event of the game stands for: the mappings
     the team set, and what is understood on its own (session_start, level events with a level
-    parameter such as `Started: 3`)."""
+    parameter such as `Started: 3`).
+
+    `detail=False` leaves out what only the Event setup page shows (the versions, and each event's
+    count and parameters): those read the game's whole history, and a verdict doesn't need them."""
     storage.get_game(game_id)
     definitions = storage.get_dictionary(game_id)
     labeler = stories.Labeler(definitions)
@@ -408,35 +411,37 @@ def mappings(storage, game_id, app_version=""):
     conflicts = defaultdict(int)
     scanned = 0
     scope_args = (app_version, app_version)
+    versions, observed, params = [], {}, {}
+    examples = defaultdict(lambda: defaultdict(list))
     with storage.connect(storage.game_path(game_id)) as connection:
         source = read_source(storage, connection)
         rows_from, version = source.table, source.envelope("app_version")
         scope = f"(? = '' OR {version} = ?)"
-        versions = [
-            row[0]
+        if detail:
+            versions = [
+                row[0]
+                for row in connection.execute(
+                    f"SELECT DISTINCT {version} FROM {rows_from} WHERE {version} IS NOT NULL"
+                )
+            ]
+            observed = {
+                row["name"]: dict(row)
+                for row in connection.execute(
+                    "SELECT name, count(*) AS events, max(client_ts) AS last_seen "
+                    f"FROM {rows_from} WHERE {scope} GROUP BY name",
+                    scope_args,
+                )
+            }
+            params = _observed_params(connection, app_version, source)
             for row in connection.execute(
-                f"SELECT DISTINCT {version} FROM {rows_from} WHERE {version} IS NOT NULL"
-            )
-        ]
-        observed = {
-            row["name"]: dict(row)
-            for row in connection.execute(
-                "SELECT name, count(*) AS events, max(client_ts) AS last_seen "
-                f"FROM {rows_from} WHERE {scope} GROUP BY name",
+                f"""SELECT name, p.key AS key, p.value AS value, count(*) AS count
+                   FROM {_each_param(source)}
+                   WHERE {scope} AND p.type IN ('text', 'integer', 'real')
+                   GROUP BY name, p.key, p.value ORDER BY count DESC LIMIT 4000""",
                 scope_args,
-            )
-        }
-        params = _observed_params(connection, app_version, source)
-        examples = defaultdict(lambda: defaultdict(list))
-        for row in connection.execute(
-            f"""SELECT name, p.key AS key, p.value AS value, count(*) AS count
-               FROM {_each_param(source)}
-               WHERE {scope} AND p.type IN ('text', 'integer', 'real')
-               GROUP BY name, p.key, p.value ORDER BY count DESC LIMIT 4000""",
-            scope_args,
-        ):
-            if row["key"] not in HIDDEN_PARAMS and len(examples[row["name"]][row["key"]]) < 6:
-                examples[row["name"]][row["key"]].append(str(row["value"])[:60])
+            ):
+                if row["key"] not in HIDDEN_PARAMS and len(examples[row["name"]][row["key"]]) < 6:
+                    examples[row["name"]][row["key"]].append(str(row["value"])[:60])
         rows = connection.execute(
             f"""SELECT name, {source.params} AS params, {source.player} AS player,
                        {version} AS app_version
@@ -577,7 +582,9 @@ def mappings(storage, game_id, app_version=""):
                 {**{key: {"events": 0} for key in definitions}, **observed}.items(),
                 key=lambda kv: -kv[1]["events"],
             )
-        ],
+        ]
+        if detail
+        else [],
     }
 
 
@@ -592,7 +599,7 @@ def mapping_status(storage, game_id):
     Something needs attention when a level moment the dashboards depend on has no event behind
     it, or when a mapping rule the team set matches nothing the game has sent.
     """
-    result = mappings(storage, game_id)
+    result = mappings(storage, game_id, detail=False)
     issues = []
     if result["scanned"]:
         for concept in result["concepts"]:

@@ -85,6 +85,7 @@ from .models import (
     timestamp,
 )
 from .nutbot import NutBot
+from .readbudget import ReadBudget
 from .storage import Storage
 from .website import add_website
 from .website import overview as website_overview
@@ -289,6 +290,12 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
 
     admin_api = APIRouter(dependencies=[Depends(current)])
     add_website(app)
+    # Outermost, so every dashboard read runs under its budget (see readbudget.py).
+    app.add_middleware(
+        ReadBudget,
+        seconds=settings.read_deadline_seconds,
+        max_body_bytes=settings.max_body_bytes,
+    )
 
     # The agent CLI that NutBot starts calls back here with a one-off token.
     def mcp_caller(request: Request):

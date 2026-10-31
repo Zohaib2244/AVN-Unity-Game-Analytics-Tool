@@ -22,6 +22,9 @@ class Settings:
     requests_per_minute: int = 120
     max_export_bytes: int = 268_435_456
     read_cache_seconds: int = 60  # how long a slow dashboard answer is reused; 0 turns it off
+    # The longest a dashboard read may run (it is also stopped when the browser goes away); 0 = no
+    # limit. The website itself gives up after 60 s, so this is only a ceiling.
+    read_deadline_seconds: int = 120
     # Where dashboards read events (see analytics.py): legacy = the raw events' JSON; facts = the
     # analytics facts of games whose facts are complete (others stay on legacy); prepared = also
     # answers the analytics worker prepared in advance, when they are fresh.
@@ -76,6 +79,8 @@ class Settings:
             raise ValueError("Invalid storage or request limits")
         if not 0 <= self.read_cache_seconds <= 3600:
             raise ValueError("AVN_READ_CACHE_SECONDS must be between 0 and 3600")
+        if not 0 <= self.read_deadline_seconds <= 3600:
+            raise ValueError("AVN_READ_DEADLINE_SECONDS must be between 0 and 3600")
         if self.analytics_read_mode not in ("legacy", "facts", "prepared"):
             raise ValueError("AVN_ANALYTICS_READ_MODE must be legacy, facts or prepared")
         for name, low, high in (
@@ -114,6 +119,7 @@ class Settings:
             requests_per_minute=int(os.environ.get("AVN_REQUESTS_PER_MINUTE", "120")),
             max_export_bytes=int(os.environ.get("AVN_MAX_EXPORT_BYTES", "268435456")),
             read_cache_seconds=int(os.environ.get("AVN_READ_CACHE_SECONDS", "60")),
+            read_deadline_seconds=int(os.environ.get("AVN_READ_DEADLINE_SECONDS", "120")),
             analytics_read_mode=_text("AVN_ANALYTICS_READ_MODE", "facts").lower(),
             analytics_worker_default_enabled=_flag("AVN_ANALYTICS_WORKER_DEFAULT_ENABLED", True),
             analytics_batch_rows=int(_text("AVN_ANALYTICS_BATCH_ROWS", "5000")),

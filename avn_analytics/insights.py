@@ -578,19 +578,24 @@ def retention(storage, game_id, start, end, filters, timezone_offset_minutes=0):
 def catalog(storage, game_id, start, end, filters=None):
     """Event names in the range, with their parameter keys and the most common values of each."""
     storage.get_game(game_id)
-    condition, args = where(start, end, filters)
     with storage.connect(storage.game_path(game_id)) as connection:
+        source = read_source(storage, connection)
+        condition, args = where(start, end, filters, source=source)
+        if source.facts:  # the parameters are kept beside the facts, without the rest of the event
+            each_param = "analytics_facts, json_each(analytics_facts.params) AS p"
+        else:
+            each_param = "events, json_each(events.payload, '$.params') AS p"
         events = {
             row["name"]: {"name": row["name"], "count": row["count"], "params": {}}
             for row in connection.execute(
-                f"SELECT name, count(*) AS count FROM events WHERE {condition} "
+                f"SELECT name, count(*) AS count FROM {source.table} WHERE {condition} "
                 "GROUP BY name ORDER BY count DESC",
                 args,
             )
         }
         for row in connection.execute(
             f"""SELECT name, p.key AS key, p.value AS value, count(*) AS count
-                FROM events, json_each(events.payload, '$.params') AS p
+                FROM {each_param}
                 WHERE {condition} GROUP BY name, p.key, p.value ORDER BY count DESC""",
             args,
         ):
