@@ -34,10 +34,11 @@ export type AnalyticsThresholds = { levels_min_players: number; funnels_min_play
 
 export type Overview = {
   games: Game[];
-  events: number;
-  today: number;
-  dau_today: number;
-  anonymous_today: number;
+  totals_ready?: boolean;
+  events: number | null;
+  today: number | null;
+  dau_today: number | null;
+  anonymous_today: number | null;
   timezone_offset_minutes: number;
   active_keys: number;
   ingest_url: string;

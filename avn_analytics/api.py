@@ -498,11 +498,12 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     def overview(
         principal: Current,
         workspace: UUID | None = None,
+        totals: bool = True,
         tz_offset: Annotated[int, Query(ge=-840, le=840)] = 0,
     ):
         workspace_id = accounts.pick_workspace(principal, str(workspace) if workspace else None)
         visible = {game["id"] for game in accounts.games_in(principal, workspace_id)}
-        result = website_overview(storage, visible, tz_offset)
+        result = website_overview(storage, visible, tz_offset, totals=totals)
         result["workspace"] = workspace_id
         result["analytics_thresholds"] = accounts.analytics_thresholds(workspace_id)
         return result

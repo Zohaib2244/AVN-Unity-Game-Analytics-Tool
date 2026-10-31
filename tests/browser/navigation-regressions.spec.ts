@@ -106,3 +106,38 @@ test('Continue toast offers each browser its own last view while Home and direct
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('heading', { name: 'Test games', exact: true })).toBeVisible();
 });
+
+test('slow or failed workspace totals do not block the game list or navigation', async ({ page }) => {
+  let release: () => void = () => {};
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  const game = { id: 'viewer-game', name: 'Viewer test', bundle_id: 'com.example.viewer', platform: 'android', created_at: '2026-10-24T10:00:00Z', workspace_id: 'test' };
+  await page.route('**/v1/overview?*', async (route) => {
+    if (new URL(route.request().url()).searchParams.get('totals') === 'false') {
+      await route.fulfill({ json: {
+        games: [game], totals_ready: false, events: null, today: null, dau_today: null, anonymous_today: null,
+        active_keys: 1, ingest_url: '/v1/events', analytics_thresholds: { levels_min_players: 1, funnels_min_players: 1, retention_min_users: 1 },
+      } });
+    } else {
+      await wait;
+      await route.fulfill({ status: 500, json: { detail: 'Workspace totals timed out' } });
+    }
+  });
+  try {
+    await page.goto('/');
+    await expect(page.getByRole('link', { name: 'Viewer test', exact: true })).toBeVisible();
+    await expect(page.locator('.game-card .tag').first()).toHaveText('Loading…');
+    await expect(page.getByText('A simple start', { exact: true })).toHaveCount(0);
+    await page.goto('/games/viewer-game/levels');
+    await expect(page.getByRole('heading', { name: 'Levels', exact: true })).toBeVisible();
+    const failure = page.waitForResponse((response) => response.url().includes('/v1/overview?') && response.status() === 500);
+    release();
+    await failure;
+    await page.getByRole('button', { name: 'Players', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Players', exact: true })).toBeVisible();
+    await expect(page.getByText('Couldn’t open your workspace.')).toHaveCount(0);
+    await page.goto('/');
+    await expect(page.locator('.game-card .tag').first()).toHaveText('Unavailable');
+    await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Viewer test', exact: true })).toBeVisible();
+  } finally { release(); }
+});

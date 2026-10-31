@@ -294,3 +294,9 @@ Other browsers see configuration changes when their freshness window expires.
 Use `scripts/benchmark.py` with a synthetic scratch directory to compare cold and repeated
 reads and inspect query plans before adding indexes. Never run synthetic generation on a real
 data directory. Longer cache windows improve reuse, not the first computation.
+
+Workspace startup reads registry metadata through `/v1/overview?totals=false` before fetching
+workspace totals separately. Counting a busy game cannot block the shell or game navigation.
+Until those totals arrive, Home and Status show loading states; an error stays local to those
+totals with Retry. Daily workspace counts share a two-day event scope and use verified facts
+when available, while raw events remain authoritative.

@@ -3891,3 +3891,66 @@ def test_level_features_count_ads_powerups_and_fail_reasons_and_what_players_did
     assert data["kinds"]["ads"] == ["Interstitial"]
     # c left the first session without starting level 2 there, then came back and did.
     assert one["left_session"] == 2 and one["dropped"] == 1
+
+
+def test_workspace_bootstrap_never_opens_game_databases(backend, monkeypatch):
+    admin, _, _ = backend
+    game = register(admin)
+    storage = admin.app.state.storage
+    connect = storage.connect
+
+    def registry_only(path):
+        assert path.name == "registry.sqlite3", "workspace startup must not scan any game's events"
+        return connect(path)
+
+    monkeypatch.setattr(storage, "connect", registry_only)
+    response = admin.get("/v1/overview?totals=false", headers=AUTH)
+    assert response.status_code == 200
+    result = response.json()
+    assert [row["id"] for row in result["games"]] == [game["id"]]
+    assert result["totals_ready"] is False
+    assert result["events"] is None and result["dau_today"] is None
+    assert "events" not in result["games"][0]
+    assert result["analytics_thresholds"]["levels_min_players"] >= 1
+
+
+@pytest.mark.parametrize("offset", [-300, 0, 330])
+def test_workspace_totals_match_raw_events_and_verified_facts(backend, monkeypatch, offset):
+    from avn_analytics import analytics
+
+    admin, ingest, settings = backend
+    game = register(admin)
+    storage = admin.app.state.storage
+    now = datetime.now(UTC)
+    rows = [
+        event(device_id="a", client_ts=now.isoformat()),
+        event(device_id="b", client_ts=now.isoformat()),
+        event(device_id="a", client_ts=(now - timedelta(days=1)).isoformat()),
+    ]
+    assert send(ingest, game, rows).status_code == 200
+    # Older SDKs could store events without a player; current ingest correctly refuses them.
+    anonymous = event(device_id=None, client_ts=now.isoformat())
+    with storage.connect(storage.game_path(game["id"])) as db:
+        db.execute(
+            "INSERT INTO events(event_id,name,client_ts,server_ts,payload) VALUES(?,?,?,?,?)",
+            (
+                anonymous["event_id"],
+                anonymous["name"],
+                anonymous["client_ts"],
+                anonymous["client_ts"],
+                json.dumps(anonymous),
+            ),
+        )
+    _send_as(
+        ingest,
+        game,
+        "editor",
+        [event(device_id="test", session_id="test-session", client_ts=now.isoformat())],
+    )
+    analytics.prepare_all(storage, game["id"])
+    monkeypatch.setattr(storage, "settings", replace(settings, analytics_read_mode="legacy"))
+    expected = admin.get(f"/v1/overview?tz_offset={offset}", headers=AUTH).json()
+    monkeypatch.setattr(storage, "settings", replace(settings, analytics_read_mode="facts"))
+    result = admin.get(f"/v1/overview?tz_offset={offset}", headers=AUTH).json()
+    assert result == expected
+    assert result["totals_ready"] is True

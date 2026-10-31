@@ -17,6 +17,8 @@ export const overviewKey = (workspace: string | null) => ['overview', workspace]
 type Session = {
   me: Me;
   overview: Overview;
+  overviewError: unknown;
+  retryOverview: () => void;
   workspace: string | null;
   chooseWorkspace: (id: string | null) => void;
   /** Reload who I am and the overview after a change (new game, moved game, team edits). */
@@ -36,21 +38,27 @@ function pickWorkspace(me: Me, preferred: string | null, current: string | null)
 }
 
 /**
- * Loads /v1/me and /v1/overview before the app draws; renders `loading` meanwhile and `failed(error, retry)`
- * when either cannot be read.
+ * Opens with account and registry metadata. Expensive workspace totals load separately,
+ * so counting events cannot prevent navigation or opening a game.
  */
 export function SessionProvider({ children, loading, failed }: { children: ReactNode; loading: ReactNode; failed: (error: unknown, retry: () => void) => ReactNode }): ReactElement {
   const [workspace, setWorkspace] = useState<string | null>(readSaved);
   const me = useQuery({ queryKey: meKey, queryFn: ({ signal }) => request<Me>('/v1/me', { signal }), staleTime: Infinity });
   const chosen = me.data ? pickWorkspace(me.data, null, workspace) : workspace;
   useEffect(() => { if (me.data && chosen !== workspace) setWorkspace(chosen); }, [me.data, chosen, workspace]);
+  const bootstrap = useQuery({
+    queryKey: ['workspace', chosen],
+    queryFn: ({ signal }) => request<Overview>(`${overviewURL(chosen)}&totals=false`, { signal }),
+    enabled: !!me.data,
+    staleTime: CACHE_MS,
+  });
   const overview = useQuery({
     queryKey: overviewKey(chosen),
     queryFn: ({ signal }) => request<Overview>(overviewURL(chosen), { signal }),
-    enabled: !!me.data,
+    enabled: !!me.data && !!bootstrap.data,
     staleTime: CACHE_MS,
-    placeholderData: (previous) => previous,
   });
+  const data = overview.data ?? bootstrap.data;
 
   const chooseWorkspace = useCallback((id: string | null) => {
     setWorkspace(id);
@@ -59,21 +67,23 @@ export function SessionProvider({ children, loading, failed }: { children: React
   }, []);
   const refresh = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: meKey });
-    await queryClient.invalidateQueries({ queryKey: ['overview'] });
+    await queryClient.invalidateQueries({ queryKey: ['workspace'] });
+    // Event totals refresh in the background; saving a game must only wait for metadata.
+    void queryClient.invalidateQueries({ queryKey: ['overview'] });
   }, []);
 
   const value = useMemo<Session | null>(() => {
-    if (!me.data || !overview.data) return null;
-    const data = me.data;
+    if (!me.data || !data) return null;
+    const account = me.data;
     return {
-      me: data, overview: overview.data, workspace: chosen, chooseWorkspace, refresh,
-      role: workspaceRole(data, chosen), canManageGames: canManage(data, chosen), workspaceName: workspaceName(data.workspaces, chosen),
-      variantsOf: (game) => variantsOf(overview.data!.games, game),
+      me: account, overview: data, overviewError: overview.error, retryOverview: () => { void overview.refetch(); }, workspace: chosen, chooseWorkspace, refresh,
+      role: workspaceRole(account, chosen), canManageGames: canManage(account, chosen), workspaceName: workspaceName(account.workspaces, chosen),
+      variantsOf: (game) => variantsOf(data.games, game),
     };
-  }, [me.data, overview.data, chosen, chooseWorkspace, refresh]);
+  }, [me.data, data, overview.error, overview.refetch, chosen, chooseWorkspace, refresh]);
 
   if (me.isError) return <>{failed(me.error, () => me.refetch())}</>;
-  if (overview.isError && !overview.data) return <>{failed(overview.error, () => overview.refetch())}</>;
+  if (bootstrap.isError && !bootstrap.data && !overview.data) return <>{failed(bootstrap.error, () => bootstrap.refetch())}</>;
   if (!value) return <>{loading}</>;
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

@@ -9,15 +9,7 @@ from . import insights
 ASSETS = Path(__file__).parent / "static"
 
 
-def _players(connection, start, end, filters):
-    """Distinct players with an event in [start, end) by game time, like the dashboard's DAU."""
-    condition, args = insights.where(start, end, filters)
-    return connection.execute(
-        f"SELECT count(DISTINCT {insights.PLAYER}) FROM events WHERE {condition}", args
-    ).fetchone()[0]
-
-
-def overview(storage, allowed=None, timezone_offset_minutes=0):
+def overview(storage, allowed=None, timezone_offset_minutes=0, *, totals=True):
     """Workspace totals; `allowed` limits them to the games a team member can see."""
     games = [game for game in storage.list_games() if allowed is None or game["id"] in allowed]
     offset = timedelta(minutes=timezone_offset_minutes)
@@ -32,7 +24,7 @@ def overview(storage, allowed=None, timezone_offset_minutes=0):
         active_keys = registry.execute(
             "SELECT count(*) FROM api_keys WHERE revoked_at IS NULL"
         ).fetchone()[0]
-    for game in games:
+    for game in games if totals else []:
         with storage.connect(storage.game_path(game["id"])) as connection:
             game["events"] = connection.execute("SELECT count(*) FROM events").fetchone()[0]
             game["last_event"] = connection.execute("SELECT max(server_ts) FROM events").fetchone()[
@@ -41,19 +33,28 @@ def overview(storage, allowed=None, timezone_offset_minutes=0):
             game["today"] = connection.execute(
                 "SELECT count(*) FROM events WHERE server_ts>=?", (today,)
             ).fetchone()[0]
-            game["dau_today"] = _players(connection, today, tomorrow, real_players)
-            game["dau_yesterday"] = _players(connection, yesterday, today, real_players)
+            source = insights.read_source(storage, connection)
+            scoped = insights.scope_events(
+                connection, yesterday, tomorrow, real_players, source=source
+            )
+            daily = connection.execute(
+                f"SELECT count(DISTINCT CASE WHEN client_ts>=? THEN player END), "
+                f"count(DISTINCT CASE WHEN client_ts<? THEN player END) FROM {scoped}",
+                (today, today),
+            ).fetchone()
+            game["dau_today"], game["dau_yesterday"] = daily
             game["anonymous_today"] = connection.execute(
-                f"SELECT count(*) FROM events WHERE client_ts>=? AND client_ts<? "
-                f"AND NOT ({insights.IDENTIFIED})",
+                f"SELECT count(*) FROM {source.table} WHERE client_ts>=? AND client_ts<? "
+                f"AND NOT ({source.identified})",
                 (today, tomorrow),
             ).fetchone()[0]
     return {
         "games": games,
-        "events": sum(game["events"] for game in games),
-        "today": sum(game["today"] for game in games),
-        "dau_today": sum(game["dau_today"] for game in games),
-        "anonymous_today": sum(game["anonymous_today"] for game in games),
+        "totals_ready": totals,
+        "events": sum(game["events"] for game in games) if totals else None,
+        "today": sum(game["today"] for game in games) if totals else None,
+        "dau_today": sum(game["dau_today"] for game in games) if totals else None,
+        "anonymous_today": sum(game["anonymous_today"] for game in games) if totals else None,
         "timezone_offset_minutes": timezone_offset_minutes,
         "active_keys": active_keys,
         "ingest_url": (storage.settings.public_ingest_url or "http://127.0.0.1:8100")

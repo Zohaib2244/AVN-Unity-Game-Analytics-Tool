@@ -7,7 +7,7 @@ import { useSession } from '@/app/session';
 import { lastBrowserPage } from '@/app/browserPage';
 import { PLATFORM_ORDER, gameGroups, gamePath, type GameGroup } from '@/lib/games';
 import { displayDate, number, platformLabel } from '@/lib/format';
-import { Empty, Heading, Metric, useNotify } from '@/components/feedback';
+import { Empty, Heading, LoadError, Metric, useNotify } from '@/components/feedback';
 import { GameAvatar } from '@/components/GameAvatar';
 import { Ico } from '@/components/icons';
 
@@ -36,9 +36,9 @@ export const initialHomeFilter = (all: GameGroup[]): HomeFilter => (all.length &
 const LIVE_MS = 600000;
 let resumeToast: number | null = null;
 
-export function GameCard({ group, canManage }: { group: GameGroup; canManage: boolean }): ReactElement {
+export function GameCard({ group, canManage, totalsReady = true, totalsFailed = false }: { group: GameGroup; canManage: boolean; totalsReady?: boolean; totalsFailed?: boolean }): ReactElement {
   const missing = canManage ? PLATFORM_ORDER.filter((platform) => !group.variants.some((item) => item.platform === platform)) : [];
-  const status = group.archived ? <span className="tag bad">Archived</span> : Date.now() - new Date(group.last_event || 0).getTime() < LIVE_MS ? <span className="tag ok dot">Live</span> : <span className="tag plain">Quiet</span>;
+  const status = group.archived ? <span className="tag bad">Archived</span> : !totalsReady ? <span className="tag plain">{totalsFailed ? 'Unavailable' : 'Loading…'}</span> : Date.now() - new Date(group.last_event || 0).getTime() < LIVE_MS ? <span className="tag ok dot">Live</span> : <span className="tag plain">Quiet</span>;
   return (
     <article className={`game-card ${group.archived ? 'archived' : ''}`}>
       <div className="game-card-header"><GameAvatar name={group.name} games={group.variants} /><span>{status}</span></div>
@@ -46,11 +46,11 @@ export function GameCard({ group, canManage }: { group: GameGroup; canManage: bo
       <p className="mono">{[...new Set(group.variants.map((item) => item.bundle_id))].join(' · ')}</p>
       {group.notes ? <p className="game-notes">{group.notes}</p> : null}
       <div className="card-variants">
-        {group.variants.map((item) => <Link key={item.id} className={`pill ${item.archived_at ? 'bad' : ''}`} to={gamePath(item)} title={`Open the ${platformLabel(item.platform)} version`}>{platformLabel(item.platform)} · {number(item.events)}</Link>)}
+        {group.variants.map((item) => <Link key={item.id} className={`pill ${item.archived_at ? 'bad' : ''}`} to={gamePath(item)} title={`Open the ${platformLabel(item.platform)} version`}>{platformLabel(item.platform)}{totalsReady ? ` · ${number(item.events)}` : ''}</Link>)}
         {missing.map((platform) => <Link key={platform} className="pill variant-add" to="/games/new" search={{ name: group.name, bundle_id: group.primary.bundle_id, platform }}>+ {platformLabel(platform)}</Link>)}
       </div>
-      {group.archived ? null : <p className="card-dau" title="Daily active users: distinct player IDs with an event on that local day, editor and development data left out"><strong>{number(group.dau_today)}</strong> DAU today <span>· {number(group.dau_yesterday)} yesterday</span></p>}
-      <div className="game-card-footer"><span>{number(group.events)} events</span><span>{group.archived ? 'Collection paused' : group.last_event ? `Last event ${displayDate(group.last_event)}` : 'Awaiting events'} <Ico name="arrow" size={12} /></span></div>
+      {group.archived ? null : <p className="card-dau" title="Daily active users: distinct player IDs with an event on that local day, editor and development data left out"><strong>{totalsReady ? number(group.dau_today) : '—'}</strong> DAU today <span>{totalsReady ? `· ${number(group.dau_yesterday)} yesterday` : totalsFailed ? '· Unavailable' : '· Loading…'}</span></p>}
+      <div className="game-card-footer"><span>{totalsReady ? `${number(group.events)} events` : totalsFailed ? 'Totals unavailable' : 'Loading totals…'}</span><span>{group.archived ? 'Collection paused' : !totalsReady ? (totalsFailed ? 'Activity unavailable' : 'Loading activity…') : group.last_event ? `Last event ${displayDate(group.last_event)}` : 'Awaiting events'} <Ico name="arrow" size={12} /></span></div>
     </article>
   );
 }
@@ -58,7 +58,8 @@ export function GameCard({ group, canManage }: { group: GameGroup; canManage: bo
 const RegisterButton = (): ReactElement => <Link className="button primary" to="/games/new"><Ico name="plus" size={15} /> Register game</Link>;
 
 export function HomePage(): ReactElement {
-  const { me, overview, workspace, canManageGames, workspaceName } = useSession();
+  const { me, overview, overviewError, retryOverview, workspace, canManageGames, workspaceName } = useSession();
+  const totalsReady = overview.totals_ready !== false;
   const resume = lastBrowserPage(workspace, me.email || me.source, overview.games.map((game) => game.id));
   const navigate = useNavigate();
   const { toast, dismiss } = useNotify();
@@ -77,11 +78,12 @@ export function HomePage(): ReactElement {
   return (
     <>
       <Heading title={me.workspaces.length > 1 || me.is_admin ? `${workspaceName || 'Your'} games` : 'Your games'} subtitle="Pick a game to see its players, funnels, exports and settings." actions={canManageGames ? <RegisterButton /> : undefined} />
-      <div className="kpis" aria-label="Workspace totals">
+      {overviewError ? <LoadError error={overviewError} onRetry={retryOverview} /> : null}
+      <div className="kpis" aria-label="Workspace totals" aria-busy={!totalsReady && !overviewError}>
         <Metric label="Games" value={number(all.length)} note={`${number(overview.games.length)} platform variant${overview.games.length === 1 ? '' : 's'}`} />
-        <Metric label="Events collected" value={number(overview.events)} note="Safely stored, never double-counted" />
-        <Metric label="Events today" value={number(overview.today)} note={`${number(overview.anonymous_today)} without a player ID · local time`} />
-        <Metric label="Players today" value={number(overview.dau_today)} note="Unique player IDs · local time, no editor data" />
+        <Metric label="Events collected" value={totalsReady ? number(overview.events) : '—'} note="Safely stored, never double-counted" />
+        <Metric label="Events today" value={totalsReady ? number(overview.today) : '—'} note={totalsReady ? `${number(overview.anonymous_today)} without a player ID · local time` : overviewError ? 'Totals unavailable' : 'Loading totals…'} />
+        <Metric label="Players today" value={totalsReady ? number(overview.dau_today) : '—'} note="Unique player IDs · local time, no editor data" />
       </div>
       {all.length ? (
         <div className="toolbar games-toolbar">
@@ -95,12 +97,12 @@ export function HomePage(): ReactElement {
           <section className="panel">{canManageGames ? <Empty title="Good things begin with a first game" action={<RegisterButton />}>Create a game and we’ll generate its first API key.</Empty> : <Empty title="No games yet">You haven’t been given access to any games. Ask your team lead or the admin.</Empty>}</section>
         ) : groups.length ? (
           <div className="game-grid">
-            {groups.map((group) => <GameCard key={group.primary.id} group={group} canManage={canManageGames} />)}
+            {groups.map((group) => <GameCard key={group.primary.id} group={group} canManage={canManageGames} totalsReady={totalsReady} totalsFailed={!!overviewError} />)}
             {canManageGames ? <Link className="game-card add-card pxhost" to="/games/new"><PixelField /><span className="add-plus">+</span><strong>Register a game</strong><span>Add a platform or a new game</span></Link> : null}
           </div>
         ) : <section className="panel"><Empty title="No games found">Try another search or filter.</Empty></section>}
       </div>
-      {overview.events ? null : (
+      {!totalsReady || overview.events ? null : (
         <section className="panel section-spacing">
           <div className="panel-header"><div><h2>A simple start</h2><p>From your first event to your next idea.</p></div><Ico name="pulse" size={17} /></div>
           <ol className="steps">

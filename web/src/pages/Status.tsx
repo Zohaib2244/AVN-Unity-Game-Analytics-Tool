@@ -6,13 +6,14 @@ import { refreshAll } from '@/api';
 import { useSession } from '@/app/session';
 import { displayDate, number, platformLabel } from '@/lib/format';
 import { Activity } from '@/components/Activity';
-import { Empty, Heading, Metric } from '@/components/feedback';
+import { Empty, Heading, LoadError, Metric } from '@/components/feedback';
 import { MiniPC } from '@/components/flavour';
 import { Ico } from '@/components/icons';
 import { Heartbeat } from '@avn/ui';
 
 export function StatusPage(): ReactElement {
-  const { overview } = useSession();
+  const { overview, overviewError, retryOverview } = useSession();
+  const totalsReady = overview.totals_ready !== false;
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as Record<string, string | undefined>;
   const game = overview.games.find((item) => item.id === search.game) || overview.games[0];
@@ -21,21 +22,22 @@ export function StatusPage(): ReactElement {
   return (
     <>
       <Heading title="Server status" subtitle="Is data arriving, and how much of it." actions={<button type="button" className="button" onClick={() => void refreshAll()}><Ico name="refresh" size={14} /> Refresh</button>} />
+      {overviewError ? <LoadError error={overviewError} onRetry={retryOverview} /> : null}
       <section className="panel">
         <div className="srv-top">
           <MiniPC />
           <div className="srv-state">
-            <span className="row-wrap"><Heartbeat live={live} tick={last ?? undefined} count={overview.today} label={live ? 'Receiving events' : 'Quiet'} /><span className="big">{live ? 'Online, receiving events' : 'Online, quiet'}</span></span>
-            <span className="muted">Last event {last ? displayDate(last) : 'none yet'} · {number(overview.today)} events today</span>
-            <span className={`tag ${live ? 'ok' : 'plain'}`}>{live ? 'Live' : 'Quiet'}</span>
+            <span className="row-wrap"><Heartbeat live={live} tick={last ?? undefined} count={overview.today ?? 0} label={!totalsReady ? (overviewError ? 'Activity unavailable' : 'Loading activity…') : live ? 'Receiving events' : 'Quiet'} /><span className="big">{!totalsReady ? (overviewError ? 'Activity unavailable' : 'Loading activity…') : live ? 'Online, receiving events' : 'Online, quiet'}</span></span>
+            <span className="muted">{totalsReady ? `Last event ${last ? displayDate(last) : 'none yet'} · ${number(overview.today)} events today` : overviewError ? 'Totals unavailable' : 'Loading workspace totals…'}</span>
+            <span className={`tag ${live ? 'ok' : 'plain'}`}>{!totalsReady ? (overviewError ? 'Unavailable' : 'Loading') : live ? 'Live' : 'Quiet'}</span>
           </div>
         </div>
       </section>
       <div className="kpis">
         <Metric label="Registered games" value={number(overview.games.length)} note="Platform versions counted separately" />
-        <Metric label="Events collected" value={number(overview.events)} note="Safely stored, never double-counted" />
-        <Metric label="Events today" value={number(overview.today)} note={`${number(overview.anonymous_today)} without a player ID · local time`} />
-        <Metric label="Players today" value={number(overview.dau_today)} note="Unique player IDs · local time" />
+        <Metric label="Events collected" value={totalsReady ? number(overview.events) : '—'} note="Safely stored, never double-counted" />
+        <Metric label="Events today" value={totalsReady ? number(overview.today) : '—'} note={totalsReady ? `${number(overview.anonymous_today)} without a player ID · local time` : overviewError ? 'Totals unavailable' : 'Loading totals…'} />
+        <Metric label="Players today" value={totalsReady ? number(overview.dau_today) : '—'} note="Unique player IDs · local time" />
       </div>
       <section className="panel">
         <div className="panel-header"><div><h2>Event arrivals</h2><p>Received by the server · choose any days · UTC</p></div></div>
