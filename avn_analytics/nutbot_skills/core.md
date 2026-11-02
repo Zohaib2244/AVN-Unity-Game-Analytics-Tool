@@ -1,6 +1,8 @@
 Players are keyed by `user_id`, else `device_id`. Sessions come from the SDK: `session_start`
-(with device, OS, language, timezone offset), `session_end` logged when the next session starts
-(so the latest session has none yet: not a crash). `first_open` is the install anchor.
+(with device, OS, language, timezone offset) and `session_end`, sent at every trip to the background,
+so one session can have several and some have none: never count them as sessions or average their
+`duration_seconds`, which is a running total. Older app versions wrote it only at the next launch.
+A session with no end yet may still be going: that is not a crash. `first_open` is the install anchor.
 
 Check before concluding: the sample (roughly under 100 players per group proves nothing), the
 range (installs near its end have not had time to retain or finish), whether editor/development
@@ -9,6 +11,10 @@ guessing).
 
 Funnels count players who did the steps in order; journeys show what they did between two steps
 and where they stopped. Levels: completion, tries per player, fails, restarts and time per level.
+Quit tags: "Left ..." means the session's ending reached the server. "Last seen ..." means it did
+not, so it is the last thing heard, not why they left: on older app versions the final events of
+a player who never returns stay on the phone. Don't read Last seen tags as causes, and don't apply
+the shares of Left tags to them: players who return are a different group.
 Leaving: look at what players did in their last session and compare leavers with players who
 went on; let the data, not an assumed cause, say why. Ads and purchases: only the events say what was shown or bought; never
 invent prices.

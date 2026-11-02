@@ -6,25 +6,25 @@ Built on the same live event queries as insights.py, but everything is named in 
 
 import json
 import re
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from collections import Counter
 from datetime import datetime
 from statistics import median
 
 from fastapi import HTTPException
 
-from . import stories
+from . import level_exits, stories
 from .insights import (
     IDENTIFIED,
     MAX_FUNNEL_EVENTS,
     PLAYER,
     SDK_EVENTS,
     SESSION,
-    _AverageSessionLength,
     matches,
     read_source,
     where,
 )
+from .session_state import SessionState
 
 TOP_JOURNEYS = 40
 TOP_EXITS = 25
@@ -41,6 +41,8 @@ LEVEL_GROUPS = (
     "left",
     "finished_stopped",
     "kept_going",
+    "straight_on",
+    "came_back_later",
     "unknown_progress",
     "stuck",
     "failed",
@@ -54,10 +56,10 @@ LEVEL_PLAYER_SORTS = ("exit_at", "tries", "fails")
 # Whose levels to count: everyone active in the range, or new players within their first session.
 LEVEL_SCOPES = ("all", "first_session")
 STUCK_TRIES = 3
+LAUNCH_WITHIN = 6  # how far into the next session its Launch event can be
 LAST_ACTIONS = 8
 # Not something the player did: SDK bookkeeping and the app going to the background.
 NOT_AN_ACTION = {"session_start", "session_end", "first_open", "APP_ANALYSIS"}
-AD_EVENT = re.compile(r"^ads?(_|$)", re.I)
 # The filters that decide whether a player's earlier history counts (the rest pick the cohort).
 HISTORY_FILTERS = ("environments", "exclude_environments", "platforms", "exclude_platforms")
 
@@ -138,7 +140,7 @@ def player_story(storage, game_id, player, start, end, show_hidden=False):
         condition, args = where(start, end, source=source)
         table, value = source.table, source.envelope
         rows = connection.execute(
-            f"""SELECT name, client_ts, {source.session} AS session_id,
+            f"""SELECT name, client_ts, server_ts, {source.session} AS session_id,
                        {source.environment} AS environment, {source.params} AS params,
                        {value("country")} AS country, {value("app_version")} AS app_version,
                        {value("platform")} AS platform
@@ -164,6 +166,7 @@ def player_story(storage, game_id, player, start, end, show_hidden=False):
         {
             "name": row["name"],
             "client_ts": row["client_ts"],
+            "server_ts": row["server_ts"],
             "session_id": row["session_id"],
             "params": json.loads(row["params"] or "{}"),
             "app_version": row["app_version"],
@@ -398,8 +401,8 @@ TOO_MUCH = {
 
 def _level_columns(source):
     return f"""{source.player} AS player, {source.session} AS session_id, event_id, name,
-               client_ts, unixepoch(client_ts, 'subsec') AS ts, {source.params} AS params,
-               {source.param("duration_seconds")} AS duration_seconds,
+               client_ts, server_ts, unixepoch(client_ts, 'subsec') AS ts,
+               {source.params} AS params, {source.param("seq")} AS seq,
                {source.envelope("app_version")} AS app_version,
                {source.envelope("country")} AS country"""
 
@@ -772,8 +775,9 @@ def _player_transitions(player, events, latest, scope, start, reader):
     versions = {}  # app version -> first position (only versions the code counts as set)
     lowest = [None] * (count + 1)  # lowest level number among level events before a position
     for index, (row, info) in enumerate(events):
-        length = session_lengths.setdefault(row["session_id"], _AverageSessionLength())
-        length.step(row["session_id"], row["name"], row["duration_seconds"], row["client_ts"])
+        session_lengths.setdefault(row["session_id"], SessionState()).add(
+            row["name"], row["client_ts"], row["server_ts"], row["seq"], row["params"]
+        )
         if row["app_version"]:
             versions.setdefault(row["app_version"], index)
         lowest[index + 1] = lowest[index]
@@ -819,10 +823,10 @@ def _player_transitions(player, events, latest, scope, start, reader):
             "completed": completed,
             "exit_at": last["client_ts"],
             "exit_event": last["event_id"],
-            "last_action": _last_action(events, last_index, reader, runs),
+            **_ending(events, last_index, latest, reader, runs),
             "next_action": _next_action(events, last_index, reader, runs),
             "last_event": _last_event(events, last_index, reader, runs),
-            "session_seconds": round(session_lengths[last["session_id"]].finalize(), 1),
+            "session_seconds": round(session_lengths[last["session_id"]].seconds, 1),
             "last_seen": latest["client_ts"],
             # Any later session counts, even the same day.
             "came_back": latest["client_ts"] > last["client_ts"]
@@ -834,8 +838,20 @@ def _player_transitions(player, events, latest, scope, start, reader):
         }
         mine = groups.setdefault(number, {})
         mine["started"] = record
+        first_left = _came_back_later(
+            events, began, number, positions, following, since, latest, reader, runs
+        )
+        if first_left:
+            mine["came_back_later"] = {
+                **record,
+                **first_left,
+                "passed": completed,
+                "reached_next": continued,
+            }
         if continued:
             mine["kept_going"] = record
+            if not first_left:
+                mine["straight_on"] = record
         else:
             mine["total_drop"] = record
             category = "unknown_progress" if higher else "finished_stopped" if completed else "left"
@@ -879,7 +895,7 @@ def _player_transitions(player, events, latest, scope, start, reader):
 
 def _session_runs(events, labeler):
     """Per position: its run of consecutive events of one session, as (first, last), plus the
-    run's last action, last non-SDK event, and the next action after each position."""
+    run's last non-SDK event, and the next action after each position."""
     count = len(events)
     run_of = [None] * count
     next_action = [None] * count
@@ -889,22 +905,20 @@ def _session_runs(events, labeler):
         end = index
         while end + 1 < count and events[end + 1][0]["session_id"] == session:
             end += 1
-        last_action = last_event = None
+        last_event = None
         upcoming = None
         for position in range(end, index - 1, -1):
             row = events[position][0]
             next_action[position] = upcoming
             if row["name"] not in NOT_AN_ACTION and not labeler.hidden(row["name"]):
                 upcoming = position
-                if last_action is None:
-                    last_action = position
             if last_event is None and row["name"] not in SDK_EVENTS:
                 last_event = position
-        run = (index, end, last_action, last_event)
+        run = (index, end, last_event)
         for position in range(index, end + 1):
             run_of[position] = run
         index = end + 1
-    return {"run": run_of, "next_action": next_action}
+    return {"run": run_of, "next_action": next_action, "endings": {}}
 
 
 def _level_scan(storage, game_id, start, end, filters, scope):
@@ -1211,32 +1225,64 @@ def render_levels(scan, threshold, scope):
     }
 
 
-def _last_action(events, index, reader, runs):
-    """What the player did last in the session of events[index], from that event on.
+def _later_session(events, end, latest):
+    """Did the player play again after the session ending at position end?"""
+    session = events[end][0]["session_id"]
+    return end + 1 < len(events) or latest["session_id"] != session
 
-    A session whose last app event sent the app to the background because of an ad is put down to
-    that ad, even when the game logged the ad just before the level start.
+
+def _ending(events, index, latest, reader, runs):
+    """How the session of events[index] ended: the tag, whether it is known, and how the phone
+    says the app went, from the next launch. One session is read once, however many levels it had.
     """
-    session = events[index][0]["session_id"]
-    _, end, run_action, _ = runs["run"][index]
-    last = run_action if run_action is not None and run_action > index else index
-    for position in range(end, last, -1):
-        row = events[position][0]
-        if row["name"] != "APP_ANALYSIS":
-            continue
-        params = reader.params(row["params"])
-        if stories.param_text(params, "STATE") == "Background" and (
-            stories.param_text(params, "CAUSE") == "Ad"
-        ):
-            for earlier in range(position - 1, -1, -1):
-                ad = events[earlier][0]
-                if ad["session_id"] != session:
-                    break
-                if AD_EVENT.match(ad["name"]):
-                    return reader.action(ad)
-            return "Left during an ad"
-        break  # the app was last in the foreground, or left for another reason
-    return reader.action(events[last][0])
+    first, end, _ = runs["run"][index]
+    known = runs["endings"].get(first)
+    if known is None:
+        rows = events[first : end + 1]
+        arrived = level_exits.ending_arrived(rows, reader, _later_session(events, end, latest))
+        words = level_exits.phrase(level_exits.where_they_left(rows, reader), arrived)
+        how = _previous_exit(events, end, reader)
+        known = {"last_action": words, "ending_known": arrived, **how}
+        runs["endings"][first] = known
+    return known
+
+
+def _previous_exit(events, end, reader):
+    """What the launch after the session at position end says about how the app stopped."""
+    for row, _ in events[end + 1 : end + 1 + LAUNCH_WITHIN]:
+        if row["name"] == "APP_ANALYSIS":
+            params = reader.params(row["params"])
+            if stories.param_text(params, "STATE") == "Launch":
+                reason = stories.param_text(params, "PREV_EXIT_REASON")
+                ad = stories.param_text(params, "PREV_EXIT_AD")
+                return {"prev_exit_reason": reason, "prev_exit_ad": ad} if reason else {}
+    return {}
+
+
+def _came_back_later(events, began, number, positions, following, since, latest, reader, runs):
+    """The player left the session they started this level in and returned in a later one.
+
+    Returns what the row of the Came back later tab needs, about the first time they left, or None
+    when they went straight on or never returned.
+    """
+    end = runs["run"][began][1]
+    session = events[began][0]["session_id"]
+    if following and following[-1] >= since:
+        ahead = following[bisect_left(following, since)]
+        if events[ahead][0]["session_id"] == session:
+            return None
+    elif not _later_session(events, end, latest):
+        return None
+    last = positions[number][bisect_right(positions[number], end) - 1]
+    away = None
+    if end + 1 < len(events):
+        away = round(max(0.0, _moment(events[end + 1][0]) - _moment(events[end][0])), 1)
+    return {
+        **_ending(events, last, latest, reader, runs),
+        "exit_at": events[last][0]["client_ts"],
+        "exit_event": events[last][0]["event_id"],
+        "away_seconds": away,
+    }
 
 
 def _moment(row):
@@ -1258,7 +1304,7 @@ def _last_event(events, index, reader, runs):
     to this event, None when this is events[index] itself.
     """
     session = events[index][0]["session_id"]
-    _, _, _, run_event = runs["run"][index]
+    _, _, run_event = runs["run"][index]
     end = run_event if run_event is not None and run_event > index else index
     row = events[end][0]
     last = {
@@ -1269,8 +1315,12 @@ def _last_event(events, index, reader, runs):
         if end > index
         else None,
     }
-    if end and events[end - 1][0]["session_id"] == session:
-        before = events[end - 1][0]
+    # A session_end in the middle of a session is a trip to the background, not an event they sent.
+    earlier = end - 1
+    while earlier >= 0 and events[earlier][0]["name"] == "session_end":
+        earlier -= 1
+    if earlier >= 0 and events[earlier][0]["session_id"] == session:
+        before = events[earlier][0]
         last["gap"] = round(max(0.0, _moment(row) - _moment(before)), 1)
         last["after"] = reader.text(before)
     return last
@@ -1315,6 +1365,7 @@ def players_in_group(groups, level, group, offset, limit, sort, last_action):
     """One page of a level group's players, from that level's groups."""
     members = groups[group]
     last_actions = Counter(item["last_action"] for item in members)
+    no_ending = sum(not item["ending_known"] for item in members)
     if last_action is not None:
         members = [item for item in members if item["last_action"] == last_action]
     members = sorted(
@@ -1330,6 +1381,7 @@ def players_in_group(groups, level, group, offset, limit, sort, last_action):
                 :LAST_ACTIONS
             ]
         ],
+        "no_ending": no_ending,
         "total": len(members),
         "offset": offset,
         "players": members[offset : offset + limit],

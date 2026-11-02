@@ -4,6 +4,7 @@ import secrets
 import sqlite3
 import struct
 import time
+from collections import defaultdict
 from contextlib import contextmanager
 from uuid import uuid4
 
@@ -133,7 +134,9 @@ class Storage:
         build that shipped in the wrong mode; applied when events are read, never to the events.
         dictionary_drafts: description texts written by an agent import that nobody has confirmed
         yet (field is "description" or "param:<key>"). dictionary_imports: one row per import,
-        with every change it made, so it can be undone.
+        with every change it made, so it can be undone. ingest_tally: per day, how many events
+        were stored or already known and how many batches were refused, which the events
+        themselves can't say.
         """
         connection.executescript("""
             CREATE TABLE IF NOT EXISTS sessions (
@@ -198,6 +201,16 @@ class Storage:
                 step TEXT PRIMARY KEY,
                 done_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS ingest_tally (
+                day TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                app_version TEXT NOT NULL,
+                delivery TEXT NOT NULL,
+                accepted INTEGER NOT NULL DEFAULT 0,
+                duplicates INTEGER NOT NULL DEFAULT 0,
+                rejected INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (day, platform, app_version, delivery)
+            ) WITHOUT ROWID;
         """)
         if connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0:
             declared = ENVIRONMENT_VALUE.format(
@@ -524,15 +537,17 @@ class Storage:
             )
             return key["game_id"]
 
-    def ingest(self, game_id, batch: Batch, country: str | None = None):
+    def ingest(self, game_id, batch: Batch, country: str | None = None, delivery=None):
         server_ts = timestamp()
-        rows = []
+        rows = defaultdict(list)  # the app that sent them -> events, to tally each app's own
         for event in batch.resolved:
             payload = event.model_dump(mode="json")
             payload["client_ts"] = timestamp(event.client_ts)
             payload["server_ts"] = server_ts
             payload["country"] = country  # set from the request IP by the server, never by clients
-            rows.append(
+            if delivery:
+                payload["delivery"] = delivery  # how the SDK sent the batch, X-AVN-Delivery
+            rows[(event.platform or "unknown", event.app_version or "unknown")].append(
                 (
                     str(event.event_id),
                     event.name,
@@ -549,13 +564,25 @@ class Storage:
             if declared and event.session_id:
                 environments[event.session_id] = declared.strip().lower()[:64]
         with self.connect(self.game_path(game_id)) as connection:
-            # rowcount counts only the events this statement stored: not duplicates, and not the
-            # facts rows its trigger writes alongside them (see analytics.py).
-            accepted = connection.executemany(
-                "INSERT INTO events (event_id, name, client_ts, server_ts, payload)"
-                " VALUES (?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING",
-                rows,
-            ).rowcount
+            accepted = 0
+            for (platform, app_version), part in rows.items():
+                # rowcount counts only the events this statement stored: not duplicates, and not
+                # the facts rows its trigger writes alongside them (see analytics.py).
+                stored = connection.executemany(
+                    "INSERT INTO events (event_id, name, client_ts, server_ts, payload)"
+                    " VALUES (?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING",
+                    part,
+                ).rowcount
+                accepted += stored
+                self._tally(
+                    connection,
+                    server_ts,
+                    platform,
+                    app_version,
+                    delivery,
+                    accepted=stored,
+                    duplicates=len(part) - stored,
+                )
             connection.executemany(
                 "INSERT INTO sessions VALUES (?, ?) "
                 "ON CONFLICT(session_id) DO UPDATE SET environment=excluded.environment",
@@ -566,7 +593,45 @@ class Storage:
             ):
                 self.map_standard_levels(connection)
                 self._levels_mapped.add(game_id)
-        return {"accepted": accepted, "duplicates": len(rows) - accepted, "server_ts": server_ts}
+        return {
+            "accepted": accepted,
+            "duplicates": len(batch.resolved) - accepted,
+            "server_ts": server_ts,
+        }
+
+    @staticmethod
+    def _tally(connection, moment, platform, app_version, delivery, **counts):
+        accepted, duplicates, rejected = (
+            counts.get(name, 0) for name in ("accepted", "duplicates", "rejected")
+        )
+        connection.execute(
+            """INSERT INTO ingest_tally VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(day, platform, app_version, delivery) DO UPDATE SET
+                   accepted=accepted+excluded.accepted,
+                   duplicates=duplicates+excluded.duplicates,
+                   rejected=rejected+excluded.rejected""",
+            (
+                moment[:10],
+                platform,
+                app_version,
+                delivery or "",
+                accepted,
+                duplicates,
+                rejected,
+            ),
+        )
+
+    def record_rejected(self, game_id, platform, app_version, delivery=None):
+        """Remember a refused batch: nothing else keeps a trace of it."""
+        with self.connect(self.game_path(game_id)) as connection:
+            self._tally(
+                connection,
+                timestamp(),
+                platform or "unknown",
+                app_version or "unknown",
+                delivery,
+                rejected=1,
+            )
 
     def map_standard_levels(self, connection):
         """Once per game: map LEVEL_ANALYSIS to the level moments, as the standard defines them.

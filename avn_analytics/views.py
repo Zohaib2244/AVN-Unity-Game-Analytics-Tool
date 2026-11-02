@@ -20,7 +20,7 @@ from . import analytics
 
 logger = logging.getLogger(__name__)
 
-VERSION = 2
+VERSION = 3
 EXPIRY = 86400
 BATCH_PLAYERS = 20
 # What one Levels step may read: a batch of players, or a single heavy player on their own.

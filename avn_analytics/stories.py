@@ -10,6 +10,9 @@ from collections import Counter
 from datetime import datetime
 from statistics import median
 
+from . import session_state
+from .session_state import SessionState
+
 LEVEL_VERBS = {
     "started": "started",
     "start": "started",
@@ -40,6 +43,7 @@ LEVELISH_KEY = re.compile(r"level", re.I)
 NOISE_KEY = re.compile(r"(time|duration|second|score|timestamp|_ts$|^ts$|id$)", re.I)
 HIDDEN_PARAMS = {"seq"}
 BOUNDARY_EVENTS = {"session_start", "session_end"}
+CHAPTER_STATE = ("seconds", "away_seconds", "status", "end_reason", "trips")
 FRIENDLY_SDK = {
     "first_open": "First open",
     "session_start": "Session started",
@@ -567,17 +571,14 @@ def story(events, labeler, include_hidden=False):
             order.append(key)
         sessions[key].append(event)
     chapters, previous_end = [], None
+    now = session_state.clock()
     for index, key in enumerate(sorted(order, key=lambda k: sessions[k][0]["client_ts"]), start=1):
         raw = sessions[key]
         start, end = raw[0]["client_ts"], raw[-1]["client_ts"]
-        reported = next(
-            (
-                e["params"].get("duration_seconds")
-                for e in reversed(raw)
-                if e["name"] == "session_end"
-            ),
-            None,
-        )
+        state = SessionState()
+        for e in raw:
+            received = e.get("server_ts") or e["client_ts"]
+            state.add(e["name"], e["client_ts"], received, e["params"].get("seq"), e["params"])
         items = clean_events(raw, labeler, include_hidden)
         chapters.append(
             {
@@ -585,9 +586,11 @@ def story(events, labeler, include_hidden=False):
                 "session_id": key,
                 "start": start,
                 "end": end,
-                "seconds": reported
-                if isinstance(reported, (int, float))
-                else round(_seconds(start, end), 1),
+                **{
+                    field: value
+                    for field, value in state.summary(now).items()
+                    if field in CHAPTER_STATE
+                },
                 "gap": round(_seconds(previous_end, start), 1) if previous_end else None,
                 "events": len(raw),
                 "segments": compress(items),

@@ -31,6 +31,11 @@ def normalize_country(value: str | None) -> str | None:
     return value if len(value) == 2 and value.isascii() and value.isalnum() else None
 
 
+def delivery_path(value: str | None) -> str | None:
+    """Which way the SDK sent a batch (X-AVN-Delivery); anything else is not recorded."""
+    return value if value in ("app", "pause", "quit", "worker") else None
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

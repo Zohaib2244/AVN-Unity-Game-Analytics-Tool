@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { duration, number, percent } from '@/lib/format';
 import type { LevelRow, LevelTransition } from '@/lib/types';
-import { DRILL_PAGE, cleanNavigation, clampPage, dropChange, dropChangeLabel, dropText, lastDidDetails, lastDidLabel, levelCurve, levelDrillGroup, levelDrop, levelHighlights, levelsNote, pageCount, pageSizeOf, pickReleases, releaseChoices, sortLevels, zoomedLevels, zoomWindow } from './levelMath';
+import { afterReturning, DRILL_PAGE, cleanNavigation, clampPage, dropChange, dropChangeLabel, dropText, lastDidDetails, lastDidLabel, levelCurve, levelDrillGroup, levelDrop, levelHighlights, levelsNote, pageCount, pageSizeOf, pickReleases, releaseChoices, sortLevels, zoomedLevels, zoomWindow } from './levelMath';
 
 const transition = (over: Partial<LevelTransition> = {}): LevelTransition => ({
-  available: true, next_level: 2, drop_percent: 20, total_drop: 10, net_change: 0, left: 0, finished_stopped: 0, kept_going: 0, unknown_progress: 0, failed: 0, failed_left: 0, failed_kept_playing: 0, fail_drop_percent: null, ...over,
+  available: true, next_level: 2, drop_percent: 20, total_drop: 10, net_change: 0, left: 0, finished_stopped: 0, kept_going: 0, straight_on: 0, came_back_later: 0, unknown_progress: 0, failed: 0, failed_left: 0, failed_kept_playing: 0, fail_drop_percent: null, ...over,
 });
 const row = (level: number, over: Partial<LevelRow> = {}): LevelRow => ({
   level, started: 100, completed: 50, completion: 50, tries_per_player: 1, fails: 0, restarts: 0, median_seconds: 60, low_sample: false, transition: transition(), ...over,
@@ -37,7 +37,8 @@ describe('which group a level opens on', () => {
   it('opens the bigger of the two drops, else who carried on', () => {
     expect(levelDrillGroup(row(1, { transition: transition({ left: 5, finished_stopped: 2, kept_going: 9 }) }))).toBe('left');
     expect(levelDrillGroup(row(1, { transition: transition({ left: 2, finished_stopped: 5 }) }))).toBe('finished_stopped');
-    expect(levelDrillGroup(row(1, { transition: transition({ left: 0, finished_stopped: 0, kept_going: 3 }) }))).toBe('kept_going');
+    expect(levelDrillGroup(row(1, { transition: transition({ left: 0, finished_stopped: 0, kept_going: 3, straight_on: 3 }) }))).toBe('straight_on');
+    expect(levelDrillGroup(row(1, { transition: transition({ left: 0, finished_stopped: 0, kept_going: 3, came_back_later: 3 }) }))).toBe('came_back_later');
     expect(levelDrillGroup(row(1, { transition: transition({ left: 0, finished_stopped: 0, kept_going: 0 }) }))).toBe('left');
   });
   it('ties and missing transitions open on "left"', () => {
@@ -66,6 +67,19 @@ describe('what they did last', () => {
     expect(details.lines.map((line) => line.label)).toEqual(['Last event in that session', 'When']);
     expect(details.lines[1]!.body).toBe('It was their last event on level 7');
     expect(details.lines[0]!.before).toBeUndefined();
+  });
+  it('says when the ending never arrived, and how the app stopped when the phone told us', () => {
+    const lost = lastDidDetails({ last_action: 'Last seen in the level', next_action: null, ending_known: false, last_event: null }, 3);
+    expect(lost.lines[0]!.label).toBe('Not the full story');
+    const told = lastDidDetails({ last_action: 'Left during interstitial ad', next_action: null, ending_known: true, prev_exit_reason: 'UserRequested', prev_exit_ad: 'Interstitial', last_event: null }, 3);
+    expect(told.lines).toEqual([{ label: 'How the app stopped', body: 'Swiped away or force-stopped, Interstitial open' }]);
+    const noAd = lastDidDetails({ last_action: 'Left in the level', next_action: null, prev_exit_reason: 'LowMemory', prev_exit_ad: 'None', last_event: null }, 3);
+    expect(noAd.lines[0]!.body).toBe('Android closed it for memory');
+  });
+  it('says what a returning player did with the level', () => {
+    expect(afterReturning({ reached_next: true, passed: true }, 3)).toBe('Reached level 4');
+    expect(afterReturning({ reached_next: false, passed: true }, 3)).toBe('Passed level 3, then stopped');
+    expect(afterReturning({ reached_next: false, passed: false }, 3)).toBe("Hasn't passed level 3");
   });
   it('falls back to Unknown with no events', () => {
     expect(lastDidDetails({ last_action: null, next_action: null, last_event: null }, 3)).toEqual({ title: 'Unknown', lines: [] });

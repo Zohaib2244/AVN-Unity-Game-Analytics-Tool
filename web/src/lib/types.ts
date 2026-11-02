@@ -164,7 +164,7 @@ export type NutBotStoredMessage = { id: number; role: 'user'; text: string } | N
 export type NutBotChatRead = { chat: NutBotChatRow; messages: NutBotStoredMessage[] };
 export type NutBotPrefs = { harness?: string; models?: Record<string, string>; efforts?: Record<string, string> };
 /** The page context sent with every message (what the "Looking at" chips say). */
-export type NutBotContext = { page?: string; range?: { from: string; to: string }; hide_test: boolean; filters: { environments: string[]; app_versions: string[]; builds: string[]; countries: string[]; platforms: string[] }; player?: string; funnel?: NutBotFunnel };
+export type NutBotContext = { page?: string; range?: { from: string; to: string }; hide_test: boolean; filters: { environments: string[]; app_versions: string[]; builds: string[]; countries: string[]; platforms: string[] }; player?: string; level?: { level: number; group?: string; last_action?: string }; funnel?: NutBotFunnel };
 
 /* ─── Players: the event catalog, event rules and the player list ─── */
 export type CatalogParam = { key: string; count: number; values: string[] };
@@ -193,7 +193,7 @@ export type PlayersResult = { total: number; players: PlayerRow[]; context?: { a
 /* ─── Levels (/insights/levels and /insights/levels/players) ─── */
 export type LevelTransition = {
   available: boolean; next_level: number; drop_percent: number | null; total_drop: number; net_change: number | null;
-  left: number; finished_stopped: number; kept_going: number; unknown_progress: number;
+  left: number; finished_stopped: number; kept_going: number; straight_on: number; came_back_later: number; unknown_progress: number;
   /** Players who failed the level at least once, split by whether they then left (without passing or going on) or kept playing. */
   failed: number; failed_left: number; failed_kept_playing: number; fail_drop_percent: number | null;
 };
@@ -215,10 +215,12 @@ export type LevelPlayer = {
   player: string; tries: number; fails: number; completed: boolean; exit_at: string; exit_event: string;
   last_action: string | null; next_action: string | null; last_event: LevelLastEvent | null;
   session_seconds: number; last_seen: string; came_back: boolean; app_version: string | null;
+  ending_known: boolean; prev_exit_reason?: string | null; prev_exit_ad?: string | null;
+  away_seconds?: number | null; passed?: boolean; reached_next?: boolean;
 };
 export type LevelLastAction = { text: string; players: number };
 export type LevelPlayersResult = {
-  level: number; group: string; counts: Record<string, number>; last_actions: LevelLastAction[];
+  level: number; group: string; counts: Record<string, number>; last_actions: LevelLastAction[]; no_ending?: number;
   total: number; offset: number; players: LevelPlayer[];
 };
 
@@ -227,7 +229,24 @@ export type PlayerProfile = { session_number?: number; device_model?: string; de
 export type PlayerInfo = { user_id?: string | null; device_id?: string | null; platform?: string | null; country?: string | null; app_version?: string | null; build?: string | null; environment?: string | null; updated_at?: string | null; properties?: PlayerProfile | null };
 export type PlayerStory = { sessions: number; events: number; first_seen?: string | null; last_seen?: string | null; total_play_seconds?: number | null; average_session_seconds?: number | null; highest_level?: number | null; info?: PlayerInfo | null };
 export type JourneyEvent = { event_id: string; name: string; session_id: string; client_ts: string; level?: number | null; params: Record<string, unknown> };
-export type JourneyPage = { events: JourneyEvent[]; truncated: boolean; snapshot: number | string | null };
+export type SessionSummary = {
+  started_at: string; last_event_at: string; status: 'open' | 'closed'; closed_by: 'client' | 'server' | null; end_reason: string | null; in_progress: boolean;
+  seconds: number; away_seconds: number; trips: number; timeout_seconds: number; measured_old_way: boolean;
+};
+export type JourneyPage = { events: JourneyEvent[]; truncated: boolean; snapshot: number | string | null; sessions?: Record<string, SessionSummary> };
+export type SessionBar = { label: string; sessions: number };
+export type SessionDay = { day: string; sessions: number; average_seconds: number | null; median_seconds: number | null };
+export type SessionQuality = {
+  platform: string; app_version: string; sessions: number; closed: number; client: number; inferred: number; client_percent: number | null; inferred_percent: number | null;
+  median_end_delay: number | null; events: number; duplicate_percent: number | null; rejected: number;
+};
+export type SessionReport = {
+  sessions: number; players: number; closed: number; in_progress: number; waiting: number; average_seconds: number | null; median_seconds: number | null;
+  play_seconds: number; away_seconds: number; ad_away_seconds: number; old_way: number; ends: Record<string, number>; days: SessionDay[]; changing_from: string;
+  measure_change: { version: string; day: string } | null; lengths: SessionBar[]; trips: SessionBar[]; aways: SessionBar[]; leaves: Array<{ cause: string; trips: number }>;
+  previous_runs: { total: number; formats: string[]; rows: Array<{ reason: string; importance: string | null; launches: number; ads: Record<string, number> }> };
+  quality: SessionQuality[]; delivery: Array<{ delivery: string; events: number; median_end_delay: number | null }>;
+};
 export type DeviceSpecs = { requested_model: string; matched_device?: string | null; note?: string | null; source_url: string; specs?: Record<string, string> | null };
 export type SavedHighlight = { id: string; name: string; color: string; conditions: ConditionGroup };
 

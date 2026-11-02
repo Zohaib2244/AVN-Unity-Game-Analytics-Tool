@@ -21,6 +21,7 @@ from fastapi import (
     Request,
     Response,
 )
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import Field
@@ -40,6 +41,7 @@ from . import (
     nutbot_commands,
     player_groups,
     sdk_package,
+    session_report,
 )
 from .auth import AccessVerifier, Accounts, Principal
 from .config import Settings
@@ -81,6 +83,7 @@ from .models import (
     WorkspaceCreate,
     WorkspaceMove,
     WorkspaceNutBot,
+    delivery_path,
     normalize_country,
     timestamp,
 )
@@ -242,7 +245,25 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             {"loc": error["loc"], "msg": error["msg"], "type": error["type"]}
             for error in exception.errors()
         ]
+        game_id = getattr(request.state, "game_id", None)
+        if game_id:
+            await run_in_threadpool(note_rejected, game_id, exception.body, request.headers)
         return JSONResponse({"detail": "Invalid request", "errors": errors}, status_code=400)
+
+    def note_rejected(game_id, body, headers):
+        """Count a refused batch for the Data quality table. It must never change the answer."""
+        context = body.get("context") if isinstance(body, dict) else None
+        context = context if isinstance(context, dict) else {}
+
+        def text(name):
+            value = context.get(name)
+            return value if isinstance(value, str) and 0 < len(value) <= 128 else None
+
+        delivery = delivery_path(headers.get("x-avn-delivery"))
+        try:
+            storage.record_rejected(game_id, text("platform"), text("app_version"), delivery)
+        except sqlite3.Error as error:
+            logger.warning("Could not count a rejected batch: %s", error)
 
     @app.exception_handler(sqlite3.Error)
     async def database_unavailable(request, exception):
@@ -275,16 +296,23 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
 
     if not admin:
 
-        def authorize(x_api_key: Annotated[str | None, Header()] = None):
-            return storage.authorize_ingest(x_api_key)
+        def authorize(request: Request, x_api_key: Annotated[str | None, Header()] = None):
+            request.state.game_id = storage.authorize_ingest(x_api_key)
+            return request.state.game_id
 
         @app.post("/v1/events")
         def ingest(
             batch: Batch,
             game_id: Annotated[str, Depends(authorize)],
             cf_ipcountry: Annotated[str | None, Header()] = None,
+            x_avn_delivery: Annotated[str | None, Header()] = None,
         ):
-            return storage.ingest(game_id, batch, country=normalize_country(cf_ipcountry))
+            return storage.ingest(
+                game_id,
+                batch,
+                country=normalize_country(cf_ipcountry),
+                delivery=delivery_path(x_avn_delivery),
+            )
 
         return app
 
@@ -929,6 +957,22 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             lambda: insights.summary(storage, str(game_id), *days, chosen, tz_offset),
         )
 
+    @admin_api.get("/v1/games/{game_id}/insights/sessions")
+    def insights_sessions(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "sessions",
+            (days, chosen, tz_offset),
+            lambda: session_report.report(storage, str(game_id), *days, chosen, tz_offset),
+        )
+
     @admin_api.get("/v1/games/{game_id}/insights/retention")
     def insights_retention(
         game_id: UUID,
@@ -1117,6 +1161,8 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             "left",
             "finished_stopped",
             "kept_going",
+            "straight_on",
+            "came_back_later",
             "unknown_progress",
             "stuck",
             "failed",

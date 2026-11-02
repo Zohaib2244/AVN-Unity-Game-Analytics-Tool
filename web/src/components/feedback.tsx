@@ -130,7 +130,10 @@ export { ConfirmDelete, DialogShell };
 /* ─── Definitions: dotted labels that explain how a number is counted ─── */
 export const DEFINITIONS: Record<string, [string, string]> = {
   Players: ['Distinct players in the range. A player is their user_id, or their device_id when there is none.', 'Editor and development data left out unless you include it'],
-  Sessions: ['A session starts when the game opens, or when it comes back after 30 or more minutes away.', 'From the SDK'],
+  Sessions: ['A session starts when the game opens, or when it comes back after 30 or more minutes away. It counts once, on the day it started.', 'From the SDK'],
+  'Median length': ['The middle length of the finished sessions: time in the game, without time away.', 'Open sessions are left out'],
+  'Average length': ['The average length of the finished sessions. A few very long ones move it a lot, so read it beside the median.', 'Open sessions are left out'],
+  'Time away in ads': ['Of all the time players spent away inside a session, the share that was for an ad.', ''],
   Events: ['Every event the server stored for these days and filters.', ''],
   'Daily active': ['Players with at least one event on the last day of the range.', ''],
   Stickiness: ['Average daily players divided by monthly players. Higher means people come back more often.', ''],

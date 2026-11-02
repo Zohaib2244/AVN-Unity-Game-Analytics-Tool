@@ -12,7 +12,8 @@ import { analysisDate, duration, number, platformLabel, shortId } from '@/lib/fo
 import { gamePath } from '@/lib/games';
 import { downloadCSV } from '@/lib/store';
 import type { Game, LevelLastAction, LevelPlayer, LevelPlayersResult, LevelRow } from '@/lib/types';
-import { CARRIED_ON_GROUPS, LEVEL_DRILL_GROUPS, lastDidDetails, lastDidLabel, levelDrillGroup, type DrillSort, type LevelDrillGroup, type LevelScope } from './levelMath';
+import { afterReturning, CARRIED_ON_GROUPS, LEVEL_DRILL_GROUPS, lastDidDetails, lastDidLabel, levelDrillGroup, type DrillSort, type LevelDrillGroup, type LevelScope } from './levelMath';
+import { showDrill } from '@/pages/nutbot/context';
 import { drillPagePath, drillPath, type DrillState } from './levelPaths';
 
 /* ─── "What they did last": the label, its popover and the group's chips ─── */
@@ -21,7 +22,7 @@ export function LastDidButton({ row, index, expanded, onPointerOver, onPointerOu
 }
 
 /** The popover's content: the last event sent in that session, when it came, and what they did right after the level. */
-export function LastDidDetails({ row, level }: { row: Pick<LevelPlayer, 'last_action' | 'next_action' | 'last_event'>; level: number }): ReactElement {
+export function LastDidDetails({ row, level }: { row: Pick<LevelPlayer, 'last_action' | 'next_action' | 'last_event' | 'ending_known' | 'prev_exit_reason' | 'prev_exit_ad'>; level: number }): ReactElement {
   const details = lastDidDetails(row, level);
   return (
     <>
@@ -56,7 +57,7 @@ export function LastActions({ level, group, lastActions, lastAction, onPick }: {
   if (CARRIED_ON_GROUPS.includes(group) || !lastActions?.length) return null;
   return (
     <div className="last-actions" role="group" aria-label={`What players did last on level ${level}`}>
-      <span className="last-actions-label">What they did last</span>
+      <span className="last-actions-label">{group === 'came_back_later' ? 'Why they left' : 'How it ended'}</span>
       {lastActions.map((item, index) => <button key={item.text} type="button" className="last-action" data-last-action={index} aria-pressed={lastAction === item.text} onClick={() => onPick?.(lastAction === item.text ? null : item.text)}>{item.text}<span className="drill-count">{number(item.players)}</span></button>)}
     </div>
   );
@@ -69,6 +70,7 @@ export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPla
   const asked = (useSearch({ strict: false }) as Record<string, string | undefined>).group;
   const requested = LEVEL_DRILL_GROUPS.find(([key]) => key === asked)?.[0];
   const [state, setStateRaw] = useState<DrillState>(() => (requested ? { ...(memory.get(level) ?? { sort: 'exit_at' as DrillSort }), group: requested, lastAction: null } : memory.get(level)) ?? { group: levelDrillGroup(row), sort: 'exit_at', lastAction: null });
+  useEffect(() => { showDrill({ level, group: state.group, ...(state.lastAction ? { last_action: state.lastAction } : {}) }); return () => showDrill(null); }, [level, state.group, state.lastAction]);
   const setState = (patch: Partial<DrillState>) => setStateRaw((previous) => { const next = { ...previous, ...patch }; memory.set(level, next); return next; });
   const firstPath = drillPagePath(game, filters, scope, level, state, 0);
   // A new group or sort waits for its own answer; the previous group's rows are not shown under its name.
@@ -106,14 +108,15 @@ export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPla
     try {
       const all = await read<LevelPlayersResult>(drillPath(game, filters, scope, level, state, { offset: 0, limit: 2000 }));
       downloadCSV(`${game.name}-${platformLabel(game.platform)}-level-${level}-${state.group}-${filters.range.from}_${filters.range.to}.csv`, [
-        ['player', 'last_action', 'next_action', 'last_event', 'last_event_after', 'last_event_gap_seconds', 'last_event_after_level_seconds', 'tries', 'fails', 'finished_level', 'last_on_level_utc', 'last_seen_utc', 'opened_game_later', 'app_version', 'session_seconds'],
-        ...all.players.map((item) => [item.player, item.last_action, item.next_action, item.last_event?.text, item.last_event?.after, item.last_event?.gap, item.last_event?.after_level, item.tries, item.fails, String(item.completed), item.exit_at, item.last_seen, String(item.came_back), item.app_version, item.session_seconds]),
+        ['player', 'last_action', 'ending_known', 'prev_exit_reason', 'prev_exit_ad', 'away_seconds', 'passed_level', 'reached_next_level', 'next_action', 'last_event', 'last_event_after', 'last_event_gap_seconds', 'last_event_after_level_seconds', 'tries', 'fails', 'finished_level', 'last_on_level_utc', 'last_seen_utc', 'opened_game_later', 'app_version', 'session_seconds'],
+        ...all.players.map((item) => [item.player, item.last_action, String(item.ending_known), item.prev_exit_reason, item.prev_exit_ad, item.away_seconds, item.passed == null ? undefined : String(item.passed), item.reached_next == null ? undefined : String(item.reached_next), item.next_action, item.last_event?.text, item.last_event?.after, item.last_event?.gap, item.last_event?.after_level, item.tries, item.fails, String(item.completed), item.exit_at, item.last_seen, String(item.came_back), item.app_version, item.session_seconds]),
       ]);
     } catch (error) { toastError(error); }
   };
 
   const quitting = !CARRIED_ON_GROUPS.includes(state.group);
-  const counts: Record<string, number> | null = first.data?.counts ?? (row?.transition ? { left: row.transition.left, finished_stopped: row.transition.finished_stopped, kept_going: row.transition.kept_going, unknown_progress: row.transition.unknown_progress, failed_left: row.transition.failed_left, failed_kept_playing: row.transition.failed_kept_playing } : null);
+  const returned = state.group === 'came_back_later';
+  const counts: Record<string, number> | null = first.data?.counts ?? (row?.transition ? { left: row.transition.left, finished_stopped: row.transition.finished_stopped, kept_going: row.transition.kept_going, straight_on: row.transition.straight_on, came_back_later: row.transition.came_back_later, unknown_progress: row.transition.unknown_progress, failed_left: row.transition.failed_left, failed_kept_playing: row.transition.failed_kept_playing } : null);
   return (
     <div className="level-drill level-page-list" data-level-drill={level}>
       <div className="level-drill-head">
@@ -126,6 +129,8 @@ export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPla
         </div>
       </div>
       {counts?.unknown_progress ? <p className="help">{number(counts.unknown_progress)} more {counts.unknown_progress === 1 ? 'player' : 'players'} in the drop started a later level without a start of level {level + 1}.</p> : null}
+      {quitting && first.data?.no_ending ? <p className="help" data-no-ending>{number(first.data.no_ending)} of these {first.data.no_ending === 1 ? 'player has' : 'players have'} no known ending: they haven't returned, so “Last seen” is the last thing we heard, not why they left.</p> : null}
+      {returned && counts ? <p className="help">{number(counts.kept_going! - counts.straight_on!)} of them went on to reach level {level + 1}, so Drop doesn't count them.</p> : null}
       <LastActions level={level} group={state.group} lastActions={first.data?.last_actions} lastAction={state.lastAction} onPick={(text) => setState({ lastAction: text })} />
       <QueryRegion query={first} path={firstPath} skeleton={<Skeleton kind="table" rows={5} columns={8} />}>
         {(result) => {
@@ -136,7 +141,7 @@ export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPla
             <>
               <div className="table-wrap">
                 <table className="compact-table">
-                  <thead><tr><th>Player</th>{quitting ? <th title="Hover or click one to see the exact last event">What they did last</th> : null}<th className="num">Tries</th><th className="num">Fails</th><th>Last on this level</th><th className="col-secondary">Opened the game later</th><th className="col-secondary">Version</th><th className="num">Session length</th></tr></thead>
+                  <thead><tr><th>Player</th>{quitting ? <th title="Hover or click one to see the exact last event">{returned ? 'Why they left' : 'How it ended'}</th> : null}{returned ? <><th className="num">Away</th><th>Then</th></> : null}<th className="num">Tries</th><th className="num">Fails</th><th>Last on this level</th>{returned ? null : <th className="col-secondary">Opened the game later</th>}<th className="col-secondary">Version</th><th className="num">Session length</th></tr></thead>
                   <tbody>
                     {players.map((item, index) => (
                       <tr key={item.player} data-player={item.player}>
@@ -147,10 +152,11 @@ export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPla
                           onFocus={(event) => { if (!did?.pinned && event.currentTarget.matches(':focus-visible')) setDid({ index, pinned: false, anchor: event.currentTarget }); }}
                           onBlur={() => { if (!did?.pinned) hideLastDid(); }}
                           onClick={(event) => { if (did?.index === index && did.pinned) hideLastDid(); else setDid({ index, pinned: true, anchor: event.currentTarget }); }} /></td> : null}
+                        {returned ? <><td className="num">{duration(item.away_seconds)}</td><td className="small">{afterReturning(item, level)}</td></> : null}
                         <td className="num">{number(item.tries)}</td>
                         <td className="num">{number(item.fails)}</td>
                         <td className="small muted">{analysisDate(item.exit_at, filters.timezone)}</td>
-                        <td className="col-secondary">{item.came_back ? <span className="pill good">came back</span> : <span className="small muted">—</span>}</td>
+                        {returned ? null : <td className="col-secondary">{item.came_back ? <span className="pill good">came back</span> : <span className="small muted">—</span>}</td>}
                         <td className="small col-secondary">{item.app_version || '—'}</td>
                         <td className="num">{duration(item.session_seconds)}</td>
                       </tr>
@@ -163,7 +169,7 @@ export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPla
                 <span className="small muted">{number(players.length)} of {number(total)}</span>
                 {players.length < total ? <button type="button" className="button" data-drill-more disabled={more.loading} aria-busy={more.loading || undefined} onClick={() => showMore(players.length)}>{more.loading ? <Spinner label="Loading…" /> : 'Show more'}</button> : null}
               </div>
-              <p className="help">Session length is the whole session they were last on this level in, not only the time on the level. “Came back” means any later session by the end date. Hover or click what they did last to see the last event the game logged in that session (session start and end aside), when it came, and what they did right after the level. Open a player to start at their last event on this level.</p>
+              <p className="help">Session length is the whole session they were last on this level in, not only the time on the level. “Came back” means any later session by the end date. Left means the end of the session reached us; Last seen means it didn't. Hover or click one to see the last event the game logged in that session (session start and end aside), when it came, and what they did right after the level. Open a player to start at their last event on this level.</p>
             </>
           );
         }}

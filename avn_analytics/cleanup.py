@@ -104,6 +104,7 @@ def delete(storage, game_id, chosen):
                 connection.rollback()
                 raise
         connection.execute("BEGIN IMMEDIATE")
+        connection.execute(f"DELETE FROM ingest_tally WHERE app_version IN ({marks})", chosen)
         for table in ("analytics_queue", "analytics_parts", "analytics_views"):
             connection.execute(f"DELETE FROM {table}")
         connection.commit()

@@ -14,7 +14,7 @@ from itertools import groupby
 from statistics import mean, median
 
 from . import events as event_reads
-from . import insights, journeys, stories
+from . import insights, journeys, session_report, stories
 from .models import EventConditionGroup, PlayerRules
 from .nutbot_analysis import (
     SDK_NOISE,
@@ -66,6 +66,8 @@ LEVEL_GROUP_TEXT = {
     "left": "stopped playing after this level",
     "finished_stopped": "finished it, then stopped",
     "kept_going": "went on to later levels",
+    "straight_on": "reached the next level in the session they started this one",
+    "came_back_later": "left in the session they started it, then returned in a later session",
     "unknown_progress": "progress unknown",
     "stuck": "tried it three or more times without passing",
     "failed": "failed it at least once",
@@ -167,6 +169,11 @@ ANALYSIS_TOOLS = [
             "value": {"type": "string"},
         },
         ["event"],
+    ),
+    _tool(
+        "get_sessions",
+        "The Sessions page: how many sessions, median and average length of finished sessions, how they ended, why players left the app (ad, purchase, themselves), time away, and why the previous run ended on Android 11+ (swiped away or closed by Android, with the ad that was open). Per version: how many ends arrived, how late, duplicates and refused batches. Use it for how long sessions are and whether ads push players out.",
+        RANGE_PROPS,
     ),
     _tool(
         "get_retention",
@@ -531,6 +538,11 @@ class AnalysisTools:
             "columns": ["day", "events", "players"],
             "days": [[item["day"], item["events"], item["players"]] for item in days],
         }
+
+    def tool_get_sessions(self, run, game_id, args):
+        start, end = self._range(run, args)
+        data = session_report.report(self.storage, game_id, start, end, self._filters(run, args))
+        return {key: value for key, value in data.items() if key != "days"}
 
     def tool_get_retention(self, run, game_id, args):
         start, end = self._range(run, args)

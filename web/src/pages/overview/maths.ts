@@ -6,13 +6,15 @@ import type { OverviewBreakdownRow, OverviewDay, OverviewMeasure } from '@/lib/t
 
 export type DayPoint = { day: string; value: number };
 
-/** One point per day of the range (missing days count 0), for `measure`. */
-export function dailySeries(days: OverviewDay[], range: Pick<DayRange, 'from' | 'to'>, measure: OverviewMeasure): DayPoint[] {
+/** One point per day of the range; missing days count 0. */
+export function fillDays(values: Record<string, number>, range: Pick<DayRange, 'from' | 'to'>): DayPoint[] {
   const all: string[] = [];
   for (let day = range.from; day <= range.to; day = addDays(day, 1)) all.push(day);
-  const values = Object.fromEntries(days.map((day) => [day.day, day[measure]]));
   return all.map((day) => ({ day, value: values[day] || 0 }));
 }
+
+/** One point per day of the range, for `measure`. */
+export const dailySeries = (days: OverviewDay[], range: Pick<DayRange, 'from' | 'to'>, measure: OverviewMeasure): DayPoint[] => fillDays(Object.fromEntries(days.map((day) => [day.day, day[measure]])), range);
 
 export const CHART = { width: 800, height: 170, left: 40, bottom: 22, top: 8 } as const;
 

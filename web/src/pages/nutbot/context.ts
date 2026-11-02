@@ -2,12 +2,20 @@
 // and put back; the scope line under each answer says which of them were used.
 import type { ContextChip } from '@avn/ui';
 import { PRESETS, resolveRange } from '@/components/DateRange';
-import { DIMENSIONS, type DayRange, type Facets, type FilterState } from '@/lib/filters';
+import { DIMENSIONS, filterState, type DayRange, type Facets, type FilterState } from '@/lib/filters';
 import { dimensionText, platformLabel, prettyDay, shortId } from '@/lib/format';
 import { storeGet } from '@/lib/store';
 import type { Game, NutBotContext, NutBotFunnel } from '@/lib/types';
 
-export const NB_PAGES: Record<string, string> = { overview: 'Overview', funnels: 'Funnels', levels: 'Levels', players: 'Players', exports: 'Exports', dictionary: 'Event dictionary', 'event-setup': 'Event setup', keys: 'API keys', settings: 'Game settings' };
+/** What the page itself works with: the saved choices, with a preset like "Last 30 days" counted from today (the saved dates may be days old). */
+export const currentFilters = (game: Pick<Game, 'id'>): FilterState => { const saved = filterState(game); return { ...saved, range: resolveRange(saved.range?.preset || '30', saved.range) }; };
+
+/** The players listed on the open level page (which group, which last action), told by the level page itself. */
+let drill: { level: number; group: string; last_action?: string } | null = null;
+export const showDrill = (value: { level: number; group: string; last_action?: string } | null): void => { drill = value; };
+const drillShown = (level: number): { group?: string; last_action?: string } => (drill && drill.level === level ? { group: drill.group, ...(drill.last_action ? { last_action: drill.last_action } : {}) } : {});
+
+export const NB_PAGES: Record<string, string> = { overview: 'Overview', funnels: 'Funnels', levels: 'Levels', players: 'Players', sessions: 'Sessions', exports: 'Exports', dictionary: 'Event dictionary', 'event-setup': 'Event setup', keys: 'API keys', settings: 'Game settings' };
 
 export const NB_SUGGESTIONS: Record<string, string[]> = {
   levels: ['Which level loses the most players, and what changed in the latest version?', 'Is level 12 hard or just slow?', 'Compare the last two releases on the early levels.', 'Where should I add a hint or a reward?'],
@@ -17,13 +25,13 @@ export const NB_SUGGESTIONS: Record<string, string[]> = {
 };
 export const suggestionsFor = (section: string): string[] => NB_SUGGESTIONS[section] || NB_SUGGESTIONS.overview!;
 
-export type PageContext = { game: Pick<Game, 'id' | 'name' | 'platform'> | null; section: string; filters: FilterState | null; player?: string | null };
+export type PageContext = { game: Pick<Game, 'id' | 'name' | 'platform'> | null; section: string; filters: FilterState | null; player?: string | null; level?: number | null };
 export type Chip = { id: string; label: string; removable: boolean };
 
 export const rangeText = (range: { from: string; to: string }): string => `${prettyDay(range.from)}${range.from === range.to ? '' : ` → ${prettyDay(range.to)}`}`;
 
 /** The chips in order: game (fixed), page, range, filters, player. Nothing outside a game. */
-export function contextChips({ game, section, filters, player }: PageContext): Chip[] {
+export function contextChips({ game, section, filters, player, level }: PageContext): Chip[] {
   if (!game) return [];
   const active = filters ? DIMENSIONS.flatMap((dimension) => filters[dimension].map((value) => dimensionText(dimension, value))) : [];
   return [
@@ -31,6 +39,7 @@ export function contextChips({ game, section, filters, player }: PageContext): C
     { id: 'page', label: NB_PAGES[section] || section, removable: true },
     ...(filters?.range ? [{ id: 'range', label: rangeText(filters.range), removable: true }] : []),
     ...(active.length ? [{ id: 'filters', label: active.slice(0, 2).join(', ') + (active.length > 2 ? ` +${active.length - 2}` : ''), removable: true }] : []),
+    ...(level != null && section === 'levels' ? [{ id: 'level', label: `Level ${level}`, removable: true }] : []),
     ...(player ? [{ id: 'player', label: `Player ${shortId(player)}`, removable: true }] : []),
   ];
 }
@@ -47,7 +56,7 @@ export function scopeLine(chips: Chip[], off: ReadonlySet<string>): string {
 }
 
 /** The context sent with a message: page, range, filters, the open player and the funnel being drafted. */
-export function buildContext({ game, section, filters, player }: PageContext, off: ReadonlySet<string>): NutBotContext {
+export function buildContext({ game, section, filters, player, level }: PageContext, off: ReadonlySet<string>): NutBotContext {
   const empty = { environments: [], app_versions: [], builds: [], countries: [], platforms: [] };
   let funnel: NutBotFunnel | null = game ? storeGet<NutBotFunnel & { steps?: NutBotFunnel['steps'] }>(`avn-funnel-draft-${game.id}`) : null;
   if (funnel?.steps?.length) funnel = { steps: funnel.steps.map(({ event, param, op, value, label }) => ({ event, param, op, value, label })).slice(0, 30), scope: funnel.scope, window_hours: funnel.window_hours };
@@ -58,6 +67,7 @@ export function buildContext({ game, section, filters, player }: PageContext, of
     hide_test: filters?.hideTest ?? true,
     filters: off.has('filters') || !filters ? empty : { environments: filters.environment, app_versions: filters.app_version, builds: filters.build, countries: filters.country, platforms: filters.platform },
     player: off.has('player') ? undefined : player || undefined,
+    level: off.has('level') || level == null || section !== 'levels' ? undefined : { level, ...drillShown(level) },
     funnel: funnel || undefined,
   };
 }

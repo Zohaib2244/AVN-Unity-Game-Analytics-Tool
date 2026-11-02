@@ -1,5 +1,8 @@
-import { applyEdit, buildContext, contextChips, editFor, editableChips, panelChips, scopeLine } from './context';
+import { showDrill } from './context';
+import { applyEdit, buildContext, contextChips, currentFilters, editFor, editableChips, panelChips, scopeLine } from './context';
 import type { FilterState } from '@/lib/filters';
+import { saveFilters } from '@/lib/filters';
+import { resolveRange } from '@/components/DateRange';
 
 const game = { id: 'g1', name: 'Blocks', platform: 'android' };
 const filters: FilterState = { range: { from: '2026-10-01', to: '2026-10-07', preset: '7' }, timezone: 'local', hideTest: true, versionMode: 'custom', environment: [], app_version: ['1.2.0'], build: [], country: ['DE', 'FR', 'US'], platform: [] };
@@ -70,5 +73,27 @@ describe('context chips', () => {
     expect(by('filters').options!.map((option) => option.id)).toEqual(['latest', 'all']);
     expect(by('player')).toMatchObject({ kind: 'Player' });
     expect(by('game').kind).toBeUndefined();
+  });
+});
+
+describe('currentFilters', () => {
+  it('counts a saved "Last 30 days" from today, as the page does, not from the day it was saved', () => {
+    saveFilters({ id: 'stale' }, { ...filters, range: { from: '2020-01-01', to: '2020-01-30', preset: '30' } });
+    expect(currentFilters({ id: 'stale' }).range).toEqual(resolveRange('30'));
+    saveFilters({ id: 'picked' }, { ...filters, range: { from: '2026-10-01', to: '2026-10-07', preset: 'custom' } });
+    expect(currentFilters({ id: 'picked' }).range).toMatchObject({ from: '2026-10-01', to: '2026-10-07' });
+  });
+});
+
+describe('open level', () => {
+  it('sends the open level and the group of players listed, and a chip, only on the Levels page', () => {
+    showDrill({ level: 3, group: 'left', last_action: 'Chose next' });
+    const page = { game, section: 'levels', filters, level: 3 };
+    expect(contextChips(page).map((chip) => chip.id)).toContain('level');
+    expect(buildContext(page, new Set()).level).toEqual({ level: 3, group: 'left', last_action: 'Chose next' });
+    expect(buildContext(page, new Set(['level'])).level).toBeUndefined();
+    expect(buildContext({ ...page, section: 'players' }, new Set()).level).toBeUndefined();
+    expect(buildContext({ ...page, level: 4 }, new Set()).level).toEqual({ level: 4 });
+    showDrill(null);
   });
 });

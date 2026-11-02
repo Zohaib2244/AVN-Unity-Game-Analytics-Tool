@@ -24,8 +24,25 @@ PRODUCTION = SimpleNamespace(insights=insights, journeys=journeys, events=events
 
 # What the level dashboards gained after the reference was frozen: the failed-then-left groups. The
 # reference cannot answer them, so the comparison leaves them out (test_backend.py checks them).
-ADDED_LEVEL_GROUPS = {"failed", "failed_left", "failed_kept_playing"}
+ADDED_LEVEL_GROUPS = {
+    "failed",
+    "failed_left",
+    "failed_kept_playing",
+    "straight_on",
+    "came_back_later",
+}
 ADDED_LEVEL_FIELDS = ADDED_LEVEL_GROUPS | {"fail_drop_percent"}
+# Why a player left is worked out anew (level_exits.py, test_level_exits.py checks it).
+CHANGED_LEVEL_FIELDS = {
+    "last_action",
+    "last_actions",
+    "no_ending",
+    "ending_known",
+    "prev_exit_reason",
+    "prev_exit_ad",
+}
+# The event before a player's last one now skips a session_end: the reference names it.
+CHANGED_LAST_EVENT_FIELDS = ("gap", "after")
 
 
 def without_added_level_fields(value):
@@ -33,11 +50,26 @@ def without_added_level_fields(value):
         return [without_added_level_fields(item) for item in value]
     if not isinstance(value, dict):
         return value
+    if "after_level" in value:
+        return {k: v for k, v in value.items() if k not in CHANGED_LAST_EVENT_FIELDS}
     counts = "total_drop" in value  # a level's group counts, or its transition summary
     return {
         key: without_added_level_fields(item)
         for key, item in value.items()
-        if not (counts and key in ADDED_LEVEL_FIELDS)
+        if not (counts and key in ADDED_LEVEL_FIELDS) and key not in CHANGED_LEVEL_FIELDS
+    }
+
+
+# Sessions now count once, on the day they started (session_state.py), where the reference counts
+# them on every day and range they touched; test_session_state.py checks the new counts.
+def without_session_counts(answer):
+    if not isinstance(answer, dict) or "days" not in answer:
+        return answer
+    return {
+        **answer,
+        "sessions": None,
+        "days": [{**day, "sessions": None} for day in answer["days"]],
+        "anomalies": [item for item in answer["anomalies"] if item["metric"] != "sessions"],
     }
 
 
@@ -245,10 +277,16 @@ def snapshot(storage, game_id, module, *, full=True):
             answers[key] = {"error": type(error).__name__, "detail": str(error)}
         if getattr(function, "__name__", "") in ("level_progress", "level_players"):
             answers[key] = without_added_level_fields(answers[key])
+        if function is module.insights.summary:
+            answers[key] = without_session_counts(answers[key])
         if function is module.insights.journey and "snapshot" in answers[key]:
             # An opaque page token: raw events and facts number it differently (see
-            # insights.FACTS_SNAPSHOT); what it does is tested on its own.
-            answers[key] = {**answers[key], "snapshot": isinstance(answers[key]["snapshot"], int)}
+            # insights.FACTS_SNAPSHOT); what it does is tested on its own. The state of each
+            # session was added after the reference was frozen.
+            answers[key] = {
+                **{name: item for name, item in answers[key].items() if name != "sessions"},
+                "snapshot": isinstance(answers[key]["snapshot"], int),
+            }
         return answers[key]
 
     days = (storage, game_id)
@@ -331,16 +369,6 @@ def snapshot(storage, game_id, module, *, full=True):
                             offset=1,
                             limit=3,
                             scope=scope,
-                        )
-                    first = module.journeys.level_players(*window, middle, scope=scope)
-                    for item in first["last_actions"][:2]:
-                        ask(
-                            f"level {middle} last {item['text']} {name} {label} {scope}",
-                            module.journeys.level_players,
-                            *window,
-                            middle,
-                            scope=scope,
-                            last_action=item["text"],
                         )
         ask("mappings", module.events.mappings, storage, game_id)
         ask("mappings 1.7", module.events.mappings, storage, game_id, "1.7")

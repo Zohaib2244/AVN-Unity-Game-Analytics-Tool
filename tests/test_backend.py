@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from avn_analytics import device_specs
+from avn_analytics import device_specs, session_state
 from avn_analytics.api import BodyLimit, create_app, dump_on_signal
 from avn_analytics.config import Settings
 from avn_analytics.exports import period_bounds
@@ -1894,6 +1894,8 @@ def test_level_players_group_who_left_who_finished_and_who_kept_going(backend):
         "left": 2,
         "finished_stopped": 0,
         "kept_going": 2,
+        "straight_on": 2,
+        "came_back_later": 1,
         "stuck": 0,
         "failed": 1,
         "failed_left": 1,
@@ -2015,6 +2017,21 @@ def test_level_players_came_back_counts_a_later_session_the_same_day(backend):
     assert rows["stayed"]["came_back"] is False  # still the same session
 
 
+def test_a_background_session_end_is_not_the_event_before_the_last_one(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    records = [
+        _played("p", "s", "04T09:00:00", "level_started", {"level": 1}),
+        _played("p", "s", "04T09:01:00", "SCREEN_ANALYSIS", {"SCREEN": "shop", "STATE": "Opened"}),
+        _played("p", "s", "04T09:01:01", "session_end", {"end_reason": "background"}),
+        _played("p", "s", "04T09:01:30", "SCREEN_ANALYSIS", {"SCREEN": "home", "STATE": "Opened"}),
+    ]
+    assert send(ingest, game, records).is_success
+    row = _level_players(admin, game, 1, "left")["players"][0]
+    assert row["last_event"]["after"] == "SCREEN_ANALYSIS · Opened (shop)"
+    assert row["last_event"]["gap"] == 30.0
+
+
 def test_level_players_say_what_players_did_last_on_the_level(backend):
     admin, ingest, _ = backend
     game = register(admin)
@@ -2043,18 +2060,18 @@ def test_level_players_say_what_players_did_last_on_the_level(backend):
     assert send(ingest, game, records).is_success
     data = _level_players(admin, game, 1, "left")
     assert data["last_actions"] == [
-        {"text": "Failed level 1", "players": 2},
-        {"text": "Interstitial ad", "players": 1},
-        {"text": "Opened settings menu", "players": 1},
+        {"text": "Last seen after failing the level", "players": 2},
+        {"text": "Left after interstitial ad", "players": 1},
+        {"text": "Left on settings menu", "players": 1},
     ]
     rows = {row["player"]: row for row in data["players"]}
-    assert rows["ad"]["last_action"] == "Interstitial ad"
-    assert rows["menu"]["last_action"] == "Opened settings menu"
-    assert rows["fail-1"]["last_action"] == "Failed level 1"
+    assert rows["ad"]["last_action"] == "Left after interstitial ad"
+    assert rows["menu"]["last_action"] == "Left on settings menu"
+    assert rows["fail-1"]["last_action"] == "Last seen after failing the level"
     # The player's last event on the level, for jumping to it in their timeline.
     assert rows["menu"]["exit_event"] == records[5]["event_id"]
     assert rows["ad"]["exit_event"] == records[1]["event_id"]
-    failed = _level_players(admin, game, 1, "left", last_action="Failed level 1")
+    failed = _level_players(admin, game, 1, "left", last_action="Last seen after failing the level")
     assert sorted(row["player"] for row in failed["players"]) == ["fail-1", "fail-2"]
     assert failed["total"] == 2 and failed["counts"]["left"] == 4
     assert failed["last_actions"] == data["last_actions"]
@@ -2123,10 +2140,10 @@ def test_level_players_blame_the_ad_that_sent_the_app_to_the_background(backend)
         for row in _level_players(admin, game, 2, "left")["players"]
     }
     assert rows == {
-        "inter": "Interstitial ad",
-        "reward": "Rewarded ad",
-        "player": "Started level 2",
-        "returned": "Failed level 2",
+        "inter": "Left during interstitial ad",
+        "reward": "Left during rewarded ad",
+        "player": "Left in the level",
+        "returned": "Last seen after failing the level",
     }
 
 
@@ -2246,10 +2263,10 @@ def test_level_players_tell_the_last_event_apart_from_what_came_right_after_the_
     rows = {
         row["player"]: row for row in _level_players(admin, game, 1, "finished_stopped")["players"]
     }
-    assert rows["shop"]["last_action"] == "Rewarded ad"
+    assert rows["shop"]["last_action"] == "Left after rewarded ad"
     assert rows["shop"]["next_action"] == "Opened shop"
     assert rows["shop"]["last_event"]["after_level"] == 1024.0
-    assert rows["quiet"]["last_action"] == "Completed level 1"
+    assert rows["quiet"]["last_action"] == "Last seen after finishing the level"
     assert rows["quiet"]["next_action"] is None
     assert rows["quiet"]["last_event"]["after_level"] is None
 
@@ -2467,7 +2484,8 @@ def test_levels_for_new_players_count_only_their_first_session(backend):
     quit_level_2 = _level_players(admin, game, 2, "left", **scoped)
     (row,) = quit_level_2["players"]
     assert row["player"] == "new-1" and row["came_back"] is True
-    assert row["session_seconds"] == 240 and row["last_action"] == "Failed level 2"
+    assert row["session_seconds"] == 240
+    assert row["last_action"] == "Left after failing the level"
     after_win = _level_players(admin, game, 1, "finished_stopped", **scoped)
     assert [row["player"] for row in after_win["players"]] == ["new-2"]
     assert after_win["players"][0]["came_back"] is False
@@ -2682,8 +2700,10 @@ def test_players_sort_by_app_version_in_number_order(backend):
     assert [p["player"] for p in first_page] == ["pc", "pf"]
 
 
-def test_players_sort_by_average_session_length_using_last_event_as_end(backend):
+def test_players_sort_by_average_session_length_using_last_event_as_end(backend, monkeypatch):
     admin, ingest, _ = backend
+    later = session_state.clock() + timedelta(hours=1)  # the sessions with no end are over
+    monkeypatch.setattr(session_state, "clock", lambda: later)
     game = register(admin)
     events = [
         event(

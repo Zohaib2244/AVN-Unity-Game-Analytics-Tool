@@ -22,11 +22,13 @@ import { agoText, number, platformLabel } from '@/lib/format';
 import { gamePath } from '@/lib/games';
 import { storeGet, storeRemove, storeSet } from '@/lib/store';
 import type { Game, NutBotAction, NutBotChatRead, NutBotChatRow, NutBotEvent, NutBotInfo, NutBotLimits, NutBotPrefs, NutBotProposal, NutBotReportRow, NutBotStoredTool } from '@/lib/types';
-import { applyEdit, buildContext, contextChips, editableChips, editFor, scopeLine, suggestionsFor, type ContextEdit, type PageContext } from './context';
+
+import { applyEdit, buildContext, currentFilters, contextChips, editableChips, editFor, scopeLine, suggestionsFor, type ContextEdit, type PageContext } from './context';
 import { Markdown } from './markdown';
 import { effortLevels, pickEffort, pickModel } from './models';
 import { APPLY_KEY, applyMode, applyProposal, decisionFor, loadDecisions, proposalKey, rememberDecision, savesReport, type Applied, type ApplyMode, type CardDecision } from './proposals';
 import { applyEvent, contextShare, emptyAnswer, fromStoredMessages, settle, type Answer, type ChatMessage } from './stream';
+
 
 const PREFS_KEY = 'avn-nutbot-prefs';
 const LAYOUT_KEY = 'avn-nutbot-layout';
@@ -162,7 +164,7 @@ export function NutBotHost(): ReactElement | null {
   const navigate = useNavigate();
   const { toast } = useNotify();
   const appEl = useAppContainer();
-  const search = useSearch({ strict: false }) as { player?: string };
+  const search = useSearch({ strict: false }) as { player?: string; level?: string };
   const href = useRouterState({ select: (state) => state.location.href });
   const allowed = game ? nbAllowed(me, game, workspace) : false;
   const infoQuery = useRead<NutBotInfo>('/v1/nutbot', { enabled: Boolean(game && allowed) });
@@ -274,10 +276,10 @@ export function NutBotHost(): ReactElement | null {
   const chooseHarness = (id: string) => { setHarness(id); setEffort(''); setModel(pickModel(info?.harnesses.find((h) => h.id === id) ?? null, (nbPrefs().models || {})[id])); };
 
   // The page's filters live in localStorage; re-read them when the panel opens, the address changes and while open.
-  const readFilters = useCallback(() => { const next = game ? filterState(game) : null; setFilters((previous) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next)); }, [game]);
+  const readFilters = useCallback(() => { const next = game ? currentFilters(game) : null; setFilters((previous) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next)); }, [game]);
   useEffect(() => { readFilters(); }, [readFilters, href, open]);
   useEffect(() => { if (!open) return; const timer = setInterval(readFilters, 1500); return () => clearInterval(timer); }, [open, readFilters]);
-  const seen: PageContext = useMemo(() => ({ game, section, filters, player: search.player || null }), [game, section, filters, search.player]);
+  const seen: PageContext = useMemo(() => ({ game, section, filters, player: search.player || null, level: search.level != null && Number.isInteger(Number(search.level)) ? Number(search.level) : null }), [game, section, filters, search.player, search.level]);
   // What the @ list changed (page, days, version) lies over what the page shows, for the next question only.
   const page = useMemo(() => applyEdit(seen, edit), [seen, edit]);
   const chips = useMemo(() => contextChips(page), [page]);
@@ -423,7 +425,7 @@ export function NutBotHost(): ReactElement | null {
     const messages = messagesRef.current;
     messages.push({ role: 'user', text });
     // The context is taken now: browsing to another player later doesn't change this question or its scope line.
-    const asked: PageContext = applyEdit({ ...seen, filters: filterState(game) }, edit);
+    const asked: PageContext = applyEdit({ ...seen, filters: currentFilters(game) }, edit);
     const answer: Answer = emptyAnswer(scopeLine(contextChips(asked), off));
     messages.push(answer);
     setEdit({}); setBusy(true); bump();

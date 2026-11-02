@@ -4,8 +4,10 @@
 import { conditionGroup, eventCondition, paramCondition } from './conditions.ts';
 import type { ConditionGroup } from './conditions.ts';
 
+/** The values picked on a ready-made highlight, per parameter. The conditions already carry them; this is what the picker shows. */
+export type ValuePicks = Record<string, string[]>;
 /** A highlight on the raw timeline: a named, coloured condition tree; `savedId` when it came from the game's saved rules. */
-export type TimelineHighlight = { label: string; color: string; enabled: boolean; conditions: ConditionGroup; savedId?: string | null };
+export type TimelineHighlight = { label: string; color: string; enabled: boolean; conditions: ConditionGroup; savedId?: string | null; picks?: ValuePicks };
 
 /** One raw event as the timeline keeps it: `session` is the session's position (0-based), `index` its place in the whole timeline. */
 export type AnalysisEvent = {

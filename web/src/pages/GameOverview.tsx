@@ -22,6 +22,9 @@ import { SectionTiles, SetupChecklist, useFacts } from './overview/Setup';
 import { signed, toggleValue } from './overview/maths';
 
 const MEASURES: Array<{ value: OverviewMeasure; label: string }> = [{ value: 'players', label: 'Players (DAU)' }, { value: 'sessions', label: 'Sessions' }, { value: 'events', label: 'Events' }];
+const SESSION_WORDS: Record<string, string> = { session_end: 'Not the number of sessions: one session can have several of these.', APP_ANALYSIS: 'Not the number of sessions: these are the app going to the background and back.' };
+/** Phones deliver late, so today and yesterday can still gain events. */
+const mayChange = (lastDay: string): boolean => lastDay >= addDays(new Date().toISOString().slice(0, 10), -1);
 const TABS = DIMENSIONS.map((key) => ({ value: key, label: DIMENSION_LABELS[key].replace('Device platform', 'Platform').replace('App version', 'Version') }));
 
 export function GameOverviewPage({ game }: { game: Game }): ReactElement {
@@ -78,7 +81,7 @@ export function GameOverviewPage({ game }: { game: Game }): ReactElement {
       <div className="split">
         <section className="panel">
           <div className="panel-header">
-            <div><h2>Activity per day</h2></div>
+            <div><h2>Activity per day</h2>{mayChange(state.range.to) ? <p>Recent data may still change</p> : null}</div>
             <div className="quiet-actions"><Freshness updatedAt={updated} refreshing={query.isFetching} onRefresh={() => void refreshAll()} /><Segmented label="Measure" value={measure} onChange={setMeasure} options={MEASURES} /></div>
           </div>
           <div className="panel-body chart-wrap">
@@ -102,7 +105,7 @@ export function GameOverviewPage({ game }: { game: Game }): ReactElement {
         <section className="panel">
           <div className="panel-header"><h2>Top events</h2><div className="quiet-actions"><span className="help">{data ? `${number(data.events)} events` : ''}</span><Link className="text-link" to={gamePath(game, 'dictionary')}>Dictionary <Ico name="arrow" size={13} /></Link></div></div>
           {loading ? <Skeleton rows={5} columns={3} /> : data ? (data.top_events.length
-            ? <table className="compact-table"><thead><tr><th>Event</th><th className="num">Events</th><th className="num">Players</th></tr></thead><tbody>{data.top_events.slice(0, 10).map((row) => <tr key={row.name}><td className="mono">{row.name}</td><td className="num">{number(row.events)}</td><td className="num">{number(row.players)}</td></tr>)}</tbody></table>
+            ? <table className="compact-table"><thead><tr><th>Event</th><th className="num">Events</th><th className="num">Players</th></tr></thead><tbody>{data.top_events.slice(0, 10).map((row) => <tr key={row.name}><td className="mono" title={SESSION_WORDS[row.name]}>{row.name}</td><td className="num">{number(row.events)}</td><td className="num">{number(row.players)}</td></tr>)}</tbody></table>
             : <p className="help panel-body">No events.</p>) : null}
         </section>
       </div>

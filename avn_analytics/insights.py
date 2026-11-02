@@ -15,8 +15,9 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from . import analytics, rules, stories
+from . import analytics, rules, session_state, stories
 from .models import timestamp
+from .session_state import WATCHED_SQL, SessionState
 
 PLAYER = "coalesce(json_extract(payload, '$.user_id'), json_extract(payload, '$.device_id'))"
 IDENTIFIED = f"{PLAYER} IS NOT NULL"
@@ -338,6 +339,24 @@ def active_users(connection, scoped, end, timezone_offset_minutes=0):
     }
 
 
+def _session_starts(connection, scoped):
+    """When each identified session of scope_events' table began, under the name client_ts."""
+    connection.execute("DROP TABLE IF EXISTS temp.session_starts")
+    connection.execute(
+        f"""CREATE TEMP TABLE session_starts AS
+            SELECT session_id, min(client_ts) AS client_ts FROM {scoped}
+            WHERE player IS NOT NULL AND session_id IS NOT NULL GROUP BY session_id"""
+    )
+    return "session_starts"
+
+
+def _sessions_started(connection, started, start, end):
+    """A session counts once, on the day it began, even when it runs past midnight."""
+    return connection.execute(
+        f"SELECT count(*) FROM {started} WHERE client_ts>=? AND client_ts<?", (start, end)
+    ).fetchone()[0]
+
+
 def summary(storage, game_id, start, end, filters, timezone_offset_minutes=0):
     """Totals, a daily series and breakdowns for the game overview."""
     storage.get_game(game_id)
@@ -360,18 +379,20 @@ def summary(storage, game_id, start, end, filters, timezone_offset_minutes=0):
                 (start, end),
             ).fetchone()
         )
+        started = _session_starts(connection, scoped)
+        totals["sessions"] = _sessions_started(connection, started, start, end)
         raw_condition, raw_args = where(start, end)
         raw_events = connection.execute(
             f"SELECT count(*) FROM events WHERE {raw_condition}", raw_args
         ).fetchone()[0]
         previous = dict(
             connection.execute(
-                f"SELECT count(*) AS events, count(DISTINCT player) AS players, "
-                f"count(DISTINCT CASE WHEN player IS NOT NULL THEN session_id END) AS sessions "
+                f"SELECT count(*) AS events, count(DISTINCT player) AS players "
                 f"FROM {scoped} WHERE {inside}",
                 (previous_start, start),
             ).fetchone()
         )
+        previous["sessions"] = _sessions_started(connection, started, previous_start, start)
         new_players = connection.execute(
             f"SELECT count(DISTINCT player) FROM {scoped} "
             f"WHERE {inside} AND player IS NOT NULL AND name='first_open'",
@@ -382,12 +403,19 @@ def summary(storage, game_id, start, end, filters, timezone_offset_minutes=0):
             dict(row)
             for row in connection.execute(
                 f"SELECT {day_sql} AS day, count(*) AS events, "
-                f"count(DISTINCT player) AS players, "
-                f"count(DISTINCT CASE WHEN player IS NOT NULL THEN session_id END) AS sessions "
+                f"count(DISTINCT player) AS players "
                 f"FROM {scoped} WHERE {inside} GROUP BY day ORDER BY day",
                 (start, end),
             )
         ]
+        per_day = dict(
+            connection.execute(
+                f"SELECT {day_sql} AS day, count(*) FROM {started} WHERE {inside} GROUP BY day",
+                (start, end),
+            ).fetchall()
+        )
+        for day in days:
+            day["sessions"] = per_day.get(day["day"], 0)
         breakdowns = {
             column: [
                 dict(row)
@@ -901,32 +929,35 @@ class _NewestVersion:
         return None if self.best is None else str(self.best)
 
 
-class _AverageSessionLength:
-    """Average per-session duration, using the final event when no end was reported."""
+class _SessionLengths:
+    """SQL aggregate: a player's sessions, each worked out by SessionState."""
 
     def __init__(self):
         self.sessions = {}
 
-    def step(self, session_id, event_name, duration, client_ts):
+    def step(self, session_id, name, client_ts, server_ts, seq, params):
         if session_id is None or client_ts is None:
             return
-        current = self.sessions.setdefault(session_id, [client_ts, client_ts, None])
-        current[0] = min(current[0], client_ts)
-        current[1] = max(current[1], client_ts)
-        if event_name == "session_end" and isinstance(duration, (int, float)) and duration >= 0:
-            current[2] = max(current[2] or 0, float(duration))
+        state = self.sessions.setdefault(session_id, SessionState())
+        state.add(name, client_ts, server_ts, seq, params)
+
+
+class _AverageSessionLength(_SessionLengths):
+    """Average length of the finished sessions: an open one has no final length yet."""
 
     def finalize(self):
-        durations = []
-        for first, last, reported in self.sessions.values():
-            if reported is not None:
-                durations.append(reported)
-            else:
-                elapsed = (
-                    datetime.fromisoformat(last) - datetime.fromisoformat(first)
-                ).total_seconds()
-                durations.append(max(0, elapsed))
-        return sum(durations) / len(durations) if durations else None
+        now = session_state.clock()
+        lengths = [
+            state.seconds for state in self.sessions.values() if state.outcome(now)[0] == "closed"
+        ]
+        return sum(lengths) / len(lengths) if lengths else None
+
+
+class _TotalSessionLength(_SessionLengths):
+    def finalize(self):
+        if not self.sessions:
+            return None
+        return sum(state.seconds for state in self.sessions.values())
 
 
 def players(
@@ -945,8 +976,8 @@ def players(
 ):
     """Players active in the range.
 
-    sort: last_seen, first_seen, events, sessions, session_length (average duration per session,
-    using its final event when no end duration was reported), playtime (total session duration),
+    sort: last_seen, first_seen, events, sessions, session_length (average length of finished
+    sessions, see session_state.py), playtime (total session length),
     version (the newest app version a
     player has used, ordered by number), or metric0..metric2 (one of `metrics`).
     conditions keep only players who did (or never did) an event; metrics add a column per player.
@@ -995,7 +1026,8 @@ def players(
         table, player, session = source.table, source.player, source.session
         connection.create_function("version_key", 1, version_key, deterministic=True)
         connection.create_aggregate("newest_version", 1, _NewestVersion)
-        connection.create_aggregate("average_session_length", 4, _AverageSessionLength)
+        connection.create_aggregate("average_session_length", 6, _AverageSessionLength)
+        connection.create_aggregate("total_session_length", 6, _TotalSessionLength)
         anonymous_events = connection.execute(
             f"SELECT count(*) FROM {table} WHERE {condition} AND NOT ({source.identified})", args
         ).fetchone()[0]
@@ -1005,15 +1037,15 @@ def players(
             f"GROUP BY player {having})",
             (*args, *having_args),
         ).fetchone()[0]
-        session_length = (
-            f"average_session_length({session}, name, "
-            f"{source.param('duration_seconds')}, client_ts)"
+        session_values = (
+            f"{session}, name, client_ts, server_ts, {source.param('seq')}, "
+            f"CASE WHEN name IN ({WATCHED_SQL}) THEN {source.params} END"
         )
         rows = connection.execute(
             f"""SELECT {player} AS player, count(*) AS events,
                        count(DISTINCT {session}) AS sessions,
-                       {session_length} AS avg_session_seconds,
-                       {session_length} * count(DISTINCT {session}) AS total_play_seconds,
+                       average_session_length({session_values}) AS avg_session_seconds,
+                       total_session_length({session_values}) AS total_play_seconds,
                        min(client_ts) AS first_seen, max(client_ts) AS last_seen,
                        max({source.envelope("platform")}) AS platform,
                        newest_version({source.envelope("app_version")}) AS app_version,
@@ -1051,6 +1083,23 @@ ENVELOPE = ("session_id", "app_version", "build", "platform", "country")
 # Facts timelines number their pages from here, so a page link made while reading raw events
 # (whose snapshots are event row numbers, far below this) is never mistaken for a facts one.
 FACTS_SNAPSHOT = 2**62
+
+
+def _player_sessions(connection, source, condition, args, player):
+    """How each of one player's sessions stands: session_id -> SessionState.summary."""
+    states = {}
+    for row in connection.execute(
+        f"""SELECT {source.session} AS session_id, name, client_ts, server_ts,
+                   {source.param("seq")} AS seq,
+                   CASE WHEN name IN ({WATCHED_SQL}) THEN {source.params} END AS params
+            FROM {source.table} WHERE {condition} AND {source.player}=?""",
+        (*args, player),
+    ):
+        if row["session_id"] is not None:
+            state = states.setdefault(row["session_id"], SessionState())
+            state.add(row["name"], row["client_ts"], row["server_ts"], row["seq"], row["params"])
+    now = session_state.clock()
+    return {key: state.summary(now) for key, state in states.items()}
 
 
 def journey(storage, game_id, player, start, end, offset=0, snapshot=None):
@@ -1092,6 +1141,9 @@ def journey(storage, game_id, player, start, end, offset=0, snapshot=None):
                     ORDER BY client_ts, event_id LIMIT ? OFFSET ?""",
                 (*args, player, snapshot, MAX_JOURNEY_EVENTS + 1, offset),
             ).fetchall()
+        sessions = (
+            _player_sessions(connection, source, condition, args, player) if not offset else {}
+        )
     events = []
     for row in rows[:MAX_JOURNEY_EVENTS]:
         if source.facts:
@@ -1123,12 +1175,15 @@ def journey(storage, game_id, player, start, end, offset=0, snapshot=None):
                 "environment": row["environment"],
             }
         )
-    return {
+    result = {
         "player": player,
         "events": events,
         "truncated": len(rows) > MAX_JOURNEY_EVENTS,
         "snapshot": snapshot,
     }
+    if offset == 0:
+        result["sessions"] = sessions
+    return result
 
 
 MAX_ENVIRONMENT_FIXES = 30

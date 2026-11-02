@@ -238,6 +238,9 @@ All of **ad**, plus:
 | Parameter | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `PREV_EXIT` | string | No | `Quit`, `Background`, `Killed` — how the previous run ended: clean quit, closed by the OS while in background, or died in foreground. Omitted on first launch. |
+| `PREV_EXIT_REASON` | string | No | Android 11 and up: why the system says the previous run ended. `UserRequested` (swiped away or force-stopped), `LowMemory`, `Crash`, `CrashNative`, `Anr`, `ExitSelf`, `Signaled`, `Freezer`, `Other`. |
+| `PREV_EXIT_IMPORTANCE` | string | No | Android 11 and up: how the system ranked the app when it ended. `Cached` is in the background; `Visible`, `Foreground` and others. |
+| `PREV_EXIT_AD` | string | No | The ad format open when the previous run ended, or `None`. Omitted when the app version can't tell. |
 
 ### Background
 
@@ -482,5 +485,6 @@ Order events within a level by `seq`, not by `client_ts`. A level start and the 
 | Revives | Spelled out: several results per `ATTEMPT_ID`, totals cover the whole attempt, the last result is the outcome. |
 | The standard itself | This file is the standard. The JSON copy is gone, and nothing on the website checks games against it; Mappings and the Dictionary show what a game really sends. |
 | `FTUE_ANALYSIS` | Removed from the standard. Use `first_open` and the first session's events instead. |
+| `APP_ANALYSIS.Launch` | Added `PREV_EXIT_REASON`, `PREV_EXIT_IMPORTANCE` and `PREV_EXIT_AD`. |
 
 **Compatibility.** New parameters are all optional, so a v4 game stays valid. Two breaks: `MOVES` is gone, and `FTUE_ANALYSIS` is no longer a standard event.

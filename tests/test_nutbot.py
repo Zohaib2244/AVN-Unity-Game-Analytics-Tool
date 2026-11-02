@@ -932,6 +932,14 @@ def test_retention_and_level_features_read_the_pages_numbers(tools):
     assert data["columns_of_each_value"][0] == "players"
 
 
+def test_sessions_tool_reads_the_page_without_its_daily_rows(tools):
+    _, _, nutbot, make = tools
+    error, text = call(nutbot, make(), "get_sessions")
+    data = json.loads(text)
+    assert not error and data["sessions"] > 0 and "days" not in data
+    assert "ends" in data and "previous_runs" in data and "quality" in data
+
+
 def test_compare_segments_puts_values_side_by_side(tools):
     _, _, nutbot, make = tools
     error, text = call(nutbot, make(), "compare_segments", dimension="app_version")
@@ -983,3 +991,21 @@ def test_measurements_join_the_agents_log_in_order():
     merge_fetches(log, fetches)
     assert [entry.get("server_ms") for entry in log] == [10, None, 20]
     assert log[2]["error"] == "nope"
+
+
+def test_header_names_the_open_level_and_the_group_of_players_listed(bot):
+    nutbot = bot[0].app.state.nutbot
+    run = type(
+        "R",
+        (),
+        {
+            "principal": Principal(email="a@b.c", name="A", is_admin=True, source="test"),
+            "can_write": True,
+        },
+    )()
+    defaults = {"start": "2026-10-01", "end": "2026-10-07", "hide_test": True, "filters": {}}
+    game = {"name": "G", "platform": "android", "id": "g"}
+    context = {"level": {"level": 3, "group": "finished_stopped", "last_action": "Chose next"}}
+    text = nutbot.user_prompt("why?", context, defaults, game, run)
+    assert "open level page: level 3, listing the players who quit after finishing it" in text
+    assert "'Chose next'" in text

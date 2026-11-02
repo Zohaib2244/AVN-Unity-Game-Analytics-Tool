@@ -58,7 +58,7 @@ describe('the players behind a level', () => {
     expect(picked.get('scope')).toBe('first_session');
   });
   it('is the players endpoint, and one page is DRILL_PAGE players from an offset', () => {
-    expect(drillPath(game, state, 'all', 3, { group: 'kept_going', sort: 'exit_at', lastAction: null }).startsWith('/v1/games/g1/insights/levels/players?')).toBe(true);
+    expect(drillPath(game, state, 'all', 3, { group: 'straight_on', sort: 'exit_at', lastAction: null }).startsWith('/v1/games/g1/insights/levels/players?')).toBe(true);
     const page = drillPagePath(game, state, 'all', 3, { group: 'left', sort: 'exit_at', lastAction: null }, 100);
     expect(params(page).get('offset')).toBe('100');
     expect(params(page).get('limit')).toBe(String(DRILL_PAGE));

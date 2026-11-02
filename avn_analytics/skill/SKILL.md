@@ -40,9 +40,12 @@ Automatic events from the Unity SDK:
 - `first_open` - once per install. The install / day-0 anchor.
 - `session_start` - launch, or return after 30+ minutes away. Params: `session_number`, language,
   timezone offset, `device_model`, `os_version`, `device_type`, screen size.
-- `session_end` - logged when the *next* session starts, stamped with the last time the app was
-  alive. Params: `duration_seconds` (foreground time), `session_number`. The latest session of a
-  player therefore has **no** `session_end` yet - do not treat that as a crash or zero-length session.
+- `session_end` - sent at every trip to the background, so one session can have several. Params:
+  `duration_seconds` (a running total of foreground time: the highest in a session is its play time),
+  `session_number`, `end_reason` (`background` = provisional, the player may return; `quit`;
+  `recovered` = written at the next launch). Older app versions have no `end_reason` and wrote it
+  only when the *next* session started. A session can have **no** `session_end` - do not treat that
+  as a crash or a zero-length session, and never count `session_end` events as sessions.
 
 Everything else is a custom event; read `events.md` before interpreting it.
 
@@ -103,7 +106,7 @@ sample allows. Replace step names with ones that exist in `events.md`.
 retained on day N if the player has any `session_start` on cohort_date + N. Report D1, D3, D7,
 D14, D30 only for cohorts old enough to have reached that day.
 
-**Sessions**: sessions per player, `duration_seconds` from `session_end` (median and p90, not just
+**Sessions**: sessions per player (distinct `session_id`), the highest `duration_seconds` of each session's `session_end`, else first to last event minus `AWAY_SECONDS` (median and p90, not just
 mean), time between sessions, sessions by hour of local day (use the timezone offset param).
 
 **Progression and difficulty**: for level-style events compute attempts, completion rate, fail

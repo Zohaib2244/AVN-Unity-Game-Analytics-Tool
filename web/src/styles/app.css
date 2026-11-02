@@ -436,7 +436,22 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
 .hl-chip.on { border-color: var(--highlight-color); background: color-mix(in srgb, var(--highlight-color) 12%, var(--nested)); font-weight: 600; }
 .hl-chip.on .highlight-dot { opacity: 1; }
 .hl-count { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 500; }
-@media (max-width: 620px) { .hl-group { grid-template-columns: 1fr; gap: 4px; } .hl-group-name { padding-top: 0; } .hl-chip { min-height: 44px; } }
+.hl-chip-pair { display: inline-flex; align-items: stretch; gap: 4px; max-width: 100%; }
+.hl-picked { max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--muted); }
+.hl-values-toggle { padding: 0 10px; border: var(--bw) solid var(--line); border-radius: var(--r-ctl); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.hl-values-toggle:hover, .hl-values-toggle[aria-expanded="true"] { border-color: var(--line-strong); color: var(--text); }
+.hl-values { grid-column: 2; display: grid; gap: 8px; margin: 0; padding: 10px 12px; border: var(--bw) solid var(--line); border-radius: var(--r-ctl); }
+.hl-value-row { display: grid; grid-template-columns: minmax(90px, 160px) minmax(0, 1fr); gap: 10px; align-items: start; }
+.hl-value-row code { padding: 6px 0 0; border: 0; background: none; font-size: var(--fs-sm); color: var(--muted); overflow-wrap: anywhere; }
+.hl-values-name { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-sm); }
+.hl-value-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.hl-value { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 9px; border: var(--bw) solid var(--line); border-radius: var(--r-ctl); background: var(--nested); color: var(--text); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.hl-value:hover { border-color: var(--line-strong); }
+.hl-value[aria-pressed="true"] { border-color: var(--highlight-color); background: color-mix(in srgb, var(--highlight-color) 14%, var(--nested)); font-weight: 600; }
+.hl-value:disabled { opacity: .5; cursor: not-allowed; }
+.hl-value.more { color: var(--muted); background: transparent; }
+.hl-values-clear { justify-self: start; }
+@media (max-width: 620px) { .hl-group { grid-template-columns: 1fr; gap: 4px; } .hl-group-name { padding-top: 0; } .hl-chip, .hl-values-toggle, .hl-value { min-height: 44px; } .hl-values { grid-column: 1; } .hl-value-row { grid-template-columns: 1fr; gap: 4px; } }
 
 /* The timeline: sessions listed down the left, the controls and events beside them. */
 .tl-layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 20px; align-items: start; padding: 14px 24px 24px; --tl-top: 0px; }
@@ -512,3 +527,25 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
   .dlg.player-view-dialog[data-state="closed"],.dlg-bg[data-state="closed"]:has(+ .player-view-dialog){animation:none}
 }
 .clipboard-fallback{position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none}
+
+/* Timeline: parameters grouped under their event, and one fact per line on a session card. */
+.param-group { margin: 12px 0 0; }
+.param-group h4 { margin: 0 0 4px; font-size: var(--fs-sm); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.param-group .param-grid { margin: 4px 0 6px; }
+.session-chip .session-chip-lines { display: grid; gap: 3px; font-size: var(--fs-sm); color: var(--text); }
+.session-chip .session-chip-lines > span { display: block; }
+.session-chip .session-chip-lines b { display: inline-block; min-width: 5.2em; font-weight: 500; color: var(--muted); }
+
+/* Sessions: the distributions side by side, days that can still change, and one line on a trend. */
+.session-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
+.session-grid > .panel { margin: 0; }
+.session-detail { margin-bottom: 16px; }
+.session-delivery { margin-top: 18px; border-top: 1px solid var(--line); }
+@media (max-width: 900px) { .session-grid { grid-template-columns: 1fr; } }
+.chart-bar.soft { fill-opacity: .45; }
+.chart-marker { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; }
+.chart-marker-label { fill: var(--muted); font-size: 11px; font-family: var(--font-mono); }
+
+/* A session's one end marker, and the word on a raw event that isn't what it seems. */
+.session-end-marker { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; color: var(--muted); font-size: var(--fs-sm); }
+.event-note { display: inline-block; margin: 3px; padding: 2px 5px; border-radius: 5px; font-size: var(--fs-micro); color: var(--muted); background: var(--nested); box-shadow: inset 0 0 0 1px var(--line); }

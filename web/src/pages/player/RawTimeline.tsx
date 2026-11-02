@@ -3,6 +3,7 @@
 // Events arrive page by page (insights/journey, one snapshot) until the whole range is in.
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react';
 import { errorMessage, isAbort, read } from '@/api';
+import { Tag } from '@avn/ui';
 import { Ico } from '@/components/icons';
 import { useNotify } from '@/components/feedback';
 import type { DayRange } from '@/lib/filters';
@@ -12,13 +13,13 @@ import { conditionError, eventMatchesCondition, highlightMatchIndices, highlight
 import { gameURL } from '@/lib/games';
 import { storeGet, storeSet } from '@/lib/store';
 import type { TimelineHighlight } from '@/lib/player-events';
-import type { Game, JourneyEvent, JourneyPage } from '@/lib/types';
+import type { Game, JourneyEvent, JourneyPage, SessionSummary } from '@/lib/types';
 import { Disclosure, useDisclosures } from './Disclosure';
 import { EventAnalysis } from './EventAnalysis';
 import { HighlightSetup } from './HighlightSetup';
 import {
   buildCatalog, chipTitle, chipValue, DEFAULT_HIDDEN_PARAMS, defaultParamState, foldRuns, highlightName, highlightSummary, matchesFilter, MAX_HIGHLIGHTS,
-  type ParamState, parameterChooser, repeatKey, sessionHasEvent, sessionLevels, sessionSeconds, sessionStartSummary, type TimelineItem, timelineSessions,
+  eventNote, type ParamState, parameterGroups, repeatKey, sessionEnding, sessionHasEvent, sessionLength, sessionLevels, sessionStartSummary, type TimelineItem, timelineSessions,
 } from './timeline';
 
 type Mode = 'highlight' | 'filter';
@@ -26,14 +27,16 @@ type Focus = { event: string; label: string };
 const joinClass = (...names: Array<string | false | null | undefined>): string => names.filter(Boolean).join(' ');
 
 /** The events of the range for one player, page by page; the same snapshot throughout, so counts stay steady. */
-function useJourney(base: string, player: string, range: DayRange, tzOffset: number, attempt: number): { events: JourneyEvent[]; complete: boolean; failure: string } {
-  const [state, setState] = useState<{ events: JourneyEvent[]; complete: boolean; failure: string }>({ events: [], complete: false, failure: '' });
+type Journey = { events: JourneyEvent[]; complete: boolean; failure: string; states: Record<string, SessionSummary> };
+function useJourney(base: string, player: string, range: DayRange, tzOffset: number, attempt: number): Journey {
+  const [state, setState] = useState<Journey>({ events: [], complete: false, failure: '', states: {} });
   useEffect(() => {
     let cancelled = false;
     let events: JourneyEvent[] = [];
+    let states: Record<string, SessionSummary> = {};
     let snapshot: number | string | null = null;
     let more = true;
-    setState({ events: [], complete: false, failure: '' });
+    setState({ events: [], complete: false, failure: '', states: {} });
     void (async () => {
       try {
         while (more && !cancelled) {
@@ -43,8 +46,9 @@ function useJourney(base: string, player: string, range: DayRange, tzOffset: num
           if (cancelled) return;
           snapshot = page.snapshot;
           events = [...events, ...page.events];
+          states = page.sessions ?? states;
           more = page.truncated && page.events.length > 0;
-          setState({ events, complete: !more, failure: '' });
+          setState({ events, complete: !more, failure: '', states });
         }
       } catch (error) {
         if (!cancelled && !isAbort(error)) setState((previous) => ({ ...previous, failure: `${errorMessage(error, 'The timeline could not load.')} · ${number(events.length)} events loaded; counts are incomplete. Reopen Raw events to retry.` }));
@@ -62,7 +66,7 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
   const base = gameURL(game);
   const [attempt, setAttempt] = useState(0);
   const journey = useJourney(base, player, range, timezoneOffset({ timezone }), attempt);
-  const { events, complete, failure } = journey;
+  const { events, complete, failure, states } = journey;
   const sessions = useMemo(() => timelineSessions(events), [events]);
   const items = useMemo(() => sessions.flatMap((session) => session.items), [sessions]);
   const catalog = useMemo(() => buildCatalog(events), [events]);
@@ -186,6 +190,8 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
   const resetParams = () => updateParams((state) => ({ ...state, hidden: [...DEFAULT_HIDDEN_PARAMS], showAll: false }));
 
   const renderRow = (item: TimelineItem, run: TimelineItem[] | null): ReactElement => {
+    const owner = sessions[item.session]!;
+    const note = eventNote(item, owner, states[owner.id]);
     const hits = mode === 'highlight' ? rules.flatMap((rule, index) => (highlightMatches(item, rule) ? [{ rule, index }] : [])) : [];
     const lit = new Set(hits.flatMap(({ rule }) => matchingConditionParams(item, rule.conditions)));
     const quiet: string[] = [];
@@ -213,6 +219,7 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
         <span className="journey-name">
           {item.name}
           {run ? <span className="chip chip-count" title={`${run.length} identical events in a row`}>×{run.length}</span> : null}
+          {note ? <span className="event-note">{note}</span> : null}
           {focused && focus ? <span className="highlight-tag focus-tag">{focus.label}</span> : null}
           {hits.map(({ rule, index }) => <span key={index} className={`highlight-tag highlight-${rule.color}`}>{highlightName(rule, index)}</span>)}
         </span>
@@ -236,15 +243,17 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
       <>
         {sections.map(({ session, index, shown }, position) => {
           const start = session.items[0]!.client_ts;
-          const end = session.items[session.items.length - 1]!.client_ts;
           const gap = session.items[0]!.gap;
+          const state = states[session.id];
+          const ending = sessionEnding(state);
           const name = `session-${session.id}-${index}`;
           const rows = foldRuns(shown, (item) => (paramState.group && item.index !== focusIndex && !rules.some((rule) => highlightMatches(item, rule)) ? repeatKey(item, hidden, paramState.showAll) : null));
           return (
             <Fragment key={name}>
               {position > 0 ? <div className="session-break" role="separator" aria-label={`Session break before session ${index + 1}`}><span aria-hidden="true">Session break</span></div> : null}
-              <Disclosure name={name} disclosures={disclosures} defaultOpen className="journey-session" summaryClassName="journey-session-head" summary={<><strong>Session {index + 1}</strong><span>{analysisDate(start, timezone)} · {duration((Date.parse(end) - Date.parse(start)) / 1000)} · {number(session.items.length)} events</span>{gap == null ? null : <span className="session-gap">{duration(gap)} after previous session</span>}</>}>
+              <Disclosure name={name} disclosures={disclosures} defaultOpen className="journey-session" summaryClassName="journey-session-head" summary={<><strong>Session {index + 1}</strong><span>{analysisDate(start, timezone)} · Play time {duration(sessionLength(session, state))}{state?.away_seconds ? ` · Away ${duration(state.away_seconds)}` : ''} · {number(session.items.length)} events</span>{gap == null ? null : <span className="session-gap">{duration(gap)} after previous session</span>}{state?.measured_old_way ? <span title="This app version only reported its end at the next launch, so this length is less exact.">Measured the old way</span> : null}</>}>
                 <ol className="journey-events">{rows.map((row) => renderRow(row.items[0]!, row.run ? row.items : null))}</ol>
+                {ending ? <p className="session-end-marker"><Tag kind={state?.end_reason === 'inferred' ? 'warn' : 'plain'}>{ending}</Tag>{state?.status === 'closed' ? <time dateTime={state.last_event_at}>{clock(state.last_event_at, timezone)}</time> : null}</p> : null}
               </Disclosure>
             </Fragment>
           );
@@ -263,10 +272,18 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
           <button type="button" className="session-chip" aria-pressed={shownSession === 'all'} onClick={() => setShownSession('all')}><strong>All sessions</strong><span>{number(sessions.length)} sessions</span></button>
           {sessions.map((session, index) => {
             const first = session.items[0]!.client_ts;
+            const gap = session.items[0]!.gap;
             return (
               <button key={session.id + index} type="button" className="session-chip" aria-pressed={shownSession === String(index)} onClick={() => { setShownSession(String(index)); if (current >= 0 && !inSession(String(index), current)) setCurrent(-1); }}>
                 <strong>Session {index + 1}{focus && sessionHasEvent(session, focus.event) ? <>{' '}<span className="pill">{focus.label}</span></> : null}</strong>
-                <span>{analysisDate(first, timezone)} · {duration(sessionSeconds(session))} · {sessionLevels(session)}</span>
+                <span className="session-chip-lines">
+                  <span>{analysisDate(first, timezone)}</span>
+                  <span><b>Length</b> {duration(sessionLength(session, states[session.id]))}</span>
+                  {states[session.id]?.away_seconds ? <span><b>Away</b> {duration(states[session.id]!.away_seconds)}</span> : null}
+                  <span><b>Played</b> {sessionLevels(session)}</span>
+                  {sessionEnding(states[session.id]) ? <span><b>Ended</b> {sessionEnding(states[session.id])}</span> : null}
+                  {gap == null ? null : <span><b>Came back</b> {duration(gap)} later</span>}
+                </span>
               </button>
             );
           })}
@@ -301,7 +318,7 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
       <p className="timeline-focus-note panel-body" role="status" hidden={analysis || !focus}>
         {focus ? (focusIndex >= 0 ? <><span>{focus.label} is marked in the timeline.</span><button type="button" className="button small-button" onClick={() => jumpTo(focusIndex)}>Go to it</button></> : <span>{complete ? `${focus.label} is not in these dates.` : `Finding ${focus.label.toLowerCase()}…`}</span>) : null}
       </p>
-      <HighlightSetup game={game} rules={rules} catalog={catalog} counts={counts} complete={complete} freshRule={freshRule} disclosures={disclosures} hidden={analysis || mode !== 'highlight'} commit={commit} />
+      <HighlightSetup game={game} rules={rules} catalog={catalog} events={events} counts={counts} complete={complete} freshRule={freshRule} disclosures={disclosures} hidden={analysis || mode !== 'highlight'} commit={commit} />
       <div className="highlight-summary panel-body" hidden={summaryHidden}>
         <div className="highlight-cards">
           {activeRules.map(({ rule, index }) => {
@@ -350,11 +367,16 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
             <Disclosure name="param-chooser" disclosures={disclosures} className="param-chooser" summary={<>Choose parameters <span className="small muted">{number(hidden.size)} hidden</span></>}>
               <div className="param-list">
                 <p className="help">Untick parameters you never read. Clicking a parameter name in the timeline hides it too. Remembered for this game in this browser; a parameter used by a highlight stays visible.</p>
-                <div className="param-grid">
-                  {parameterChooser(events, hidden).map(({ name, key, count }) => (
-                    <label key={name} className="check-row"><input type="checkbox" checked={!hidden.has(name)} onChange={(event) => toggleParam(name, event.target.checked)} /> <code>{key}</code> <span className="small muted">{number(count)}</span></label>
-                  ))}
-                </div>
+                {parameterGroups(events, hidden).map((group) => (
+                  <section key={group.event ?? 'other'} className="param-group">
+                    <h4>{group.event ?? 'Hidden, not on any event here'}</h4>
+                    <div className="param-grid">
+                      {group.params.map(({ name, key, count }) => (
+                        <label key={name} className="check-row"><input type="checkbox" checked={!hidden.has(name)} onChange={(event) => toggleParam(name, event.target.checked)} /> <code>{key}</code> {group.event ? <span className="small muted">{number(count)}</span> : null}</label>
+                      ))}
+                    </div>
+                  </section>
+                ))}
                 <button type="button" className="button small-button" onClick={resetParams}>Reset to default</button>
               </div>
             </Disclosure>

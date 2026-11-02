@@ -2,7 +2,7 @@
 // (levels, ads, other), then the old "Highlight rules" disclosure with one editor per rule and the game's saved
 // rules (insights/highlights, shared with the team). Active selections stay in this browser; saving a rule is
 // the only thing that reaches the server.
-import { useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import { errorMessage, useRead, write } from '@/api';
 import { HighlightEditor } from '@/components/ConditionEditor';
 import { useNotify } from '@/components/feedback';
@@ -10,16 +10,55 @@ import { conditionError, describeHighlight, HIGHLIGHT_COLORS } from '@/lib/condi
 import { number } from '@/lib/format';
 import { gameURL } from '@/lib/games';
 import type { TimelineHighlight } from '@/lib/player-events';
-import type { Game, SavedHighlight } from '@/lib/types';
+import type { Game, JourneyEvent, SavedHighlight } from '@/lib/types';
 import { Disclosure, type Disclosures } from './Disclosure';
-import { type Catalog, highlightName, HIGHLIGHT_PRESETS, MAX_HIGHLIGHTS, newHighlight, presetHighlight } from './timeline';
+import { type Catalog, highlightName, HIGHLIGHT_PRESETS, MAX_HIGHLIGHTS, narrowedHighlight, newHighlight, pickableParams, picksSummary, presetHighlight } from './timeline';
 
 const GROUPS = ['Levels', 'Ads', 'Other'];
+const SHOWN_VALUES = 12;
+const MOST_PICKS = 50; // what one condition group may hold
+
+/** Narrow one ready-made highlight: tick values of any of its parameters. Nothing ticked marks them all. */
+function ValuePicker({ events, base, rule, onChange }: { events: JourneyEvent[]; base: TimelineHighlight; rule: TimelineHighlight; onChange: (picks: Record<string, string[]>) => void }): ReactElement {
+  const picks = useMemo(() => rule.picks ?? {}, [rule.picks]);
+  const params = useMemo(() => pickableParams(events, base, picks), [events, base, picks]);
+  const [wide, setWide] = useState<string[]>([]);
+  if (!params.length) return <p className="hl-values help">Nothing to narrow: every {rule.label.toLowerCase()} of this player looks the same.</p>;
+  const toggle = (key: string, value: string) => {
+    const mine = picks[key] ?? [];
+    onChange({ ...picks, [key]: mine.includes(value) ? mine.filter((item) => item !== value) : [...mine, value] });
+  };
+  return (
+    <div className={`hl-values highlight-${rule.color}`} role="group" aria-label={`Narrow ${rule.label}`}>
+      <strong className="hl-values-name"><span className="highlight-dot" aria-hidden="true" />{rule.label}</strong>
+      {params.map(({ key, values }) => {
+        const mine = picks[key] ?? [];
+        const open = wide.includes(key);
+        const shown = open ? values : values.filter((item, index) => index < SHOWN_VALUES || mine.includes(item.value));
+        return (
+          <div key={key} className="hl-value-row">
+            <code>{key}</code>
+            <div className="hl-value-list">
+              {shown.map(({ value, count }) => {
+                const on = mine.includes(value);
+                return <button key={value} type="button" className="hl-value" aria-pressed={on} disabled={!on && mine.length >= MOST_PICKS} onClick={() => toggle(key, value)}>{value}<span className="hl-count">{number(count)}</span></button>;
+              })}
+              {shown.length < values.length ? <button type="button" className="hl-value more" onClick={() => setWide([...wide, key])}>+{number(values.length - shown.length)} more</button> : null}
+            </div>
+          </div>
+        );
+      })}
+      {rule.picks ? <button type="button" className="button small-button hl-values-clear" onClick={() => onChange({})}>Clear values</button> : null}
+    </div>
+  );
+}
 
 export type HighlightSetupProps = {
   game: Game;
   rules: TimelineHighlight[];
   catalog: Catalog;
+  /** The player's events, for the values a ready-made highlight can be narrowed by. */
+  events: JourneyEvent[];
   /** Matches per rule in the timeline as it is shown (0 for an invalid rule). */
   counts: number[];
   complete: boolean;
@@ -31,7 +70,7 @@ export type HighlightSetupProps = {
   commit: (next: TimelineHighlight[], fresh?: number) => void;
 };
 
-export function HighlightSetup({ game, rules, catalog, counts, complete, freshRule, disclosures, hidden, commit }: HighlightSetupProps): ReactElement {
+export function HighlightSetup({ game, rules, catalog, events, counts, complete, freshRule, disclosures, hidden, commit }: HighlightSetupProps): ReactElement {
   const { toast, toastError } = useNotify();
   const base = `${gameURL(game)}/insights/highlights`;
   const [loaded, setLoaded] = useState(false);
@@ -56,6 +95,23 @@ export function HighlightSetup({ game, rules, catalog, counts, complete, freshRu
     if (at >= 0) { commit(rules.filter((_, position) => position !== at)); return; }
     if (rules.length >= MAX_HIGHLIGHTS) { toast('Use at most 20 highlights.'); return; }
     commit([...rules, rule]);
+  };
+
+  // A ready-made highlight remembered from before it could tell ads apart still marks every ad.
+  useEffect(() => {
+    if (!complete) return;
+    const updated = rules.map((item) => {
+      const base = offered.find(({ preset }) => preset.label === item.label)?.rule;
+      return base && !item.savedId && item.conditions.conditions.length < base.conditions.conditions.length ? { ...item, conditions: base.conditions } : item;
+    });
+    if (updated.some((item, position) => item !== rules[position])) commit(updated);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once the player's events are all in
+  }, [complete, catalog]);
+
+  const [narrowing, setNarrowing] = useState('');
+  const narrow = (at: number, base: TimelineHighlight, picks: Record<string, string[]>) => {
+    const { conditions, picks: kept } = narrowedHighlight(base, picks);
+    commit(rules.map((item, position) => (position === at ? { ...item, conditions, picks: kept } : item)));
   };
 
   const browse = () => { if (loaded) void saved.refetch(); else setLoaded(true); setMessage(''); };
@@ -113,21 +169,30 @@ export function HighlightSetup({ game, rules, catalog, counts, complete, freshRu
                 {items.map(({ preset, rule }) => {
                   const at = rules.findIndex((item) => item.label === preset.label);
                   const on = at >= 0;
+                  const picked = on ? picksSummary(rules[at]!.picks) : '';
                   return (
-                    <button key={preset.key} type="button" className={`hl-chip highlight-${preset.color}${on ? ' on' : ''}`} aria-pressed={on} onClick={() => togglePreset(preset, rule)}>
-                      <span className="highlight-dot" aria-hidden="true" />{preset.label}
-                      {on ? <span className="hl-count">{number(counts[at] ?? 0)}</span> : null}
-                    </button>
+                    <span key={preset.key} className="hl-chip-pair">
+                      <button type="button" className={`hl-chip highlight-${preset.color}${on ? ' on' : ''}`} aria-pressed={on} onClick={() => togglePreset(preset, rule)}>
+                        <span className="highlight-dot" aria-hidden="true" />{preset.label}
+                        {picked ? <span className="hl-picked">{picked}</span> : null}
+                        {on ? <span className="hl-count">{number(counts[at] ?? 0)}</span> : null}
+                      </button>
+                      {on ? <button type="button" className="hl-values-toggle" aria-expanded={narrowing === preset.key} aria-label={`Choose values for ${preset.label}`} onClick={() => setNarrowing(narrowing === preset.key ? '' : preset.key)}>Values</button> : null}
+                    </span>
                   );
                 })}
               </div>
+              {items.map(({ preset, rule }) => {
+                const at = rules.findIndex((item) => item.label === preset.label);
+                return narrowing === preset.key && at >= 0 ? <ValuePicker key={preset.key} events={events} base={rule} rule={rules[at]!} onChange={(picks) => narrow(at, rule, picks)} /> : null;
+              })}
             </div>
           ) : null;
         }) : <p className="help">{complete ? 'This player has no events a ready-made highlight fits. Add a custom rule.' : 'Loading the timeline…'}</p>}
       </div>
       <Disclosure name="highlight-setup" disclosures={disclosures} className="panel-body highlight-setup" hidden={hidden} summary={<>Highlight rules <span className="small muted">{number(rules.length)} highlights</span></>}>
         <div className="highlight-setup-body">
-          <p className="help">1. Choose an event. 2. Add parameters if you want a specific type or action. 3. Save the rule to reuse it. For example: AD_ANALYSIS with AD_TYPE = interstitial and STAGE = shown. Use the parameter names and values your game actually sends.</p>
+          <p className="help">1. Choose an event. 2. Add parameters if you want a specific type or action. 3. Save the rule to reuse it. For example: AD_ANALYSIS with FORMAT = Interstitial and STATE = Show. Use the parameter names and values your game actually sends.</p>
           <div className="highlight-library">
             <div className="highlight-library-head"><strong>Saved rules</strong><button type="button" className="button small-button" disabled={busy} onClick={browse}>{busy ? 'Working…' : loaded ? 'Refresh saved rules' : 'Browse saved rules'}</button></div>
             <p className="help">Save a named rule below, then reuse it for any player. Saved rules belong to this game and are shared with its team. Your active selections stay in this browser.</p>
@@ -158,7 +223,7 @@ export function HighlightSetup({ game, rules, catalog, counts, complete, freshRu
                     <button type="button" className="button small-button" onClick={() => commit(rules.filter((_, position) => position !== index))}>Remove from timeline</button>
                   </div>
                   <p className="highlight-rule-preview help">Highlights when {describeHighlight(rule.conditions)}.</p>
-                  <HighlightEditor tree={rule.conditions} catalog={catalog} onChange={(tree) => patch(index, { conditions: tree })} />
+                  <HighlightEditor tree={rule.conditions} catalog={catalog} onChange={(tree) => patch(index, { conditions: tree, picks: undefined })} />
                   {problem ? <p className="error" role="alert">{problem}</p> : null}
                 </Disclosure>
               );

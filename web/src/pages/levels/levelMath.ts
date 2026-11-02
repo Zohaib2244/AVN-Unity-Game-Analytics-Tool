@@ -3,6 +3,7 @@
 import { duration, number, percent } from '@/lib/format';
 import type { ActiveFilters } from '@/lib/filters';
 import type { LevelLastEvent, LevelPlayer, LevelRow } from '@/lib/types';
+import { adLabel, reasonLabel } from '@/pages/sessions/model';
 
 // Who is counted: everyone active in the dates, or new players within their first session.
 export type LevelScope = 'all' | 'first_session';
@@ -10,10 +11,10 @@ export const LEVEL_SCOPES: Record<LevelScope, string> = { all: 'Everyone', first
 export const isLevelScope = (value: unknown): value is LevelScope => value === 'all' || value === 'first_session';
 
 // The players behind a level: where the drop splits, and who carried on.
-export type LevelDrillGroup = 'left' | 'finished_stopped' | 'kept_going' | 'failed_left' | 'failed_kept_playing';
-export const LEVEL_DRILL_GROUPS: Array<[LevelDrillGroup, string]> = [['left', 'Quit during level'], ['finished_stopped', 'Quit after finishing'], ['kept_going', 'Reached next level'], ['failed_left', 'Failed, then quit'], ['failed_kept_playing', 'Failed, kept playing']];
+export type LevelDrillGroup = 'left' | 'finished_stopped' | 'came_back_later' | 'straight_on' | 'failed_left' | 'failed_kept_playing';
+export const LEVEL_DRILL_GROUPS: Array<[LevelDrillGroup, string]> = [['left', 'Quit during level'], ['finished_stopped', 'Quit after finishing'], ['came_back_later', 'Came back later'], ['straight_on', 'Reached next level'], ['failed_left', 'Failed, then quit'], ['failed_kept_playing', 'Failed, kept playing']];
 /** Groups of players who carried on, so there is no “what they did last” for them. */
-export const CARRIED_ON_GROUPS: LevelDrillGroup[] = ['kept_going', 'failed_kept_playing'];
+export const CARRIED_ON_GROUPS: LevelDrillGroup[] = ['straight_on', 'failed_kept_playing'];
 
 export type LevelSort = 'level' | 'drop' | 'failquit' | 'completion' | 'tries' | 'time';
 export const LEVEL_SORTS: LevelSort[] = ['level', 'drop', 'failquit', 'completion', 'tries', 'time'];
@@ -35,23 +36,29 @@ export function cleanNavigation(saved: Partial<Record<keyof LevelNavigation, unk
 }
 
 // The tab a level opens on: the bigger of its two kinds of drop, else who carried on.
-export function levelDrillGroup(row: { transition?: Pick<LevelRow['transition'] & object, 'left' | 'finished_stopped' | 'kept_going'> | null } | null | undefined): LevelDrillGroup {
+export function levelDrillGroup(row: { transition?: Pick<LevelRow['transition'] & object, 'left' | 'finished_stopped' | 'straight_on' | 'came_back_later'> | null } | null | undefined): LevelDrillGroup {
   const value = row?.transition;
   if (!value) return 'left';
   if (value.left || value.finished_stopped) return value.finished_stopped > value.left ? 'finished_stopped' : 'left';
-  return value.kept_going ? 'kept_going' : 'left';
+  if (value.straight_on) return 'straight_on';
+  return value.came_back_later ? 'came_back_later' : 'left';
 }
 
 /* ─── "What they did last" ─── */
 // One short label per player; hovering or clicking it opens the exact last event above it.
 export const lastDidLabel = (row: Pick<LevelPlayer, 'last_action'>): string => row.last_action || '—';
 
+/** What a player who came back did with the level afterwards. */
+export const afterReturning = (row: Pick<LevelPlayer, 'passed' | 'reached_next'>, level: number): string => (row.reached_next ? `Reached level ${level + 1}` : row.passed ? `Passed level ${level}, then stopped` : `Hasn't passed level ${level}`);
+
 export type LastDidLine = { label: string; body: string; mono?: boolean; before?: string };
 export type LastDidDetails = { title: string; lines: LastDidLine[] };
 // The popover's text: the last event sent in that session, when it came, and what they did right after the level.
-export function lastDidDetails(row: Pick<LevelPlayer, 'last_action' | 'next_action'> & { last_event?: LevelLastEvent | null }, level: number): LastDidDetails {
+export function lastDidDetails(row: Pick<LevelPlayer, 'last_action' | 'next_action'> & Partial<Pick<LevelPlayer, 'ending_known' | 'prev_exit_reason' | 'prev_exit_ad'>> & { last_event?: LevelLastEvent | null }, level: number): LastDidDetails {
   const last = row.last_event;
   const lines: LastDidLine[] = [];
+  if (row.ending_known === false) lines.push({ label: 'Not the full story', body: 'The end of this session never reached the server. This is the last thing we heard from them.' });
+  if (row.prev_exit_reason) lines.push({ label: 'How the app stopped', body: `${reasonLabel(row.prev_exit_reason)}${row.prev_exit_ad && !['None', 'unknown'].includes(row.prev_exit_ad) ? `, ${adLabel(row.prev_exit_ad)} open` : ''}` });
   if (last) {
     lines.push({ label: 'Last event in that session', body: last.text, mono: true, ...(last.after ? { before: `${duration(last.gap)} after ${last.after}` } : {}) });
     lines.push({ label: 'When', body: last.after_level == null ? `It was their last event on level ${level}` : `${duration(last.after_level)} after their last event on level ${level}` });

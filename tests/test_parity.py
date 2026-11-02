@@ -1,6 +1,8 @@
 """The production dashboards give exactly the answers of the frozen reference (tests/reference),
 whichever way they read the events (AVN_ANALYTICS_READ_MODE)."""
 
+from datetime import timedelta
+
 import pytest
 from parity import (
     PRODUCTION,
@@ -12,7 +14,14 @@ from parity import (
     without_added_level_fields,
 )
 
-from avn_analytics import analytics, insights
+from avn_analytics import analytics, insights, session_state
+
+
+@pytest.fixture(autouse=True)
+def everyone_has_gone_home(monkeypatch):
+    """The fixture's events were received just now; the reference has no idea of an open session."""
+    later = session_state.clock() + timedelta(days=1)
+    monkeypatch.setattr(session_state, "clock", lambda: later)
 
 
 @pytest.fixture(scope="module")
@@ -96,4 +105,8 @@ def test_levels_refuse_too_much_data_as_before(fixture, monkeypatch, mode):
                 actual = _answer(
                     getattr(journeys, name), storage, game_id, start, end, *arguments, **extra
                 )
-                assert without_added_level_fields(actual) == expected, (limit, scope, name)
+                assert without_added_level_fields(actual) == without_added_level_fields(expected), (
+                    limit,
+                    scope,
+                    name,
+                )
