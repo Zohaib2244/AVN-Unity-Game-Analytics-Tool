@@ -40,6 +40,8 @@ scripts/release.sh # (owner) run the gate, tag main vX.Y.Z, push
 scripts/deploy.sh  # (owner) deploy the newest tag on the server, health-checked, auto-rollback
 docker compose exec -T admin python - < scripts/measure_speed.py  # (owner) read-only: events per game and how long each page takes
 scripts/benchmark.py generate|measure|ingest|plans|compare --dir <scratch dir>  # synthetic benchmark (never a real data dir)
+scripts/nutbot_questions.py [--json out.json]  # can NutBot's tools answer real questions: checked against raw events of a synthetic game, spends no allowance
+docker compose exec -T admin python - < scripts/nutbot_usage.py  # (owner) read-only: which tools real answers used, totals only
 ```
 
 The app refuses to run on SQLite older than 3.51.3 (WAL-reset fix). When the

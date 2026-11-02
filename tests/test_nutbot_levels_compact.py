@@ -36,6 +36,9 @@ def row(number):
             "kept_going": 29,
             "matched_completed": 11000,
             "next_level": number + 1,
+            "failed": 40,
+            "failed_left": 10,
+            "fail_drop_percent": 25.0,
         },
     }
 
@@ -49,6 +52,7 @@ def test_a_long_game_fits_with_the_pages_drop_numbers():
     assert len(out["rows"]) == 100 and out["more_levels_from"] is None
     assert len(json.dumps(out)) < MAX_TOOL_RESULT
     assert out["rows"][0][out["columns"].index("drop_percent")] == 31.1
+    assert out["rows"][0][out["columns"].index("fail_drop_percent")] == 25.0
 
 
 def test_a_game_too_long_for_one_result_says_where_to_continue():

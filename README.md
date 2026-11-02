@@ -368,6 +368,7 @@ NutBot is a chat assistant on every game page. You ask in plain words ("where do
 | `get_level_detail`, `get_exits`, `compare_cohorts` | One level in depth (who left, who got stuck, what they did last), where players stop across the game, and two groups of players side by side. |
 | `compare_player_groups`, `list_saved_groups`, `propose_player_groups` | Split new players by an early behaviour (time to finish a level, how often they saw an event, a recorded parameter) and compare who reaches a later outcome, with intervals; read the game's saved groups and checks; open or save a comparison from a card. |
 | `get_behaviour` | What players do beyond the levels: how many use each event and how often, common sequences, loops, dominant parameter values and this week against last. |
+| `get_level_features`, `get_event_activity`, `get_retention`, `compare_segments` | Ads, fail reasons and power-ups per level with who left after them, how many players did an event and on which days, retention, and countries, platforms or versions side by side |
 | `propose_players_view`, `propose_funnel`, `propose_highlight`, `propose_level_view`, `explain_conditions` | Build rules, a funnel, a highlight or a levels view for you as a card; nothing changes until you press **Apply** (or you set NutBot to apply itself, with Undo). |
 | `propose_report` | Offer findings as a report card; it is saved only when you press Save. |
 | `save_funnel`, `set_event_label` | Change data. Need a team lead or admin, and a yes from the user. |
@@ -576,7 +577,6 @@ The website lives in `web/`: React + TypeScript + Vite on [AVN Style](https://gi
 
 The tests cover duplicate retries, concurrent writes, game isolation, key deletion, validation and limits, funnels, players, stories and journeys, levels and the players behind them, retention and time zones, DAU, environment filters and fixes, filtered exports, workspaces and roles, NutBot's tools, rate limiting across instances, export periods and timezones, storage failures, dictionary output, country handling and data-directory relocation. The website's own tests (Vitest) cover the request contract, the filter and condition models, the timeline, levels and funnel maths and the dialogs; `tests/test_conditions.py` runs the browser's condition matcher and the server's SQL over the same events.
 
-## Roadmap
 For an owner-run release and deployment on a configured server, use
 `scripts/deploy.sh --release` (optionally followed by `minor`, `major` or an explicit tag).
 It runs the checks, then asks once before tagging, pushing and deploying that exact release.
@@ -585,6 +585,7 @@ If main is already tagged, it only confirms deployment of that tag. Direct
 `--yes` explicitly skips confirmation for scripted use. Health checks and automatic rollback
 still run. The T3 **Deploy** action uses the combined command.
 
+## Roadmap
 
 - A data-retention policy and a backup schedule.
 - Archiving of old raw events.

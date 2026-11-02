@@ -9,7 +9,7 @@ from test_backend import TOKEN, event, register, send
 from avn_analytics.api import create_app
 from avn_analytics.auth import Principal
 from avn_analytics.config import Settings
-from avn_analytics.nutbot import TOOLS
+from avn_analytics.nutbot import TOOLS, merge_fetches
 from avn_analytics.nutbot_limits import Limits, parse_claude_usage, parse_codex_limits
 
 FAKE_AGENT = Path(__file__).parent / "fake_acp_agent.py"
@@ -886,3 +886,100 @@ def test_answers_lead_with_the_finding_not_with_ruled_out_causes(bot):
     prompt = admin.app.state.nutbot.system_prompt()
     assert "question that was asked" in prompt
     assert "ruling out causes nobody mentioned" in prompt
+
+
+def test_a_players_count_reads_past_one_page_of_events(tools, monkeypatch):
+    _, game, nutbot, make = tools
+    monkeypatch.setattr("avn_analytics.insights.MAX_JOURNEY_EVENTS", 2)
+    run = make()
+    error, text = call(nutbot, run, "get_player_events", player="a")
+    data = json.loads(text)
+    assert not error and "note" not in data
+    assert sum(item["times"] for item in data["events"]) > 2
+
+
+def test_event_activity_counts_players_by_day(tools):
+    _, _, nutbot, make = tools
+    error, text = call(nutbot, make(), "get_event_activity", event="LEVEL_ANALYSIS")
+    data = json.loads(text)
+    assert not error and data["players"] == 2 and data["active_players"] == 2
+    assert data["columns"] == ["day", "events", "players"]
+    assert sum(day[1] for day in data["days"]) == data["events"]
+    assert data["first_day"] == data["days"][0][0]
+
+
+def test_event_activity_can_test_a_parameter(tools):
+    _, _, nutbot, make = tools
+    error, text = call(
+        nutbot, make(), "get_event_activity", event="LEVEL_ANALYSIS", param="Started", value="3"
+    )
+    assert not error and json.loads(text)["players"] == 1  # only player a reached level 3
+    error, text = call(
+        nutbot, make(), "get_event_activity", event="LEVEL_ANALYSIS", param="Started", value="99"
+    )
+    data = json.loads(text)
+    assert not error and data["players"] == 0 and data["busiest_day"] is None
+
+
+def test_retention_and_level_features_read_the_pages_numbers(tools):
+    _, _, nutbot, make = tools
+    error, text = call(nutbot, make(), "get_retention")
+    data = json.loads(text)
+    assert not error and "1" in data["retention"] and "cohorts" not in data
+    error, text = call(nutbot, make(), "get_level_features", from_level=1, to_level=2)
+    data = json.loads(text)
+    assert not error and [row["level"] for row in data["levels"]] == [1, 2]
+    assert data["columns_of_each_value"][0] == "players"
+
+
+def test_compare_segments_puts_values_side_by_side(tools):
+    _, _, nutbot, make = tools
+    error, text = call(nutbot, make(), "compare_segments", dimension="app_version")
+    data = json.loads(text)
+    assert not error and data["segments"][0]["players"] == 2
+    assert data["events_that_differ_most"][0]["players_percent"]
+    error, text = call(nutbot, make(), "compare_segments", dimension="nonsense")
+    assert error and "dimension" in text
+    error, text = call(nutbot, make(), "compare_segments", dimension="country", values=["ZZ"])
+    assert error and "No identified players" in text
+
+
+def test_compare_cohorts_takes_numbers_and_groups_sent_as_text(tools):
+    _, _, nutbot, make = tools
+    done = {"event": "LEVEL_ANALYSIS", "param": "Completed", "op": "eq", "value": 3}
+    error, text = call(
+        nutbot,
+        make(),
+        "compare_cohorts",
+        a=json.dumps({"name": "finished", "conditions": [done]}),
+        b={"name": "everyone"},
+    )
+    data = json.loads(text)
+    assert not error and data["a"]["players"] == 1 and data["b"]["players"] == 2
+    error, text = call(nutbot, make(), "compare_cohorts", a="nonsense", b={"name": "b"})
+    assert error and "a and b" in text
+
+
+def test_each_call_records_what_the_server_measured(tools):
+    _, _, nutbot, make = tools
+    run = make()
+    call(nutbot, run, "get_context")
+    call(nutbot, run, "get_level_detail", level=99)
+    good, bad = run.fetches
+    assert good["tool"] == "get_context" and good["chars"] > 0 and "error" not in good
+    assert "Nobody started level 99" in bad["error"] and good["cut"] is False
+
+
+def test_measurements_join_the_agents_log_in_order():
+    log = [
+        {"tool": "get_exits", "ms": 0},
+        {"tool": "other"},
+        {"tool": "get_exits", "ms": 0},
+    ]
+    fetches = [
+        {"tool": "get_exits", "server_ms": 10},
+        {"tool": "get_exits", "server_ms": 20, "error": "nope"},
+    ]
+    merge_fetches(log, fetches)
+    assert [entry.get("server_ms") for entry in log] == [10, None, 20]
+    assert log[2]["error"] == "nope"

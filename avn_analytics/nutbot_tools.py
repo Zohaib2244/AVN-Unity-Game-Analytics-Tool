@@ -6,14 +6,16 @@ the run (who is asking, the dashboard's range and filters) and the range/filter 
 answer from the same queries the pages use, in compact form so a result costs few tokens.
 """
 
+import contextlib
 import json
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from itertools import groupby
 from statistics import mean, median
 
+from . import events as event_reads
 from . import insights, journeys, stories
-from .models import PlayerRules
+from .models import EventConditionGroup, PlayerRules
 from .nutbot_analysis import (
     SDK_NOISE,
     event_counts,
@@ -57,6 +59,7 @@ COHORT = {
     "additionalProperties": False,
 }
 SAMPLE_PLAYERS = 500
+MAX_PLAYER_EVENTS = 100_000  # one player's events read for a count, page by page
 MAX_SEQUENCE_ROWS = 300_000
 LEVEL_GROUP_TEXT = {
     "total_drop": "never started any later level",
@@ -136,6 +139,55 @@ ANALYSIS_TOOLS = [
         "What players do beyond the levels: reach and intensity of every event (share of players who do it, times per player, so over- and under-used features show), the most common two- and three-event sequences, repeated loops (the same event several times in a row), parameter values that dominate an event, and what changed in the last 7 days against the 7 before. Use it to discover behaviour nobody asked about.",
         {**RANGE_PROPS, "limit": {"type": "integer", "minimum": 3, "maximum": 15}},
     ),
+    _tool(
+        "get_level_features",
+        "What happened on each level, as on the Levels page's Occurrence & drop view: ads (by format and placement), fail reasons and power-ups, each with how many players met it and how many of them dropped, ended their session on the level, or left right after it happened. Use it for why a level fails or whether an ad loses players. more_levels_from says where to continue with from_level.",
+        {
+            **RANGE_PROPS,
+            "from_level": {"type": "integer", "minimum": 0},
+            "to_level": {"type": "integer", "minimum": 0},
+            "scope": {
+                "type": "string",
+                "enum": ["all", "first_session"],
+                "description": "all = everyone active (default); first_session = new players in their first session.",
+            },
+        },
+    ),
+    _tool(
+        "get_event_activity",
+        "How many players did one event and when: totals, share of active players, times per player, first, last and busiest day, and players per day. Optionally only events with a parameter test (for example placement = interstitial). This is the exact count, so prefer it to find_players when the question is how many or when.",
+        {
+            **RANGE_PROPS,
+            "event": {"type": "string", "description": "Exact event name from list_events."},
+            "param": {"type": "string"},
+            "op": {
+                "type": "string",
+                "enum": ["eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists"],
+            },
+            "value": {"type": "string"},
+        },
+        ["event"],
+    ),
+    _tool(
+        "get_retention",
+        "Retention: of the players who started in the range, the share who came back exactly on day 1, 3, 7, 14 and 30. Only cohorts old enough to have reached a day count towards it. Filter by app_versions to compare builds.",
+        RANGE_PROPS,
+    ),
+    _tool(
+        "compare_segments",
+        "Countries, platforms or app versions side by side in one call: players, sessions and events per player for each, and the events whose reach differs most between them. Use it to compare regions or versions rather than one call per value.",
+        {
+            **RANGE_PROPS,
+            "dimension": {"type": "string", "enum": ["country", "platform", "app_version"]},
+            "values": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Which ones to compare. Default: those with the most players.",
+            },
+            "limit": {"type": "integer", "minimum": 2, "maximum": 6},
+        },
+        ["dimension"],
+    ),
 ]
 
 
@@ -149,16 +201,23 @@ class AnalysisTools:
     # ---- one player
 
     def _player_events(self, run, game_id, args):
+        """All of one player's events in the range, page by page, so counts are not cut short."""
         start, end = self._range(run, args)
         player = str(args["player"])[:128]
-        data = insights.journey(self.storage, game_id, player, start, end)
-        if not data["events"]:
+        events, snapshot, more = [], None, True
+        while more and len(events) < MAX_PLAYER_EVENTS:
+            data = insights.journey(
+                self.storage, game_id, player, start, end, offset=len(events), snapshot=snapshot
+            )
+            events += data["events"]
+            snapshot, more = data["snapshot"], data["truncated"]
+        if not events:
             raise ToolError("No events for that player in this range. Check the ID and the range.")
         labeler = stories.Labeler(self.storage.get_dictionary(game_id))
-        for event in data["events"]:
+        for event in events:
             info = labeler.level_info(event["name"], event["params"], event.get("app_version"))
             event["verb"] = info[0] if info else None
-        return data["events"], data["truncated"]
+        return events, more
 
     def tool_get_player_events(self, run, game_id, args):
         events, truncated = self._player_events(run, game_id, args)
@@ -335,10 +394,8 @@ class AnalysisTools:
         filters = self._filters(run, args)
         result = {}
         for key in ("a", "b"):
-            cohort = args.get(key)
-            if not isinstance(cohort, dict):
-                raise ToolError("a and b describe the two groups.")
-            parsed = PlayerRules.model_validate({"conditions": cohort.get("conditions") or []})
+            cohort = _group(args.get(key))
+            parsed = player_rules(cohort.get("conditions"))
             listing = insights.players(
                 self.storage,
                 game_id,
@@ -429,6 +486,98 @@ class AnalysisTools:
             )
         return data
 
+    def tool_get_level_features(self, run, game_id, args):
+        start, end = self._range(run, args)
+        table = journeys.level_features(
+            self.storage,
+            game_id,
+            start,
+            end,
+            self._filters(run, args),
+            args.get("scope", "all"),
+        )
+        return compact_features(table, args.get("from_level"), args.get("to_level"))
+
+    def tool_get_event_activity(self, run, game_id, args):
+        start, end = self._range(run, args)
+        name = str(args["event"])[:128]
+        tree = None
+        if args.get("param"):
+            test = {
+                "field": "param",
+                "param": str(args["param"]),
+                "op": args.get("op") or "eq",
+                "value": str(args.get("value") or ""),
+            }
+            tree = EventConditionGroup.model_validate(
+                {"match": "all", "conditions": [test]}
+            ).model_dump()
+        data = event_reads.activity(
+            self.storage, game_id, name, start, end, self._filters(run, args), tree
+        )
+        days = [item for item in data["days"] if item["events"]]
+        active = data["active_players"]
+        return {
+            "event": name,
+            "events": data["events"],
+            "players": data["players"],
+            "active_players": active,
+            "players_percent": round(100 * data["players"] / active, 1) if active else None,
+            "times_per_player": round(data["per_matching_player"], 2),
+            "anonymous_events": data["anonymous_events"],
+            "first_day": days[0]["day"] if days else None,
+            "last_day": days[-1]["day"] if days else None,
+            "busiest_day": max(days, key=lambda item: item["players"])["day"] if days else None,
+            "columns": ["day", "events", "players"],
+            "days": [[item["day"], item["events"], item["players"]] for item in days],
+        }
+
+    def tool_get_retention(self, run, game_id, args):
+        start, end = self._range(run, args)
+        data = insights.retention(self.storage, game_id, start, end, self._filters(run, args))
+        return {
+            "days": data["days"],
+            "retention": data["aggregate"],
+            "start_days": len(data["cohorts"]),
+            "context": data["context"],
+        }
+
+    def tool_compare_segments(self, run, game_id, args):
+        start, end = self._range(run, args)
+        filters = self._filters(run, args)
+        dimension = args.get("dimension")
+        if dimension not in ("country", "platform", "app_version"):
+            raise ToolError("dimension is country, platform or app_version.")
+        limit = _within(int(args.get("limit") or 4), 2, 6)
+        chosen = [str(value)[:128] for value in args.get("values") or []][:6]
+        self.storage.get_game(game_id)
+        with self.storage.connect(self.storage.game_path(game_id)) as connection:
+            source = insights.read_source(self.storage, connection)
+            condition, values = insights.where(start, end, filters, source=source)
+            column = source.dimensions[dimension]
+            scope = f"{source.table} WHERE {condition} AND {source.identified}"
+            totals = connection.execute(
+                f"""SELECT {column} AS value, count(DISTINCT {source.player}) AS players,
+                           count(DISTINCT {source.session}) AS sessions, count(*) AS events
+                    FROM {scope} GROUP BY value ORDER BY players DESC""",
+                values,
+            ).fetchall()
+            picked = [row for row in totals if not chosen or row["value"] in chosen][:limit]
+            if not picked:
+                raise ToolError("No identified players in this range for those values.")
+            marks = ",".join("?" for _ in picked)
+            reach = connection.execute(
+                f"""SELECT {column} AS value, name, count(DISTINCT {source.player}) AS players
+                    FROM {scope} AND {column} IN ({marks}) GROUP BY value, name""",
+                (*values, *[row["value"] for row in picked]),
+            ).fetchall()
+        return {
+            "dimension": dimension,
+            "segments": [_segment(row, game_id, self.storage) for row in picked],
+            "not_shown": max(0, len(totals) - len(picked)),
+            "events_that_differ_most": _reach_gaps(picked, reach),
+        }
+
     def _dominant_params(self, game_id, start, end, filters, limit):
         """Parameters where one value makes up most of an event's occurrences."""
         with self.storage.connect(self.storage.game_path(game_id)) as connection:
@@ -486,31 +635,48 @@ LEVEL_COLUMNS = (
     "quit_percent",
     "low_sample",
 )
-TRANSITION_COLUMNS = ("total_drop", "drop_percent", "left", "finished_stopped", "kept_going")
+TRANSITION_COLUMNS = (
+    "total_drop",
+    "drop_percent",
+    "left",
+    "finished_stopped",
+    "kept_going",
+    "failed",
+    "failed_left",
+    "fail_drop_percent",
+)
+FEATURE_COLUMNS = ("players", "times", "dropped", "left_session", "right_after")
 MAX_LEVEL_TABLE = 12000  # below MAX_TOOL_RESULT, so the JSON is never cut in the middle
 
 
-def compact_levels(table, from_level=None, to_level=None):
-    """The levels as columns and rows, from `from_level` until `to_level` or the size limit."""
+def _fit_levels(levels, from_level, to_level, render):
+    """The rendered levels from `from_level` until `to_level` or the size limit, and where to
+    continue."""
     low = int(from_level or 0)
     high = None if to_level is None else int(to_level)
-    wanted = [
-        row
-        for row in table["levels"]
-        if row["level"] >= low and (high is None or row["level"] <= high)
-    ]
-    rows, size, more = [], 0, None
-    for row in wanted:
-        transition = row.get("transition") or {}
-        values = [row.get(key) for key in LEVEL_COLUMNS]
-        values += [transition.get(key) for key in TRANSITION_COLUMNS]
-        size += len(json.dumps(values))
+    rows, size = [], 0
+    for row in levels:
+        if row["level"] < low or (high is not None and row["level"] > high):
+            continue
+        rendered = render(row)
+        size += len(json.dumps(rendered))
         if size > MAX_LEVEL_TABLE:
-            more = row["level"]
-            break
-        rows.append(values)
-    if more is None and high is not None:
-        more = next((row["level"] for row in table["levels"] if row["level"] > high), None)
+            return rows, row["level"]
+        rows.append(rendered)
+    later = (row["level"] for row in levels if high is not None and row["level"] > high)
+    return rows, next(later, None)
+
+
+def compact_levels(table, from_level=None, to_level=None):
+    """The levels as columns and rows: the page's numbers, without the words."""
+
+    def render(row):
+        transition = row.get("transition") or {}
+        return [row.get(key) for key in LEVEL_COLUMNS] + [
+            transition.get(key) for key in TRANSITION_COLUMNS
+        ]
+
+    rows, more = _fit_levels(table["levels"], from_level, to_level, render)
     return {
         "columns": [*LEVEL_COLUMNS, *TRANSITION_COLUMNS],
         "rows": rows,
@@ -518,6 +684,91 @@ def compact_levels(table, from_level=None, to_level=None):
         "more_levels_from": more,
         "context": table["context"],
     }
+
+
+def compact_features(table, from_level=None, to_level=None):
+    """What happened per level, each value as numbers in FEATURE_COLUMNS' order."""
+
+    def render(row):
+        return {
+            "level": row["level"],
+            "started": row["started"],
+            "dropped": row["dropped"],
+            "left_session": row["left_session"],
+            "low_sample": row["low_sample"],
+            **{
+                kind: {
+                    value: [counts[key] for key in FEATURE_COLUMNS]
+                    for value, counts in values.items()
+                }
+                for kind, values in row["things"].items()
+            },
+        }
+
+    rows, more = _fit_levels(table["levels"], from_level, to_level, render)
+    return {
+        "columns_of_each_value": FEATURE_COLUMNS,
+        "kinds": table["kinds"],
+        "levels": rows,
+        "levels_in_range": len(table["levels"]),
+        "more_levels_from": more,
+        "context": table["context"],
+    }
+
+
+def _segment(row, game_id, storage):
+    players = row["players"]
+    threshold = storage.analytics_thresholds(game_id)["levels_min_players"]
+    return {
+        "value": row["value"],
+        "players": players,
+        "sessions_per_player": round(row["sessions"] / players, 2),
+        "events_per_player": round(row["events"] / players, 1),
+        "low_sample": players < threshold,
+    }
+
+
+def _reach_gaps(picked, reach, keep=10):
+    """Events whose share of players differs most between the segments."""
+    sizes = {row["value"]: row["players"] for row in picked}
+    shares = defaultdict(dict)
+    for row in reach:
+        if row["name"] not in SDK_NOISE:
+            shares[row["name"]][row["value"]] = round(100 * row["players"] / sizes[row["value"]], 1)
+
+    def spread(values):
+        filled = [values.get(name, 0) for name in sizes]
+        return max(filled) - min(filled)
+
+    ranked = sorted(shares.items(), key=lambda item: -spread(item[1]))
+    return [
+        {"event": name, "players_percent": {key: values.get(key, 0) for key in sizes}}
+        for name, values in ranked[:keep]
+    ]
+
+
+def _group(value):
+    """One compare_cohorts group. Some agents send nested objects as JSON text."""
+    if isinstance(value, str):
+        with contextlib.suppress(ValueError):
+            value = json.loads(value)
+    if not isinstance(value, dict):
+        raise ToolError("a and b are objects with a name and conditions.")
+    return value
+
+
+def player_rules(conditions=None, metrics=None):
+    """Conditions and columns for insights.players. A rule holds text, so a number sent as 3
+    means the same as "3"."""
+
+    def texted(rule):
+        if isinstance(rule, dict) and isinstance(rule.get("value"), int | float):
+            return {**rule, "value": str(rule["value"])}
+        return rule
+
+    return PlayerRules.model_validate(
+        {"conditions": [texted(rule) for rule in conditions or []], "metrics": metrics or []}
+    )
 
 
 def _short_transition(transition):
