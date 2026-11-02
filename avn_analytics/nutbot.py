@@ -46,7 +46,7 @@ from .nutbot_groups import GROUP_TOOLS, GroupTools
 from .nutbot_limits import Limits
 from .nutbot_proposals import PROPOSAL_TOOLS, ProposalTools
 from .nutbot_reports import REPORT_TOOLS, Reports, ReportTools
-from .nutbot_tools import ANALYSIS_TOOLS, AnalysisTools
+from .nutbot_tools import ANALYSIS_TOOLS, AnalysisTools, compact_levels
 
 MAX_MESSAGE = 4000
 MAX_CONTEXT = 3000
@@ -254,8 +254,12 @@ TOOLS = [
     ),
     _tool(
         "get_level_progress",
-        "Per level: players started and finished, completion %, tries per player, fails, restarts, median and slowest-10% time, power-ups used, and players whose last level event was there.",
-        RANGE_PROPS,
+        "One row per level, as columns and rows: players started and finished, completion %, tries per player, fails, restarts, median and slowest-10% time, players whose last level event was there, and the Drop to next the Levels page shows (with who left during the level, finished then stopped, or kept going). more_levels_from says where to continue with from_level. For power-ups, what players did or a single level use get_level_detail.",
+        {
+            **RANGE_PROPS,
+            "from_level": {"type": "integer", "minimum": 0},
+            "to_level": {"type": "integer", "minimum": 0},
+        },
     ),
     *ANALYSIS_TOOLS,
     *GROUP_TOOLS,
@@ -645,10 +649,11 @@ How you work
 - To change data (save_funnel, set_event_label): say exactly what you will change, wait for a clear yes, then call the tool with confirmed=true. Never save things nobody asked for.
 - To build conditions for the pages (propose_players_view, propose_funnel, propose_highlight, propose_level_view): use real event and parameter names from list_events, test the rule first (find_players or run_funnel) so you can say how many players it matches, then propose it. A proposal is a card the person applies; it changes nothing by itself, so never say it is applied. explain_conditions reads a rule back in words.
 - Keep results small to spare the person's allowance: ask for the narrowest tool first (get_exits, get_level_detail, get_player_levels, get_behaviour) before the big tables (get_level_progress, list_events, get_player_story), and don't repeat a call you already have the answer to.
+- Before you say you can't tell why players left a level, call get_level_detail for it: it shows what the players who left did last. If a tool result says it was cut, call again with a narrower range (for example from_level/to_level) instead of reporting levels as missing.
 - Offer a report (propose_report) only when the person asks or a skill tells you to. It is saved only when they press Save on its card, so never say it was saved. When a message begins with a skill's instructions, follow them.
 - Order of work: call the data tools you need; then WRITE YOUR ANSWER (the findings with their numbers, and what to try next) as normal text; only after that, if something is worth opening (a funnel, a player story, the levels table), call show_in_dashboard as the very last step to add a shortcut button. The button never replaces the written answer, and a reply that is only "I added a button" is wrong.
 
-Style: plain, friendly and brief, a little dry humour is fine, accuracy comes first. Lead with what the data shows about the question that was asked, then the numbers behind it, then one or two concrete things worth trying. Don't open by ruling out causes nobody mentioned ("it isn't difficulty"): say what you found, and mention a cause you checked and dismissed only as one line of the evidence. Short paragraphs, small markdown tables or bullet lists are fine. Don't repeat raw JSON.
+Style: plain, friendly and brief, a little dry humour is fine, accuracy comes first. Lead with what the data shows about the question that was asked, then the numbers behind it, then one or two concrete things worth trying. Don't open by ruling out causes nobody mentioned ("it isn't difficulty"): say what you found, and mention a cause you checked and dismissed only as one line of the evidence. Short paragraphs, small markdown tables or bullet lists are fine. Don't list a measure that is zero or normal everywhere (for example no fails) as a finding of its own; fold it into one line of the evidence. Don't repeat raw JSON.
 
 Analysis guide
 {skill}"""
@@ -888,7 +893,8 @@ Analysis guide
 
     def tool_get_level_progress(self, run, game_id, args):
         start, end = self._range(run, args)
-        return journeys.level_progress(self.storage, game_id, start, end, self._filters(run, args))
+        table = journeys.level_progress(self.storage, game_id, start, end, self._filters(run, args))
+        return compact_levels(table, args.get("from_level"), args.get("to_level"))
 
     def _need_write(self, run, args, summary):
         if not run.can_write:

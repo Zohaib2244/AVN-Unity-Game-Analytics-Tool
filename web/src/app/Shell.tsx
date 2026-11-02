@@ -163,7 +163,7 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
               <IconButton icon="link" label="Copy link to this view" onClick={() => void copyLink()} />
               <BellButton ref={bellButton} onClick={() => setBell((open) => !open)} />
               <button type="button" className="icon-btn" title="Switch light/dark theme" aria-label="Switch light/dark theme" onClick={toggleTheme}><Ico name={theme === 'light' ? 'moon' : 'sun'} size={16} /></button>
-              {nutbot.usable ? <button type="button" className="btn sm nb-launcher" aria-hidden={nutbot.open || undefined} tabIndex={nutbot.open ? -1 : undefined} onClick={nutbot.toggle}><Ico name="sparkle" size={14} /> NutBot</button> : null}
+              {nutbot.usable ? <button type="button" className="btn sm nb-launcher" aria-hidden={nutbot.open || undefined} tabIndex={nutbot.open ? -1 : undefined} aria-label={nutbot.waiting ? 'NutBot, answer ready' : undefined} onClick={nutbot.toggle}><Ico name="sparkle" size={14} /> NutBot{nutbot.waiting ? <span className="nb-waiting" aria-hidden="true" /> : null}</button> : null}
             </>} />
           <Page pageKey={pathname}>
             <div id="main">{children}</div>

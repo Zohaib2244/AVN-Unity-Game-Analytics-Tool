@@ -25,7 +25,7 @@ import type { Game, NutBotAction, NutBotChatRead, NutBotChatRow, NutBotEvent, Nu
 import { applyEdit, buildContext, contextChips, editableChips, editFor, scopeLine, suggestionsFor, type ContextEdit, type PageContext } from './context';
 import { Markdown } from './markdown';
 import { effortLevels, pickEffort, pickModel } from './models';
-import { APPLY_KEY, applyMode, applyProposal, proposalKey, savesReport, type Applied, type ApplyMode } from './proposals';
+import { APPLY_KEY, applyMode, applyProposal, decisionFor, loadDecisions, proposalKey, rememberDecision, savesReport, type Applied, type ApplyMode, type CardDecision } from './proposals';
 import { applyEvent, contextShare, emptyAnswer, fromStoredMessages, settle, type Answer, type ChatMessage } from './stream';
 
 const PREFS_KEY = 'avn-nutbot-prefs';
@@ -39,6 +39,7 @@ const EDGE_REST_MS = 120;
 const LEAVE_MS = 350; // how long the mouse may be away before the unpinned panel hides
 const LEAVE_MARGIN_PX = 16;
 const HEAVY_CONTEXT = 0.6; // past this share of the agent's context window, suggest a new chat
+const DONE_MARK = '● ';
 const currentKey = (game: Pick<Game, 'id'>) => `avn-nutbot-current-${game.id}`;
 const nbPrefs = (): NutBotPrefs => storeGet<NutBotPrefs>(PREFS_KEY) || {};
 const chatsPath = (game: Pick<Game, 'id'>) => `/v1/games/${encodeURIComponent(game.id)}/nutbot/chats`;
@@ -73,9 +74,24 @@ type TraceState = { open: boolean; tools?: NutBotStoredTool[]; loading?: boolean
 type View = 'chat' | 'chats' | 'reports' | 'settings';
 
 /** The @avn/ui message for one answer. The answer being streamed shows its text as it arrives. */
-type ProposalControls = { applied: ReadonlySet<string>; apply: (proposal: NutBotProposal) => void; undo: (proposal: NutBotProposal) => void; saveReport?: (answer: Answer) => void };
+type ProposalControls = { decision: (proposal: NutBotProposal) => CardDecision | undefined; canUndo: (proposal: NutBotProposal) => boolean; apply: (proposal: NutBotProposal) => void; decline: (proposal: NutBotProposal) => void; undo: (proposal: NutBotProposal) => void; saveReport?: (answer: Answer) => void };
 
-function toPanelMessage(message: ChatMessage, streaming: boolean, onOpen: (action: NutBotAction) => void, onLink: (path: string) => void, trace: { state?: TraceState; toggle?: () => void }, proposals: ProposalControls, note?: ReactNode): NbMessage {
+/** A card set aside with Not now: one line, and opening it offers the choice again. */
+function DeclinedCard({ title, confirmLabel, onConfirm, children }: { title: string; confirmLabel: string; onConfirm: () => void; children: ReactNode }): ReactElement {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="nb-card-set">
+      <button type="button" className="nb-card-head" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+        <span className={`nb-card-arrow${expanded ? ' open' : ''}`} aria-hidden="true"><Ico name="chevron" size={13} /></span>
+        <span className="nb-card-title">{title}</span>
+        <span className="small muted">Not now</span>
+      </button>
+      {expanded ? <div className="nb-card-more">{children}<button type="button" className="btn sm" onClick={onConfirm}>{confirmLabel}</button></div> : null}
+    </div>
+  );
+}
+
+function toPanelMessage(message: ChatMessage, streaming: boolean, onOpen: (action: NutBotAction) => void, onLink: (path: string) => void, trace: { state?: TraceState; toggle?: () => void }, proposals: ProposalControls, note?: ReactNode, latest = true): NbMessage {
   if (message.role === 'user') return { role: 'user', text: message.text };
   const tools = message.tools.map((tool) => ({ name: tool.label, args: tool.name, status: tool.status ?? (tool.done ? 'done' as const : 'running' as const), ms: tool.ms }));
   const body: ReactNode[] = [];
@@ -87,8 +103,9 @@ function toPanelMessage(message: ChatMessage, streaming: boolean, onOpen: (actio
     // Under an answer: what to do with it, never tokens or cost (the Settings view has the allowance limits).
     const links: ReactNode[] = [];
     if (message.resumed === false && message.id == null) links.push(<span key="rebuilt">Rebuilt from the saved chat</span>);
-    if (proposals.saveReport && message.id != null && message.text) links.push(<button key="save" type="button" className="nb-link" onClick={() => proposals.saveReport!(message)}>Save as report</button>);
-    if (trace.toggle) links.push(<button key="trace" type="button" className="nb-link" onClick={trace.toggle}>{trace.state?.open ? 'Hide trace' : 'Trace'}</button>);
+    // Only the newest answer offers these, so a long chat does not repeat them under every reply.
+    if (latest && proposals.saveReport && message.id != null && message.text) links.push(<button key="save" type="button" className="nb-link" onClick={() => proposals.saveReport!(message)}>Save as report</button>);
+    if (trace.toggle && (latest || trace.state?.open)) links.push(<button key="trace" type="button" className="nb-link" onClick={trace.toggle}>{trace.state?.open ? 'Hide trace' : 'Trace'}</button>);
     if (note) links.push(<span key="note">{note}</span>);
     if (links.length) body.push(<div key="meta" className="nb-meta">{links}</div>);
     if (trace.state?.open) {
@@ -117,9 +134,11 @@ function toPanelMessage(message: ChatMessage, streaming: boolean, onOpen: (actio
           {proposal.plain.length ? <ul className="small">{proposal.plain.map((line, index) => <li key={index}>{line}</li>)}</ul> : null}
         </div>
       );
-      return proposals.applied.has(proposalKey(proposal))
-        ? { type: 'custom', title: proposal.title, node: <p className="small muted">{savesReport(proposal) ? 'Saved to Reports.' : 'Applied.'} <button type="button" className="nb-link" onClick={() => proposals.undo(proposal)}>Undo</button></p> }
-        : { type: 'proposal', title: proposal.title, preview, confirmLabel: savesReport(proposal) ? 'Save' : 'Apply', onConfirm: () => proposals.apply(proposal) };
+      const confirmLabel = savesReport(proposal) ? 'Save' : 'Apply';
+      const decision = proposals.decision(proposal);
+      if (decision === 'applied') return { type: 'custom', title: proposal.title, node: <p className="small muted">{savesReport(proposal) ? 'Saved to Reports.' : 'Applied.'} {proposals.canUndo(proposal) ? <button type="button" className="nb-link" onClick={() => proposals.undo(proposal)}>Undo</button> : null}</p> };
+      if (decision === 'declined') return { type: 'custom', title: '', node: <DeclinedCard title={proposal.title} confirmLabel={confirmLabel} onConfirm={() => proposals.apply(proposal)}>{preview}</DeclinedCard> };
+      return { type: 'proposal', title: proposal.title, preview, confirmLabel, onConfirm: () => proposals.apply(proposal), onDecline: () => proposals.decline(proposal) };
     }) : undefined,
     scope: message.scope && !streaming && message.text ? message.scope : undefined,
     thought: !streaming ? message.seconds : undefined,
@@ -169,7 +188,10 @@ export function NutBotHost(): ReactElement | null {
   const [traces, setTraces] = useState<Record<number, TraceState>>({});
   const [mode, setModeState] = useState<ApplyMode>(applyMode);
   const appliedRef = useRef(new Map<string, Applied>());
-  const { open, setOpen, setUsable, pending, takePending } = nutbot;
+  const [decisions, setDecisions] = useState<ReturnType<typeof loadDecisions>>({});
+  const { open, setOpen, setUsable, pending, takePending, setWaiting } = nutbot;
+  const openRef = useRef(open);
+  openRef.current = open;
   // The latest values for handlers that outlive a render (the Escape listener, a card applied after a stream).
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -183,6 +205,15 @@ export function NutBotHost(): ReactElement | null {
     storeRemove('avn-nutbot-open-report');
     if (wanted.game === game.id) { setView('reports'); setOpenReport(wanted.report); }
   }, [open, game]);
+
+  // An answer that finished while the panel was closed, or in a tab out of sight: opening the panel takes the
+  // mark off the launcher, and coming back to the tab takes it off the tab's title.
+  useEffect(() => { if (open) setWaiting(false); }, [open, setWaiting]);
+  useEffect(() => {
+    const seen = () => { if (!document.hidden && document.title.startsWith(DONE_MARK)) document.title = document.title.slice(DONE_MARK.length); };
+    document.addEventListener('visibilitychange', seen);
+    return () => document.removeEventListener('visibilitychange', seen);
+  }, []);
 
   // Availability: a game page, this person may use it, and the server has it switched on.
   const usable = Boolean(game && allowed && info?.enabled);
@@ -199,7 +230,8 @@ export function NutBotHost(): ReactElement | null {
     controller.current?.abort();
     messagesRef.current = [];
     setChatIdState(game ? storeGet<string>(currentKey(game)) : null);
-    setTraces({}); setBusy(false); setOpen(false); setView('chat'); setDraft(''); setEdit({}); bump();
+    setDecisions(gameId ? loadDecisions(gameId) : {});
+    setTraces({}); setBusy(false); setOpen(false); setWaiting(false); setView('chat'); setDraft(''); setEdit({}); bump();
   }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const chatPath = game && chatId ? `${chatsPath(game)}/${encodeURIComponent(chatId)}` : null;
@@ -352,18 +384,23 @@ export function NutBotHost(): ReactElement | null {
   const undoProposal = useCallback(async (proposal: NutBotProposal) => {
     const key = proposalKey(proposal); const done = appliedRef.current.get(key);
     if (!done) return;
-    appliedRef.current.delete(key); bump();
+    appliedRef.current.delete(key);
+    if (gameId) setDecisions(rememberDecision(gameId, chatIdRef.current, proposal));
     try { await done.undo(); } catch (error) { toast((error as Error).message || 'Could not undo that.', undefined, 'error'); }
-  }, [toast]);
+  }, [gameId, toast]);
+  const declineOne = useCallback((proposal: NutBotProposal) => {
+    if (gameId) setDecisions(rememberDecision(gameId, chatIdRef.current, proposal, 'declined'));
+  }, [gameId]);
   const applyOne = useCallback(async (proposal: NutBotProposal, quiet = false) => {
     if (!game || proposal.game_id !== game.id) { toast('That belongs to another game.'); return; }
     const key = proposalKey(proposal);
     if (appliedRef.current.has(key)) return;
     try {
       const done = await applyProposal(game, proposal, chatIdRef.current);
-      appliedRef.current.set(key, done); bump();
+      appliedRef.current.set(key, done);
+      setDecisions(rememberDecision(game.id, chatIdRef.current, proposal, 'applied'));
       // A report opens no page.
-      if (!quiet && !savesReport(proposal)) void navigate({ to: done.path });
+      if (!quiet && !savesReport(proposal)) void navigate({ to: done.path, search: done.search ?? {} });
       toast(savesReport(proposal) ? 'Saved to Reports' : `Applied: ${proposal.title}`, { label: 'Undo', run: () => undoProposal(proposal) }, 'info');
     } catch (error) { toast((error as Error).message || (savesReport(proposal) ? 'Could not save the report.' : 'Could not apply that.'), undefined, 'error'); }
   }, [game, navigate, toast, undoProposal]);
@@ -422,10 +459,16 @@ export function NutBotHost(): ReactElement | null {
       answer.seconds = answer.seconds || Math.round((Date.now() - started) / 100) / 10;
       controller.current = null; setBusy(false); bump();
       if (newChat || chatId) refreshChats(newChat || chatId);
+      // Said only when the answer can't be seen, and never for one the person stopped.
+      if (!abort.signal.aborted && (!openRef.current || document.hidden)) {
+        if (!openRef.current) setWaiting(true);
+        if (document.hidden && !document.title.startsWith(DONE_MARK)) document.title = `${DONE_MARK}${document.title}`;
+        toast(answer.error ? 'NutBot could not finish' : 'NutBot has finished', { label: 'Open', run: () => { setView('chat'); setOpen(true); } }, answer.error ? 'error' : 'info', chatQuery.data?.chat.title || text.slice(0, 80));
+      }
       // "Applies itself" covers what NutBot builds for the pages; a report is only ever saved by pressing Save.
       if (applyMode() === 'auto' && !abort.signal.aborted) for (const proposal of answer.proposals) if (!savesReport(proposal)) await applyOne(proposal);
     }
-  }, [busy, game, harness, model, effort, seen, edit, off, chatId, setChatId, refreshChats, applyOne]);
+  }, [busy, game, harness, model, effort, seen, edit, off, chatId, chatQuery.data, setChatId, setOpen, setWaiting, refreshChats, applyOne, toast]);
 
   // Questions asked from the command palette arrive through the context.
   useEffect(() => {
@@ -507,8 +550,8 @@ export function NutBotHost(): ReactElement | null {
     : undefined;
   const messages = all.map((message, index) => toPanelMessage(message, busy && index === all.length - 1, openAction, openLink,
     message.role === 'assistant' && message.id != null && me.is_admin ? { state: traces[message.id], toggle: () => void toggleTrace(message.id!) } : {},
-    { applied: new Set(appliedRef.current.keys()), apply: (proposal) => void applyOne(proposal), undo: (proposal) => void undoProposal(proposal), saveReport: (answer) => void saveReport(answer) },
-    message === lastAnswer ? heavy : undefined));
+    { decision: (proposal) => decisionFor(decisions, chatId, proposal), canUndo: (proposal) => appliedRef.current.has(proposalKey(proposal)), apply: (proposal) => void applyOne(proposal), decline: declineOne, undo: (proposal) => void undoProposal(proposal), saveReport: (answer) => void saveReport(answer) },
+    message === lastAnswer ? heavy : undefined, message === lastAnswer));
   const toggleView = (next: View) => setView(view === next ? 'chat' : next);
   const back = () => setView('chat');
   // Without a working assistant the settings view explains the setup and is what the panel shows.

@@ -8,7 +8,6 @@ import type { Game, NutBotProposal } from '@/lib/types';
 import { groupDraftKey, groupRunKey } from '../levels/groupModel';
 import { restoreSavedGroup, type SavedGroupItem } from '../levels/groupLibraryModel';
 import { cleanNavigation, navigationKey } from '../levels/levelMath';
-import { viewKey } from '../levels/levelPaths';
 
 export const APPLY_KEY = 'avn-nutbot-apply';
 export type ApplyMode = 'ask' | 'auto';
@@ -17,7 +16,35 @@ export const applyMode = (): ApplyMode => (storeGet<string>(APPLY_KEY) === 'auto
 /** A stable name for a proposal, so a reloaded chat knows which cards were applied. */
 export const proposalKey = (proposal: NutBotProposal): string => `${proposal.kind}:${proposal.title}:${JSON.stringify(proposal.payload)}`;
 
-export type Applied = { path: string; undo: () => Promise<void> };
+export type Applied = { path: string; search?: Record<string, string>; undo: () => Promise<void> };
+
+/* ─── What was decided about a card ─── */
+export type CardDecision = 'declined' | 'applied';
+type CardDecisions = Record<string, CardDecision>;
+const MAX_DECISIONS = 300;
+const decisionsKey = (gameId: string): string => `avn-nutbot-cards-${gameId}`;
+
+/** A short name for a card in one chat. The full proposal can be a whole report, too long to keep as a key. */
+function cardName(chatId: string | null, proposal: NutBotProposal): string {
+  let hash = 5381;
+  for (const char of proposalKey(proposal)) hash = (hash * 33 + char.charCodeAt(0)) | 0;
+  return `${chatId ?? ''}:${proposal.kind}:${(hash >>> 0).toString(36)}`;
+}
+
+export const loadDecisions = (gameId: string): CardDecisions => storeGet<CardDecisions>(decisionsKey(gameId)) || {};
+export const decisionFor = (decisions: CardDecisions, chatId: string | null, proposal: NutBotProposal): CardDecision | undefined => decisions[cardName(chatId, proposal)];
+
+/** Remembers (or with no decision forgets) what was decided, so the card stays settled after the panel closes or the page reloads. */
+export function rememberDecision(gameId: string, chatId: string | null, proposal: NutBotProposal, decision?: CardDecision): CardDecisions {
+  const next = { ...loadDecisions(gameId) };
+  const name = cardName(chatId, proposal);
+  delete next[name];
+  if (decision) next[name] = decision;
+  const names = Object.keys(next);
+  for (const old of names.slice(0, Math.max(0, names.length - MAX_DECISIONS))) delete next[old];
+  storeSet(decisionsKey(gameId), next);
+  return next;
+}
 
 const KINDS: Record<NutBotProposal['kind'], string> = { players: 'players', funnel: 'funnels', highlight: 'players', levels: 'levels', groups: 'levels', report: 'overview' };
 
@@ -69,15 +96,15 @@ export async function applyProposal(game: Game, proposal: NutBotProposal, chatId
       const saved = payload.save ? await write<{ id: string }>(library, { method: 'POST', body: JSON.stringify(item) }) : null;
       const restored = restoreSavedGroup({ id: saved?.id ?? '', name: item.name, kind: item.kind, definition: item.definition, updated_at: '' });
       const draftKey = groupDraftKey(game.id); const runKey = groupRunKey(game.id);
-      const before = { draft: storeGet(draftKey), run: storeGet(runKey), filters: storeGet(`${runKey}-filters`), view: storeGet(viewKey(game)) };
-      storeSet(viewKey(game), 'groups');
+      const before = { draft: storeGet(draftKey), run: storeGet(runKey), filters: storeGet(`${runKey}-filters`) };
       storeSet(draftKey, restored.draft);
       storeSet(`${runKey}-filters`, restored.filters);
       storePush(runKey, item.kind === 'check' ? restored.draft : before.run);
       return {
         path,
+        search: { view: 'groups' },
         undo: async () => {
-          storeSet(viewKey(game), before.view); storeSet(draftKey, before.draft); storeSet(`${runKey}-filters`, before.filters); storePush(runKey, before.run);
+          storeSet(draftKey, before.draft); storeSet(`${runKey}-filters`, before.filters); storePush(runKey, before.run);
           if (saved) await write(`${library}/${encodeURIComponent(saved.id)}`, { method: 'DELETE' });
         },
       };

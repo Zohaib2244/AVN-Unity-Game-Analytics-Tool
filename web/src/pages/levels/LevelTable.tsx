@@ -1,4 +1,4 @@
-// "Level by level": the table of every level with its scope, sort, display settings (columns, heat, flags),
+// "Level Flow": the table of every level with its scope, sort, display settings (columns, heat, flags),
 // jump-to-level and paging, plus a Summary dialog (the levels worth a look and players remaining by level).
 // A row or a level opens that level's page. Drops and quits are drawn against per-game flag thresholds.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactElement } from 'react';
@@ -118,7 +118,7 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
   return (
     <section ref={box} className="panel levels-panel" onClickCapture={() => rememberSpot(game.id, { y: window.scrollY, page: current })}>
       <div className="panel-header">
-        <div><h2 className="with-icon"><Ico name="chart" size={16} /> Level by level</h2></div>
+        <div><h2 className="with-icon"><Ico name="chart" size={16} /> Level Flow</h2></div>
         <div className="quiet-actions">
           <div className="segmented" role="group" aria-label="Which players">
             {(Object.entries(LEVEL_SCOPES) as Array<[LevelScope, string]>).map(([key, label]) => (

@@ -282,6 +282,15 @@ body:has(.dlg > .player-view) { overflow: hidden; }
   .group-library .panel-header, .group-builder .panel-header { flex-wrap: wrap; gap: 12px; }
 }
 /* NutBot proposals: what a proposal card says it will do */
+/* A card set aside with Not now: one line, opened on request. */
+.nb-blk:has(> .nb-card-set) > .eyebrow{display:none}
+.nb-card-head{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:0;border:0;background:none;color:var(--text);font:inherit;font-size:var(--fs-sm);text-align:left;cursor:pointer}
+.nb-card-arrow{display:inline-flex;color:var(--dim);transform:rotate(-90deg)}
+.nb-card-arrow.open{transform:none}
+.nb-card-title{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.nb-card-more{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:4px 0 6px 21px}
+/* The launcher's mark: an answer is waiting. */
+.nb-waiting{width:7px;height:7px;margin-left:2px;border-radius:50%;background:var(--accent)}
 .nb-proposal p,.nb-proposal ul{margin:0}
 .nb-proposal ul{padding-left:18px}
 .nb-pane.nb-reports{gap:2px}

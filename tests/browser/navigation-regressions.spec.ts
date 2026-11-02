@@ -24,11 +24,11 @@ test('Levels view switches reliably and survives refresh and browser history', a
   await page.goto('/games/viewer-game/levels');
   const views = page.getByRole('group', { name: 'Levels view', exact: true });
   for (let index = 0; index < 3; index++) {
-    await views.getByRole('button', { name: 'Level by level', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Level by level', exact: true })).toBeVisible();
-    await expect(views.getByRole('button', { name: 'Level by level', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await views.getByRole('button', { name: 'Level Flow', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Level Flow', exact: true })).toBeVisible();
+    await expect(views.getByRole('button', { name: 'Level Flow', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Level by level', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Level Flow', exact: true })).toBeVisible();
     await views.getByRole('button', { name: 'Compare releases', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Compare releases', exact: true })).toBeVisible();
   }
@@ -68,7 +68,7 @@ test('Game selector stays beside its trigger on a scrolled page', async ({ page 
 
 test('Continue toast offers each browser its own last view while Home and direct links stay predictable', async ({ page, browser }, info) => {
   await page.goto('/games/viewer-game/levels?view=table');
-  await expect(page.getByRole('heading', { name: 'Level by level', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Level Flow', exact: true })).toBeVisible();
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Test games', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Continue', exact: true }).click();

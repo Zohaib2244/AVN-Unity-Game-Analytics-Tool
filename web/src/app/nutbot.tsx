@@ -7,6 +7,8 @@ type NutBot = {
   /** False until the server says the assistant can be used on this page. */
   usable: boolean; setUsable: (usable: boolean) => void;
   ask: (text: string) => void; pending: string | null; takePending: () => string | null;
+  /** An answer finished while the panel was closed; opening the panel clears it. */
+  waiting: boolean; setWaiting: (waiting: boolean) => void;
 };
 const NutBotContext = createContext<NutBot | null>(null);
 
@@ -14,10 +16,11 @@ export function NutBotProvider({ children }: { children: ReactNode }): ReactElem
   const [open, setOpen] = useState(false);
   const [usable, setUsable] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
+  const [waiting, setWaiting] = useState(false);
   const toggle = useCallback(() => setOpen((o) => !o), []);
   const ask = useCallback((text: string) => { setPending(text); setOpen(true); }, []);
   const takePending = useCallback(() => { const text = pending; setPending(null); return text; }, [pending]);
-  const value = useMemo(() => ({ open, setOpen, toggle, usable, setUsable, ask, pending, takePending }), [open, toggle, usable, ask, pending, takePending]);
+  const value = useMemo(() => ({ open, setOpen, toggle, usable, setUsable, ask, pending, takePending, waiting, setWaiting }), [open, toggle, usable, ask, pending, takePending, waiting]);
   return <NutBotContext.Provider value={value}>{children}</NutBotContext.Provider>;
 }
 

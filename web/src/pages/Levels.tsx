@@ -5,9 +5,8 @@ import { useCallback, useEffect, useMemo, useState, type ReactElement } from 're
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useRead } from '@/api';
 import { resolveRange } from '@/components/DateRange';
-import { FilterBar, facetsPath, useFilters } from '@/components/Filters';
-import type { Facets } from '@/lib/filters';
-import { Heading, Skeleton } from '@/components/feedback';
+import { FilterBar, useFilters } from '@/components/Filters';
+import { Heading } from '@/components/feedback';
 import { gamePath } from '@/lib/games';
 import { storeGet, storeSet, useStorePushed } from '@/lib/store';
 import type { Game, LevelsResult } from '@/lib/types';
@@ -19,7 +18,7 @@ import { LevelTable } from './levels/LevelTable';
 import { PlayerGroups } from './levels/PlayerGroups';
 import { forgetSpot } from './levels/levelReturn';
 import { cleanNavigation, navigationKey, type LevelNavigation, type ReleasePrefs, type SavedLevelView } from './levels/levelMath';
-import { isCompareView, levelsPath, releasesKey, viewKey, type DrillState } from './levels/levelPaths';
+import { isCompareView, levelsPath, releasesKey, type DrillState } from './levels/levelPaths';
 
 export function LevelsPage({ game }: { game: Game }): ReactElement {
   const navigate = useNavigate();
@@ -36,20 +35,17 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
 
   // ?level=12 opens that level's page; ?view=compare opens Compare releases (the view is also remembered).
   const pageLevel = search.level != null && Number.isInteger(Number(search.level)) ? Number(search.level) : null;
-  // With no view chosen yet, a game with two published builds opens on the latest build against the one before it.
-  const facets = useRead<Facets>(facetsPath(game, filters));
-  const chosen = search.view || storeGet<string>(viewKey(game));
-  const view: 'table' | 'compare' | 'groups' | 'features' = pageLevel != null ? 'table' : chosen === 'groups' ? 'groups' : chosen === 'features' ? 'features' : (chosen ? isCompareView(chosen) : !!facets.data?.previous_app_version) ? 'compare' : 'table';
-  const deciding = pageLevel == null && !chosen && !facets.data && !facets.isError;
+  // Levels always opens on Level Flow; the other views open from the buttons or from ?view=.
+  const chosen = search.view;
+  const view: 'table' | 'compare' | 'groups' | 'features' = pageLevel != null ? 'table' : chosen === 'groups' ? 'groups' : chosen === 'features' ? 'features' : chosen && isCompareView(chosen) ? 'compare' : 'table';
 
   const path = levelsPath(game, filters, nav.scope);
-  const levels = useRead<LevelsResult>(path, { enabled: view === 'table' && !deciding });
+  const levels = useRead<LevelsResult>(path, { enabled: view === 'table' });
   // The players each level's drill has been opened on (group, sort) last; kept while the dates and filters stay.
   const memory = useMemo(() => new Map<number, DrillState>(), [path]);
 
   const listPath = gamePath(game, 'levels');
   const chooseView = (next: 'table' | 'compare' | 'groups' | 'features') => {
-    storeSet(viewKey(game), next);
     if (next === view && pageLevel == null) return;
     void navigate({ to: listPath, search: { view: next }, replace: true });
   };
@@ -74,12 +70,12 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
       <Heading title="Levels" subtitle="Follow the same players from one level’s start to the next, with a breakdown of where progress stops." />
       {view !== 'groups' ? <FilterBar game={game} state={filters} onChange={updateFilters} context={levels.data ? { anonymous_events: levels.data.context.anonymous_events } : {}} /> : null}
       <div className="range-modes route-tabs levels-views" role="group" aria-label="Levels view">
-        <button type="button" aria-pressed={view === 'table'} onClick={() => chooseView('table')}>Level by level</button>
+        <button type="button" aria-pressed={view === 'table'} onClick={() => chooseView('table')}>Level Flow</button>
         <button type="button" aria-pressed={view === 'features'} onClick={() => chooseView('features')}>Occurrence &amp; drop</button>
         <button type="button" aria-pressed={view === 'compare'} onClick={() => chooseView('compare')}>Compare releases</button>
         <button type="button" aria-pressed={view === 'groups'} onClick={() => chooseView('groups')}>Compare player groups</button>
       </div>
-      {deciding ? <Skeleton kind="table" rows={6} columns={7} /> : view === 'groups' ? (
+      {view === 'groups' ? (
         <PlayerGroups game={game} filters={filters} onFilters={updateFilters} onOpenPlayer={openPlayer} />
       ) : view === 'features' ? (
         <LevelFeatures game={game} filters={filters} scope={nav.scope} onOpen={(level) => { setJump({ level }); chooseView('table'); }} />

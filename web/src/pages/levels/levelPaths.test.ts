@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ActiveFilters } from '@/lib/filters';
 import { storeSet } from '@/lib/store';
 import { DRILL_PAGE, navigationKey } from './levelMath';
-import { activeViewKey, drillPagePath, drillPath, drillQuery, isCompareView, levelsPath, levelsPrefetchPath, levelsQuery, listPath, releaseFacetsPath, releasePath, releasesKey, savedViewsKey, viewKey } from './levelPaths';
+import { activeViewKey, drillPagePath, drillPath, drillQuery, isCompareView, levelsPath, levelsPrefetchPath, levelsQuery, listPath, releaseFacetsPath, releasePath, releasesKey, savedViewsKey } from './levelPaths';
 
 const game = { id: 'g1' };
 const state: ActiveFilters = {
@@ -15,7 +15,6 @@ beforeEach(() => localStorage.clear());
 
 describe('keys kept in this browser', () => {
   it('uses the old names, one set per game', () => {
-    expect(viewKey(game)).toBe('avn-levels-view-g1');
     expect(navigationKey(game)).toBe('avn-level-nav-g1');
     expect(savedViewsKey(game)).toBe('avn-level-views-g1');
     expect(activeViewKey(game)).toBe('avn-level-active-view-g1');
@@ -82,14 +81,12 @@ describe('Compare releases requests', () => {
 });
 
 describe('the first request of the page', () => {
-  it('is not sent while Compare releases is the open view', () => {
-    storeSet(viewKey(game), 'compare');
-    expect(levelsPrefetchPath(game)).toBeNull();
-    storeSet(viewKey(game), 'explore');
-    expect(levelsPrefetchPath(game)).toBeNull();
+  it('asks for Level Flow even when an old browser still remembers another view', () => {
+    storeSet('avn-levels-view-g1', 'compare');
+    expect(levelsPrefetchPath(game).startsWith('/v1/games/g1/insights/levels?')).toBe(true);
   });
   it('asks for the level table, with the new-players scope when that is remembered', () => {
-    expect(levelsPrefetchPath(game)?.startsWith('/v1/games/g1/insights/levels?')).toBe(true);
+    expect(levelsPrefetchPath(game).startsWith('/v1/games/g1/insights/levels?')).toBe(true);
     expect(levelsPrefetchPath(game)).not.toContain('scope=');
     storeSet(navigationKey(game), { sort: 'level', pageSize: '50', scope: 'first_session' });
     expect(levelsPrefetchPath(game)).toContain('scope=first_session');

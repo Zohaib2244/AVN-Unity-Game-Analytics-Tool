@@ -201,6 +201,88 @@ test('a report card saves nothing until Save is pressed', async ({ page }) => {
   expect(JSON.parse(posted[0]!)).toMatchObject({ title: 'Level 12 review', body: 'Level 12 loses everyone.' });
 });
 
+test('Not now folds a card to one line and stays that way after closing the panel and reloading', async ({ page }) => {
+  const card = { type: 'proposal', kind: 'levels', title: 'Levels by biggest drop', why: 'Shows the worst level first.', game_id: 'viewer-game', plain: ['Sorted by drop'], payload: { sort: 'drop', scope: 'all' } };
+  await mockNutBot(page, `${JSON.stringify({ type: 'chat', id: 'c1', title: 'Drops', harness: 'codex' })}\n${JSON.stringify({ type: 'text', text: 'Level 10 drops most.' })}\n${JSON.stringify(card)}\n{"type":"done","seconds":1}\n`);
+  const row = { id: 'c1', game_id: 'viewer-game', email: '', title: 'Drops', harness: 'codex', model: 'standard', agent_session: '', created_at: '', updated_at: '', deleted: false, messages: 2 };
+  const stored = [{ id: 1, role: 'user', text: 'Which level drops most?' }, { id: 2, role: 'assistant', text: 'Level 10 drops most.', tools: [], actions: [card], scope: '', error: '', seconds: 1, harness: 'codex', model: 'standard', usage: {}, context: {}, created_at: '' }];
+  await page.route('**/nutbot/chats/c1', (route) => route.fulfill({ json: { chat: row, messages: stored } }));
+  await page.goto('/games/viewer-game/levels');
+  await page.locator('.nb-launcher').click();
+  const field = page.getByRole('textbox', { name: 'Message NutBot' });
+  await field.fill('Which level drops most?');
+  await field.press('Enter');
+  await page.getByRole('button', { name: 'Not now', exact: true }).click();
+  const folded = page.locator('.nb-card-head');
+  await expect(folded).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('button', { name: 'Apply', exact: true })).toHaveCount(0);
+  await expect(page.getByText('Shows the worst level first.')).toHaveCount(0);
+
+  await field.press('Escape');
+  await expect(page.locator('.nb')).toHaveCount(0);
+  await page.locator('.nb-launcher').click();
+  await expect(page.locator('.nb-card-head')).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('button', { name: 'Not now', exact: true })).toHaveCount(0);
+
+  await page.reload();
+  await page.locator('.nb-launcher').click();
+  await expect(page.locator('.nb-card-head')).toHaveAttribute('aria-expanded', 'false');
+
+  await page.locator('.nb-card-head').click();
+  await expect(page.getByText('Shows the worst level first.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply', exact: true })).toBeVisible();
+});
+
+test('an answer finishing behind a closed panel says so, and Open brings it back', async ({ page }) => {
+  const sent = await mockNutBot(page);
+  let release = (): void => undefined;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/nutbot/chat', async (route) => {
+    sent.push(route.request().postData() || '');
+    await held;
+    await route.fulfill({ contentType: 'application/x-ndjson', body: '{"type":"text","text":"Level 7 loses the most."}\n{"type":"done","seconds":1}\n' });
+  });
+  await page.goto('/games/viewer-game/levels');
+  await page.locator('.nb-launcher').click();
+  const field = page.getByRole('textbox', { name: 'Message NutBot' });
+  await field.fill('Where do players leave?');
+  await field.press('Enter');
+  await expect.poll(() => sent.length).toBe(1);
+  await page.keyboard.press('Escape');
+  await page.locator('.nb').press('Escape').catch(() => undefined);
+  await expect(page.locator('.nb')).toHaveCount(0);
+
+  release();
+  const toast = page.getByText('NutBot has finished', { exact: true });
+  await expect(toast).toBeVisible();
+  await expect(page.locator('.nb-launcher .nb-waiting')).toBeVisible();
+  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await expect(page.locator('.nb-md')).toContainText('Level 7 loses the most.');
+  await expect(page.locator('.nb-launcher .nb-waiting')).toHaveCount(0);
+});
+
+test('an answer that finishes with the panel open stays quiet', async ({ page }) => {
+  await openNutBot(page);
+  const field = page.getByRole('textbox', { name: 'Message NutBot' });
+  await field.fill('Where do players leave?');
+  await field.press('Enter');
+  await expect(page.locator('.nb-md')).toContainText('two players');
+  await expect(page.getByText('NutBot has finished', { exact: true })).toHaveCount(0);
+});
+
+test('a player groups card opens Compare player groups', async ({ page }) => {
+  const card = { type: 'proposal', kind: 'groups', title: 'Fast starters', why: '', game_id: 'viewer-game', plain: ['Opens the comparison'], payload: { save: false, item: { name: 'Fast', kind: 'groups', definition: { start: '2026-10-01', end: '2026-10-05', filters: { environments: [], app_versions: [], builds: [], countries: [], platforms: [], exclude_environments: [] }, timezone_offset_minutes: 0, entry_level: 1, exclude_players: [], exclude_events: [], behavior: { kind: 'level_duration', level: 1, event: null, parameter: '', window_minutes: 10, comparison: 'number', split: 90, value: '' }, outcome: null, window_hours: 24, range_preset: 'custom', version_mode: 'custom', timezone: 'utc', hide_test: true } } } };
+  await mockNutBot(page, `${JSON.stringify(card)}\n{"type":"text","text":"Here it is."}\n{"type":"done","seconds":1}\n`);
+  await page.goto('/games/viewer-game/levels');
+  await page.locator('.nb-launcher').click();
+  const field = page.getByRole('textbox', { name: 'Message NutBot' });
+  await field.fill('Compare fast starters');
+  await field.press('Enter');
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect(page).toHaveURL(/view=groups/);
+  await expect(page.getByRole('button', { name: 'Compare player groups', exact: true })).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('a new chat keeps its answer on screen after the chat is saved', async ({ page }) => {
   // The chat is fetched as soon as the stream names it, while only the question is stored; the answer must not vanish.
   const text = 'The first levels lose players in small steps.';

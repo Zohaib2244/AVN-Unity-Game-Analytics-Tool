@@ -8,8 +8,7 @@ import { DRILL_PAGE, cleanNavigation, navigationKey, type DrillSort, type LevelD
 
 type GameRef = Pick<Game, 'id'>;
 
-/** Which sub page is open (`avn-levels-view-<game>`): the level table, Compare releases or player groups ("explore" is its old name). */
-export const viewKey = (game: GameRef): string => `avn-levels-view-${game.id}`;
+/** Whether `?view=` asks for Compare releases ("explore" is its old name). */
 export const isCompareView = (value: unknown): boolean => value === 'compare' || value === 'explore';
 
 export const listPath = (game: GameRef): string => gamePath(game, 'levels');
@@ -41,9 +40,8 @@ export function resolvedFilters(game: GameRef): ActiveFilters {
   const state = filterState(game);
   return { ...state, range: resolveRange(state.range?.preset || '30', state.range) };
 }
-/** The Levels page's first request. Null when the page would open a comparison. */
-export function levelsPrefetchPath(game: GameRef): string | null {
-  if (isCompareView(storeGet(viewKey(game))) || storeGet(viewKey(game)) === 'groups' || storeGet(viewKey(game)) === 'features') return null;
+/** The Levels page's first request: the page opens on Level Flow. */
+export function levelsPrefetchPath(game: GameRef): string {
   return levelsPath(game, resolvedFilters(game), cleanNavigation(storeGet(navigationKey(game))).scope);
 }
 /** The Overview's first request, for the same early start. */

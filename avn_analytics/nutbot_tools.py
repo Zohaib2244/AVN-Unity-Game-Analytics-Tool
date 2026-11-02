@@ -6,6 +6,7 @@ the run (who is asking, the dashboard's range and filters) and the range/filter 
 answer from the same queries the pages use, in compact form so a result costs few tokens.
 """
 
+import json
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from itertools import groupby
@@ -299,6 +300,7 @@ class AnalysisTools:
         enough = [row for row in table["levels"] if not row["low_sample"] and row["quit"]]
         few = [row for row in table["levels"] if row["low_sample"] and row["quit"]]
         enough.sort(key=lambda row: (-(row["quit_percent"] or 0), -row["quit"]))
+        few.sort(key=lambda row: (-row["quit"], row["level"]))
 
         def short(row):
             return {
@@ -323,6 +325,7 @@ class AnalysisTools:
                 {"level": row["level"], "started": row["started"], "quit": row["quit"]}
                 for row in few[:limit]
             ],
+            "too_few_players_total": len(few),
             "minimum_players": table["context"]["minimum_players"],
             "levels_in_range": len(table["levels"]),
         }
@@ -467,10 +470,60 @@ def _moment(value):
         return None
 
 
+# One row per level for the agent. Words like the most common events are in get_level_detail, so
+# a long game fits in one tool result.
+LEVEL_COLUMNS = (
+    "level",
+    "started",
+    "completed",
+    "completion",
+    "tries_per_player",
+    "fails",
+    "restarts",
+    "median_seconds",
+    "p90_seconds",
+    "quit",
+    "quit_percent",
+    "low_sample",
+)
+TRANSITION_COLUMNS = ("total_drop", "drop_percent", "left", "finished_stopped", "kept_going")
+MAX_LEVEL_TABLE = 12000  # below MAX_TOOL_RESULT, so the JSON is never cut in the middle
+
+
+def compact_levels(table, from_level=None, to_level=None):
+    """The levels as columns and rows, from `from_level` until `to_level` or the size limit."""
+    low = int(from_level or 0)
+    high = None if to_level is None else int(to_level)
+    wanted = [
+        row
+        for row in table["levels"]
+        if row["level"] >= low and (high is None or row["level"] <= high)
+    ]
+    rows, size, more = [], 0, None
+    for row in wanted:
+        transition = row.get("transition") or {}
+        values = [row.get(key) for key in LEVEL_COLUMNS]
+        values += [transition.get(key) for key in TRANSITION_COLUMNS]
+        size += len(json.dumps(values))
+        if size > MAX_LEVEL_TABLE:
+            more = row["level"]
+            break
+        rows.append(values)
+    if more is None and high is not None:
+        more = next((row["level"] for row in table["levels"] if row["level"] > high), None)
+    return {
+        "columns": [*LEVEL_COLUMNS, *TRANSITION_COLUMNS],
+        "rows": rows,
+        "levels_in_range": len(table["levels"]),
+        "more_levels_from": more,
+        "context": table["context"],
+    }
+
+
 def _short_transition(transition):
     if not transition:
         return None
-    keep = ("matched_completed", "matched_started", "matched_total")
+    keep = ("matched_completed", "matched_started", "matched_total", *TRANSITION_COLUMNS)
     return {
         key: value for key, value in transition.items() if key in keep or key.startswith("next")
     } or None

@@ -409,7 +409,9 @@ def test_read_tools_answer_with_real_numbers(tools):
         "Levels 1–2 (all completed)",
     }
     error, text = call(nutbot, run, "get_level_progress")
-    assert [row["level"] for row in json.loads(text)["levels"]] == [1, 2, 3]
+    table = json.loads(text)
+    assert [row[table["columns"].index("level")] for row in table["rows"]] == [1, 2, 3]
+    assert "drop_percent" in table["columns"]  # the number the Levels page shows
     error, text = call(nutbot, run, "get_player_story", player="a")
     assert "Played levels 1–3, completed all" in text
     error, text = call(nutbot, run, "list_events")

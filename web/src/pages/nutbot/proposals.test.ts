@@ -1,4 +1,4 @@
-import { applyMode, applyProposal, proposalKey, proposalPage, savesReport } from './proposals';
+import { applyMode, applyProposal, decisionFor, loadDecisions, proposalKey, proposalPage, rememberDecision, savesReport } from './proposals';
 import type { Game, NutBotProposal } from '@/lib/types';
 
 const game = { id: 'g1', name: 'Test', platform: 'android' } as unknown as Game;
@@ -43,7 +43,7 @@ describe('NutBot proposals', () => {
     const done = await applyProposal(game, proposal('groups', { item: { name: 'Fast', kind: 'check', definition }, save: false }));
     const run = JSON.parse(localStorage.getItem('avn-player-groups-run-g1')!);
     expect(run).toMatchObject({ kind: 'level_duration', level: '1', split: '90', outcomeLevel: '3' });
-    expect(localStorage.getItem('avn-levels-view-g1')).toBe('"groups"');
+    expect(done.search).toEqual({ view: 'groups' });
     await done.undo();
     expect(JSON.parse(localStorage.getItem('avn-player-groups-run-g1')!)).toBeNull();
   });
@@ -66,5 +66,24 @@ describe('NutBot proposals', () => {
     await done.undo();
     expect(calls.at(-1)).toMatchObject({ url: '/v1/games/g1/nutbot/reports/r1', init: { method: 'DELETE' } });
     vi.unstubAllGlobals();
+  });
+
+  it('remembers a decision per game and chat, and forgets it on undo', () => {
+    const card = proposal('levels', { sort: 'drop' });
+    rememberDecision('g1', 'c1', card, 'declined');
+    expect(decisionFor(loadDecisions('g1'), 'c1', card)).toBe('declined');
+    expect(decisionFor(loadDecisions('g1'), 'c2', card)).toBeUndefined();
+    expect(decisionFor(loadDecisions('g2'), 'c1', card)).toBeUndefined();
+    expect(decisionFor(loadDecisions('g1'), 'c1', proposal('levels', { sort: 'level' }))).toBeUndefined();
+    rememberDecision('g1', 'c1', card);
+    expect(decisionFor(loadDecisions('g1'), 'c1', card)).toBeUndefined();
+  });
+
+  it('keeps only the newest decisions', () => {
+    for (let index = 0; index < 305; index++) rememberDecision('g1', 'c1', proposal('levels', { index }), 'declined');
+    const decisions = loadDecisions('g1');
+    expect(Object.keys(decisions)).toHaveLength(300);
+    expect(decisionFor(decisions, 'c1', proposal('levels', { index: 0 }))).toBeUndefined();
+    expect(decisionFor(decisions, 'c1', proposal('levels', { index: 304 }))).toBe('declined');
   });
 });
