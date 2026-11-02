@@ -64,7 +64,7 @@ export function LastActions({ level, group, lastActions, lastAction, onPick }: {
 }
 
 /* ─── The drill ─── */
-export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPlayer }: { game: Game; filters: ActiveFilters; scope: LevelScope; level: number; row: LevelRow | undefined; memory: Map<number, DrillState>; onOpenPlayer?: (player: string, index: number, players: string[]) => void }): ReactElement {
+export function LevelDrill({ game, filters, scope, excludeReturners, level, row, memory, onOpenPlayer }: { game: Game; filters: ActiveFilters; scope: LevelScope; excludeReturners: boolean; level: number; row: LevelRow | undefined; memory: Map<number, DrillState>; onOpenPlayer?: (player: string, index: number, players: string[]) => void }): ReactElement {
   const { toastError } = useNotify();
   // A link from the table (?group=failed_left) opens that group; otherwise the group last used on this level, else the bigger drop.
   const asked = (useSearch({ strict: false }) as Record<string, string | undefined>).group;
@@ -72,7 +72,7 @@ export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPla
   const [state, setStateRaw] = useState<DrillState>(() => (requested ? { ...(memory.get(level) ?? { sort: 'exit_at' as DrillSort }), group: requested, lastAction: null } : memory.get(level)) ?? { group: levelDrillGroup(row), sort: 'exit_at', lastAction: null });
   useEffect(() => { showDrill({ level, group: state.group, ...(state.lastAction ? { last_action: state.lastAction } : {}) }); return () => showDrill(null); }, [level, state.group, state.lastAction]);
   const setState = (patch: Partial<DrillState>) => setStateRaw((previous) => { const next = { ...previous, ...patch }; memory.set(level, next); return next; });
-  const firstPath = drillPagePath(game, filters, scope, level, state, 0);
+  const firstPath = drillPagePath(game, filters, scope, level, state, 0, excludeReturners);
   // A new group or sort waits for its own answer; the previous group's rows are not shown under its name.
   const first = useRead<LevelPlayersResult>(firstPath, { keepPrevious: false });
   // Pages after the first, kept only while the list they continue is the one shown.
@@ -83,7 +83,7 @@ export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPla
     const mine = ++ticket.current;
     setMore({ loading: true, error: null });
     try {
-      const result = await read<LevelPlayersResult>(drillPagePath(game, filters, scope, level, state, loaded));
+      const result = await read<LevelPlayersResult>(drillPagePath(game, filters, scope, level, state, loaded, excludeReturners));
       if (mine !== ticket.current) return;
       setExtra((previous) => (previous.path === firstPath ? { path: firstPath, players: [...previous.players, ...result.players], total: result.total } : { path: firstPath, players: result.players, total: result.total }));
       setMore({ loading: false, error: null });
@@ -106,8 +106,8 @@ export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPla
 
   const exportCSV = async () => {
     try {
-      const all = await read<LevelPlayersResult>(drillPath(game, filters, scope, level, state, { offset: 0, limit: 2000 }));
-      downloadCSV(`${game.name}-${platformLabel(game.platform)}-level-${level}-${state.group}-${filters.range.from}_${filters.range.to}.csv`, [
+      const all = await read<LevelPlayersResult>(drillPath(game, filters, scope, level, state, { offset: 0, limit: 2000 }, excludeReturners));
+      downloadCSV(`${game.name}-${platformLabel(game.platform)}-level-${level}-${state.group}${excludeReturners ? '-no-return' : ''}-${filters.range.from}_${filters.range.to}.csv`, [
         ['player', 'last_action', 'ending_known', 'prev_exit_reason', 'prev_exit_ad', 'away_seconds', 'passed_level', 'reached_next_level', 'next_action', 'last_event', 'last_event_after', 'last_event_gap_seconds', 'last_event_after_level_seconds', 'tries', 'fails', 'finished_level', 'last_on_level_utc', 'last_seen_utc', 'opened_game_later', 'app_version', 'session_seconds'],
         ...all.players.map((item) => [item.player, item.last_action, String(item.ending_known), item.prev_exit_reason, item.prev_exit_ad, item.away_seconds, item.passed == null ? undefined : String(item.passed), item.reached_next == null ? undefined : String(item.reached_next), item.next_action, item.last_event?.text, item.last_event?.after, item.last_event?.gap, item.last_event?.after_level, item.tries, item.fails, String(item.completed), item.exit_at, item.last_seen, String(item.came_back), item.app_version, item.session_seconds]),
       ]);
@@ -121,7 +121,7 @@ export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPla
     <div className="level-drill level-page-list" data-level-drill={level}>
       <div className="level-drill-head">
         <div className="segmented" role="group" aria-label={`Players on level ${level}`}>
-          {LEVEL_DRILL_GROUPS.map(([key, label]) => <button key={key} type="button" data-drill-group={key} aria-pressed={state.group === key} onClick={() => { if (state.group !== key) setState({ group: key, lastAction: null }); }}>{label}{counts ? <> <span className="drill-count">{number(counts[key])}</span></> : null}</button>)}
+          {LEVEL_DRILL_GROUPS.map(([key, label]) => <button key={key} type="button" data-drill-group={key} aria-pressed={state.group === key} onClick={() => { if (state.group !== key) setState({ group: key, lastAction: null }); }}>{excludeReturners && key === 'left' ? 'Stopped during level · no return' : excludeReturners && key === 'finished_stopped' ? 'Stopped after finishing · no return' : excludeReturners && key === 'failed_left' ? 'Failed · no return' : label}{counts ? <> <span className="drill-count">{number(counts[key])}</span></> : null}</button>)}
         </div>
         <div className="quiet-actions">
           <label className="inline-field">Sort<select data-drill-sort value={state.sort} onChange={(event) => setState({ sort: event.target.value as DrillSort })}><option value="exit_at">Latest on this level</option><option value="tries">Most tries</option><option value="fails">Most fails</option></select></label>
@@ -130,7 +130,7 @@ export function LevelDrill({ game, filters, scope, level, row, memory, onOpenPla
       </div>
       {counts?.unknown_progress ? <p className="help">{number(counts.unknown_progress)} more {counts.unknown_progress === 1 ? 'player' : 'players'} in the drop started a later level without a start of level {level + 1}.</p> : null}
       {quitting && first.data?.no_ending ? <p className="help" data-no-ending>{number(first.data.no_ending)} of these {first.data.no_ending === 1 ? 'player has' : 'players have'} no known ending: they haven't returned, so “Last seen” is the last thing we heard, not why they left.</p> : null}
-      {returned && counts ? <p className="help">{number(counts.kept_going! - counts.straight_on!)} of them went on to reach level {level + 1}, so Drop doesn't count them.</p> : null}
+      {returned && excludeReturners ? <p className="help">Returners stay visible here and are excluded from drop counts, even if they have not reached the next level.</p> : returned && counts ? <p className="help">{number(counts.kept_going! - counts.straight_on!)} of them went on to reach level {level + 1}, so Drop doesn't count them.</p> : null}
       <LastActions level={level} group={state.group} lastActions={first.data?.last_actions} lastAction={state.lastAction} onPick={(text) => setState({ lastAction: text })} />
       <QueryRegion query={first} path={firstPath} skeleton={<Skeleton kind="table" rows={5} columns={8} />}>
         {(result) => {

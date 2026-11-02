@@ -29,8 +29,8 @@ export function LevelCompare({ game, filters, nav, prefs, onPrefs, onRestore, on
   const choices = releaseChoices((facets.data?.app_version ?? []).map((item) => item.value));
   const pair = pickReleases(choices, prefs);
   const comparing = pair !== null && pair.a !== pair.b;
-  const first = useRead<LevelsResult>(comparing ? releasePath(game, filters, pair.a) : null, { keepPrevious: false });
-  const second = useRead<LevelsResult>(comparing ? releasePath(game, filters, pair.b) : null, { keepPrevious: false });
+  const first = useRead<LevelsResult>(comparing ? releasePath(game, filters, pair.a, nav.excludeReturners, nav.scope) : null, { keepPrevious: false });
+  const second = useRead<LevelsResult>(comparing ? releasePath(game, filters, pair.b, nav.excludeReturners, nav.scope) : null, { keepPrevious: false });
 
   // Saved views: this browser only.
   const [views, setViews] = useState<Record<string, SavedLevelView>>(() => storeGet<Record<string, SavedLevelView>>(savedViewsKey(game)) ?? {});
@@ -45,7 +45,7 @@ export function LevelCompare({ game, filters, nav, prefs, onPrefs, onRestore, on
   const saveForm = useSubmit(async (values) => {
     const name = values.name?.trim() ?? '';
     if (!name) throw new Error('Enter a name for this view.');
-    const next = { ...views, [name]: { filters: structuredClone(filters), tools: { ...prefs }, sort: nav.sort, pageSize: nav.pageSize, scope: nav.scope } };
+    const next = { ...views, [name]: { filters: structuredClone(filters), tools: { ...prefs }, sort: nav.sort, pageSize: nav.pageSize, scope: nav.scope, excludeReturners: nav.excludeReturners } };
     storeSet(savedViewsKey(game), next); storeSet(activeViewKey(game), name);
     setViews(next); setActive(name); setSaving(false);
     toast('Level view saved.');
@@ -83,7 +83,7 @@ export function LevelCompare({ game, filters, nav, prefs, onPrefs, onRestore, on
           <table className="compact-table comparison-table">
             <thead>
               <tr><th rowSpan={2}>Level</th><th colSpan={3}>{pair.a}</th><th colSpan={3}>{pair.b}</th><th rowSpan={2}>Drop change · B vs A</th></tr>
-              <tr><th>Start</th><th>Finish</th><th>Drop</th><th>Start</th><th>Finish</th><th>Drop</th></tr>
+              <tr><th>Start</th><th>Finish</th><th>{nav.excludeReturners ? 'Stopped · no return' : 'Drop'}</th><th>Start</th><th>Finish</th><th>{nav.excludeReturners ? 'Stopped · no return' : 'Drop'}</th></tr>
             </thead>
             <tbody>
               {numbers.map((level) => {
@@ -113,7 +113,7 @@ export function LevelCompare({ game, filters, nav, prefs, onPrefs, onRestore, on
 
   return (
     <section className="panel level-explore">
-      <div className="panel-header"><div><h2>Compare releases</h2><p>Start, finish and drop of two app versions, level by level.</p></div></div>
+      <div className="panel-header"><div><h2>Compare releases</h2><p>Start, finish and drop of two app versions, level by level.{nav.excludeReturners ? ' Drop excludes players who came back; starter counts stay the same.' : ''}</p></div></div>
       <details className="level-saved-options">
         <summary>Saved views on this device</summary>
         <div className="level-saved-views">

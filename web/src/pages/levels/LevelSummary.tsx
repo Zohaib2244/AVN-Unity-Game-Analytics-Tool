@@ -13,8 +13,8 @@ import { levelHighlights } from './levelMath';
 
 type Spot = { key: string; icon: IcoName; label: string; row: LevelRow | undefined; value: string; hot: boolean };
 
-export function LevelSummary({ open, onClose, levels, minimum, dropFlag, quitFlag, firstSession, onJump, onOpen }: {
-  open: boolean; onClose: () => void; levels: LevelRow[]; minimum: number; dropFlag: number; quitFlag: number; firstSession: boolean;
+export function LevelSummary({ open, onClose, levels, minimum, dropFlag, quitFlag, firstSession, excludeReturners, onJump, onOpen }: {
+  open: boolean; onClose: () => void; levels: LevelRow[]; minimum: number; dropFlag: number; quitFlag: number; firstSession: boolean; excludeReturners: boolean;
   onJump: (level: number) => void; onOpen: (level: number) => void;
 }): ReactElement {
   const { largestDrop, failQuit, hardest, slowest } = levelHighlights(levels);
@@ -30,7 +30,7 @@ export function LevelSummary({ open, onClose, levels, minimum, dropFlag, quitFla
   return (
     <DialogShell open={open} onOpenChange={(next) => { if (!next) onClose(); }} title="Levels summary">
       <div className="levels-summary">
-        <p className="summary-range">{first && last ? `${number(levels.length)} levels · ${first.level} to ${last.level}${firstSession ? ' · new players, first session' : ''}` : 'No levels yet'}</p>
+        <p className="summary-range">{first && last ? `${number(levels.length)} levels · ${first.level} to ${last.level}${firstSession ? ' · new players, first session' : ''}${excludeReturners ? ' · stops with no return observed' : ''}` : 'No levels yet'}</p>
         <div className="summary-spots">
           {spots.map((spot, index) => (
             <motion.button key={spot.key} type="button" className="summary-spot" disabled={!spot.row} onClick={() => spot.row && go(spot.row.level)} {...rise(index)} whileTap={{ scale: 0.97 }}>

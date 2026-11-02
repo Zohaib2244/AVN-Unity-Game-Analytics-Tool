@@ -16,6 +16,7 @@ type Props = {
   game: Game;
   filters: ActiveFilters;
   scope: LevelScope;
+  excludeReturners: boolean;
   level: number;
   query: UseQueryResult<LevelsResult>;
   path: string;
@@ -23,7 +24,7 @@ type Props = {
   onOpenPlayer: (player: string, index: number, players: string[]) => void;
 };
 
-export function LevelPage({ game, filters, scope, level, query, path, memory, onOpenPlayer }: Props): ReactElement {
+export function LevelPage({ game, filters, scope, excludeReturners, level, query, path, memory, onOpenPlayer }: Props): ReactElement {
   const list = gamePath(game, 'levels');
   useEffect(() => leftForLevel(game.id), [game.id]);
   return (
@@ -54,7 +55,7 @@ export function LevelPage({ game, filters, scope, level, query, path, memory, on
                 <div className="level-page-summary">
                   <span><strong>{number(row.started)}</strong> started</span>
                   <span><strong>{number(row.completed)}</strong> finished{row.completion != null ? ` · ${percent(row.completion)}` : ''}</span>
-                  {drop?.available ? <span><strong>{percent(drop.drop_percent ?? 0)}</strong> dropped · {number(drop.total_drop)} did not start level {drop.next_level}</span> : <span className="muted">drop: not enough data</span>}
+                  {drop?.available ? <span><strong>{percent(drop.drop_percent ?? 0)}</strong> {excludeReturners ? 'stopped · no return observed' : 'dropped'} · {number(drop.total_drop)} did not start level {drop.next_level}</span> : <span className="muted">drop: not enough data</span>}
                   <span><strong>{row.tries_per_player ?? '—'}</strong> tries / player</span>
                   <span>median <strong>{duration(row.median_seconds)}</strong></span>
                 </div>
@@ -63,7 +64,7 @@ export function LevelPage({ game, filters, scope, level, query, path, memory, on
             </div>
             <div className="panel-body">
               <div className="level-page-split">
-                <LevelDrill key={level} game={game} filters={filters} scope={scope} level={level} row={row} memory={memory} onOpenPlayer={onOpenPlayer} />
+                <LevelDrill key={level} game={game} filters={filters} scope={scope} excludeReturners={excludeReturners} level={level} row={row} memory={memory} onOpenPlayer={onOpenPlayer} />
               </div>
             </div>
           </section>

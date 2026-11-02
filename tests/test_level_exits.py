@@ -221,6 +221,73 @@ def came_back_rows(game, *plays, level=1):
     return tags(game, *plays, level=level, group="came_back_later")[1]
 
 
+@pytest.mark.parametrize("scope,unfiltered_drop", [("all", 3), ("first_session", 4)])
+def test_excluding_returners_changes_only_stop_counts(game, scope, unfiltered_drop):
+    straight = Play("straight").level("Started").ad("Show").ad("Closed")
+    straight.level("Completed").level("Started", 2)
+    progressed = Play("progressed").level("Started").ad("Show").next_session("s2")
+    progressed.level("Started", 2)
+    retry = Play("retry").level("Started").level("Failed").ad("Show").next_session("s2")
+    retry.level("Started").level("Failed")
+    menu = Play("menu").level("Started").level("Completed").ad("Show").next_session("s2")
+    menu.add("MM_ANALYSIS", STATUS="OPENED")
+    gone = Play("gone").level("Started").level("Failed").ad("Show")
+    admin, ingest, record = game
+    assert send(
+        ingest, record, [e for p in (straight, progressed, retry, menu, gone) for e in p.events]
+    ).is_success
+    root = f"/v1/games/{record['id']}/insights/levels"
+    params = {"start": DAY, "end": "2026-10-05", "scope": scope}
+    original = admin.get(root, params=params).json()
+    selected = {**params, "exclude_returners": True}
+    row = admin.get(root, params=selected).json()["levels"][0]
+    assert original["levels"][0]["transition"]["total_drop"] == unfiltered_drop
+    assert row["started"] == 5
+    for key in ("completed", "attempts", "fails", "tries_per_player"):
+        assert row[key] == original["levels"][0][key]
+    assert row["transition"]["total_drop"] == 1
+    assert row["transition"]["drop_percent"] == 20
+    assert row["transition"]["failed"] == 2
+    assert row["transition"]["failed_left"] == 1
+    assert row["transition"]["fail_drop_percent"] == 50
+    assert row["transition"]["came_back_later"] == 3
+
+    drill = admin.get(root + "/players", params={**selected, "level": 1}).json()
+    assert [p["player"] for p in drill["players"]] == ["gone"]
+    assert drill["total"] == drill["counts"]["total_drop"] == 1
+    assert sum(p["players"] for p in drill["last_actions"]) == 1
+    returned = admin.get(
+        root + "/players", params={**selected, "level": 1, "group": "came_back_later"}
+    ).json()
+    assert {p["player"] for p in returned["players"]} == {"progressed", "retry", "menu"}
+
+    features = admin.get(root + "/features", params=selected).json()["levels"][0]
+    original_features = admin.get(root + "/features", params=params).json()["levels"][0]
+    assert features["started"] == original_features["started"] == 5
+    ad = features["things"]["ads"]["Interstitial"]
+    assert ad["players"] == ad["times"] == 5
+    assert ad["dropped"] == features["dropped"] == 1
+    assert ad["left_session"] == features["left_session"] == 1
+    assert ad["right_after"] == 1
+    # The cached/prepared scan must not be mutated when switching this option.
+    assert admin.get(root, params=params).json() == original
+
+
+def test_return_filter_respects_end_date_and_follows_version_updates(game):
+    returned = Play("returned").level("Started").level("Failed").next_session("s2")
+    returned.add("MM_ANALYSIS", STATUS="OPENED")
+    returned.events[-1]["client_ts"] = returned.events[-1]["client_ts"].replace(DAY, "2026-10-05")
+    returned.events[-1]["app_version"] = "2.0"
+    straight = Play("straight").level("Started").level("Started", 2)
+    admin, ingest, record = game
+    assert send(ingest, record, returned.events + straight.events).is_success
+    root = f"/v1/games/{record['id']}/insights/levels"
+    params = {"start": DAY, "end": DAY, "exclude_returners": True}
+    assert admin.get(root, params=params).json()["levels"][0]["transition"]["total_drop"] == 1
+    params["end"] = "2026-10-05"
+    assert admin.get(root, params=params).json()["levels"][0]["transition"]["total_drop"] == 0
+
+
 def test_players_who_left_and_returned_get_their_own_tab(game):
     straight = Play("straight").level("Started").level("Completed").level("Started", 2)
     returned = Play("returned").level("Started").ad("Show").next_session("s2", wait=600)

@@ -23,9 +23,11 @@ describe('failing and then quitting', () => {
 
 describe('level navigation memory', () => {
   it('keeps valid saved sort, rows and scope, and falls back to the defaults for anything else', () => {
-    expect(cleanNavigation({ sort: 'drop', pageSize: '100', scope: 'first_session' })).toEqual({ sort: 'drop', pageSize: '100', scope: 'first_session' });
-    expect(cleanNavigation({ sort: 'nope', pageSize: '10', scope: 'everyone' })).toEqual({ sort: 'level', pageSize: '50', scope: 'all' });
-    expect(cleanNavigation(null)).toEqual({ sort: 'level', pageSize: '50', scope: 'all' });
+    expect(cleanNavigation({ sort: 'drop', pageSize: '100', scope: 'first_session' })).toEqual({ sort: 'drop', pageSize: '100', scope: 'first_session', excludeReturners: false });
+    expect(cleanNavigation({ sort: 'nope', pageSize: '10', scope: 'everyone' })).toEqual({ sort: 'level', pageSize: '50', scope: 'all', excludeReturners: false });
+    expect(cleanNavigation({ excludeReturners: true }).excludeReturners).toBe(true);
+    expect(cleanNavigation({ excludeReturners: 'true' }).excludeReturners).toBe(false);
+    expect(cleanNavigation(null)).toEqual({ sort: 'level', pageSize: '50', scope: 'all', excludeReturners: false });
   });
   it('words the note for each scope and keeps the old sentence', () => {
     expect(levelsNote('all')).toBe('Counted from level start, complete, fail and restart events. Click a level to see the players behind it.');

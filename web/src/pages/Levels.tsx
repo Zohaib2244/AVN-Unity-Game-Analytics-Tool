@@ -15,6 +15,7 @@ import { LevelCompare } from './levels/LevelCompare';
 import { LevelFeatures } from './levels/LevelFeatures';
 import { LevelPage } from './levels/LevelPage';
 import { LevelTable } from './levels/LevelTable';
+import { LevelScopeControls } from './levels/LevelScopeControls';
 import { PlayerGroups } from './levels/PlayerGroups';
 import { forgetSpot } from './levels/levelReturn';
 import { cleanNavigation, navigationKey, type LevelNavigation, type ReleasePrefs, type SavedLevelView } from './levels/levelMath';
@@ -39,7 +40,7 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
   const chosen = search.view;
   const view: 'table' | 'compare' | 'groups' | 'features' = pageLevel != null ? 'table' : chosen === 'groups' ? 'groups' : chosen === 'features' ? 'features' : chosen && isCompareView(chosen) ? 'compare' : 'table';
 
-  const path = levelsPath(game, filters, nav.scope);
+  const path = levelsPath(game, filters, nav.scope, nav.excludeReturners);
   const levels = useRead<LevelsResult>(path, { enabled: view === 'table' });
   // The players each level's drill has been opened on (group, sort) last; kept while the dates and filters stay.
   const memory = useMemo(() => new Map<number, DrillState>(), [path]);
@@ -75,14 +76,15 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
         <button type="button" aria-pressed={view === 'compare'} onClick={() => chooseView('compare')}>Compare releases</button>
         <button type="button" aria-pressed={view === 'groups'} onClick={() => chooseView('groups')}>Compare player groups</button>
       </div>
+      {view !== 'groups' && (view !== 'table' || pageLevel != null) ? <LevelScopeControls nav={nav} onChange={setNav} /> : null}
       {view === 'groups' ? (
         <PlayerGroups game={game} filters={filters} onFilters={updateFilters} onOpenPlayer={openPlayer} />
       ) : view === 'features' ? (
-        <LevelFeatures game={game} filters={filters} scope={nav.scope} onOpen={(level) => { setJump({ level }); chooseView('table'); }} />
+        <LevelFeatures game={game} filters={filters} scope={nav.scope} excludeReturners={nav.excludeReturners} onOpen={(level) => { setJump({ level }); chooseView('table'); }} />
       ) : view === 'compare' ? (
         <LevelCompare game={game} filters={filters} nav={nav} prefs={prefs} onPrefs={setPrefs} onRestore={restore} onJump={jumpFromCompare} />
       ) : pageLevel != null ? (
-        <LevelPage game={game} filters={filters} scope={nav.scope} level={pageLevel} query={levels} path={path} memory={memory} onOpenPlayer={openPlayer} />
+        <LevelPage game={game} filters={filters} scope={nav.scope} excludeReturners={nav.excludeReturners} level={pageLevel} query={levels} path={path} memory={memory} onOpenPlayer={openPlayer} />
       ) : (
         <LevelTable key={path} game={game} filters={filters} scope={nav.scope} nav={nav} onNav={setNav} query={levels} path={path} jump={jump} onJumped={() => setJump(null)} onOpen={openLevel} />
       )}

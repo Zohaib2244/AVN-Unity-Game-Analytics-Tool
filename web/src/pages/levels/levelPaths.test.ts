@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ActiveFilters } from '@/lib/filters';
 import { storeSet } from '@/lib/store';
 import { DRILL_PAGE, navigationKey } from './levelMath';
-import { activeViewKey, drillPagePath, drillPath, drillQuery, isCompareView, levelsPath, levelsPrefetchPath, levelsQuery, listPath, releaseFacetsPath, releasePath, releasesKey, savedViewsKey } from './levelPaths';
+import { activeViewKey, drillPagePath, drillPath, drillQuery, featuresPath, isCompareView, levelsPath, levelsPrefetchPath, levelsQuery, listPath, releaseFacetsPath, releasePath, releasesKey, savedViewsKey } from './levelPaths';
 
 const game = { id: 'g1' };
 const state: ActiveFilters = {
@@ -29,6 +29,23 @@ describe('keys kept in this browser', () => {
 });
 
 describe('addresses the Levels page asks for', () => {
+  it('keeps the return option on summaries, features, paged/exported players and comparisons', () => {
+    const drill = { group: 'came_back_later' as const, sort: 'exit_at' as const, lastAction: null };
+    const paths = [
+      levelsPath(game, state, 'first_session', true),
+      featuresPath(game, state, 'first_session', true),
+      drillPagePath(game, state, 'first_session', 12, drill, 50, true),
+      drillPath(game, state, 'first_session', 12, drill, { limit: 2000 }, true),
+      releasePath(game, state, '1.4', true, 'first_session'),
+    ];
+    for (const path of paths) {
+      expect(params(path).get('exclude_returners')).toBe('true');
+      expect(params(path).get('scope')).toBe('first_session');
+    }
+    expect(levelsQuery(state, 'all').has('exclude_returners')).toBe(false);
+    storeSet(navigationKey(game), { scope: 'first_session', excludeReturners: true });
+    expect(params(levelsPrefetchPath(game)).get('exclude_returners')).toBe('true');
+  });
   it('opens the list at the game\'s levels section', () => {
     expect(listPath(game)).toBe('/games/g1/levels');
   });

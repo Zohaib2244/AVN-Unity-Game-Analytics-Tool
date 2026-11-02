@@ -982,6 +982,7 @@ def _scan_levels(storage, game_id, start, end, filters, scope, definitions):
         "levels": totals.levels,
         "transitions": totals.transitions(),
         "features": totals.features,
+        "features_without_returners": totals.features_without_returners,
         "anonymous_events": anonymous_events,
         "too_many": too_many,
     }
@@ -1007,6 +1008,7 @@ class _LevelTotals:
         self.groups = {}
         self.observed = set()
         self.features = {}  # level -> key -> [players, times, dropped, left session, right after]
+        self.features_without_returners = {}
 
     def add(self, part):
         for number, mine in part["progress"].items():
@@ -1041,14 +1043,21 @@ class _LevelTotals:
                 target[name].append(record)
         self.observed.update(part["observed"])
         for number, mine in part.get("features", {}).items():
-            target = self.features.setdefault(number, {})
-            for key, (count, dropped, left, right) in mine.items():
-                total = target.setdefault(key, [0, 0, 0, 0, 0])
-                total[0] += 1
-                total[1] += count
-                total[2] += dropped
-                total[3] += left
-                total[4] += right
+            records = part["groups"].get(number, {})
+            returned = "came_back_later" in records or records.get("started", {}).get("came_back")
+            for features, exclude in (
+                (self.features, False),
+                (self.features_without_returners, True),
+            ):
+                target = features.setdefault(number, {})
+                for key, (count, dropped, left, right) in mine.items():
+                    total = target.setdefault(key, [0, 0, 0, 0, 0])
+                    total[0] += 1
+                    total[1] += count
+                    if not (exclude and returned):
+                        total[2] += dropped
+                        total[3] += left
+                        total[4] += right
 
     def transitions(self):
         result = {}
@@ -1084,7 +1093,37 @@ class _LevelTotals:
         return result
 
 
-def level_progress(storage, game_id, start, end, filters=None, scope="all"):
+def _without_returners(scan):
+    """Select drop numerators without changing the cached scan or its starter cohort.
+
+    A return is a later session after an interruption on this level, observed by range end.
+    Keep the returners' own tab and all progression/occurrence denominators available.
+    """
+    transitions = {}
+    for number, transition in scan["transitions"].items():
+        groups = transition["groups"]
+        returned = {item["player"] for item in groups["came_back_later"]}
+        returned.update(item["player"] for item in groups["started"] if item["came_back"])
+        selected = dict(groups)
+        for name in ("total_drop", "left", "finished_stopped", "unknown_progress", "failed_left"):
+            selected[name] = [item for item in groups[name] if item["player"] not in returned]
+        summary = {**transition["summary"], **{key: len(rows) for key, rows in selected.items()}}
+        started, failed = summary["started"], summary["failed"]
+        summary["drop_percent"] = (
+            round(100 * summary["total_drop"] / started, 1) if summary["available"] else None
+        )
+        summary["fail_drop_percent"] = (
+            round(100 * summary["failed_left"] / failed, 1)
+            if summary["available"] and failed
+            else None
+        )
+        transitions[number] = {"groups": selected, "summary": summary}
+    return {**scan, "transitions": transitions, "features": scan["features_without_returners"]}
+
+
+def level_progress(
+    storage, game_id, start, end, filters=None, scope="all", exclude_returners=False
+):
     """Per level: who started, who finished, tries, fails, time, power-ups, where players quit.
 
     scope "first_session" counts only new players, within their first session.
@@ -1098,11 +1137,15 @@ def level_progress(storage, game_id, start, end, filters=None, scope="all"):
         raise HTTPException(400, message) from None
     if scan["too_many"]:
         raise HTTPException(400, TOO_MUCH["range"])
+    if exclude_returners:
+        scan = _without_returners(scan)
     threshold = storage.analytics_thresholds(game_id)["levels_min_players"]
     return render_levels(scan, threshold, scope)
 
 
-def level_features(storage, game_id, start, end, filters=None, scope="all"):
+def level_features(
+    storage, game_id, start, end, filters=None, scope="all", exclude_returners=False
+):
     """Per level: how often each ad format or placement, powerup and fail reason happened, and
     what the players who met it did next (drop, left the session, left right after it).
 
@@ -1117,6 +1160,8 @@ def level_features(storage, game_id, start, end, filters=None, scope="all"):
         raise HTTPException(400, message) from None
     if scan["too_many"]:
         raise HTTPException(400, TOO_MUCH["range"])
+    if exclude_returners:
+        scan = _without_returners(scan)
     threshold = storage.analytics_thresholds(game_id)["levels_min_players"]
     return render_features(scan, threshold, scope)
 
@@ -1339,6 +1384,7 @@ def level_players(
     sort="exit_at",
     scope="all",
     last_action=None,
+    exclude_returners=False,
 ):
     """The players in one group of one level, plus the size of every group.
 
@@ -1357,6 +1403,8 @@ def level_players(
     except _TooMuch:
         message = TOO_MUCH["range" if scope == "first_session" else "history"]
         raise HTTPException(400, message) from None
+    if exclude_returners:
+        scan = _without_returners(scan)
     groups = scan["transitions"].get(level, {}).get("groups", {name: [] for name in LEVEL_GROUPS})
     return players_in_group(groups, level, group, offset, limit, sort, last_action)
 

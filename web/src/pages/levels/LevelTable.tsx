@@ -14,11 +14,12 @@ import { useStored } from '@/lib/store';
 import { POP } from '@/lib/motion';
 import { gamePath } from '@/lib/games';
 import type { Game, LevelRow, LevelsResult } from '@/lib/types';
-import { LEVEL_SCOPES, clampPage, levelDrillGroup, pageSizeOf, pageCount, sortLevels, type LevelNavigation, type LevelPageSize, type LevelScope, type LevelSort } from './levelMath';
+import { clampPage, levelDrillGroup, pageSizeOf, pageCount, sortLevels, type LevelNavigation, type LevelPageSize, type LevelScope, type LevelSort } from './levelMath';
 import { drillPagePath } from './levelPaths';
 import { HeatValue } from './LevelHeat';
 import { LevelDisplayMenu } from './LevelDisplayMenu';
 import { LevelSummary } from './LevelSummary';
+import { LevelScopeControls } from './LevelScopeControls';
 import { cleanDisplay, displayKey, heatOf, type LevelDisplay } from './levelDisplay';
 import { forgetSpot, rememberSpot, returnSpot, scrollBackTo } from './levelReturn';
 
@@ -26,25 +27,25 @@ const SORTS: Array<[LevelSort, string]> = [['level', 'Level order'], ['drop', 'H
 const PAGE_SIZES: Array<[LevelPageSize, string]> = [['25', '25'], ['50', '50'], ['100', '100'], ['all', 'All']];
 
 /** The drop to the next level as a link to the level: a heat cell or bar against the drop flag. */
-function DropCell({ game, row, display }: { game: Game; row: LevelRow; display: LevelDisplay }): ReactElement {
+function DropCell({ game, row, display, excludeReturners }: { game: Game; row: LevelRow; display: LevelDisplay; excludeReturners: boolean }): ReactElement {
   const transition = row.transition;
   if (!transition?.available) return <span className="muted" title="No starters here or no observed start for the next numbered level. The next level may not exist or may be unlogged.">—</span>;
   const net = transition.net_change ?? 0;
   const netText = net > 0 ? `net gain +${number(net)}` : net < 0 ? `net loss ${number(Math.abs(net))}` : 'no net change';
   return (
-    <Link to={gamePath(game, 'levels')} search={{ level: String(row.level) }} className="level-drop-button" title={`${number(transition.total_drop)} players started this level but have no later start of level ${transition.next_level} by the end of these dates · ${netText} (filtered starter totals, includes players entering midway)`}>
+    <Link to={gamePath(game, 'levels')} search={{ level: String(row.level) }} className="level-drop-button" title={`${excludeReturners ? 'No return observed · ' : ''}${number(transition.total_drop)} players started this level but have no later start of level ${transition.next_level} by the end of these dates · ${netText} (filtered starter totals, includes players entering midway)`}>
       <HeatValue value={transition.drop_percent ?? 0} threshold={display.dropFlag} style={display.style} counts={display.counts} count={number(transition.total_drop)} title={`${number(transition.total_drop)} of ${number(row.started)} did not start level ${transition.next_level}`} />
     </Link>
   );
 }
 
 /** Of the players who failed this level, how many then left for good: failing and playing on is fine, failing and leaving is the problem. */
-function FailQuitCell({ game, row, display }: { game: Game; row: LevelRow; display: LevelDisplay }): ReactElement {
+function FailQuitCell({ game, row, display, excludeReturners }: { game: Game; row: LevelRow; display: LevelDisplay; excludeReturners: boolean }): ReactElement {
   const transition = row.transition;
   if (!transition?.available) return <span className="muted" title="Needs a later level to tell who left.">—</span>;
   if (!transition.failed) return <span className="muted" title="Nobody failed this level in these days.">—</span>;
   return (
-    <Link to={gamePath(game, 'levels')} search={{ level: String(row.level), group: 'failed_left' }} className="level-drop-button" title={`${number(transition.failed_left)} of ${number(transition.failed)} players who failed level ${row.level} did not pass it or play on. ${number(transition.failed_kept_playing)} failed and kept playing.`}>
+    <Link to={gamePath(game, 'levels')} search={{ level: String(row.level), group: 'failed_left' }} className="level-drop-button" title={`${number(transition.failed_left)} of ${number(transition.failed)} players who failed level ${row.level} did not pass it or play on. ${excludeReturners ? 'Returners are excluded from this quit count; the failure denominator stays the same.' : `${number(transition.failed_kept_playing)} failed and kept playing.`}`}>
       <HeatValue value={transition.fail_drop_percent ?? 0} threshold={display.quitFlag} style={display.style} counts={display.counts} count={`${number(transition.failed_left)}/${number(transition.failed)}`} title={`${number(transition.failed_left)} of ${number(transition.failed)} who failed then left`} />
     </Link>
   );
@@ -120,11 +121,7 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
       <div className="panel-header">
         <div><h2 className="with-icon"><Ico name="chart" size={16} /> Level Flow</h2></div>
         <div className="quiet-actions">
-          <div className="segmented" role="group" aria-label="Which players">
-            {(Object.entries(LEVEL_SCOPES) as Array<[LevelScope, string]>).map(([key, label]) => (
-              <button key={key} type="button" aria-pressed={scope === key} onClick={() => { if (scope !== key) onNav({ scope: key }); }}><Ico name={key === 'all' ? 'users' : 'user-plus'} size={14} />{label}</button>
-            ))}
-          </div>
+          <LevelScopeControls nav={nav} onChange={onNav} />
           <label className="inline-field icon-field"><Ico name="sort" size={14} /><span className="sr-only">Sort</span><select id="levels-sort" aria-label="Sort" value={nav.sort} onChange={(event) => { setPage(0); onNav({ sort: event.target.value as LevelSort }); }}>
             {SORTS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </select></label>
@@ -158,13 +155,13 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
           }
           return (
             <>
-              <LevelSummary open={summary} onClose={() => setSummary(false)} levels={result.levels} minimum={minimum} dropFlag={display.dropFlag} quitFlag={display.quitFlag} firstSession={scope === 'first_session'} onJump={jumpTo} onOpen={onOpen} />
+              <LevelSummary open={summary} onClose={() => setSummary(false)} levels={result.levels} minimum={minimum} dropFlag={display.dropFlag} quitFlag={display.quitFlag} firstSession={scope === 'first_session'} excludeReturners={nav.excludeReturners} onJump={jumpTo} onOpen={onOpen} />
               <div className="table-wrap level-scroll levels-scroll" tabIndex={0} role="region" aria-label="Level results">
                 <table className="levels-grid">
                   <thead><tr><th>Level</th>
                     {columns.started ? <Th icon="play">Started</Th> : null}
                     {columns.finished ? <Th icon="check">Finished</Th> : null}
-                    {columns.drop ? <Th icon="trend" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">Drop to next</Th> : null}
+                    {columns.drop ? <Th icon="trend" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">{nav.excludeReturners ? 'Stopped · no return observed' : 'Drop to next'}</Th> : null}
                     {columns.failquit ? <Th icon="exit" title="Of the players who failed this level, the share who then did not pass it or play on">Failed → quit</Th> : null}
                     {columns.tries ? <Th icon="refresh">Tries / player</Th> : null}
                     {columns.fails ? <Th icon="alert">Fails</Th> : null}
@@ -174,7 +171,7 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
                     {sorted.slice(current * size, (current + 1) * size).map((row) => (
                       <tr key={row.level} data-level-row={row.level} className={`${highlight?.level === row.level ? 'level-highlight' : ''}`}
                         onClick={(event) => openRow(event, row.level)}
-                        onPointerOver={(event) => { if (event.pointerType === 'mouse') void prefetch(drillPagePath(game, filters, scope, row.level, { group: levelDrillGroup(row), sort: 'exit_at', lastAction: null }, 0)); }}>
+                        onPointerOver={(event) => { if (event.pointerType === 'mouse') void prefetch(drillPagePath(game, filters, scope, row.level, { group: levelDrillGroup(row), sort: 'exit_at', lastAction: null }, 0, nav.excludeReturners)); }}>
                         <td className="level-number-cell">
                           <Link to={gamePath(game, 'levels')} search={{ level: String(row.level) }} className="level-toggle" aria-label={`Open the players behind level ${row.level}`}><Ico name="chevron" size={14} /></Link>
                           <strong>{row.level}</strong>
@@ -182,8 +179,8 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
                         </td>
                         {columns.started ? <td className="num">{number(row.started)}</td> : null}
                         {columns.finished ? <td className="num">{number(row.completed)}</td> : null}
-                        {columns.drop ? <td className="num"><DropCell game={game} row={row} display={display} /></td> : null}
-                        {columns.failquit ? <td className="num"><FailQuitCell game={game} row={row} display={display} /></td> : null}
+                        {columns.drop ? <td className="num"><DropCell game={game} row={row} display={display} excludeReturners={nav.excludeReturners} /></td> : null}
+                        {columns.failquit ? <td className="num"><FailQuitCell game={game} row={row} display={display} excludeReturners={nav.excludeReturners} /></td> : null}
                         {columns.tries ? <td className="num">{row.tries_per_player ?? '—'}</td> : null}
                         {columns.fails ? <td className="num">{number(row.fails)}{row.restarts ? <span className="muted small"> · {row.restarts} restart{row.restarts === 1 ? '' : 's'}</span> : null}</td> : null}
                         {columns.time ? <td className="num">{duration(row.median_seconds)}</td> : null}

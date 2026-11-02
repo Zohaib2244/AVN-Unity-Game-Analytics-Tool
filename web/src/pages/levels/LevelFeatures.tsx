@@ -29,11 +29,11 @@ function Choice<T extends string>({ label, value, options, onChange }: { label: 
   );
 }
 
-export function LevelFeatures({ game, filters, scope, onOpen }: { game: Game; filters: ActiveFilters; scope: LevelScope; onOpen: (level: number) => void }): ReactElement {
+export function LevelFeatures({ game, filters, scope, excludeReturners, onOpen }: { game: Game; filters: ActiveFilters; scope: LevelScope; excludeReturners: boolean; onOpen: (level: number) => void }): ReactElement {
   const [stored, setStored] = useStored<FeaturePrefs>(prefsKey(game), DEFAULT_FEATURE_PREFS);
   const prefs = cleanFeaturePrefs(stored);
   const change = (patch: Partial<FeaturePrefs>) => setStored({ ...prefs, ...patch });
-  const query = useRead<Features>(featuresPath(game, filters, scope));
+  const query = useRead<Features>(featuresPath(game, filters, scope, excludeReturners));
   const kind = kindOf(prefs.subject, prefs.split);
   const values = query.data?.kinds[kind];
   const value = chosenValue(values, prefs.value);
@@ -48,7 +48,7 @@ export function LevelFeatures({ game, filters, scope, onOpen }: { game: Game; fi
   return (
     <section className="panel level-features">
       <div className="panel-header">
-        <div><h2>{MODES[prefs.mode]} · {subject}</h2><p>{prefs.mode === 'occurrence' ? 'Share of each level’s starters who met it, with how often per player in small type.' : 'Whether players who met it leave more than players who didn’t.'}</p></div>
+        <div><h2>{MODES[prefs.mode]} · {subject}{prefs.mode === 'drop' && excludeReturners ? ' · no return observed' : ''}</h2><p>{prefs.mode === 'occurrence' ? 'Share of each level’s starters who met it, with how often per player in small type.' : 'Whether players who met it leave more than players who didn’t.'}</p></div>
       </div>
       <div className="panel-body">
         <div className="level-analysis-controls feature-controls">
@@ -65,7 +65,7 @@ export function LevelFeatures({ game, filters, scope, onOpen }: { game: Game; fi
         {body}
         {query.data && values?.length ? (
           <p className="help">{prefs.mode === 'drop'
-            ? 'Never started the next level = dropped by the end date. Left the session = no next level started in that session, even if they came back later. “Left right after” means it was the last thing they did. pts = percentage points. Ads between levels count for the level just played. Small samples are marked.'
+            ? `${excludeReturners ? 'Drop and session-stop counts exclude players who came back by the end date; occurrence and starter counts stay the same. ' : 'Never started the next level = dropped by the end date. Left the session = no next level started in that session, even if they came back later. '}“Left right after” means it was the last thing they did. pts = percentage points. Ads between levels count for the level just played. Small samples are marked.`
             : 'Counts are the level’s starters in these dates and filters. An ad or powerup belongs to the level it names, or to the level just played when it names none. Small samples are marked.'}</p>
         ) : null}
       </div>

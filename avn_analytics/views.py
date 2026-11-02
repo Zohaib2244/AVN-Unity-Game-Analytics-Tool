@@ -20,7 +20,7 @@ from . import analytics
 
 logger = logging.getLogger(__name__)
 
-VERSION = 3
+VERSION = 4
 EXPIRY = 86400
 BATCH_PLAYERS = 20
 # What one Levels step may read: a batch of players, or a single heavy player on their own.
@@ -186,6 +186,9 @@ def restore_scan(scan):
     scan["levels"] = {int(key): value for key, value in scan["levels"].items()}
     scan["transitions"] = {int(key): value for key, value in scan["transitions"].items()}
     scan["features"] = {int(key): value for key, value in scan.get("features", {}).items()}
+    scan["features_without_returners"] = {
+        int(key): value for key, value in scan.get("features_without_returners", {}).items()
+    }
     for level in scan["levels"].values():
         for field in ("other", "powerups"):
             level[field] = Counter(level[field])
@@ -549,6 +552,7 @@ def _refresh(worker, game_id, revision, row, began):
                 "levels": totals.levels,
                 "transitions": totals.transitions(),
                 "features": totals.features,
+                "features_without_returners": totals.features_without_returners,
                 "anonymous_events": stage["anonymous_events"],
                 "too_many": stage["too_many"],
             }

@@ -1130,10 +1130,16 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         end: DateParam,
         chosen: Filtered,
         scope: Literal["all", "first_session"] = "all",
+        exclude_returners: bool = False,
         tz_offset: TimezoneOffset = 0,
     ):
         return journeys.level_progress(
-            storage, str(game_id), *day_range(start, end, tz_offset), chosen, scope
+            storage,
+            str(game_id),
+            *day_range(start, end, tz_offset),
+            chosen,
+            scope,
+            exclude_returners=exclude_returners,
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/levels/features")
@@ -1143,10 +1149,16 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         end: DateParam,
         chosen: Filtered,
         scope: Literal["all", "first_session"] = "all",
+        exclude_returners: bool = False,
         tz_offset: TimezoneOffset = 0,
     ):
         return journeys.level_features(
-            storage, str(game_id), *day_range(start, end, tz_offset), chosen, scope
+            storage,
+            str(game_id),
+            *day_range(start, end, tz_offset),
+            chosen,
+            scope,
+            exclude_returners=exclude_returners,
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/levels/players")
@@ -1174,6 +1186,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         ] = "total_drop",
         sort: Literal["exit_at", "tries", "fails"] = "exit_at",
         scope: Literal["all", "first_session"] = "all",
+        exclude_returners: bool = False,
         last_action: Annotated[str | None, Query(max_length=500)] = None,
         offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
         limit: Annotated[int, Query(ge=1, le=2000)] = 50,
@@ -1191,6 +1204,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             sort=sort,
             scope=scope,
             last_action=last_action,
+            exclude_returners=exclude_returners,
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/players")

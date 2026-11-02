@@ -29,15 +29,21 @@ def finish(storage, game, limit=100):
 
 
 @pytest.mark.parametrize("scope", ["all", "first_session"])
-def test_level_generation_equals_live_and_survives_api_restart(prepared, scope, monkeypatch):
+@pytest.mark.parametrize("exclude_returners", [False, True])
+def test_level_generation_equals_live_and_survives_api_restart(
+    prepared, scope, exclude_returners, monkeypatch
+):
     storage, game, days = prepared
-    expected = journeys.level_progress(storage, game, *days, HIDE_TEST, scope)
-    expected_players = journeys.level_players(storage, game, *days, HIDE_TEST, 1, scope=scope)
+    options = {"scope": scope, "exclude_returners": exclude_returners}
+    expected = journeys.level_progress(storage, game, *days, HIDE_TEST, **options)
+    expected_features = journeys.level_features(storage, game, *days, HIDE_TEST, **options)
+    expected_players = journeys.level_players(storage, game, *days, HIDE_TEST, 1, **options)
     finish(storage, game)
     again = make_storage(storage.root, analytics_read_mode="prepared", read_cache_seconds=0)
     monkeypatch.setattr(journeys, "_scan_levels", lambda *args: pytest.fail("unexpected live scan"))
-    assert journeys.level_progress(again, game, *days, HIDE_TEST, scope) == expected
-    assert journeys.level_players(again, game, *days, HIDE_TEST, 1, scope=scope) == expected_players
+    assert journeys.level_progress(again, game, *days, HIDE_TEST, **options) == expected
+    assert journeys.level_features(again, game, *days, HIDE_TEST, **options) == expected_features
+    assert journeys.level_players(again, game, *days, HIDE_TEST, 1, **options) == expected_players
 
 
 def test_summary_exact_and_stop_unavailable_and_expiry_use_live(prepared):

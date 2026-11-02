@@ -24,7 +24,7 @@ export type DrillSort = 'exit_at' | 'tries' | 'fails';
 export const DRILL_PAGE = 50;
 
 /** The sort, rows per page and scope of the level table, remembered per game (`avn-level-nav-<game>`). */
-export type LevelNavigation = { sort: LevelSort; pageSize: LevelPageSize; scope: LevelScope };
+export type LevelNavigation = { sort: LevelSort; pageSize: LevelPageSize; scope: LevelScope; excludeReturners: boolean };
 export const navigationKey = (game: { id: string }): string => `avn-level-nav-${game.id}`;
 export function cleanNavigation(saved: Partial<Record<keyof LevelNavigation, unknown>> | null | undefined): LevelNavigation {
   const sort = saved?.sort; const pageSize = saved?.pageSize; const scope = saved?.scope;
@@ -32,6 +32,7 @@ export function cleanNavigation(saved: Partial<Record<keyof LevelNavigation, unk
     sort: LEVEL_SORTS.includes(sort as LevelSort) ? (sort as LevelSort) : 'level',
     pageSize: LEVEL_PAGE_SIZES.includes(pageSize as LevelPageSize) ? (pageSize as LevelPageSize) : '50',
     scope: isLevelScope(scope) ? scope : 'all',
+    excludeReturners: saved?.excludeReturners === true,
   };
 }
 
@@ -158,7 +159,7 @@ export function levelsNote(scope: LevelScope): string {
 /* ─── Compare releases ─── */
 export type ReleasePrefs = { releaseA?: string; releaseB?: string };
 /** Saved on this device as `avn-level-views-<game>[name]`: the filters, the remembered releases and the table settings. */
-export type SavedLevelView = { filters: ActiveFilters; tools: ReleasePrefs; sort?: string; pageSize?: string; scope?: string };
+export type SavedLevelView = { filters: ActiveFilters; tools: ReleasePrefs; sort?: string; pageSize?: string; scope?: string; excludeReturners?: boolean };
 
 /** The releases to pick from, newest first (numeric-aware, so 1.10 comes after 1.9). */
 export function releaseChoices(versions: string[]): string[] {
