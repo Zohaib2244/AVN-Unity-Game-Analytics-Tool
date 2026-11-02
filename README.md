@@ -577,6 +577,14 @@ The website lives in `web/`: React + TypeScript + Vite on [AVN Style](https://gi
 The tests cover duplicate retries, concurrent writes, game isolation, key deletion, validation and limits, funnels, players, stories and journeys, levels and the players behind them, retention and time zones, DAU, environment filters and fixes, filtered exports, workspaces and roles, NutBot's tools, rate limiting across instances, export periods and timezones, storage failures, dictionary output, country handling and data-directory relocation. The website's own tests (Vitest) cover the request contract, the filter and condition models, the timeline, levels and funnel maths and the dialogs; `tests/test_conditions.py` runs the browser's condition matcher and the server's SQL over the same events.
 
 ## Roadmap
+For an owner-run release and deployment on a configured server, use
+`scripts/deploy.sh --release` (optionally followed by `minor`, `major` or an explicit tag).
+It runs the checks, then asks once before tagging, pushing and deploying that exact release.
+If main is already tagged, it only confirms deployment of that tag. Direct
+`scripts/deploy.sh` and `scripts/deploy.sh --rollback` each keep their own confirmation;
+`--yes` explicitly skips confirmation for scripted use. Health checks and automatic rollback
+still run. The T3 **Deploy** action uses the combined command.
+
 
 - A data-retention policy and a backup schedule.
 - Archiving of old raw events.

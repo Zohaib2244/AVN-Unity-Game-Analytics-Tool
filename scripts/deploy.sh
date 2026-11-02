@@ -5,6 +5,8 @@
 #   scripts/deploy.sh v0.2.0      deploy a specific tag
 #   scripts/deploy.sh --status    show what is deployed and what is available
 #   scripts/deploy.sh --rollback  go back to the previous release
+#   scripts/deploy.sh --release [patch|minor|major|vX.Y.Z]
+#                                release main and deploy, with one confirmation
 #
 # Layout (see ~/docs, "avns_apps"):
 #   $AVNS_APPS_ROOT/avn-analytics/src      read-only git checkout, only ever checked out at tags
@@ -12,7 +14,7 @@
 # This script is run from the dev clone but acts on the deploy checkout above.
 set -euo pipefail
 
-# --yes skips the y/N prompts (for scripted use); the T3 action stays interactive.
+# --yes skips the confirmation (for scripted use); the T3 action stays interactive.
 YES=0; args=()
 for a in "$@"; do if [ "$a" = --yes ]; then YES=1; else args+=("$a"); fi; done
 set -- ${args[@]+"${args[@]}"}
@@ -122,6 +124,13 @@ ship() { # ship <tag>
 }
 
 case "${1:-}" in
+  --release)
+    preflight
+    echo "deployed now : $(deployed_tag)"
+    release_args=(--deploy)
+    [ "$YES" = 1 ] && release_args+=(--yes)
+    exec "$(dirname "$0")/release.sh" "${release_args[@]}" "${@:2}"
+    ;;
   --status)
     [ -d "$SRC/.git" ] || die "no checkout at $SRC"
     git_src fetch --quiet --tags --prune origin
