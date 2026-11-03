@@ -280,6 +280,16 @@ def snapshot(storage, game_id, module, *, full=True):
             answers[key] = without_added_level_fields(answers[key])
         if function is module.insights.summary:
             answers[key] = without_session_counts(answers[key])
+        if function is module.insights.players and isinstance(answers[key], dict):
+            # The highest level and last event of each listed player were added after the
+            # reference was frozen; test_player_summary.py checks them.
+            answers[key] = {
+                **answers[key],
+                "players": [
+                    {k: v for k, v in row.items() if k not in ("highest_level", "last_event")}
+                    for row in answers[key].get("players", [])
+                ],
+            }
         info = answers[key].get("info") if isinstance(answers[key], dict) else None
         if isinstance(info, dict) and "snapshots" in info:
             # The game's latest snapshots were added to a player's information after the

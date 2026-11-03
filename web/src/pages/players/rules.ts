@@ -6,7 +6,7 @@ import { analysisDate, number, type Timezone } from '@/lib/format';
 import type { EventRule, PlayerMetric, PlayerRow, PlayerRulesBody } from '@/lib/types';
 
 export const AGG_LABELS: Record<NonNullable<EventRule['agg']>, string> = { count: 'How many times', max: 'Highest value', min: 'Lowest value', sum: 'Total of', first: 'First time', last: 'Last time' };
-export const BASE_SORTS: Array<[string, string]> = [['last_seen', 'Last active'], ['first_seen', 'First seen'], ['events', 'Events'], ['sessions', 'Sessions'], ['session_length', 'Session length'], ['playtime', 'Total playtime'], ['version', 'App version']];
+export const BASE_SORTS: Array<[string, string]> = [['last_seen', 'Last active'], ['first_seen', 'First seen'], ['events', 'Events'], ['sessions', 'Sessions'], ['playtime', 'Total playtime'], ['version', 'App version']];
 export const PAGE_SIZE = 50;
 
 /** "level_start · level ≥ 12" or just the event. */

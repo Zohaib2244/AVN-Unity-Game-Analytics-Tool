@@ -7,6 +7,7 @@ import { createColumnHelper, flexRender, getCoreRowModel, useReactTable, type Ro
 import { TEST_ENVIRONMENTS } from '@/lib/filters';
 import { analysisDate, countryName, duration, number, platformLabel, shortId, type Timezone } from '@/lib/format';
 import { gamePath } from '@/lib/games';
+import { eventLabel } from '@/pages/player/eventLayout';
 import type { Game, PlayerMetric, PlayerRow } from '@/lib/types';
 import { metricLabel, metricValue, playerComparator } from './rules';
 
@@ -16,6 +17,8 @@ declare module '@tanstack/react-table' {
 }
 
 const column = createColumnHelper<PlayerRow>();
+/** "3 Nov, 5:14 pm" in the reader's own format: the year is in the tooltip, as these are recent. */
+const recent = (value: string, timezone: Timezone): string => new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(timezone === 'utc' ? { timeZone: 'UTC' } : {}) });
 const plainClick = (event: MouseEvent): boolean => event.button === 0 && !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
 
 export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSort, onOpen }: {
@@ -31,17 +34,20 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSor
     column.accessor('player', { id: 'player', header: 'Player', enableSorting: false, cell: ({ row }) => (
       <>
         <Link to={gamePath(game, 'players')} search={{ player: row.original.player }} className="row-title" onClick={(event: MouseEvent) => { if (plainClick(event)) open.current(row.original.player, row.index); }}><span className="mono">{shortId(row.original.player)}</span></Link>
-        <p className="small muted">{row.original.has_user_id ? 'User ID' : 'Install ID'} · {platformLabel(row.original.platform || '—')}</p>
+        <p className="small muted">{row.original.has_user_id ? 'User ID' : 'Install ID'} · {platformLabel(row.original.platform || '—')}{row.original.app_version ? ` · ${row.original.app_version}` : ''}{TEST_ENVIRONMENTS.includes(row.original.environment || '') ? <span className="pill"> {row.original.environment}</span> : null}</p>
       </>
     ) }),
     column.accessor('events', { id: 'events', header: 'Events', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => number(getValue()) }),
     column.accessor('sessions', { id: 'sessions', header: 'Sessions', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => number(getValue()) }),
-    column.accessor('avg_session_seconds', { id: 'session_length', header: 'Avg session', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => duration(getValue()) }),
-    column.accessor('total_play_seconds', { id: 'playtime', header: 'Total playtime', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => duration(getValue()) }),
-    column.accessor('last_seen', { id: 'last_seen', header: 'Last active', meta: { className: 'small muted', sortable: true }, cell: ({ getValue }) => analysisDate(getValue(), timezone) }),
+    column.display({ id: 'level', header: 'Level', enableSorting: false, meta: { className: 'num' }, cell: ({ row }) => (row.original.highest_level != null ? number(row.original.highest_level) : '—') }),
+    column.accessor('total_play_seconds', { id: 'playtime', header: 'Playtime', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => duration(getValue()) }),
+    column.accessor('last_seen', { id: 'last_seen', header: 'Last active', meta: { className: 'small muted', sortable: true }, cell: ({ getValue }) => <span title={analysisDate(getValue(), timezone)}>{recent(getValue(), timezone)}</span> }),
+    column.display({ id: 'last_event', header: 'Last event', enableSorting: false, meta: { className: 'last-event' }, cell: ({ row }) => {
+      const last = row.original.last_event;
+      if (!last) return '—';
+      return <span className="mono" title={last.name}><b>{eventLabel(last.name)}</b>{last.state ? ` · ${last.state}` : ''}{last.level != null ? ` · L${last.level}` : ''}</span>;
+    } }),
     ...metrics.map((metric, position) => column.display({ id: `metric${position}`, header: metricLabel(metric), meta: { className: 'num metric', sortable: true }, cell: ({ row }) => metricValue(metric, row.original.metrics[position], timezone) })),
-    column.accessor('app_version', { id: 'version', header: 'Version', meta: { className: 'small', sortable: true }, cell: ({ getValue }) => getValue() || '—' }),
-    column.accessor('environment', { id: 'environment', header: 'Env', enableSorting: false, cell: ({ getValue }) => <span className={`pill ${TEST_ENVIRONMENTS.includes(getValue() || '') ? '' : 'good'}`}>{getValue() || '—'}</span> }),
     column.accessor('country', { id: 'country', header: 'Country', enableSorting: false, meta: { className: 'small' }, cell: ({ getValue }) => (getValue() ? <abbr className="cc" title={countryName(getValue())}>{getValue()}</abbr> : '—') }),
   ], [game, metrics, timezone]);
   const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel(), manualSorting: true, state: { sorting: [{ id: sort, desc: order === 'desc' }] } });

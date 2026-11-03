@@ -641,3 +641,37 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
 .last-actions-grouped { display: grid; gap: 2px; }
 .last-actions.last-endings { margin-top: 0; padding-left: 14px; border-left: 2px solid var(--line); }
 .last-actions.last-endings .last-action { min-height: 30px; }
+
+/* ── Raw events: compact rows, one colour per kind of event, dotted lanes, quiet parameter chips ── */
+.raw-timeline .journey-events li { grid-template-columns: 62px 48px var(--lanes-w, 0px) minmax(150px, 210px) minmax(0, 1fr); gap: 4px 10px; align-items: center; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
+.raw-timeline .journey-events time { font-family: var(--font-mono); font-size: var(--fs-sm); }
+.raw-timeline .journey-gap { font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
+.raw-timeline .journey-name { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-sm); color: var(--c, var(--text)); }
+.journey-lanes { display: grid; grid-auto-flow: column; grid-auto-columns: 9px; justify-content: center; align-self: stretch; margin: -4px 0; }
+.journey-lanes i { position: relative; display: grid; place-items: center; }
+.journey-lanes i::before { content: ""; position: absolute; inset: 0 auto; left: 50%; width: 1px; background: color-mix(in srgb, var(--line) 70%, transparent); }
+.journey-lanes i.dot::after { content: ""; position: relative; width: 7px; height: 7px; border-radius: 50%; background: var(--lane); box-shadow: 0 0 0 2px var(--panel); }
+.raw-timeline .journey-events .chip { display: inline-flex; align-items: baseline; gap: 5px; margin: 0; padding: 1px 7px; border: 0; border-radius: 5px; background: var(--raise); color: var(--text); font-size: var(--fs-sm); overflow-wrap: normal; }
+.raw-timeline .journey-events .chip .chip-key { color: var(--muted); font-size: .92em; }
+.raw-timeline .journey-events .chip .chip-key:hover { color: var(--text); text-decoration: underline; }
+.raw-timeline .journey-events .chip .chip-value { width: auto; height: auto; min-width: 0; max-width: none; padding: 0; overflow: visible; white-space: normal; overflow-wrap: anywhere; color: var(--text); }
+.raw-timeline .journey-events .chip.chip-off { background: none; box-shadow: inset 0 0 0 1px var(--line); opacity: .6; border-style: solid; }
+.raw-timeline .journey-events .chip.chip-link { background: none; box-shadow: none; opacity: .65; }
+.raw-timeline .journey-events .chip.chip-link .chip-value { color: var(--muted); font-family: var(--font-mono); }
+.raw-timeline .journey-events .chip.chip-more { padding: 0 6px; font-family: var(--font-mono); color: var(--muted); }
+.raw-timeline .journey-params { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
+.raw-timeline .journey-events .highlight-tag { margin: 0; padding: 0 6px; font-size: 11px; font-weight: 400; }
+.level-mark { margin-right: 2px; }
+@media (max-width: 760px) { .raw-timeline .journey-events li { grid-template-columns: 62px 48px minmax(0, 1fr); } .journey-lanes { display: none; } }
+
+/* ── The Player tab: summary widgets flow in balanced columns instead of a ragged grid ── */
+.ps-grid { display: block; columns: 340px; column-gap: 12px; }
+.ps-grid > .ps-card { break-inside: avoid; margin-bottom: 12px; }
+
+/* ── Players list: tighter rows, the player's last event readable at a glance ── */
+.players-table td.last-event { white-space: nowrap; font-size: var(--fs-sm); color: var(--muted); }
+.players-table td.last-event b { color: var(--text); font-weight: 600; }
+.players-table th, .players-table td { padding-inline: 7px; white-space: nowrap; }
+.players-table td { padding-block: 9px; }
+.players-table .row-title + .small { margin: 1px 0 0; }
+.players-table .small .pill { margin-left: 6px; }

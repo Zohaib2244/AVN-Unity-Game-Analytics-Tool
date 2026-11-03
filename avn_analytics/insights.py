@@ -960,6 +960,44 @@ class _TotalSessionLength(_SessionLengths):
         return sum(state.seconds for state in self.sessions.values())
 
 
+def _player_progress(connection, source, condition, args, ids):
+    """For the players on one page of the list: the highest level their events name (LEVEL_NUMBER,
+    as the AVN events standard sends it) and the last event they sent, as {player: ...}."""
+    if not ids:
+        return {}, {}
+    marks = ",".join("?" for _ in ids)
+    table, player, params = source.table, source.player, source.params
+    highest = {
+        row["player"]: int(row["level"])
+        for row in connection.execute(
+            f"""SELECT {player} AS player,
+                       max(CASE WHEN json_type({params}, '$.LEVEL_NUMBER') IN ('integer', 'real')
+                                THEN json_extract({params}, '$.LEVEL_NUMBER') END) AS level
+                FROM {table} WHERE {condition} AND {player} IN ({marks}) GROUP BY player""",
+            (*args, *ids),
+        )
+        if row["level"] is not None
+    }
+    last_events = {}
+    for row in connection.execute(
+        f"""SELECT player, name, params FROM (
+                SELECT {player} AS player, name, {params} AS params,
+                       row_number() OVER (PARTITION BY {player}
+                                          ORDER BY client_ts DESC, event_id DESC) AS position
+                FROM {table} WHERE {condition} AND {player} IN ({marks}))
+            WHERE position = 1""",
+        (*args, *ids),
+    ):
+        values = json.loads(row["params"] or "{}")
+        level = values.get("LEVEL_NUMBER")
+        last_events[row["player"]] = {
+            "name": row["name"],
+            "state": values.get("STATE") if isinstance(values.get("STATE"), str) else None,
+            "level": int(level) if isinstance(level, int | float) else None,
+        }
+    return highest, last_events
+
+
 def players(
     storage,
     game_id,
@@ -1058,9 +1096,15 @@ def players(
                 LIMIT ? OFFSET ?""",
             (*column_args, *args, *having_args, limit, offset),
         )
+        rows = rows.fetchall()
+        highest, last_events = _player_progress(
+            connection, source, condition, args, [row["player"] for row in rows]
+        )
         result = []
         for row in rows:
             item = dict(row)
+            item["highest_level"] = highest.get(item["player"])
+            item["last_event"] = last_events.get(item["player"])
             for key in ("avg_session_seconds", "total_play_seconds"):
                 if item[key] is not None:
                     item[key] = round(item[key], 1)

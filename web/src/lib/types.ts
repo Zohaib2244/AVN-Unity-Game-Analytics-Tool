@@ -187,6 +187,8 @@ export type PlayerRow = {
   first_seen: string; last_seen: string;
   platform: string | null; app_version: string | null; country: string | null; environment: string | null;
   has_user_id: number | boolean; metrics: Array<number | string | null>;
+  /** The highest LEVEL_NUMBER their events name, and the last event they sent (the AVN events standard's STATE and LEVEL_NUMBER). */
+  highest_level?: number | null; last_event?: { name: string; state: string | null; level: number | null } | null;
 };
 export type PlayersResult = { total: number; players: PlayerRow[]; context?: { anonymous_events?: number } };
 

@@ -26,6 +26,8 @@ import {
 
 type Mode = 'highlight' | 'filter';
 type Focus = { event: string; label: string };
+/** One colour per kind of event, in order of how many the player has, so the same kind is the same colour in every session. */
+const LANE_COLORS = ['var(--accent)', 'var(--info)', 'var(--ok)', 'var(--warn)', 'var(--done)', 'var(--new)', 'var(--bad)', 'var(--muted)'];
 const joinClass = (...names: Array<string | false | null | undefined>): string => names.filter(Boolean).join(' ');
 /** The name of the highlight a click on one value makes: the same click again finds and removes it. */
 const quickLabel = (item: { name: string }, key: string, value: unknown): string => (key === 'STATE' ? `${eventLabel(item.name)} · ${String(value)}` : `${eventLabel(item.name)} · ${key} ${chipValue(value)}`);
@@ -136,11 +138,18 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
 
   const inSession = (session: string, index: number): boolean => session === 'all' || items[index]?.session === Number(session);
   const visible = (index: number): boolean => inSession(shownSession, index);
+  const typeOrder = useMemo(() => {
+    const total = new Map<string, number>();
+    items.forEach((item) => total.set(item.name, (total.get(item.name) ?? 0) + 1));
+    return [...total].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([name]) => name);
+  }, [items]);
+  const colorOf = (name: string): string => LANE_COLORS[Math.min(typeOrder.indexOf(name), LANE_COLORS.length - 1)]!;
   const shownType = (index: number): boolean => !offSet.has(items[index]!.name);
   const scoped = items.filter((_, index) => visible(index) && shownType(index));
   const typeCounts = new Map<string, number>();
   items.forEach((item, index) => { if (visible(index)) typeCounts.set(item.name, (typeCounts.get(item.name) ?? 0) + 1); });
   const focusIndex = focus ? items.findIndex((item) => item.event_id === focus.event) : -1;
+  const lanes = typeOrder.filter((name) => typeCounts.has(name) && !offSet.has(name)).slice(0, 10);
   const selection = navSelection === 'all' || Number(navSelection) < rules.length ? navSelection : 'all';
   const validRules = rules.filter((rule) => rule.enabled !== false && !conditionError(rule.conditions));
   const matchIndices = highlightMatchIndices(items, rules, selection).filter((index) => visible(index) && shownType(index));
@@ -269,9 +278,10 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
     const last = run?.[run.length - 1];
     const focused = item.index === focusIndex;
     return (
-      <li key={item.index} data-timeline-index={item.index} tabIndex={-1} className={joinClass(run && 'timeline-run', hits.length > 0 && `timeline-match highlight-${hits[0]!.rule.color}`, focused && 'timeline-focus', current === item.index && mode === 'highlight' && 'timeline-current')}>
+      <li key={item.index} data-timeline-index={item.index} tabIndex={-1} style={{ '--c': colorOf(item.name) } as React.CSSProperties} className={joinClass(run && 'timeline-run', hits.length > 0 && `timeline-match highlight-${hits[0]!.rule.color}`, focused && 'timeline-focus', current === item.index && mode === 'highlight' && 'timeline-current')}>
         <time dateTime={item.client_ts}>{clock(item.client_ts, timezone)}</time>
         <span className={joinClass('journey-gap', item.gap != null && item.gap > 60 && 'long')}>{item.gap == null ? '' : `+${duration(item.gap)}`}</span>
+        <span className="journey-lanes" aria-hidden="true">{lanes.map((name) => <i key={name} className={name === item.name ? 'dot' : undefined} style={{ '--lane': colorOf(name) } as React.CSSProperties} />)}</span>
         <span className="journey-name">
           {level != null ? <span className="level-mark" title={`Level ${level}`}>L{level}</span> : null}
           <span title={item.name}>{eventLabel(item.name)}</span>
@@ -310,7 +320,7 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
             <Fragment key={name}>
               {position > 0 ? <div className="session-break" role="separator" aria-label={`Session break before session ${index + 1}`}><span aria-hidden="true">Session break</span></div> : null}
               <Disclosure name={name} disclosures={disclosures} defaultOpen className="journey-session" summaryClassName="journey-session-head" summary={<><strong>Session {index + 1}</strong><span>{analysisDate(start, timezone)} · Play time {duration(sessionLength(session, state))}{state?.away_seconds ? ` · Away ${duration(state.away_seconds)}` : ''} · {number(session.items.length)} events</span>{gap == null ? null : <span className="session-gap">{duration(gap)} after previous session</span>}{state?.measured_old_way ? <span title="This app version only reported its end at the next launch, so this length is less exact.">Measured the old way</span> : null}</>}>
-                <ol className="journey-events">{rows.map((row) => renderRow(row.items[0]!, row.run ? row.items : null))}</ol>
+                <ol className="journey-events" style={{ '--lanes-w': `${lanes.length * 9 + 4}px` } as React.CSSProperties}>{rows.map((row) => renderRow(row.items[0]!, row.run ? row.items : null))}</ol>
                 {ending ? <p className="session-end-marker"><Tag kind={state?.end_reason === 'inferred' ? 'warn' : 'plain'}>{ending}</Tag>{state?.status === 'closed' ? <time dateTime={state.last_event_at}>{clock(state.last_event_at, timezone)}</time> : null}</p> : null}
               </Disclosure>
             </Fragment>

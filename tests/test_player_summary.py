@@ -200,3 +200,32 @@ def test_player_summary_endpoint_reads_the_whole_history(backend):
         f"/v1/games/{game['id']}/insights/player-summary", params={"player": "nobody"}
     ).json()
     assert unknown["sessions"]["count"] == 0 and unknown["first_seen"] is None
+
+
+def test_the_player_list_names_each_players_highest_level_and_last_event(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    assert (
+        send(
+            ingest,
+            game,
+            [
+                level("Started", 3, "2026-10-04T09:00:00Z"),
+                level("Completed", 3, "2026-10-04T09:00:30Z", SECONDS=30.0),
+                level("Started", 4, "2026-10-04T09:01:00Z"),
+                ad("Show", "2026-10-04T09:02:00Z", FORMAT="Interstitial"),
+                event(name="session_start", device_id="p2", client_ts="2026-10-04T09:00:00Z"),
+            ],
+        ).status_code
+        == 200
+    )
+    data = admin.get(
+        f"/v1/games/{game['id']}/insights/players",
+        params={"start": "2026-10-04", "end": "2026-10-04"},
+    ).json()
+    rows = {row["player"]: row for row in data["players"]}
+    assert rows["p1"]["highest_level"] == 4
+    assert rows["p1"]["last_event"] == {"name": "AD_ANALYSIS", "state": "Show", "level": None}
+    # A player whose events name no level has none, and the last event can be any event.
+    assert rows["p2"]["highest_level"] is None
+    assert rows["p2"]["last_event"] == {"name": "session_start", "state": None, "level": None}
