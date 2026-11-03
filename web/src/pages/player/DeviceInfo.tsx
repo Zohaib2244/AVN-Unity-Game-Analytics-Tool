@@ -6,7 +6,7 @@ import { useNotify } from '@/components/feedback';
 import { Ico } from '@/components/icons';
 import { analysisDate, countryText, platformLabel, propertyLabel, type Timezone } from '@/lib/format';
 import { gameURL } from '@/lib/games';
-import type { DeviceSpecs, Game, PlayerStory } from '@/lib/types';
+import type { DeviceSpecs, Game, GameSnapshot, PlayerStory } from '@/lib/types';
 
 export function playerOperatingSystem(raw: unknown, platform: string | null | undefined): { name: string; version: string; build: string } {
   const value = String(raw || '').trim();
@@ -25,6 +25,37 @@ export const playerTimezone = (value: unknown): string => {
   const sign = minutes < 0 ? '−' : '+';
   return `UTC${sign}${String(Math.floor(Math.abs(minutes) / 60)).padStart(2, '0')}:${String(Math.abs(minutes) % 60).padStart(2, '0')}`;
 };
+
+// Names and units for the standard's snapshot parameters; anything else keeps a tidied key.
+const SNAPSHOT_LABELS: Record<string, string> = { TIER: 'Game tier', RAM_MB: 'RAM', GPU_MB: 'GPU memory', CPU_CORES: 'CPU cores', QUALITY_LEVEL: 'Quality level', HIGHEST_LEVEL: 'Highest level', HAS_PURCHASED: 'Has purchased', SUB_ACTIVE: 'Subscription active', ADS_REMOVED: 'Ads removed' };
+const FLAGS = new Set(['HAS_PURCHASED', 'SUB_ACTIVE', 'ADS_REMOVED']);
+const sentence = (text: string): string => { const words = text.replace(/_/g, ' ').toLowerCase(); return words.charAt(0).toUpperCase() + words.slice(1); };
+
+export function snapshotLabel(key: string): string {
+  if (SNAPSHOT_LABELS[key]) return SNAPSHOT_LABELS[key]!;
+  if (key.startsWith('BALANCE_')) return `${sentence(key.slice(8))} balance`;
+  if (key.startsWith('POWERUP_')) return `${sentence(key.slice(8))} owned`;
+  return sentence(key);
+}
+
+export function snapshotValue(key: string, value: unknown): string {
+  if (value == null || value === '') return '';
+  const numeric = typeof value === 'number' ? value : Number.NaN;
+  if (FLAGS.has(key) && (value === 0 || value === 1 || value === '0' || value === '1')) return String(value) === '1' ? 'Yes' : 'No';
+  if (/_MB$/.test(key) && Number.isFinite(numeric)) return `${numeric.toLocaleString()} MB`;
+  if (Number.isFinite(numeric)) return numeric.toLocaleString();
+  return String(value);
+}
+
+/** Rows for one snapshot, the standard's keys in their documented order first. */
+export function snapshotRows(snapshot: GameSnapshot | null | undefined): InfoRow[] {
+  if (!snapshot) return [];
+  const order = Object.keys(SNAPSHOT_LABELS);
+  const rank = (key: string) => { const at = order.indexOf(key); return at < 0 ? order.length + (key.startsWith('BALANCE_') ? 0 : key.startsWith('POWERUP_') ? 1 : 2) : at; };
+  return Object.entries(snapshot.values)
+    .sort(([a], [b]) => rank(a) - rank(b))
+    .map(([key, value]) => [snapshotLabel(key), snapshotValue(key, value)] as InfoRow);
+}
 
 const CATALOG_LABELS: Record<string, string> = { manufacturer: 'Manufacturer', type: 'Device type', released: 'Released', os: 'Original OS', chipset: 'Chipset', cpu: 'CPU', gpu: 'GPU', ram: 'RAM options', storage: 'Storage options', expandable_storage: 'Expandable storage', display: 'Display', battery: 'Battery', dimensions: 'Dimensions', weight: 'Weight', network: 'Network' };
 
@@ -54,6 +85,7 @@ export function PlayerInformation({ game, player, data, timezone }: { game: Game
   useEffect(() => { setFetched(null); setState('idle'); }, [player]);
   const info = data.info || {};
   const profile = info.properties || {};
+  const snapshots = info.snapshots || {};
   const os = playerOperatingSystem(profile.os_version, info.platform);
   const screen = profile.screen_width != null && profile.screen_height != null ? `${profile.screen_width} × ${profile.screen_height}` : '';
   const known = new Set(['seq', 'environment', 'session_number', 'device_model', 'device_type', 'os_version', 'language', 'timezone_offset_minutes', 'screen_width', 'screen_height']);
@@ -73,7 +105,7 @@ export function PlayerInformation({ game, player, data, timezone }: { game: Game
       </div>
       <div className="player-information-grid">
         <Group title="Identity" rows={[['User ID', info.user_id, true], ['Install ID', info.device_id, true]]} />
-        <Group title="Device" rows={[['Model', profile.device_model], ['Type', profile.device_type], ['Operating system', os.name], ['OS version', os.version], ['OS build', os.build, true], ['Screen', screen]]} />
+        <Group title="Device" rows={[['Model', profile.device_model], ['Type', profile.device_type], ['Operating system', os.name], ['OS version', os.version], ['OS build', os.build, true], ['Screen', screen], ...snapshotRows(snapshots.device)]} />
         <Group title="App & location" rows={[['Location', info.country ? countryText(info.country) : ''], ['Language', profile.language], ['Player time zone', playerTimezone(profile.timezone_offset_minutes)], ['Platform', platformLabel(info.platform || '')], ['App version', info.app_version], ['Build', info.build], ['Environment', info.environment], ['Latest session', profile.session_number]]} />
         <Group title="Other collected properties" rows={Object.entries(profile).filter(([key]) => !known.has(key)).map(([key, value]) => [propertyLabel(key), value] as InfoRow)} />
       </div>

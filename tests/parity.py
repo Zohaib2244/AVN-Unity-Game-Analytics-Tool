@@ -36,6 +36,7 @@ ADDED_LEVEL_FIELDS = ADDED_LEVEL_GROUPS | {"fail_drop_percent"}
 CHANGED_LEVEL_FIELDS = {
     "last_action",
     "last_actions",
+    "causes",
     "no_ending",
     "ending_known",
     "prev_exit_reason",
@@ -279,6 +280,14 @@ def snapshot(storage, game_id, module, *, full=True):
             answers[key] = without_added_level_fields(answers[key])
         if function is module.insights.summary:
             answers[key] = without_session_counts(answers[key])
+        info = answers[key].get("info") if isinstance(answers[key], dict) else None
+        if isinstance(info, dict) and "snapshots" in info:
+            # The game's latest snapshots were added to a player's information after the
+            # reference was frozen; test_backend.py checks them.
+            answers[key] = {
+                **answers[key],
+                "info": {k: v for k, v in info.items() if k != "snapshots"},
+            }
         if function is module.insights.journey and "snapshot" in answers[key]:
             # An opaque page token: raw events and facts number it differently (see
             # insights.FACTS_SNAPSHOT); what it does is tested on its own. The state of each

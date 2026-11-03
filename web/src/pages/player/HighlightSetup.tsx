@@ -4,6 +4,7 @@
 // the only thing that reaches the server.
 import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import { errorMessage, useRead, write } from '@/api';
+import { DialogShell } from '@avn/ui';
 import { HighlightEditor } from '@/components/ConditionEditor';
 import { useNotify } from '@/components/feedback';
 import { conditionError, describeHighlight, HIGHLIGHT_COLORS } from '@/lib/conditions';
@@ -16,6 +17,7 @@ import { type Catalog, highlightName, HIGHLIGHT_PRESETS, MAX_HIGHLIGHTS, narrowe
 
 const GROUPS = ['Levels', 'Ads', 'Other'];
 const SHOWN_VALUES = 12;
+const pickedCount = (picks: Record<string, string[]> | undefined): number => Object.values(picks ?? {}).reduce((sum, list) => sum + list.length, 0);
 const MOST_PICKS = 50; // what one condition group may hold
 
 /** Narrow one ready-made highlight: tick values of any of its parameters. Nothing ticked marks them all. */
@@ -30,7 +32,7 @@ function ValuePicker({ events, base, rule, onChange }: { events: JourneyEvent[];
   };
   return (
     <div className={`hl-values highlight-${rule.color}`} role="group" aria-label={`Narrow ${rule.label}`}>
-      <strong className="hl-values-name"><span className="highlight-dot" aria-hidden="true" />{rule.label}</strong>
+      <p className="help hl-values-help">Tick the values to mark. Nothing ticked marks them all.</p>
       {params.map(({ key, values }) => {
         const mine = picks[key] ?? [];
         const open = wide.includes(key);
@@ -177,14 +179,18 @@ export function HighlightSetup({ game, rules, catalog, events, counts, complete,
                         {picked ? <span className="hl-picked">{picked}</span> : null}
                         {on ? <span className="hl-count">{number(counts[at] ?? 0)}</span> : null}
                       </button>
-                      {on ? <button type="button" className="hl-values-toggle" aria-expanded={narrowing === preset.key} aria-label={`Choose values for ${preset.label}`} onClick={() => setNarrowing(narrowing === preset.key ? '' : preset.key)}>Values</button> : null}
+                      {on ? <button type="button" className={`hl-values-toggle${pickedCount(rules[at]!.picks) ? ' set' : ''}`} aria-haspopup="dialog" aria-label={`Choose values for ${preset.label}${pickedCount(rules[at]!.picks) ? `, ${pickedCount(rules[at]!.picks)} chosen` : ''}`} onClick={() => setNarrowing(preset.key)}>Values{pickedCount(rules[at]!.picks) ? <span className="hl-count">{number(pickedCount(rules[at]!.picks))}</span> : null}</button> : null}
                     </span>
                   );
                 })}
               </div>
               {items.map(({ preset, rule }) => {
                 const at = rules.findIndex((item) => item.label === preset.label);
-                return narrowing === preset.key && at >= 0 ? <ValuePicker key={preset.key} events={events} base={rule} rule={rules[at]!} onChange={(picks) => narrow(at, rule, picks)} /> : null;
+                return narrowing === preset.key && at >= 0 ? (
+                  <DialogShell key={preset.key} open onOpenChange={(next) => { if (!next) setNarrowing(''); }} title={`${preset.label}: values`} className="hl-values-dialog">
+                    <ValuePicker events={events} base={rule} rule={rules[at]!} onChange={(picks) => narrow(at, rule, picks)} />
+                  </DialogShell>
+                ) : null;
               })}
             </div>
           ) : null;

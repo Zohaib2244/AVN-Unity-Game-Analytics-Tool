@@ -23,12 +23,14 @@ export const levelsPath = (game: GameRef, state: ActiveFilters, scope: LevelScop
 
 export const featuresPath = (game: GameRef, state: ActiveFilters, scope: LevelScope, excludeReturners = false): string => `${gameURL(game)}/insights/levels/features?${levelsQuery(state, scope, excludeReturners)}`;
 
-/** Which players of a level are listed: the group, the order and, within a group, one last action. */
-export type DrillState = { group: LevelDrillGroup; sort: DrillSort; lastAction: string | null };
+/** Which players of a level are listed: the group, the order and, within a group, one last action, or one cause of ending (and how it ended). */
+export type DrillState = { group: LevelDrillGroup; sort: DrillSort; lastAction: string | null; cause?: string | null; ending?: string | null };
 export function drillQuery(state: ActiveFilters, scope: LevelScope, level: number, drill: DrillState, extra: Record<string, string | number> = {}, excludeReturners = false): URLSearchParams {
   const query = levelsQuery(state, scope, excludeReturners);
   query.set('level', String(level)); query.set('group', drill.group); query.set('sort', drill.sort);
   if (drill.lastAction != null) query.set('last_action', drill.lastAction);
+  if (drill.cause != null) query.set('cause', drill.cause);
+  if (drill.cause != null && drill.ending != null) query.set('ending', drill.ending);
   for (const [key, value] of Object.entries(extra)) query.set(key, String(value));
   return query;
 }

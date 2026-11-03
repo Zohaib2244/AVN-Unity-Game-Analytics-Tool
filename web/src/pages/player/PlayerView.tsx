@@ -15,6 +15,7 @@ import { analysisDate, duration, number, type Timezone } from '@/lib/format';
 import { gameURL } from '@/lib/games';
 import type { Game, PlayerStory } from '@/lib/types';
 import { PlayerInformation } from './DeviceInfo';
+import { PlayerSummary } from './PlayerSummary';
 import { RawTimeline } from './RawTimeline';
 
 /** The players the viewer walks: how many there are, which one is open, and the player at a position. */
@@ -160,12 +161,15 @@ function PlayerDetails({ game, player, filters }: { game: Game; player: string; 
       <div className="range-modes route-tabs" role="group" aria-label="View">
         <button type="button" aria-pressed={tab === 'raw'} onClick={() => chooseTab('raw')}>Raw events</button>
         <button type="button" aria-pressed={tab === 'analysis'} onClick={() => chooseTab('analysis')}>Event Analysis</button>
-        <button type="button" aria-pressed={tab === 'info'} onClick={() => chooseTab('info')}>Player info</button>
+        <button type="button" aria-pressed={tab === 'info'} onClick={() => chooseTab('info')}>Player</button>
       </div>
       {tab === 'info' ? (
-        <QueryRegion query={story} path={storyPath} skeleton={<Skeleton kind="table" rows={5} columns={2} />}>
-          {(data) => <PlayerInformation game={game} player={player} data={data} timezone={timezone} />}
-        </QueryRegion>
+        <div className="player-tab">
+          <PlayerSummary game={game} player={player} />
+          <QueryRegion query={story} path={storyPath} skeleton={<Skeleton kind="table" rows={5} columns={2} />}>
+            {(data) => <PlayerInformation game={game} player={player} data={data} timezone={timezone} />}
+          </QueryRegion>
+        </div>
       ) : (
         <RawTimeline key={player} game={game} player={player} range={range} timezone={timezone} view={tab} onView={(next) => chooseTab(next)} />
       )}

@@ -131,6 +131,9 @@ def _definitions(storage, game_id):
     return storage.get_dictionary(game_id)
 
 
+SNAPSHOT_EVENTS = {"device": "DEVICE_ANALYSIS"}
+
+
 def player_story(storage, game_id, player, start, end, show_hidden=False):
     """One player's events as chapters (sessions) of readable lines, plus a few totals."""
     storage.get_game(game_id)
@@ -162,6 +165,22 @@ def player_story(storage, game_id, player, start, end, show_hidden=False):
                 ORDER BY client_ts DESC, event_id DESC LIMIT 1""",
             (player,),
         ).fetchone()
+        # The game's own latest snapshot of the device (AVN events standard), whichever date
+        # range is picked. The player's save is on the summary page (player_summary.py).
+        snapshots = {}
+        for key, name in SNAPSHOT_EVENTS.items():
+            found = connection.execute(
+                f"""SELECT client_ts, {source.params} AS params
+                    FROM {table} WHERE {source.player}=? AND name=?
+                      AND json_extract({source.params}, '$.STATE')='Snapshot'
+                    ORDER BY client_ts DESC, event_id DESC LIMIT 1""",
+                (player, name),
+            ).fetchone()
+            if found:
+                values = json.loads(found["params"] or "{}")
+                values.pop("STATE", None)
+                values.pop("seq", None)
+                snapshots[key] = {"at": found["client_ts"], "values": values}
     events = [
         {
             "name": row["name"],
@@ -212,6 +231,7 @@ def player_story(storage, game_id, player, start, end, show_hidden=False):
             "updated_at": latest_info["client_ts"] if latest_info else None,
             "profile_updated_at": latest_profile["client_ts"] if latest_profile else None,
             "properties": profile,
+            "snapshots": snapshots,
         },
         "chapters": chapters,
     }
@@ -1385,12 +1405,16 @@ def level_players(
     scope="all",
     last_action=None,
     exclude_returners=False,
+    cause=None,
+    ending=None,
 ):
     """The players in one group of one level, plus the size of every group.
 
     last_actions counts what the group's players did last on the level; last_action keeps only
-    the players whose last action was that one. The scan is shared with the level table and cached
-    for a minute, so switching groups, pages, levels or last actions doesn't read the events again.
+    the players whose last action was that one. causes counts the same endings by cause (all the
+    endings around one kind of ad together, with how each ended); cause and ending keep one.
+    The scan is shared with the level table and cached for a minute, so switching groups, pages,
+    levels or last actions doesn't read the events again.
     """
     storage.get_game(game_id)
     if group not in LEVEL_GROUPS:
@@ -1406,16 +1430,61 @@ def level_players(
     if exclude_returners:
         scan = _without_returners(scan)
     groups = scan["transitions"].get(level, {}).get("groups", {name: [] for name in LEVEL_GROUPS})
-    return players_in_group(groups, level, group, offset, limit, sort, last_action)
+    return players_in_group(groups, level, group, offset, limit, sort, last_action, cause, ending)
 
 
-def players_in_group(groups, level, group, offset, limit, sort, last_action):
+def _endings_by_cause(last_actions):
+    """The group's last actions counted by cause (every ending around one kind of ad together),
+    each with how it ended; biggest first. last_actions: Counter of the exact texts."""
+    causes = {}
+    for text, count in last_actions.items():
+        parts = level_exits.split_ending(text)
+        entry = causes.setdefault(
+            parts["cause"],
+            {
+                "key": parts["cause"],
+                "label": parts["label"],
+                "players": 0,
+                "left": 0,
+                "endings": {},
+            },
+        )
+        entry["players"] += count
+        entry["left"] += count if parts["arrived"] else 0
+        ending = entry["endings"].setdefault(
+            parts["ending"], {"key": parts["ending"], "label": parts["ending_label"], "players": 0}
+        )
+        ending["players"] += count
+    ranked = sorted(causes.values(), key=lambda entry: (-entry["players"], entry["key"]))
+    for entry in ranked:
+        entry["endings"] = sorted(
+            entry["endings"].values(), key=lambda item: (-item["players"], item["key"])
+        )
+    return ranked[:LAST_ACTIONS]
+
+
+def players_in_group(
+    groups, level, group, offset, limit, sort, last_action, cause=None, ending=None
+):
     """One page of a level group's players, from that level's groups."""
     members = groups[group]
     last_actions = Counter(item["last_action"] for item in members)
     no_ending = sum(not item["ending_known"] for item in members)
+    causes = _endings_by_cause(last_actions)
     if last_action is not None:
         members = [item for item in members if item["last_action"] == last_action]
+    if cause is not None:
+        members = [
+            item
+            for item in members
+            if level_exits.split_ending(item["last_action"])["cause"] == cause
+        ]
+    if ending is not None:
+        members = [
+            item
+            for item in members
+            if level_exits.split_ending(item["last_action"])["ending"] == ending
+        ]
     members = sorted(
         members, key=lambda item: (item[sort], item["exit_at"], item["player"]), reverse=True
     )
@@ -1429,6 +1498,7 @@ def players_in_group(groups, level, group, offset, limit, sort, last_action):
                 :LAST_ACTIONS
             ]
         ],
+        "causes": causes,
         "no_ending": no_ending,
         "total": len(members),
         "offset": offset,

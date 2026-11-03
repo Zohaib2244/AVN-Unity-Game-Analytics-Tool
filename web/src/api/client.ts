@@ -17,6 +17,9 @@ export function analyticsRead(path: string, options: RequestOptions = {}): boole
   return (options.method || 'GET').toUpperCase() === 'POST' && /\/insights\/(?:funnel|player-groups|journeys(?:\/players)?)$/.test(path.split('?')[0] ?? '');
 }
 
+/** True when the read is over a range of days, so "fewer days" is advice the person can act on. */
+export const readsDays = (path: string): boolean => /[?&](?:start|end|days)=/.test(path);
+
 const STATUS_MESSAGES: Record<number, string> = {
   401: 'Your session has expired. Reload the page to sign in again.',
   403: 'You don’t have permission for this action. Contact a workspace admin.',
@@ -39,7 +42,8 @@ function changeActivity(delta: number) { pending = Math.max(0, pending + delta);
 export async function request<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
   const canRetry = (options.method || 'GET').toUpperCase() === 'GET';
   const readOnly = canRetry || analyticsRead(path, options);
-  const timeoutMessage = readOnly ? 'This request took too long. Try a shorter date range or retry.' : 'The request timed out. Check whether the change was saved before trying again.';
+  const ranged = readsDays(path);
+  const timeoutMessage = !readOnly ? 'The request timed out. Check whether the change was saved before trying again.' : ranged ? 'This request took too long. Try a shorter date range or retry.' : 'This request took too long. Try again in a moment.';
   const timeout = AbortSignal.timeout(60000);
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
   changeActivity(1);
@@ -67,7 +71,7 @@ export async function request<T = unknown>(path: string, options: RequestOptions
     if (!response.ok) {
       const error = (await response.json().catch(() => ({}))) as { detail?: unknown; errors?: Array<{ loc?: string[]; msg: string }> };
       const details = Array.isArray(error.errors) ? error.errors.map((item) => `${(item.loc || []).filter((part) => part !== 'body').join(' · ')}: ${item.msg}`).join('; ') : '';
-      throw new ApiError(details || STATUS_MESSAGES[response.status] || (typeof error.detail === 'string' ? error.detail : 'Please check your details and try again.'), response.status);
+      throw new ApiError(details || (response.status === 504 && !ranged ? 'The server took too long. Try again in a moment.' : STATUS_MESSAGES[response.status]) || (typeof error.detail === 'string' ? error.detail : 'Please check your details and try again.'), response.status);
     }
     if (response.status === 204) return null as T;
     if (readOnly) rememberSlow(path, (typeof performance !== 'undefined' ? performance.now() : Date.now()) - began);
@@ -87,9 +91,14 @@ export function usualWait(path: string): number | null {
   try { return Number(localStorage.getItem(endpointKey(path))) || null; } catch { return null; }
 }
 /** What to tell someone who has waited this long. Never a percentage: there is no way to know one. */
-export function slowLoadMessage(seconds: number, usual: number | null = null): string {
+/** `ranged` is false for reads with no days to narrow (settings, versions), which get no "fewer days" advice. */
+export function slowLoadMessage(seconds: number, usual: number | null = null, ranged = true): string {
   if (seconds < 2) return '';
   const last = usual ? ` Last time it took about ${Math.max(1, Math.round(usual / 1000))} s.` : '';
+  if (!ranged) {
+    if (seconds < 30) return `Still loading.${last}`;
+    return 'This is taking longer than usual. It stops after a minute and lets you try again.';
+  }
   if (seconds < 10) return `Reading your events. The first load takes a few seconds, then this page opens instantly for a while.${last}`;
   if (seconds < 30) return `Still loading analytics data for this range.${last}`;
   return 'This is taking longer than usual. It stops after a minute and lets you try again, or pick fewer days.';

@@ -11,7 +11,7 @@ import type { ActiveFilters } from '@/lib/filters';
 import { analysisDate, duration, number, platformLabel, shortId } from '@/lib/format';
 import { gamePath } from '@/lib/games';
 import { downloadCSV } from '@/lib/store';
-import type { Game, LevelLastAction, LevelPlayer, LevelPlayersResult, LevelRow } from '@/lib/types';
+import type { Game, LevelCause, LevelLastAction, LevelPlayer, LevelPlayersResult, LevelRow } from '@/lib/types';
 import { afterReturning, CARRIED_ON_GROUPS, LEVEL_DRILL_GROUPS, lastDidDetails, lastDidLabel, levelDrillGroup, type DrillSort, type LevelDrillGroup, type LevelScope } from './levelMath';
 import { showDrill } from '@/pages/nutbot/context';
 import { drillPagePath, drillPath, type DrillState } from './levelPaths';
@@ -52,13 +52,39 @@ export function LastDidPopover({ row, level, anchor, pinned }: { row: LevelPlaye
   );
 }
 
-/** What the group's players did last on the level; pick one to list only those players. Nothing for players who carried on. */
-export function LastActions({ level, group, lastActions, lastAction, onPick }: { level: number; group: LevelDrillGroup; lastActions: LevelLastAction[] | undefined; lastAction: string | null; onPick?: (text: string | null) => void }): ReactElement | null {
+/**
+ * How the group's players' sessions ended, counted by cause: every ending around one kind of ad is one chip, however it
+ * ended. Pick a cause to list only those players and to see how it ended (during, after, failed to show, ...); pick one
+ * of those to narrow further. Without causes (an older server) it lists each exact last action instead. Nothing for
+ * players who carried on.
+ */
+export function LastActions({ level, group, lastActions, causes, lastAction, cause, ending, onPick, onCause, onEnding }: {
+  level: number; group: LevelDrillGroup; lastActions: LevelLastAction[] | undefined; causes?: LevelCause[]; lastAction: string | null; cause?: string | null; ending?: string | null;
+  onPick?: (text: string | null) => void; onCause?: (key: string | null) => void; onEnding?: (key: string | null) => void;
+}): ReactElement | null {
   if (CARRIED_ON_GROUPS.includes(group) || !lastActions?.length) return null;
+  const label = group === 'came_back_later' ? 'Why they left' : 'How it ended';
+  if (!causes?.length) {
+    return (
+      <div className="last-actions" role="group" aria-label={`What players did last on level ${level}`}>
+        <span className="last-actions-label">{label}</span>
+        {lastActions.map((item, index) => <button key={item.text} type="button" className="last-action" data-last-action={index} aria-pressed={lastAction === item.text} onClick={() => onPick?.(lastAction === item.text ? null : item.text)}>{item.text}<span className="drill-count">{number(item.players)}</span></button>)}
+      </div>
+    );
+  }
+  const chosen = causes.find((item) => item.key === cause);
   return (
-    <div className="last-actions" role="group" aria-label={`What players did last on level ${level}`}>
-      <span className="last-actions-label">{group === 'came_back_later' ? 'Why they left' : 'How it ended'}</span>
-      {lastActions.map((item, index) => <button key={item.text} type="button" className="last-action" data-last-action={index} aria-pressed={lastAction === item.text} onClick={() => onPick?.(lastAction === item.text ? null : item.text)}>{item.text}<span className="drill-count">{number(item.players)}</span></button>)}
+    <div className="last-actions-grouped">
+      <div className="last-actions" role="group" aria-label={`What players did last on level ${level}`}>
+        <span className="last-actions-label">{label}</span>
+        {causes.map((item, index) => <button key={item.key} type="button" className="last-action" data-last-cause={index} aria-pressed={cause === item.key} onClick={() => onCause?.(cause === item.key ? null : item.key)}>{item.label}<span className="drill-count">{number(item.players)}</span></button>)}
+      </div>
+      {chosen ? (
+        <div className="last-actions last-endings" role="group" aria-label={`How ${chosen.label.toLowerCase()} endings went`}>
+          <span className="last-actions-label">{number(chosen.left)} of {number(chosen.players)} told us how it ended</span>
+          {chosen.endings.map((item, index) => <button key={item.key} type="button" className="last-action" data-last-ending={index} aria-pressed={ending === item.key} onClick={() => onEnding?.(ending === item.key ? null : item.key)}>{item.label}<span className="drill-count">{number(item.players)}</span></button>)}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -121,7 +147,7 @@ export function LevelDrill({ game, filters, scope, excludeReturners, level, row,
     <div className="level-drill level-page-list" data-level-drill={level}>
       <div className="level-drill-head">
         <div className="segmented" role="group" aria-label={`Players on level ${level}`}>
-          {LEVEL_DRILL_GROUPS.map(([key, label]) => <button key={key} type="button" data-drill-group={key} aria-pressed={state.group === key} onClick={() => { if (state.group !== key) setState({ group: key, lastAction: null }); }}>{excludeReturners && key === 'left' ? 'Stopped during level · no return' : excludeReturners && key === 'finished_stopped' ? 'Stopped after finishing · no return' : excludeReturners && key === 'failed_left' ? 'Failed · no return' : label}{counts ? <> <span className="drill-count">{number(counts[key])}</span></> : null}</button>)}
+          {LEVEL_DRILL_GROUPS.map(([key, label]) => <button key={key} type="button" data-drill-group={key} aria-pressed={state.group === key} onClick={() => { if (state.group !== key) setState({ group: key, lastAction: null, cause: null, ending: null }); }}>{excludeReturners && key === 'left' ? 'Stopped during level · no return' : excludeReturners && key === 'finished_stopped' ? 'Stopped after finishing · no return' : excludeReturners && key === 'failed_left' ? 'Failed · no return' : label}{counts ? <> <span className="drill-count">{number(counts[key])}</span></> : null}</button>)}
         </div>
         <div className="quiet-actions">
           <label className="inline-field">Sort<select data-drill-sort value={state.sort} onChange={(event) => setState({ sort: event.target.value as DrillSort })}><option value="exit_at">Latest on this level</option><option value="tries">Most tries</option><option value="fails">Most fails</option></select></label>
@@ -131,7 +157,7 @@ export function LevelDrill({ game, filters, scope, excludeReturners, level, row,
       {counts?.unknown_progress ? <p className="help">{number(counts.unknown_progress)} more {counts.unknown_progress === 1 ? 'player' : 'players'} in the drop started a later level without a start of level {level + 1}.</p> : null}
       {quitting && first.data?.no_ending ? <p className="help" data-no-ending>{number(first.data.no_ending)} of these {first.data.no_ending === 1 ? 'player has' : 'players have'} no known ending: they haven't returned, so “Last seen” is the last thing we heard, not why they left.</p> : null}
       {returned && excludeReturners ? <p className="help">Returners stay visible here and are excluded from drop counts, even if they have not reached the next level.</p> : returned && counts ? <p className="help">{number(counts.kept_going! - counts.straight_on!)} of them went on to reach level {level + 1}, so Drop doesn't count them.</p> : null}
-      <LastActions level={level} group={state.group} lastActions={first.data?.last_actions} lastAction={state.lastAction} onPick={(text) => setState({ lastAction: text })} />
+      <LastActions level={level} group={state.group} lastActions={first.data?.last_actions} causes={first.data?.causes} lastAction={state.lastAction} cause={state.cause} ending={state.ending} onPick={(text) => setState({ lastAction: text })} onCause={(key) => setState({ cause: key, ending: null, lastAction: null })} onEnding={(key) => setState({ ending: key })} />
       <QueryRegion query={first} path={firstPath} skeleton={<Skeleton kind="table" rows={5} columns={8} />}>
         {(result) => {
           const players = extra.path === firstPath ? [...result.players, ...extra.players] : result.players;

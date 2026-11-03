@@ -4,7 +4,7 @@
 import { useRef, useState, type ReactElement } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { ConfirmDelete } from '@avn/ui';
-import { useRead, write } from '@/api';
+import { errorStatus, useRead, write } from '@/api';
 import { useSession } from '@/app/session';
 import { gamePath, gameURL } from '@/lib/games';
 import { displayDate, fileSize, number, platformLabel } from '@/lib/format';
@@ -191,7 +191,7 @@ export function GameSettingsPage({ game }: { game: Game }): ReactElement {
   const targetName = me.workspaces.find((item) => item.id === target)?.name || '';
 
   if (query.isError && query.data === undefined) {
-    return <><Heading title="Game not found" subtitle="This game is not in your workspace." /><LoadError error={query.error} onRetry={() => query.refetch()} /><Link className="button" to="/">Back to games</Link></>;
+    return <>{errorStatus(query.error) === 404 ? <Heading title="Game not found" subtitle="This game is not in your workspace." /> : <Heading title="Game settings" subtitle="The settings couldn’t load." />}<LoadError error={query.error} onRetry={() => query.refetch()} /><Link className="button" to="/">Back to games</Link></>;
   }
   return (
     <QueryRegion query={query} path={path} skeleton={<Skeleton kind="stats" />}>{(detail) => {

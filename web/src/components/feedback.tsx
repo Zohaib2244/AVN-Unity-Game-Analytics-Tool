@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { Button, ConfirmDelete, Definition, DialogShell, useToast, type ToastKind } from '@avn/ui';
-import { errorMessage, errorStatus, isAbort, read, slowLoadMessage, usualWait } from '@/api';
+import { errorMessage, errorStatus, isAbort, read, readsDays, slowLoadMessage, usualWait } from '@/api';
 import { Ico } from './icons';
 import { IsoBlocks } from './flavour';
 
@@ -38,7 +38,7 @@ export function LoadingNote({ path, began }: { path?: string | null; began: numb
     const gamePath = path.match(/^(\/v1\/games\/[^/]+)\/insights\//)?.[1];
     if (gamePath) read<{ paused?: boolean }>(`${gamePath}/insights/processing`).then((state) => { if (state.paused) setProcessing('Background processing is paused. Calculating from collected events…'); }).catch(() => {});
   }, [seconds, path]);
-  const message = processing || slowLoadMessage(seconds, path ? usualWait(path) : null);
+  const message = processing || slowLoadMessage(seconds, path ? usualWait(path) : null, path ? readsDays(path) : false);
   if (!message) return null;
   return <p className="loading-note"><Spinner label="" /><span role="status">{message}</span><span className="loading-elapsed" aria-hidden="true">{seconds} s</span></p>;
 }

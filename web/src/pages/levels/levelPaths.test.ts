@@ -74,6 +74,14 @@ describe('the players behind a level', () => {
     expect(picked.get('last_action')).toBe('Pressed back');
     expect(picked.get('scope')).toBe('first_session');
   });
+  it('names a cause of ending, and how it ended only together with the cause', () => {
+    const cause = drillQuery(state, 'all', 12, { group: 'left', sort: 'exit_at', lastAction: null, cause: 'interstitial ad', ending: 'seen:around' });
+    expect(cause.get('cause')).toBe('interstitial ad');
+    expect(cause.get('ending')).toBe('seen:around');
+    const stale = drillQuery(state, 'all', 12, { group: 'left', sort: 'exit_at', lastAction: null, cause: null, ending: 'seen:around' });
+    expect(stale.has('cause')).toBe(false);
+    expect(stale.has('ending')).toBe(false);
+  });
   it('is the players endpoint, and one page is DRILL_PAGE players from an offset', () => {
     expect(drillPath(game, state, 'all', 3, { group: 'straight_on', sort: 'exit_at', lastAction: null }).startsWith('/v1/games/g1/insights/levels/players?')).toBe(true);
     const page = drillPagePath(game, state, 'all', 3, { group: 'left', sort: 'exit_at', lastAction: null }, 100);

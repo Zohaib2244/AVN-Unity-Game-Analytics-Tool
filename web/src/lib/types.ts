@@ -219,14 +219,19 @@ export type LevelPlayer = {
   away_seconds?: number | null; passed?: boolean; reached_next?: boolean;
 };
 export type LevelLastAction = { text: string; players: number };
+/** The endings of a group counted by cause (all the endings around one kind of ad together), each with how it ended. */
+export type LevelEnding = { key: string; label: string; players: number };
+export type LevelCause = { key: string; label: string; players: number; left: number; endings: LevelEnding[] };
 export type LevelPlayersResult = {
-  level: number; group: string; counts: Record<string, number>; last_actions: LevelLastAction[]; no_ending?: number;
+  level: number; group: string; counts: Record<string, number>; last_actions: LevelLastAction[]; causes?: LevelCause[]; no_ending?: number;
   total: number; offset: number; players: LevelPlayer[];
 };
 
 /* ─── One player: the story summary, the raw timeline pages, device lookup, saved highlight rules ─── */
 export type PlayerProfile = { session_number?: number; device_model?: string; device_type?: string; os_version?: string; language?: string; timezone_offset_minutes?: number | string; screen_width?: number; screen_height?: number; [key: string]: unknown };
-export type PlayerInfo = { user_id?: string | null; device_id?: string | null; platform?: string | null; country?: string | null; app_version?: string | null; build?: string | null; environment?: string | null; updated_at?: string | null; properties?: PlayerProfile | null };
+export type PlayerInfo = { user_id?: string | null; device_id?: string | null; platform?: string | null; country?: string | null; app_version?: string | null; build?: string | null; environment?: string | null; updated_at?: string | null; properties?: PlayerProfile | null; snapshots?: { device?: GameSnapshot } | null };
+/** The game's latest DEVICE_ANALYSIS Snapshot (AVN events standard), STATE removed. */
+export type GameSnapshot = { at: string; values: Record<string, unknown> };
 export type PlayerStory = { sessions: number; events: number; first_seen?: string | null; last_seen?: string | null; total_play_seconds?: number | null; average_session_seconds?: number | null; highest_level?: number | null; info?: PlayerInfo | null };
 export type JourneyEvent = { event_id: string; name: string; session_id: string; client_ts: string; level?: number | null; params: Record<string, unknown> };
 export type SessionSummary = {
@@ -352,3 +357,22 @@ export type ImportUndoResult = { reverted: number; kept: string[] };
 export type StandardEvent = { name: string; states: string[] };
 export type WorkspaceStandard = { version: number | null; builtin_version: number | null; source: 'builtin' | 'uploaded'; uploaded_at: string | null; uploaded_by: string | null; events: StandardEvent[]; prompt: string };
 export type GameStandard = { game_version: number | null; workspace_version: number | null; outdated: boolean };
+
+/* ─── One player's summary (insights/player-summary): ads, levels, coins, powerups and habits over their whole history ─── */
+export type SummaryAdFormat = { shown: number; closed: number; failed: number; rewarded: number; placements: Record<string, number>; reasons: Record<string, number> };
+export type PlayerSummaryData = {
+  player: string; events_counted: number; partial: boolean; first_seen: string | null; last_seen: string | null;
+  sessions: { count: number; active_days: number; per_day: Array<[string, number]> };
+  ads: { formats: Record<string, SummaryAdFormat>; shown: number; failed: number; average_seconds_on_screen: number | null };
+  levels: {
+    cleared: number; highest: number | null; clears: number; fails: number; left: number; first_try_clears: number;
+    average_seconds: number | null; median_seconds: number | null; fastest_seconds: number | null; slowest_seconds: number | null; average_moves: number | null;
+    restarts: number; revives: number; pace: Array<[number, number]>; hardest: Array<{ level: number; bad_attempts: number; cleared: boolean }>;
+  };
+  economy: {
+    balances: Record<string, number>; balance_history: Array<[string, number]>; earned: Record<string, number>; spent: Record<string, number>;
+    inventory: Record<string, number>; flags: Record<string, number>; save_level: number | null;
+  };
+  powerups: { used: Record<string, number>; obtained: Array<{ powerup: string; source: string; count: number }> };
+  screens: Record<string, number>; background: Record<string, number>; tutorials: { shown: number; completed: number }; shop_taps: number; levels_ended_by_kill: number;
+};

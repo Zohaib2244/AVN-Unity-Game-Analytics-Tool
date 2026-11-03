@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from test_backend import AUTH, TOKEN, event, register, send
 
+from avn_analytics import level_exits
 from avn_analytics.api import create_app
 from avn_analytics.config import Settings
 
@@ -344,3 +345,74 @@ def test_a_tag_keeps_only_its_players_in_the_came_back_tab(game):
         "Left during interstitial ad",
         "Left after failing the level",
     }
+
+
+def test_endings_around_one_kind_of_ad_are_one_cause():
+    cause = level_exits.split_ending
+    during = cause("Left during interstitial ad")
+    after = cause("Left after interstitial ad")
+    assert during["cause"] == after["cause"] == "interstitial ad"
+    assert (during["ending"], after["ending"]) == ("left:during", "left:after")
+    # Without the ending we can't tell during from after, so those are one.
+    seen = cause("Last seen during interstitial ad")
+    assert seen["cause"] == "interstitial ad"
+    assert seen["ending"] == cause("Last seen after interstitial ad")["ending"] == "seen:around"
+    assert cause("Last seen after interstitial ad, no reward")["ending"] == "seen:around"
+    # A failed ad stays its own ending, and a missing reward is told apart once the ending arrived.
+    assert cause("Left after rewarded ad failed to show")["ending"] == "left:failed"
+    assert cause("Left after rewarded ad, no reward")["ending"] == "left:no_reward"
+    assert cause("Left during an ad")["cause"] == "an ad"
+    # Other endings are their own cause, split by whether the ending arrived.
+    other = cause("Last seen in the level")
+    assert (other["cause"], other["label"], other["arrived"]) == (
+        "in the level",
+        "In the level",
+        False,
+    )
+    assert cause("Left in the level")["cause"] == other["cause"]
+
+
+def test_the_level_drill_counts_endings_by_cause_and_filters_by_cause_and_ending(game):
+    during = Play("during").level("Started").ad("Show").next_session("s2")
+    during.add("MM_ANALYSIS", STATUS="OPENED")
+    after = Play("after").level("Started").ad("Show").ad("Closed").next_session("s2")
+    after.add("MM_ANALYSIS", STATUS="OPENED")
+    failed = Play("failed").level("Started").ad("Failed").next_session("s2")
+    failed.add("MM_ANALYSIS", STATUS="OPENED")
+    lost_during = Play("lost_during").level("Started").ad("Show")
+    lost_after = Play("lost_after").level("Started").ad("Show").ad("Closed")
+    plain = Play("plain").level("Started").background().next_session("s2")
+    plain.add("MM_ANALYSIS", STATUS="OPENED")
+    admin, ingest, record = game
+    found, data = tags(game, during, after, failed, lost_during, lost_after, plain)
+    assert found["lost_during"].startswith("Last seen") and found["during"].startswith("Left")
+
+    causes = {item["key"]: item for item in data["causes"]}
+    ads = causes["interstitial ad"]
+    assert ads["label"] == "Interstitial ad" and ads["players"] == 5 and ads["left"] == 3
+    endings = {item["key"]: item["players"] for item in ads["endings"]}
+    assert endings == {"left:during": 1, "left:after": 1, "left:failed": 1, "seen:around": 2}
+    assert causes["in the level"]["players"] == 1
+    assert [item["key"] for item in data["causes"]][0] == "interstitial ad"  # biggest first
+    assert sum(item["players"] for item in data["causes"]) == data["total"]
+
+    def players(**params):
+        return sorted(
+            row["player"]
+            for row in admin.get(
+                f"/v1/games/{record['id']}/insights/levels/players",
+                params={"start": DAY, "end": "2026-10-05", "level": 1, "group": "total_drop"}
+                | params,
+            ).json()["players"]
+        )
+
+    assert players(cause="interstitial ad") == [
+        "after",
+        "during",
+        "failed",
+        "lost_after",
+        "lost_during",
+    ]
+    assert players(cause="interstitial ad", ending="seen:around") == ["lost_after", "lost_during"]
+    assert players(cause="interstitial ad", ending="left:failed") == ["failed"]
+    assert players(cause="in the level") == ["plain"]

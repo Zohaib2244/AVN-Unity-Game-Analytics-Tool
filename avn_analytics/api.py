@@ -40,6 +40,7 @@ from . import (
     materialize,
     nutbot_commands,
     player_groups,
+    player_summary,
     sdk_package,
     session_report,
 )
@@ -1055,6 +1056,13 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             show_hidden=hidden,
         )
 
+    @admin_api.get("/v1/games/{game_id}/insights/player-summary")
+    def insights_player_summary(
+        game_id: UUID,
+        player: Annotated[str, Query(min_length=1, max_length=128)],
+    ):
+        return player_summary.player_summary(storage, str(game_id), player)
+
     @admin_api.get("/v1/games/{game_id}/insights/device-specs")
     def insights_device_specs(
         game_id: UUID,
@@ -1188,6 +1196,8 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         scope: Literal["all", "first_session"] = "all",
         exclude_returners: bool = False,
         last_action: Annotated[str | None, Query(max_length=500)] = None,
+        cause: Annotated[str | None, Query(max_length=200)] = None,
+        ending: Annotated[str | None, Query(max_length=100)] = None,
         offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
         limit: Annotated[int, Query(ge=1, le=2000)] = 50,
         tz_offset: TimezoneOffset = 0,
@@ -1205,6 +1215,8 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             scope=scope,
             last_action=last_action,
             exclude_returners=exclude_returners,
+            cause=cause,
+            ending=ending,
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/players")

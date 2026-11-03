@@ -1,6 +1,6 @@
 // The player's operating system and time zone read the way the old Player information did (insights.js).
 import { describe, expect, it } from 'vitest';
-import { playerOperatingSystem, playerTimezone } from './DeviceInfo';
+import { playerOperatingSystem, playerTimezone, snapshotLabel, snapshotRows, snapshotValue } from './DeviceInfo';
 
 describe('playerOperatingSystem', () => {
   it('reads Android with its API level and build', () => {
@@ -28,5 +28,28 @@ describe('playerTimezone', () => {
   it('keeps a value it cannot read as a number, and is empty when there is none', () => {
     expect(playerTimezone('Europe/London')).toBe('Europe/London');
     expect(playerTimezone(undefined)).toBe('');
+  });
+});
+
+describe('game snapshots', () => {
+  it('names the standard keys and tidies the rest', () => {
+    expect(snapshotLabel('TIER')).toBe('Game tier');
+    expect(snapshotLabel('BALANCE_COINS')).toBe('Coins balance');
+    expect(snapshotLabel('POWERUP_AUTO_SHOOT')).toBe('Auto shoot owned');
+    expect(snapshotLabel('SOMETHING_ELSE')).toBe('Something else');
+  });
+
+  it('reads flags as yes or no and memory in MB', () => {
+    expect(snapshotValue('ADS_REMOVED', 0)).toBe('No');
+    expect(snapshotValue('HAS_PURCHASED', '1')).toBe('Yes');
+    expect(snapshotValue('RAM_MB', 3712)).toBe(`${(3712).toLocaleString()} MB`);
+    expect(snapshotValue('TIER', 'Mid')).toBe('Mid');
+    expect(snapshotValue('TIER', null)).toBe('');
+  });
+
+  it('lists the standard keys in their documented order, then balances, powerups and the rest', () => {
+    const rows = snapshotRows({ at: '2026-10-04T09:00:00Z', values: { EXTRA: 'x', POWERUP_BOMB: 2, BALANCE_COINS: 340, HIGHEST_LEVEL: 11 } });
+    expect(rows.map(([label]) => label)).toEqual(['Highest level', 'Coins balance', 'Bomb owned', 'Extra']);
+    expect(snapshotRows(undefined)).toEqual([]);
   });
 });

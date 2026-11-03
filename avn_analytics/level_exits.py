@@ -10,6 +10,8 @@ means it hasn't: older SDKs keep the final events on the phone until the next la
 who never returns never delivers them, and all we can say is the last thing we heard.
 """
 
+import re
+
 from .stories import _words, param_text
 
 SDK_EVENTS = {"session_start", "session_end", "first_open"}
@@ -150,3 +152,46 @@ def ending_arrived(rows, reader, later_session):
 
 def phrase(where, arrived):
     return f"{'Left' if arrived else 'Last seen'} {where}"
+
+
+AD_ENDING = re.compile(r"^(during|after) (an ad|[a-z0-9 ]+ ad)( failed to show|, no reward)?$")
+
+
+def split_ending(text):
+    """One last action ("Left during interstitial ad") as its cause and how it ended.
+
+    The cause is what to count together: every ending around one kind of ad is one cause, however
+    it ended. `ending` says how, as a key and words: during, after, no reward, or failed to show.
+    A player who never came back left no word of the ad closing (the end of the session stays on
+    the phone), so for them during and after cannot be told apart and are one ending, "around".
+    Anything that is not an ad is its own cause, split only by whether the ending arrived.
+    """
+    arrived = not text.startswith("Last seen ")
+    where = text.removeprefix("Left ").removeprefix("Last seen ")
+    heard = "left" if arrived else "seen"
+    lead = "Left" if arrived else "Last seen"
+    ad = AD_ENDING.match(where)
+    if not ad:
+        return {
+            "cause": where,
+            "label": where[:1].upper() + where[1:],
+            "ending": heard,
+            "ending_label": lead,
+            "arrived": arrived,
+        }
+    moment, kind, tail = ad.groups()
+    if tail == " failed to show":
+        key, words = "failed", "failed to show"
+    elif not arrived:
+        key, words = "around", "around the ad (during or after)"
+    elif tail == ", no reward":
+        key, words = "no_reward", "after, no reward"
+    else:
+        key, words = moment, moment
+    return {
+        "cause": kind,
+        "label": kind[:1].upper() + kind[1:],
+        "ending": f"{heard}:{key}",
+        "ending_label": f"{lead} {words}",
+        "arrived": arrived,
+    }

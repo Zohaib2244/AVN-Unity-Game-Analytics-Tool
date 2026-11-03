@@ -1,21 +1,23 @@
 // One player's raw timeline (the old renderRawEvents): every event of the range, grouped by session, with
 // highlights and their rules, parameter folds, the filter, and the Event Analysis tab over the same events.
 // Events arrive page by page (insights/journey, one snapshot) until the whole range is in.
-import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react';
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { errorMessage, isAbort, read } from '@/api';
-import { Tag } from '@avn/ui';
+import { Popover, Tag } from '@avn/ui';
+import { motion } from 'motion/react';
 import { Ico } from '@/components/icons';
 import { useNotify } from '@/components/feedback';
 import type { DayRange } from '@/lib/filters';
 import { timezoneOffset } from '@/lib/filters';
 import { analysisDate, clock, duration, number, percent, type Timezone } from '@/lib/format';
-import { conditionError, eventMatchesCondition, highlightMatchIndices, highlightMatches, highlightNavigationIndex, matchingConditionParams } from '@/lib/conditions';
+import { conditionError, conditionGroup, eventCondition, eventMatchesCondition, HIGHLIGHT_COLORS, highlightMatchIndices, highlightMatches, highlightNavigationIndex, matchingConditionParams, paramCondition } from '@/lib/conditions';
 import { gameURL } from '@/lib/games';
 import { storeGet, storeSet } from '@/lib/store';
 import type { TimelineHighlight } from '@/lib/player-events';
 import type { Game, JourneyEvent, JourneyPage, SessionSummary } from '@/lib/types';
 import { Disclosure, useDisclosures } from './Disclosure';
 import { EventAnalysis } from './EventAnalysis';
+import { eventLabel, levelChange, shapeEvent, SNAPSHOT_EVENTS } from './eventLayout';
 import { HighlightSetup } from './HighlightSetup';
 import {
   buildCatalog, chipTitle, chipValue, DEFAULT_HIDDEN_PARAMS, defaultParamState, foldRuns, highlightName, highlightSummary, matchesFilter, MAX_HIGHLIGHTS,
@@ -25,6 +27,8 @@ import {
 type Mode = 'highlight' | 'filter';
 type Focus = { event: string; label: string };
 const joinClass = (...names: Array<string | false | null | undefined>): string => names.filter(Boolean).join(' ');
+/** The name of the highlight a click on one value makes: the same click again finds and removes it. */
+const quickLabel = (item: { name: string }, key: string, value: unknown): string => (key === 'STATE' ? `${eventLabel(item.name)} · ${String(value)}` : `${eventLabel(item.name)} · ${key} ${chipValue(value)}`);
 
 /** The events of the range for one player, page by page; the same snapshot throughout, so counts stay steady. */
 type Journey = { events: JourneyEvent[]; complete: boolean; failure: string; states: Record<string, SessionSummary> };
@@ -90,6 +94,35 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
   const updateParams = (change: (state: ParamState) => ParamState) => setParamState((previous) => { const next = change(previous); storeSet(paramKey, next); return next; });
   const hidden = new Set(paramState.hidden);
 
+  // Which kinds of event the log shows; the game's snapshots (the player and the device, not something that happened) start folded away.
+  const typesKey = `avn-timeline-event-types-${game.id}`;
+  const [offTypes, setOffTypes] = useState<string[]>(() => storeGet<{ hidden?: string[] }>(typesKey)?.hidden ?? SNAPSHOT_EVENTS);
+  const offSet = useMemo(() => new Set(offTypes), [offTypes]);
+  const setTypes = (next: string[]) => { storeSet(typesKey, { hidden: next }); setOffTypes(next); };
+  const typesButton = useRef<HTMLButtonElement>(null);
+  const [typesOpen, setTypesOpen] = useState(false);
+  // The row you clicked stays where it was on screen when the page above it changes (a highlight appearing).
+  const place = useRef<{ el: HTMLElement; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const held = place.current;
+    if (!held) return;
+    place.current = null;
+    const shift = held.el.isConnected ? held.el.getBoundingClientRect().top - held.top : 0;
+    if (shift) window.scrollBy({ top: shift, behavior: 'instant' });
+  });
+  // The last level an event named before each one in its session, so a row marks a level only where it changes.
+  const levelBefore = useMemo(() => {
+    const before: Array<number | null> = [];
+    let last: number | null = null;
+    let current = -1;
+    for (const item of items) {
+      if (item.session !== current) { current = item.session; last = null; }
+      before.push(last);
+      if (item.level != null) last = item.level;
+    }
+    return before;
+  }, [items]);
+
   const [shownSession, setShownSession] = useState('all');
   const [current, setCurrent] = useState(-1);
   const [focus, setFocus] = useState<Focus | null>(null);
@@ -103,12 +136,15 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
 
   const inSession = (session: string, index: number): boolean => session === 'all' || items[index]?.session === Number(session);
   const visible = (index: number): boolean => inSession(shownSession, index);
-  const scoped = items.filter((_, index) => visible(index));
+  const shownType = (index: number): boolean => !offSet.has(items[index]!.name);
+  const scoped = items.filter((_, index) => visible(index) && shownType(index));
+  const typeCounts = new Map<string, number>();
+  items.forEach((item, index) => { if (visible(index)) typeCounts.set(item.name, (typeCounts.get(item.name) ?? 0) + 1); });
   const focusIndex = focus ? items.findIndex((item) => item.event_id === focus.event) : -1;
   const selection = navSelection === 'all' || Number(navSelection) < rules.length ? navSelection : 'all';
   const validRules = rules.filter((rule) => rule.enabled !== false && !conditionError(rule.conditions));
-  const matchIndices = highlightMatchIndices(items, rules, selection).filter(visible);
-  const counts = rules.map((rule) => (conditionError(rule.conditions) ? 0 : items.filter((item, index) => visible(index) && eventMatchesCondition(item, rule.conditions)).length));
+  const matchIndices = highlightMatchIndices(items, rules, selection).filter((index) => visible(index) && shownType(index));
+  const counts = rules.map((rule) => (conditionError(rule.conditions) ? 0 : items.filter((item, index) => visible(index) && shownType(index) && eventMatchesCondition(item, rule.conditions)).length));
 
   const commit = (next: TimelineHighlight[], fresh?: number) => {
     writeStore({ rules: next, mode });
@@ -132,7 +168,7 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
     const target = listRef.current?.querySelector<HTMLElement>(`[data-timeline-index="${pulse.index}"]`);
     if (!target) return;
     target.focus({ preventScroll: true });
-    target.scrollIntoView({ block: 'center' });
+    target.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     target.classList.add('jump-pulse');
     const timer = window.setTimeout(() => target.classList.remove('jump-pulse'), 800);
     return () => window.clearTimeout(timer);
@@ -179,6 +215,18 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
     disclosures.set('highlight-setup', true);
   };
 
+  // Click a value (or a STATE) to highlight every event that carries it; click it again to take it off.
+  const quickHighlight = (el: HTMLElement, item: TimelineItem, key: string, value: unknown) => {
+    place.current = { el, top: el.getBoundingClientRect().top };
+    const label = quickLabel(item, key, value);
+    const at = rules.findIndex((rule) => rule.label === label);
+    if (at >= 0) { writeStore({ rules: rules.filter((_, index) => index !== at), mode: 'highlight' }); setCurrent(-1); return; }
+    if (rules.length >= MAX_HIGHLIGHTS) { toast('Use at most 20 highlights.'); return; }
+    const color = HIGHLIGHT_COLORS[rules.length % HIGHLIGHT_COLORS.length]![0];
+    writeStore({ rules: [...rules, { label, color, enabled: true, conditions: conditionGroup([eventCondition(item.name), { ...paramCondition(key), value: String(value) }]) }], mode: 'highlight' });
+    setCurrent(-1);
+  };
+
   const toggleHide = (key: string) => {
     const lower = key.toLowerCase();
     if (hidden.has(lower)) { updateParams((state) => ({ ...state, hidden: state.hidden.filter((name) => name !== lower) })); return; }
@@ -194,19 +242,27 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
     const note = eventNote(item, owner, states[owner.id]);
     const hits = mode === 'highlight' ? rules.flatMap((rule, index) => (highlightMatches(item, rule) ? [{ rule, index }] : [])) : [];
     const lit = new Set(hits.flatMap(({ rule }) => matchingConditionParams(item, rule.conditions)));
+    const shape = shapeEvent(item);
     const quiet: string[] = [];
-    const chips = Object.entries(item.params).map(([key, value]) => {
-      const off = hidden.has(key.toLowerCase());
+    const chip = (key: string, value: unknown, kind: 'show' | 'link' | 'quiet'): ReactElement | null => {
+      const off = kind === 'quiet' || (kind === 'show' && hidden.has(key.toLowerCase()));
       if (!paramState.showAll && off && !lit.has(key)) { quiet.push(key); return null; }
       const hit = hits.find(({ rule }) => matchingConditionParams(item, rule.conditions).includes(key));
+      const picked = rules.some((rule) => rule.label === quickLabel(item, key, value));
       return (
-        <span key={key} className={joinClass('chip', hit && `highlight-ink highlight-${hit.rule.color}`, off && 'chip-off')}>
+        <span key={key} className={joinClass('chip', hit && `highlight-ink highlight-${hit.rule.color}`, off && 'chip-off', kind === 'link' && 'chip-link')}>
           <button type="button" className="chip-key" onClick={() => toggleHide(key)} title={off ? `Show ${key} again in clean view` : `Hide ${key} in every event`}>{key}</button>{' '}
-          <span title={chipTitle(value)}>{chipValue(value)}</span>
+          <button type="button" className={joinClass('chip-value', picked && 'on')} aria-pressed={picked} onClick={(event) => quickHighlight(event.currentTarget, item, key, value)} title={kind === 'link' ? `${chipTitle(value)} · highlight every event with this ID` : `${chipTitle(value)} · highlight every ${eventLabel(item.name)} event with this value`}>{chipValue(value)}</button>
         </span>
       );
-    });
+    };
+    const chips = [
+      ...shape.show.map(([key, value]) => chip(key, value, 'show')),
+      ...shape.quiet.map(([key, value]) => chip(key, value, 'quiet')),
+      ...shape.link.map(([key, value]) => chip(key, value, 'link')),
+    ];
     const chipList = <>{chips}{quiet.length ? <button type="button" className="chip chip-more" onClick={() => setShowAll(true)} title={`Hidden: ${quiet.join(', ')}. Click to show all parameters.`}>+{quiet.length}</button> : null}</>;
+    const level = levelChange(item.level, levelBefore[item.index]);
     const params = item.name === 'session_start' && Object.keys(item.params).length ? (
       <details className="chip-collapse" open={lit.size > 0 ? true : undefined}><summary>{sessionStartSummary(item.params)}</summary>{chipList}</details>
     ) : chipList;
@@ -217,7 +273,9 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
         <time dateTime={item.client_ts}>{clock(item.client_ts, timezone)}</time>
         <span className={joinClass('journey-gap', item.gap != null && item.gap > 60 && 'long')}>{item.gap == null ? '' : `+${duration(item.gap)}`}</span>
         <span className="journey-name">
-          {item.name}
+          {level != null ? <span className="level-mark" title={`Level ${level}`}>L{level}</span> : null}
+          <span title={item.name}>{eventLabel(item.name)}</span>
+          {shape.state ? <button type="button" className={joinClass('state-badge', rules.some((rule) => rule.label === quickLabel(item, 'STATE', shape.state)) && 'on')} onClick={(event) => quickHighlight(event.currentTarget, item, 'STATE', shape.state)} title={`Highlight every ${eventLabel(item.name)} ${shape.state}`}>{shape.state}</button> : null}
           {run ? <span className="chip chip-count" title={`${run.length} identical events in a row`}>×{run.length}</span> : null}
           {note ? <span className="event-note">{note}</span> : null}
           {focused && focus ? <span className="highlight-tag focus-tag">{focus.label}</span> : null}
@@ -235,7 +293,7 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
     const query = mode === 'filter' ? filterText : '';
     const sections = sessions.flatMap((session, index) => {
       if (shownSession !== 'all' && index !== Number(shownSession)) return [];
-      const shown = session.items.filter((item) => matchesFilter(item, query));
+      const shown = session.items.filter((item) => !offSet.has(item.name) && matchesFilter(item, query));
       return shown.length ? [{ session, index, shown }] : [];
     });
     if (!sections.length) return <p className="help">{events.length ? 'No events match the filter.' : complete ? 'No events from this player in these days.' : 'Loading events…'}</p>;
@@ -269,12 +327,13 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
         <label className="compact-session-picker">Session<select value={shownSession} onChange={(event) => { const next = event.target.value; setShownSession(next); if (current >= 0 && !inSession(next, current)) setCurrent(-1); }}><option value="all">All {number(sessions.length)} sessions</option>{sessions.map((session, index) => <option key={session.id + index} value={index}>Session {index + 1} · {analysisDate(session.items[0]!.client_ts, timezone)}</option>)}</select></label>
         <span className="session-picker-label" id={pickerLabel}>Sessions</span>
         <div className="session-chips" role="group" aria-labelledby={pickerLabel}>
-          <button type="button" className="session-chip" aria-pressed={shownSession === 'all'} onClick={() => setShownSession('all')}><strong>All sessions</strong><span>{number(sessions.length)} sessions</span></button>
+          <button type="button" className="session-chip" aria-pressed={shownSession === 'all'} onClick={() => setShownSession('all')}>{shownSession === 'all' ? <motion.i layoutId="session-bar" className="session-bar" aria-hidden="true" transition={{ type: 'spring', stiffness: 520, damping: 40 }} /> : null}<strong>All sessions</strong><span>{number(sessions.length)} sessions</span></button>
           {sessions.map((session, index) => {
             const first = session.items[0]!.client_ts;
             const gap = session.items[0]!.gap;
             return (
               <button key={session.id + index} type="button" className="session-chip" aria-pressed={shownSession === String(index)} onClick={() => { setShownSession(String(index)); if (current >= 0 && !inSession(String(index), current)) setCurrent(-1); }}>
+                {shownSession === String(index) ? <motion.i layoutId="session-bar" className="session-bar" aria-hidden="true" transition={{ type: 'spring', stiffness: 520, damping: 40 }} /> : null}
                 <strong>Session {index + 1}{focus && sessionHasEvent(session, focus.event) ? <>{' '}<span className="pill">{focus.label}</span></> : null}</strong>
                 <span className="session-chip-lines">
                   <span>{analysisDate(first, timezone)}</span>
@@ -380,6 +439,16 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
                 <button type="button" className="button small-button" onClick={resetParams}>Reset to default</button>
               </div>
             </Disclosure>
+            <button type="button" ref={typesButton} className="button small-button types-button" aria-haspopup="dialog" aria-expanded={typesOpen} onClick={() => setTypesOpen((open) => !open)}>Event types{offTypes.length ? <span className="small muted"> · {number(offTypes.filter((name) => typeCounts.has(name)).length)} hidden</span> : null}</button>
+            <Popover position="fixed" open={typesOpen} onClose={() => setTypesOpen(false)} anchor={typesButton} width={300} className="types-pop">
+              <div className="pop-scroll" role="group" aria-label="Event types shown">
+                <div className="pop-grp"><span className="eyebrow">Event types</span></div>
+                {[...typeCounts].sort((a, b) => b[1] - a[1]).map(([name, count]) => (
+                  <label key={name} className="check-row types-row"><input type="checkbox" checked={!offSet.has(name)} onChange={(event) => setTypes(event.target.checked ? offTypes.filter((item) => item !== name) : [...offTypes, name])} /> <span title={name}>{eventLabel(name)}</span> <span className="small muted">{number(count)}</span></label>
+                ))}
+                <div className="pop-grp types-foot"><button type="button" className="button small-button" onClick={() => setTypes([])}>Show all</button><button type="button" className="button small-button" onClick={() => setTypes(SNAPSHOT_EVENTS)}>Reset</button></div>
+              </div>
+            </Popover>
             <label className="check-row" htmlFor={groupId}><input id={groupId} type="checkbox" checked={paramState.group} onChange={(event) => updateParams((state) => ({ ...state, group: event.target.checked }))} /> Group repeated events</label>
           </div>
             <div className="toolbar" hidden={analysis || mode !== 'filter'}>
@@ -392,7 +461,7 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
           {analysis ? (
             <EventAnalysis events={items} session={shownSession} complete={complete} failure={failure} timezone={timezone} onJump={jumpFromAnalysis} onHighlight={highlightFromAnalysis} onRetry={() => setAttempt((count) => count + 1)} />
           ) : (
-            <div className="panel-body" id="journey" ref={listRef}>{renderSessions()}</div>
+            <div className="panel-body" id="journey" ref={listRef}><div className="journey-swap" key={shownSession}>{renderSessions()}</div></div>
           )}
         </div>
       </div>

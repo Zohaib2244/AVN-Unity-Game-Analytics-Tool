@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from avn_analytics import device_specs, session_state
+from avn_analytics import events as events_module
 from avn_analytics.api import BodyLimit, create_app, dump_on_signal
 from avn_analytics.config import Settings
 from avn_analytics.exports import period_bounds
@@ -1702,7 +1703,39 @@ def test_player_story_includes_latest_player_information_and_play_stats(backend)
             "screen_height": 2400,
             "gpu_tier": "high",
         },
+        "snapshots": {},
     }
+
+
+def test_player_story_includes_the_latest_device_snapshot(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    common = {"device_id": "snapshot-player", "session_id": "s1"}
+    events = [
+        event(
+            **common,
+            name="DEVICE_ANALYSIS",
+            client_ts="2026-09-01T09:00:00Z",
+            params={"STATE": "Snapshot", "TIER": "Low", "RAM_MB": 2048, "CPU_CORES": 4},
+        ),
+        event(
+            **common,
+            name="DEVICE_ANALYSIS",
+            client_ts="2026-10-04T09:00:00Z",
+            params={"STATE": "Snapshot", "TIER": "Mid", "RAM_MB": 3712, "CPU_CORES": 8},
+        ),
+    ]
+    assert send(ingest, game, events).status_code == 200
+
+    # The newest snapshot, even from before the picked range.
+    data = admin.get(
+        f"/v1/games/{game['id']}/insights/story",
+        params={"player": "snapshot-player", "start": "2026-10-04", "end": "2026-10-04"},
+    ).json()
+    snapshots = data["info"]["snapshots"]
+    assert snapshots["device"]["values"] == {"TIER": "Mid", "RAM_MB": 3712, "CPU_CORES": 8}
+    assert snapshots["device"]["at"].startswith("2026-10-04T09:00:00")
+    assert "player" not in snapshots
 
 
 def test_device_specs_lookup_is_explicit_and_uses_the_collected_model(backend, monkeypatch):
@@ -3053,7 +3086,10 @@ def _insights(admin, game, path, **params):
     return response.json()
 
 
-def test_events_overview_lists_every_event_with_counts_and_meaning(backend):
+def test_events_overview_lists_every_event_with_counts_and_meaning(backend, monkeypatch):
+    # The events are dated 2026-10-04: keep them "within the last 30 days" whatever today is.
+    age = (datetime.now(UTC).date() - date(2026, 10, 4)).days
+    monkeypatch.setattr(events_module, "STALE_DAYS", age + 29)
     admin, game = _journey_game(backend)
     url = f"/v1/games/{game['id']}/dictionary"
     assert (
