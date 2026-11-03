@@ -3,6 +3,7 @@
 // copy link, theme switch, shortcuts (Ctrl /), offline banner, request activity.
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement, type ReactNode } from 'react';
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router';
+import { IngestMeter } from './IngestMeter';
 import { AccountMenu, AppShell, BellButton, CommandPalette, IconButton, MoreSheet, NotificationList, Page, Popover, SearchButton, ShortcutsDialog, Sidebar, SidebarNav, SingleSelect, TabBar, TopBar, Workspace, type CommandItem, type IconName, type NavGroup } from '@avn/ui';
 import { freshness, refreshAll, requestActivity } from '@/api';
 import { GAME_SECTIONS, PLATFORM_ORDER, ROLE_LABELS, gameGroups, gamePath, iconURL, initials, sameGame, withIcon } from '@/lib/games';
@@ -141,6 +142,7 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
         </>
       ) : null}
       <SidebarNav groups={game ? NAV_GROUPS : workspaceNav} active={navActive} onSelect={onNav} label={game ? 'Game' : 'Workspace'} />
+      {game ? <IngestMeter game={game} /> : null}
       <AccountMenu name={accountName} role={`${ROLE_LABELS[role] || role}${me.source === 'lan' ? ' · local network' : ''}`} initial={accountName.slice(0, 1).toUpperCase()} items={accountItems} onSelect={onAccount} />
     </Sidebar>
   );

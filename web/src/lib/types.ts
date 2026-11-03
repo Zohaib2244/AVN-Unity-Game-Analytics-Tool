@@ -376,3 +376,9 @@ export type PlayerSummaryData = {
   powerups: { used: Record<string, number>; obtained: Array<{ powerup: string; source: string; count: number }> };
   screens: Record<string, number>; background: Record<string, number>; tutorials: { shown: number; completed: number }; shop_taps: number; levels_ended_by_kill: number;
 };
+
+/* ─── The sidebar's ingest meter (health/live): what is arriving at one game right now ─── */
+export type IngestMeterData = {
+  now: string; last_event_at: string | null; recent_minutes: number; recent_events: number; per_minute: number; players_now: number;
+  events_24h: number; hourly: Array<{ hour: string; events: number }>; versions: Array<{ version: string; events: number }>; stored_bytes: number;
+};

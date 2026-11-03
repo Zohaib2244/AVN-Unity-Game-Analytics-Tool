@@ -35,6 +35,7 @@ from . import (
     events,
     group_library,
     highlights,
+    ingest_meter,
     insights,
     journeys,
     materialize,
@@ -886,6 +887,10 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     ):
         start, end = bounds(period, selected_date, end_date)
         return storage.health(str(game_id), start, end, basis, chosen)
+
+    @admin_api.get("/v1/games/{game_id}/health/live")
+    def game_ingest_meter(game_id: UUID):
+        return ingest_meter.ingest_meter(storage, str(game_id))
 
     @admin_api.get("/v1/games/{game_id}/export")
     def export(

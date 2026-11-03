@@ -171,3 +171,31 @@ body{background-image:radial-gradient(var(--dot) 1px,transparent 1.3px);backgrou
 .search-btn{font-family:var(--font-ui)}
 .grp-label{overflow:hidden}
 @container app (max-width: 900px) { .ws-switch { display: none; } .nav-ind::before { top: 8px; bottom: 8px; } }
+
+/* ── The ingest meter: a thin chip above the account button, a panel when opened ── */
+.ingest { margin-top: 4px; }
+.ingest-chip { --c: var(--ok); display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 12px; text-align: left; transition: background .2s, border-color .2s; }
+.ingest-chip:hover, .ingest-chip[aria-expanded="true"] { background: var(--nested); border-color: var(--line-strong); }
+.ingest-chip.quiet { --c: var(--warn); } .ingest-chip.stale { --c: var(--bad); } .ingest-chip.empty { --c: var(--dim); }
+.ingest-chip b { font-weight: 600; white-space: nowrap; }
+.ingest-rate { font-family: var(--font-mono); color: var(--muted); font-size: 11px; white-space: nowrap; }
+.ingest-ago { margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap; }
+.ingest-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.ingest-chip.live .ingest-dot { animation: ingest-pulse 2s infinite; }
+@keyframes ingest-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 55%, transparent); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .ingest-chip.live .ingest-dot { animation: none; } }
+.ingest-pop { position: fixed; z-index: 60; width: 308px; display: grid; gap: 10px; padding: 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: 0 12px 36px #0007; color: var(--text); }
+.ingest-pop h3 { display: flex; justify-content: space-between; gap: 8px; margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.ingest-state { letter-spacing: 0; text-transform: none; font-size: 12px; color: var(--ok); }
+.ingest-state.quiet { color: var(--warn); } .ingest-state.stale { color: var(--bad); } .ingest-state.empty { color: var(--dim); }
+.ingest-top { display: flex; justify-content: space-between; gap: 14px; }
+.ingest-top div { display: grid; gap: 1px; } .ingest-top div:last-child { text-align: right; }
+.ingest-top b { font-size: 1.35rem; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.ingest-top span { font-size: 11px; color: var(--muted); }
+.ingest-bars { display: block; width: 100%; height: 44px; }
+.ingest-bars rect { fill: var(--accent); opacity: .55; } .ingest-bars rect.now { opacity: 1; }
+.ingest-axis { display: flex; justify-content: space-between; margin-top: -6px; font-size: 10.5px; color: var(--dim); }
+.ingest-pop dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; font-size: 12px; }
+.ingest-pop dt { color: var(--muted); } .ingest-pop dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.ingest-pop dd small { color: var(--dim); }
+@container app (max-width: 900px) { .ingest-chip b, .ingest-rate, .ingest-ago { display: none; } .ingest-chip { justify-content: center; padding: 8px 0; } }
