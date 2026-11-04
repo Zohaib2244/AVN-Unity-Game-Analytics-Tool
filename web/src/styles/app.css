@@ -665,8 +665,8 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
 @media (max-width: 760px) { .raw-timeline .journey-events li { grid-template-columns: 62px 48px minmax(0, 1fr); } .journey-lanes { display: none; } }
 
 /* ── The Player tab: summary widgets flow in balanced columns instead of a ragged grid ── */
-.ps-grid { display: block; columns: 340px; column-gap: 12px; }
-.ps-grid > .ps-card { break-inside: avoid; margin-bottom: 12px; }
+.ps-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; align-items: start; }
+.ps-col { display: grid; gap: 12px; min-width: 0; }
 
 /* ── Players list: tighter rows, the player's last event readable at a glance ── */
 .players-table td.last-event { white-space: nowrap; font-size: var(--fs-sm); color: var(--muted); }
@@ -675,3 +675,76 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
 .players-table td { padding-block: 9px; }
 .players-table .row-title + .small { margin: 1px 0 0; }
 .players-table .small .pill { margin-left: 6px; }
+.players-table th.sortable button { padding-inline: 7px; }
+
+/* ── Levels: Drop by, in plain words ── */
+.drop-view { display: grid; gap: 12px; }
+.drop-verdict { display: grid; gap: 8px; padding: 14px 16px; border-radius: var(--r-card, 12px); background: var(--nested); box-shadow: inset 0 0 0 1px var(--line); }
+.drop-sentence { margin: 0; font-size: 1.05rem; line-height: 1.5; }
+.drop-sentence strong { font-weight: 650; }
+.drop-standout { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: var(--fs-sm); color: var(--muted); }
+.drop-chip-note { margin-left: 8px; font-size: 11px; font-family: var(--font-mono); }
+.drop-order { display: flex; align-items: center; gap: 10px; font-size: var(--fs-sm); color: var(--muted); }
+.drop-table th.num, .drop-table td.num { text-align: right; }
+.drop-table th { white-space: normal; max-width: 150px; vertical-align: bottom; }
+.drop-table tr.drop-faint td { opacity: .55; }
+.drop-gap { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
+.drop-gap-bar { position: relative; width: 96px; height: 8px; border-radius: 4px; background: var(--raise); overflow: hidden; }
+.drop-gap-bar::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--line-strong); }
+.drop-gap-bar i { position: absolute; top: 0; bottom: 0; max-width: 50%; border-radius: 4px; background: currentColor; opacity: .85; }
+.drop-gap-bar i.loss { left: 50%; right: auto !important; color: var(--bad); }
+.drop-gap-bar i.gain { right: 50%; left: auto !important; color: var(--info); }
+
+/* ── Game settings: the game first, rarely-changed settings one line each until opened ── */
+.section-grid.section-spacing { margin-bottom: 14px; }
+.settings-group { margin: 22px 0 8px; font-size: var(--fs-label, 12px); font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.settings-fold { margin-bottom: 8px; border-radius: var(--r-card, 12px); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.settings-fold-head { display: flex; align-items: baseline; gap: 14px; padding: 12px 16px; cursor: pointer; list-style: none; }
+.settings-fold-head::-webkit-details-marker { display: none; }
+.settings-fold-head::before { content: "›"; color: var(--muted); transition: transform .15s; align-self: center; }
+.settings-fold[open] > .settings-fold-head::before { transform: rotate(90deg); }
+.settings-fold-head strong { flex: none; min-width: 150px; font-weight: 600; }
+.settings-fold-head span { font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-fold-head:hover { background: var(--raise); border-radius: var(--r-card, 12px); }
+.settings-fold-body { padding: 0 16px 14px; border-top: 1px solid var(--line); }
+.settings-fold-body > .panel { margin: 0; padding: 0; border: 0; box-shadow: none; background: none; }
+.settings-fold-body .panel-header { padding-inline: 0; }
+.settings-fold-body .panel-header h2 { display: none; }
+.settings-fold-body .panel-body { padding-inline: 0; }
+.settings-fold-body > .help { margin: 12px 0 8px; }
+.game-identity { display: flex; align-items: center; gap: 18px; padding-bottom: 14px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.game-identity-text { display: grid; gap: 4px; min-width: 0; }
+.game-identity-text strong { font-size: 1.2rem; }
+.game-identity-text code { justify-self: start; }
+.game-identity-text .icon-actions { justify-self: start; }
+.game-identity-text .icon-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.connect-card { display: grid; align-content: start; gap: 10px; }
+.connect-card .connection { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.connect-card .connection code { overflow-wrap: anywhere; }
+.connect-card p { margin: 0; }
+
+/* ── Player information: the device and a few facts first, detail below, identifiers tucked away ── */
+.info-hero { display: grid; gap: 14px; padding: 16px 20px 18px; border-bottom: 1px solid var(--line); }
+.info-device { display: grid; gap: 2px; }
+.info-device strong { font-size: 1.35rem; font-weight: 650; }
+.info-device span { color: var(--muted); font-size: var(--fs-sm); }
+.info-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
+.info-facts li { display: grid; gap: 2px; padding: 8px 12px; border-radius: 10px; background: var(--nested); box-shadow: inset 0 0 0 1px var(--line); }
+.info-facts li span { font-size: var(--fs-label, 12px); color: var(--muted); }
+.info-facts li b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.player-information .player-information-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.player-information .player-information-grid > section { border-right: 0; }
+.player-information .player-information-grid > section + section { border-left: 1px solid var(--line); }
+.player-information .player-information-grid dt, .player-information .player-information-grid dd { font-size: var(--fs-sm); }
+.info-more { padding: 10px 20px 14px; border-top: 1px solid var(--line); }
+.info-more summary { cursor: pointer; font-size: var(--fs-sm); color: var(--muted); display: flex; gap: 10px; }
+.info-more summary:hover { color: var(--text); }
+.info-more dl { display: grid; gap: 6px; margin: 10px 0 0; font-size: var(--fs-sm); }
+.info-more dl > div { display: grid; grid-template-columns: minmax(110px, .4fr) minmax(0, 1.6fr); gap: 10px; }
+.info-more dt { color: var(--muted); } .info-more dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 700px) { .player-information .player-information-grid { grid-template-columns: 1fr; } .player-information .player-information-grid > section + section { border-left: 0; border-top: 1px solid var(--line); } }
+@media (max-width: 620px) {
+  .settings-fold-head { flex-wrap: wrap; row-gap: 2px; }
+  .settings-fold-head strong { min-width: 0; }
+  .settings-fold-head span { flex-basis: 100%; padding-left: 20px; white-space: normal; }
+}

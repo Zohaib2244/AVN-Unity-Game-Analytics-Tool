@@ -4,15 +4,15 @@ import type { LevelFeatureKind, LevelFeatureRow, LevelThing } from '@/lib/types'
 export type FeatureMode = 'occurrence' | 'drop';
 export type FeatureSubject = 'ads' | 'powerups' | 'fails';
 export type AdSplit = 'format' | 'placement';
-/** What counts as leaving: never starting the next level, leaving the session, or both side by side. */
-export type DropBasis = 'next' | 'session' | 'both';
+/** What counts as leaving: never starting the next level, or ending that session. */
+export type DropBasis = 'next' | 'session';
 
 export type FeaturePrefs = { mode: FeatureMode; subject: FeatureSubject; split: AdSplit; basis: DropBasis; value: string };
-export const DEFAULT_FEATURE_PREFS: FeaturePrefs = { mode: 'occurrence', subject: 'ads', split: 'format', basis: 'both', value: '' };
+export const DEFAULT_FEATURE_PREFS: FeaturePrefs = { mode: 'occurrence', subject: 'ads', split: 'format', basis: 'next', value: '' };
 
 export const SUBJECTS: Record<FeatureSubject, string> = { ads: 'Ads', powerups: 'Powerups', fails: 'Fail reasons' };
 export const SPLITS: Record<AdSplit, string> = { format: 'Format', placement: 'Placement' };
-export const BASES: Record<DropBasis, string> = { next: 'Never started the next level', session: 'Left the session', both: 'Both' };
+export const BASES: Record<DropBasis, string> = { next: 'Stopped playing for good', session: 'Ended that session' };
 
 const SUBJECTS_LIST = Object.keys(SUBJECTS) as FeatureSubject[];
 const BASES_LIST = Object.keys(BASES) as DropBasis[];
@@ -22,7 +22,7 @@ export function cleanFeaturePrefs(raw: Partial<FeaturePrefs> | null | undefined)
     mode: value.mode === 'drop' ? 'drop' : 'occurrence',
     subject: SUBJECTS_LIST.includes(value.subject as FeatureSubject) ? value.subject as FeatureSubject : 'ads',
     split: value.split === 'placement' ? 'placement' : 'format',
-    basis: BASES_LIST.includes(value.basis as DropBasis) ? value.basis as DropBasis : 'both',
+    basis: BASES_LIST.includes(value.basis as DropBasis) ? value.basis as DropBasis : 'next',
     value: typeof value.value === 'string' ? value.value : '',
   };
 }
@@ -74,3 +74,40 @@ export const rowsWith = (rows: LevelFeatureRow[], kind: LevelFeatureKind, value:
 
 /** Which value Drop by shows: the chosen one when it exists, else the commonest. */
 export const chosenValue = (values: string[] | undefined, wanted: string): string => ((values ?? []).includes(wanted) ? wanted : (values ?? [])[0] ?? '');
+
+/** Levels with fewer players on either side than this are too few to read a gap from. */
+export const MIN_SIDE = 30;
+export type DropLevel = { level: number; started: number; met: number; withRate: number | null; withoutRate: number | null; gap: number | null; reliable: boolean; lowSample: boolean };
+/** One row per level for the table: who met it, how many of each side left, and whether the gap can be trusted. */
+export function dropLevels(rows: LevelFeatureRow[], kind: LevelFeatureKind, value: string, basis: DropBasis): DropLevel[] {
+  return rows.map((row) => {
+    const thing = row.things[kind]?.[value];
+    const met = thing?.players ?? 0;
+    const side = dropSide(row, thing, basis);
+    const usable = basis === 'session' || row.drop_available;
+    const reliable = usable && !row.low_sample && met >= MIN_SIDE && row.started - met >= MIN_SIDE && side.difference != null;
+    return { level: row.level, started: row.started, met, withRate: usable ? side.with : null, withoutRate: usable ? side.without : null, gap: usable ? side.difference : null, reliable, lowSample: row.low_sample || met < 10 };
+  });
+}
+
+export type DropSummary = { levels: number; met: number; metLeft: number; notMet: number; notMetLeft: number; withRate: number | null; withoutRate: number | null; gap: number | null; higher: DropLevel[]; lower: DropLevel[] };
+/** Across the levels with enough players on both sides: how often each side left, and the levels where the gap is biggest either way. */
+export function dropSummary(rows: LevelFeatureRow[], kind: LevelFeatureKind, value: string, basis: DropBasis, top = 3): DropSummary {
+  const levels = dropLevels(rows, kind, value, basis).filter((item) => item.reliable);
+  let met = 0; let metLeft = 0; let notMet = 0; let notMetLeft = 0;
+  for (const level of levels) {
+    const row = rows.find((item) => item.level === level.level)!;
+    const thing = row.things[kind]?.[value];
+    const total = basis === 'next' ? row.dropped : row.left_session;
+    const mine = !thing ? 0 : basis === 'next' ? thing.dropped : thing.left_session;
+    met += level.met; metLeft += mine; notMet += row.started - level.met; notMetLeft += total - mine;
+  }
+  const withRate = share(metLeft, met); const withoutRate = share(notMetLeft, notMet);
+  const byGap = [...levels].sort((a, b) => (b.gap ?? 0) - (a.gap ?? 0));
+  return {
+    levels: levels.length, met, metLeft, notMet, notMetLeft, withRate, withoutRate,
+    gap: withRate != null && withoutRate != null ? withRate - withoutRate : null,
+    higher: byGap.filter((item) => (item.gap ?? 0) >= 2).slice(0, top),
+    lower: byGap.filter((item) => (item.gap ?? 0) <= -2).reverse().slice(0, top),
+  };
+}

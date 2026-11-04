@@ -1,7 +1,8 @@
-// Game settings (avn-ux pages.md "Settings"): key numbers, icon, who can see the game, game information,
-// analysis thresholds, environment fixes, event activity, workspace move, data by version and the Danger zone. Archiving
-// is reversible (at once, Undo in the toast); deleting asks for the bundle ID.
-import { useRef, useState, type ReactElement } from 'react';
+// Game settings (avn-ux pages.md "Settings"), in order of how often you need them: the game and how to connect it
+// first, who can see it, then the settings you change rarely, each one line until opened (data collection, then
+// housekeeping), and the Danger zone last. Archiving is reversible (at once, Undo in the toast); deleting asks for
+// the bundle ID.
+import { useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { ConfirmDelete } from '@avn/ui';
 import { errorStatus, useRead, write } from '@/api';
@@ -13,9 +14,11 @@ import type { AccessPerson, EnvironmentFix, EnvironmentFixes, EnvironmentSeen, G
 import { Activity } from '@/components/Activity';
 import { ConfirmDialog, DialogShell, Heading, LoadError, Metric, QueryRegion, Skeleton, useNotify, type ToastAction } from '@/components/feedback';
 import { Field, FormError, useSubmit } from '@/components/forms';
+import { CopyButton } from '@/components/CopyButton';
 import { GameAvatar } from '@/components/GameAvatar';
 import { Ico } from '@/components/icons';
 import { removeIcon, uploadIcon } from './gameIcon';
+import { Disclosure, useDisclosures, type Disclosures } from './player/Disclosure';
 import { VersionDataPanel } from './VersionData';
 
 const WRONG = ['development', 'test', 'debug'];
@@ -143,6 +146,16 @@ function EnvironmentPanel({ game, manage }: { game: Game; manage: boolean }): Re
 }
 
 /* ─── The page ─── */
+/** A settings section that stays one line (its name and what it is set to) until opened; its contents load when opened. */
+function Fold({ name, title, summary, disclosures, children }: { name: string; title: string; summary: string; disclosures: Disclosures; children: ReactNode }): ReactElement {
+  const open = disclosures.isOpen(name, false);
+  return (
+    <Disclosure name={name} disclosures={disclosures} className="settings-fold" summaryClassName="settings-fold-head" summary={<><strong>{title}</strong><span className="muted">{summary}</span></>}>
+      <div className="settings-fold-body">{open ? children : null}</div>
+    </Disclosure>
+  );
+}
+
 export function GameSettingsPage({ game }: { game: Game }): ReactElement {
   const { me, overview, workspace, workspaceName, canManageGames: manage, variantsOf, refresh, chooseWorkspace } = useSession();
   const navigate = useNavigate();
@@ -156,6 +169,7 @@ export function GameSettingsPage({ game }: { game: Game }): ReactElement {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [target, setTarget] = useState(() => me.workspaces.find((item) => item.id !== workspace)?.id || '');
   const variants = variantsOf(game);
+  const folds = useDisclosures(`avn-settings-folds-${game.id}`);
 
   const update = async (changes: Record<string, unknown>, message: string, undo: ToastAction | null = null) => {
     await write(path, { method: 'PATCH', body: JSON.stringify(changes) });
@@ -209,55 +223,61 @@ export function GameSettingsPage({ game }: { game: Game }): ReactElement {
             <Metric label="API keys" value={`${detail.keys_active} active`} note={`${detail.keys_total} created in total`} />
             <Metric label="Storage" value={fileSize(detail.storage_bytes)} note="Event database on disk" />
           </section>
-          {manage ? (
-            <section className="panel section-spacing">
-              <div className="panel-header"><div><h2>Game icon</h2><p>Shown next to the game in the sidebar and on the games page{variants.length > 1 ? ' · applies to both platforms' : ''}</p></div></div>
-              <div className="panel-body icon-settings">
-                <GameAvatar name={detail.name} games={variants} className="icon-large" />
-                <div className="icon-actions">
-                  <label className="button" htmlFor="icon-file"><Ico name="export" size={14} /> {detail.icon_updated_at ? 'Change icon' : 'Upload icon'}</label>
-                  <input ref={iconInput} id="icon-file" type="file" accept="image/*" hidden onChange={() => void changeIcon()} />
-                  {variants.some((item) => item.icon_updated_at) ? <button type="button" className="button danger-text" id="icon-remove" onClick={() => void dropIcon()}>Remove</button> : null}
-                  <p className="small muted">Any image works; it is cropped to a square.</p>
-                </div>
-              </div>
-            </section>
-          ) : null}
-          {manage ? <AccessPanel game={game} /> : null}
           <div className="section-grid section-spacing">
             <section className="panel">
-              <div className="panel-header"><h2>Game information</h2>{manage ? <button type="button" className="button ghost" onClick={() => setEditing(true)}>Edit <Ico name="arrow" size={12} /></button> : null}</div>
+              <div className="panel-header"><h2>Game</h2></div>
               <div className="panel-body">
+                <div className="game-identity">
+                  <GameAvatar name={detail.name} games={variants} className="icon-large" />
+                  <div className="game-identity-text">
+                    <strong>{detail.name}</strong>
+                    <code>{detail.bundle_id}</code>
+                    <span>{platformLabel(detail.platform)} · {archived ? <span className="pill bad">Archived · collection paused</span> : <span className="pill good">{detail.last_event ? 'Active' : 'Ready for events'}</span>}</span>
+                    {manage ? (
+                      <div className="icon-actions">
+                        <label className="button small-button" htmlFor="icon-file"><Ico name="export" size={13} /> {detail.icon_updated_at ? 'Change icon' : 'Upload icon'}</label>
+                        <input ref={iconInput} id="icon-file" type="file" accept="image/*" hidden onChange={() => void changeIcon()} />
+                        {variants.some((item) => item.icon_updated_at) ? <button type="button" className="button small-button danger-text" id="icon-remove" onClick={() => void dropIcon()}>Remove icon</button> : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
                 <ul className="status-list">
-                  <li><span>Name</span><strong>{detail.name}</strong></li>
-                  <li><span>Bundle ID</span><code>{detail.bundle_id}</code></li>
-                  <li><span>Platform</span><strong>{platformLabel(detail.platform)}</strong></li>
-                  <li><span>Status</span>{archived ? <span className="pill bad">Archived · collection paused</span> : <span className="pill good">{detail.last_event ? 'Active' : 'Ready for events'}</span>}</li>
-                  <li><span>Game ID</span><span className="copy-row"><code>{detail.id}</code><button type="button" className="icon-button" aria-label="Copy game ID" onClick={() => void copyId()}><Ico name="copy" size={14} /></button></span></li>
-                  <li><span>Registered</span><strong>{displayDate(detail.created_at)}</strong></li>
-                  <li><span>First event</span><strong>{displayDate(detail.first_event)}</strong></li>
                   <li><span>Latest event</span><strong>{displayDate(detail.last_event)}</strong></li>
+                  <li><span>First event</span><strong>{displayDate(detail.first_event)}</strong></li>
+                  <li><span>Registered</span><strong>{displayDate(detail.created_at)}</strong></li>
                   <li><span>Event definitions</span><strong>{number(detail.definitions)}</strong></li>
+                  <li><span>Game ID</span><span className="copy-row"><code>{detail.id}</code><button type="button" className="icon-button" aria-label="Copy game ID" onClick={() => void copyId()}><Ico name="copy" size={14} /></button></span></li>
                   <li className="notes-row"><span>Notes</span>{detail.notes ? <p>{detail.notes}</p> : <span className="muted">No notes yet</span>}</li>
                 </ul>
-                <div className="section-spacing"><Link className="button" to={gamePath(game, 'keys')}><Ico name="key" size={15} /> Manage keys</Link> <Link className="button" to={gamePath(game, 'dictionary')}><Ico name="book" size={15} /> Events</Link></div>
+                <div className="section-spacing"><Link className="button" to={gamePath(game, 'dictionary')}><Ico name="book" size={15} /> Event dictionary</Link></div>
               </div>
             </section>
-            <aside className="aside-card"><Ico name="pulse" size={25} /><h3>Connect your game</h3><p>Send batches to the collection endpoint with one of this game’s API keys in the <code>X-API-Key</code> header.</p><div className="connection"><code>POST {overview.ingest_url}</code></div><p className="small section-spacing">Set <code>AVN_PUBLIC_INGEST_URL</code> on the server to show your public collection address here.</p></aside>
+            <aside className="aside-card connect-card">
+              <Ico name="pulse" size={25} />
+              <h3>Connect your game</h3>
+              <p>Send batches to this address with one of the game’s API keys in the <code>X-API-Key</code> header.</p>
+              <div className="connection"><code>POST {overview.ingest_url}</code><CopyButton text={overview.ingest_url} label="Copy collection address" done="Address copied." /></div>
+              <Link className="button" to={gamePath(game, 'keys')}><Ico name="key" size={15} /> Manage API keys <span className="muted">({detail.keys_active} active)</span></Link>
+              <p className="small muted">Set <code>AVN_PUBLIC_INGEST_URL</code> on the server to show your public address here.</p>
+            </aside>
           </div>
-          <ThresholdsPanel game={game} thresholds={thresholds} manage={manage} />
-          <EnvironmentPanel game={game} manage={manage} />
-          <section className="panel section-spacing"><div className="panel-header"><div><h2>Event activity</h2><p>Pick any days on the calendar · received by the server · UTC</p></div></div><div className="panel-body" id="activity"><Activity game={game} /></div></section>
+          {manage ? <AccessPanel game={game} /> : null}
+          <h2 className="settings-group">Data collection</h2>
+          <Fold name="activity" title="Event activity" disclosures={folds} summary={`${number(detail.today)} received today · ${number(detail.events)} in total`}><div id="activity"><Activity game={game} /></div></Fold>
+          <Fold name="confidence" title="Analysis confidence" disclosures={folds} summary={`Levels need ${number(thresholds.levels_min_players)} players, funnels ${number(thresholds.funnels_min_players)}${thresholds.levels_override != null || thresholds.funnels_override != null ? ' · customised' : ' · workspace defaults'}`}><ThresholdsPanel game={game} thresholds={thresholds} manage={manage} /></Fold>
+          <Fold name="environment" title="Environment" disclosures={folds} summary="Re-count a build that reported the wrong environment"><EnvironmentPanel game={game} manage={manage} /></Fold>
+          {(me.is_admin && me.workspaces.length > 1) || manage ? <h2 className="settings-group">Housekeeping</h2> : null}
           {me.is_admin && me.workspaces.length > 1 ? (
-            <section className="panel section-spacing">
-              <div className="panel-header"><div><h2>Workspace</h2><p>This game is in <strong>{workspaceName}</strong>{variants.length > 1 ? '; moving it also moves its other platform version' : ''}. Members’ per-game access is cleared when it moves.</p></div></div>
-              <div className="panel-body icon-actions">
+            <Fold name="workspace" title="Workspace" disclosures={folds} summary={`In ${workspaceName}${variants.length > 1 ? ' · moves with its other platform' : ''}`}>
+              <p className="help">Members’ per-game access is cleared when the game moves.</p>
+              <div className="icon-actions">
                 <select id="move-target" aria-label="Move to workspace" value={target} onChange={(event) => setTarget(event.target.value)}>{me.workspaces.filter((item) => item.id !== workspace).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
                 <button className="button" type="button" id="move-game" onClick={() => setMoving(true)}>Move game…</button>
               </div>
-            </section>
+            </Fold>
           ) : null}
-          {manage ? <VersionDataPanel game={game} bundleId={detail.bundle_id} /> : null}
+          {manage ? <Fold name="versions" title="Data by version" disclosures={folds} summary="Delete what old builds sent"><VersionDataPanel game={game} bundleId={detail.bundle_id} /></Fold> : null}
           {manage ? (
             <section className="panel section-spacing danger-zone">
               <div className="panel-header"><div><h2>Danger zone</h2><p>Changes here affect live data collection.</p></div></div>

@@ -200,10 +200,8 @@ export function PlayerSummaryView({ data }: { data: PlayerSummaryData }): ReactE
       {data.partial ? <p className="ps-warn" role="status">This player has more events than one summary reads; the numbers cover the latest {number(data.events_counted)}.</p> : null}
       <div className="ps-tiles">{tiles.map(([label, value, note]) => <div className="ps-tile" key={label}><span>{label}</span><b>{value}</b>{note ? <small>{note}</small> : null}</div>)}</div>
       <div className="ps-grid">
-        <LevelsCard data={data} />
-        <AdsCard data={data} />
-        <WalletCard data={data} />
-        <HabitsCard data={data} />
+        <div className="ps-col"><LevelsCard data={data} /><HabitsCard data={data} /></div>
+        <div className="ps-col"><WalletCard data={data} /><AdsCard data={data} /></div>
       </div>
     </div>
   );

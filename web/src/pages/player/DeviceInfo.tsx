@@ -97,18 +97,37 @@ export function PlayerInformation({ game, player, data, timezone }: { game: Game
       setFetched(device); setState('done');
     } catch (error) { toastError(error); setState('failed'); }
   };
+  const device = snapshots.device?.values ?? {};
+  const fact = (key: string): string => snapshotValue(key, device[key]);
+  const tier = fact('TIER');
+  // What you want first: the device, then the few facts that describe the player at a glance.
+  const hero: Array<[string, string]> = [
+    ['Country', info.country ? countryText(info.country) : ''], ['App version', info.app_version ? String(info.app_version) : ''], ['Game tier', tier],
+    ['RAM', fact('RAM_MB')], ['Screen', screen], ['Player time zone', playerTimezone(profile.timezone_offset_minutes)],
+  ];
+  const system = [os.name, os.version].filter(Boolean).join(' ');
+  const detailRows: InfoRow[] = [['Type', profile.device_type], ['OS build', os.build, true], ['GPU memory', fact('GPU_MB')], ['CPU cores', fact('CPU_CORES')], ['Quality level', fact('QUALITY_LEVEL')]];
+  const appRows: InfoRow[] = [['Language', profile.language], ['Platform', platformLabel(info.platform || '')], ['Build', info.build], ['Environment', info.environment], ['Latest session', profile.session_number]];
+  const other = Object.entries(profile).filter(([key]) => !known.has(key)).map(([key, value]) => [propertyLabel(key), value] as InfoRow);
+  const identifiers: InfoRow[] = [['User ID', info.user_id, true], ['Install ID', info.device_id, true], ...other];
   return (
     <section className="panel player-information">
       <div className="panel-header">
-        <div><h2>Player information</h2><p>{updated} · location is IP-derived country{profile.device_model ? ' · lookup sends the device model to Wikipedia only when pressed' : ''}</p></div>
-        {profile.device_model ? <button type="button" className="button small-button" disabled={state === 'loading' || state === 'done'} onClick={fetchDevice}>{state === 'idle' ? <><Ico name="search" size={14} /> Fetch device info</> : state === 'loading' ? 'Fetching…' : state === 'done' ? 'Device info fetched' : 'Try device lookup again'}</button> : null}
+        <div><h2>Player information</h2><p>{updated}</p></div>
+        {profile.device_model ? <button type="button" className="button ghost small-button" title="Sends the device model to Wikipedia, only when pressed" disabled={state === 'loading' || state === 'done'} onClick={fetchDevice}>{state === 'idle' ? <><Ico name="search" size={14} /> Look up this device</> : state === 'loading' ? 'Looking up…' : state === 'done' ? 'Looked up' : 'Try the lookup again'}</button> : null}
+      </div>
+      <div className="info-hero">
+        <div className="info-device"><strong>{String(profile.device_model || 'Unknown device')}</strong><span>{system || '—'}</span></div>
+        <ul className="info-facts">{hero.filter(([, value]) => value).map(([label, value]) => <li key={label}><span>{label}</span><b>{value}</b></li>)}</ul>
       </div>
       <div className="player-information-grid">
-        <Group title="Identity" rows={[['User ID', info.user_id, true], ['Install ID', info.device_id, true]]} />
-        <Group title="Device" rows={[['Model', profile.device_model], ['Type', profile.device_type], ['Operating system', os.name], ['OS version', os.version], ['OS build', os.build, true], ['Screen', screen], ...snapshotRows(snapshots.device)]} />
-        <Group title="App & location" rows={[['Location', info.country ? countryText(info.country) : ''], ['Language', profile.language], ['Player time zone', playerTimezone(profile.timezone_offset_minutes)], ['Platform', platformLabel(info.platform || '')], ['App version', info.app_version], ['Build', info.build], ['Environment', info.environment], ['Latest session', profile.session_number]]} />
-        <Group title="Other collected properties" rows={Object.entries(profile).filter(([key]) => !known.has(key)).map(([key, value]) => [propertyLabel(key), value] as InfoRow)} />
+        <Group title="More about the device" rows={detailRows} />
+        <Group title="App and session" rows={appRows} />
       </div>
+      <details className="info-more">
+        <summary>Identifiers and other collected properties <span className="muted">{identifiers.filter(([, value]) => value != null && value !== '').length} items</span></summary>
+        <dl>{identifiers.filter(([, value]) => value != null && value !== '').map(([label, value, mono]) => <div key={label}><dt>{label}</dt><dd className={mono ? 'mono' : ''}>{String(value)}</dd></div>)}</dl>
+      </details>
       <div id="device-specs-result"><DeviceCatalog details={fetched} loading={state === 'loading'} /></div>
     </section>
   );

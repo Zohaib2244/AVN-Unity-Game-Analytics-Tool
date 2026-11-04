@@ -70,6 +70,18 @@ tests through `scripts/check.sh` (or `. scripts/_env.sh` first); a bare
 - Raw events are kept indefinitely and SQLite may hold committed data in `-wal` files: never "clean up" data files as part of a change.
 - Don't push, merge or open PRs yourself; leave the branch for review.
 
+## UI changes are checked in the browser
+
+Tests passing does not make a UI change done. Before you say a UI change is finished, use the `ui-review` skill (`.claude/skills/ui-review/SKILL.md`): read `avn-design`, open the running app with realistic data at wide, rail and phone widths, compare with the approved prototype (it is the spec), go through the checklist and fix what fails. Say which screens and widths you looked at.
+
+Things the owner has already said they don't like (don't make them again):
+
+- Column headings that don't line up with their cells; values clipped or cut off.
+- Widgets in a ragged grid with big gaps instead of balanced columns.
+- A built screen that doesn't match the prototype they approved.
+- Analytical screens with many percentage columns and no plain-words answer; a column or number whose meaning isn't stated.
+- Main information buried among settings and secondary detail; everything on a page given the same weight.
+
 ## Design preferences
 
 - NutBot opens and closes with one smooth horizontal slide of the whole panel; no bounce, scale or nested panel animation.
