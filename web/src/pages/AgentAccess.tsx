@@ -1,6 +1,7 @@
 // Agent access (admin): read-only keys that let an AI agent look at the games' data over MCP.
 // A list of keys (what each can read, when it was last used, on or off), "Create key", and per key
-// "Connect" (copy-paste setup for each agent) and "Edit" (scope, link, on/off, new key text, delete).
+// "Connect" (step-by-step setup for the Claude app and ChatGPT, each field copied on its own) and
+// "Edit" (scope, ChatGPT link, on/off, new key text, delete).
 import { useState, type ReactElement } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useRead, write } from '@/api';
@@ -24,17 +25,73 @@ export function scopeText(key: Pick<McpKey, 'workspace_ids' | 'game_ids'>, works
   return parts.join(' + ') || 'Nothing';
 }
 
-export type ConnectOption = { id: string; label: string; where: string; text: string };
+export type GuideField = { label: string; value: string; secret?: boolean };
+export type GuideStep = { text: string; fields?: GuideField[] }; // **…** marks the app's own button and field names
+export type ConnectGuide = { id: 'claude' | 'chatgpt'; label: string; intro: string; needsLink: boolean; steps: GuideStep[] };
 
-/** The copy-paste setup for each kind of agent. The key goes in the Authorization header; the link form is only for apps that take a link. */
-export function connectOptions(key: Pick<McpKey, 'endpoint' | 'secret' | 'link'>): ConnectOption[] {
-  const header = `Bearer ${key.secret}`;
+export const CONNECTOR_NAME = 'AVN Analytics';
+
+/** Shows the start and end of a key so the screen (and screenshots of it) don't carry the whole key. */
+export function maskSecret(text: string, secret: string): string {
+  if (secret.length < 20) return text;
+  return text.replace(secret, `${secret.slice(0, 12)}…${secret.slice(-4)}`);
+}
+
+/**
+ * How to add the server in each app, field by field. The Claude app sends the key in an
+ * Authorization header; ChatGPT's form has no header field (only OAuth or no authentication), so
+ * it uses the link that carries the key in its path, which the key must allow.
+ */
+export function connectGuides(key: Pick<McpKey, 'endpoint' | 'secret' | 'link'>): ConnectGuide[] {
   return [
-    { id: 'claude-code', label: 'Claude Code', where: 'Run this in a terminal.', text: `claude mcp add --transport http avn-analytics ${key.endpoint} --header "Authorization: ${header}"` },
-    { id: 'codex', label: 'Codex', where: 'Add this to ~/.codex/config.toml.', text: `[mcp_servers.avn-analytics]\nurl = "${key.endpoint}"\nhttp_headers = { Authorization = "${header}" }` },
-    { id: 'json', label: 'Cursor and others', where: 'Add this to the app’s MCP settings (Cursor: ~/.cursor/mcp.json).', text: JSON.stringify({ mcpServers: { 'avn-analytics': { url: key.endpoint, headers: { Authorization: header } } } }, null, 2) },
-    { id: 'link', label: 'Claude app', where: key.link ? 'Add a custom connector and paste this address as its URL.' : 'This app only takes a link. Edit the key and allow the link, then come back here.', text: key.link ?? '' },
+    {
+      id: 'claude',
+      label: 'Claude app',
+      intro: 'Works in Claude on the web, desktop and phone once added. The key travels in a request header, so it never appears in an address.',
+      needsLink: false,
+      steps: [
+        { text: 'In Claude, open **Settings → Connectors** and choose **Add custom connector**.' },
+        { text: 'Fill in the name and the server URL.', fields: [{ label: 'Name', value: CONNECTOR_NAME }, { label: 'Remote MCP server URL', value: key.endpoint }] },
+        { text: 'Under **Authentication**, choose **No sign-in**.' },
+        { text: 'Under **Request headers**, choose **Add header** and fill in both boxes.', fields: [{ label: 'Header name', value: 'Authorization' }, { label: 'Header value', value: `Bearer ${key.secret}`, secret: true }] },
+        { text: 'Choose **Add**. In a chat, turn **AVN Analytics** on from the tools menu, then ask, for example: “List my games, then show this week’s ad revenue for one of them.”' },
+      ],
+    },
+    {
+      id: 'chatgpt',
+      label: 'ChatGPT',
+      intro: 'ChatGPT can’t send a key in a header, so it uses a private link with the key inside. Anyone who has the link can read what this key allows, so keep it to yourself.',
+      needsLink: !key.link,
+      steps: [
+        { text: 'On chatgpt.com (on the web), open **Plugins**, select **+** and choose **Add custom MCP server**. Your ChatGPT plan or workspace has to allow custom MCP servers.' },
+        { text: 'Fill in the name, then put the link in **Server URL** under **Connection**.', fields: [{ label: 'Name', value: CONNECTOR_NAME }, { label: 'Server URL', value: key.link ?? '', secret: true }] },
+        { text: 'Set **Authentication** to **No authentication**.' },
+        { text: 'Read the warning, choose **I understand and want to continue**, then **Create as a plugin**.' },
+        { text: 'In a chat, type **@** and pick **AVN Analytics**, then ask, for example: “List my games, then show this week’s ad revenue for one of them.”' },
+      ],
+    },
   ];
+}
+
+/** A step's text with the app's own labels (between **) in bold. */
+export function StepText({ text }: { text: string }): ReactElement {
+  return <p>{text.split(/\*\*(.+?)\*\*/).map((part, index) => (index % 2 ? <strong key={index}>{part}</strong> : part))}</p>;
+}
+
+/** One value to paste into the app: its label, the value (masked when it holds the key) and Copy. */
+function CopyField({ field, secret }: { field: GuideField; secret: string }): ReactElement {
+  const [shown, setShown] = useState(false);
+  const display = field.secret && !shown ? maskSecret(field.value, secret) : field.value;
+  return (
+    <div className="copy-field">
+      <span className="copy-field-label">{field.label}</span>
+      <div className="copy-field-value">
+        <code>{display}</code>
+        {field.secret ? <button type="button" className="link-button small" aria-pressed={shown} onClick={() => setShown(!shown)}>{shown ? 'Hide' : 'Show'}</button> : null}
+        <CopyButton text={field.value} label={`Copy ${field.label}`} done={`${field.label} copied`} />
+      </div>
+    </div>
+  );
 }
 
 type Dialog = { kind: 'create' } | { kind: 'edit'; key: McpKey } | { kind: 'connect'; key: McpKey } | { kind: 'regenerate'; key: McpKey } | { kind: 'delete'; key: McpKey } | null;
@@ -77,7 +134,7 @@ function KeyDialog({ existing, workspaces, games, onClose, onSaved, onDanger }: 
       <form id="mcp-key-form" onSubmit={onSubmit}>
         <div className="field"><label htmlFor="mcp-key-name">Name</label><input id="mcp-key-name" name="name" required maxLength={80} defaultValue={existing?.name} placeholder="e.g. Maya’s Claude" autoFocus={!existing} autoComplete="off" /><p>Who or what it is for, so you can tell the keys apart.</p></div>
         <div className="field"><label>What it can read</label><ScopePicker workspaces={workspaces} games={games} chosenWorkspaces={chosenWorkspaces} chosenGames={chosenGames} onWorkspaces={setWorkspaces} onGames={setGames} /></div>
-        <label className="check-row"><input type="checkbox" name="url_access" defaultChecked={existing?.url_access} /> Also allow the key inside a link, for apps that only take a link (the key then appears in server logs)</label>
+        <label className="check-row"><input type="checkbox" name="url_access" defaultChecked={existing?.url_access} /> Allow a ChatGPT link (ChatGPT can only take a link, so the key is part of the address and can show up in server logs)</label>
         {existing ? <label className="check-row"><input type="checkbox" name="enabled" defaultChecked={existing.enabled} /> Key is on (switch it off to stop it working without deleting it)</label> : null}
         <FormError error={error} />
         <div className="modal-actions"><button type="button" className="button" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" className="button primary" disabled={busy} aria-busy={busy || undefined}>{busy ? 'Working…' : existing ? 'Save' : 'Create key'}</button></div>
@@ -94,19 +151,40 @@ function KeyDialog({ existing, workspaces, games, onClose, onSaved, onDanger }: 
 }
 
 function ConnectDialog({ keyItem, scope, onClose }: { keyItem: McpKey; scope: string; onClose: () => void }): ReactElement {
-  const options = connectOptions(keyItem);
-  const [choice, setChoice] = useState(options[0]!.id);
-  const option = options.find((item) => item.id === choice)!;
+  const { toastError } = useNotify();
+  const [current, setCurrent] = useState(keyItem);
+  const [choice, setChoice] = useState<ConnectGuide['id']>('claude');
+  const [allowing, setAllowing] = useState(false);
+  const guides = connectGuides(current);
+  const guide = guides.find((item) => item.id === choice)!;
+  const allowLink = async () => {
+    setAllowing(true);
+    try { setCurrent(await write<McpKey>(`/v1/mcp-keys/${current.id}`, { method: 'PATCH', body: JSON.stringify({ url_access: true }) })); }
+    catch (error) { toastError(error); }
+    finally { setAllowing(false); }
+  };
   return (
-    <DialogShell open onOpenChange={(next) => { if (!next) onClose(); }} title={`Connect “${keyItem.name}”`} className="agent-dialog">
-      <p>This key can only read: <strong>{scope}</strong>. It can’t change anything. Pick the agent, copy the text and paste it where it says.</p>
-      <div className="seg-row range-modes" role="group" aria-label="Agent">
-        {options.map((item) => <button key={item.id} type="button" aria-pressed={choice === item.id} onClick={() => setChoice(item.id)}>{item.label}</button>)}
+    <DialogShell open onOpenChange={(next) => { if (!next) onClose(); }} title={`Connect “${current.name}”`} className="agent-dialog">
+      <p>This key can only read: <strong>{scope}</strong>. It can’t change anything.</p>
+      <div className="seg-row range-modes" role="group" aria-label="App">
+        {guides.map((item) => <button key={item.id} type="button" aria-pressed={choice === item.id} onClick={() => setChoice(item.id)}>{item.label}</button>)}
       </div>
-      <p className="small">{option.where}</p>
-      {option.text ? (
-        <div className="snippet"><pre tabIndex={0}>{option.text}</pre><CopyButton text={option.text} label={`Copy the ${option.label} setup`} done="Copied" /></div>
-      ) : null}
+      <p className="small">{guide.intro}</p>
+      {guide.needsLink ? (
+        <div className="connect-allow">
+          <p>This key doesn’t allow a link yet. Allow it to get the ChatGPT link (you can turn it off again under Edit).</p>
+          <button type="button" className="button" onClick={() => void allowLink()} disabled={allowing} aria-busy={allowing || undefined}>{allowing ? 'Working…' : 'Allow the link for this key'}</button>
+        </div>
+      ) : (
+        <ol className="connect-steps">
+          {guide.steps.map((step) => (
+            <li key={step.text}>
+              <StepText text={step.text} />
+              {step.fields?.map((field) => <CopyField key={field.label} field={field} secret={current.secret} />)}
+            </li>
+          ))}
+        </ol>
+      )}
       <div className="modal-actions"><button type="button" className="button primary" onClick={onClose}>Done</button></div>
     </DialogShell>
   );
@@ -126,7 +204,7 @@ export function AgentAccessPage(): ReactElement {
   const scope = (key: McpKey) => scopeText(key, workspaceList, gameList);
   return (
     <>
-      <Heading title="Agent access" subtitle="Read-only keys that let an AI agent (Claude Code, Codex, the Claude app…) look at your games’ data. Whoever has a key can read what it allows. If one leaks, switch it off or make a new key text." actions={<button type="button" className="button primary" id="create-mcp-key" onClick={() => setDialog({ kind: 'create' })} disabled={!workspaces.data || !games.data}><Ico name="plus" size={15} /> Create key</button>} />
+      <Heading title="Agent access" subtitle="Read-only keys that let the Claude app or ChatGPT look at your games’ data. Whoever has a key can read what it allows. If one leaks, switch it off or make a new key text." actions={<button type="button" className="button primary" id="create-mcp-key" onClick={() => setDialog({ kind: 'create' })} disabled={!workspaces.data || !games.data}><Ico name="plus" size={15} /> Create key</button>} />
       <QueryRegion query={keys} path="/v1/mcp-keys" skeleton={<Skeleton rows={3} columns={5} />}>{(list) => (
         <section className="panel">
           <div className="panel-header"><h2>Keys <span className="count">{list.keys.length}</span></h2>{list.enabled ? null : <span className="pill warn">Agent access is switched off on this server</span>}</div>

@@ -779,3 +779,15 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
   .keys-table .row-actions { display: flex; gap: 8px; padding-top: 8px; text-align: left; }
   .keys-table .row-actions .button { min-height: 44px; padding: 8px 16px; }
 }
+.connect-steps { margin: 4px 0 0; padding-left: 22px; display: grid; gap: 14px; }
+.connect-steps li { color: var(--muted); }
+.connect-steps li::marker { color: var(--dim); font-family: var(--font-mono); }
+.connect-steps li > p { margin-bottom: 6px; color: var(--text); }
+.connect-steps li > p strong { font-weight: 700; }
+.copy-field { display: grid; gap: 3px; margin-top: 8px; }
+.copy-field-label { color: var(--dim); font-size: var(--fs-micro); letter-spacing: .08em; text-transform: uppercase; }
+.copy-field-value { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 4px 4px 10px; background: var(--nested); border: var(--bw) solid var(--line); border-radius: var(--r-ctl); }
+.copy-field-value code { flex: 1; min-width: 0; padding: 0; border: 0; background: none; font-family: var(--font-mono); font-size: var(--fs-sm); overflow-wrap: anywhere; color: var(--text); }
+.copy-field-value .link-button { flex-shrink: 0; color: var(--muted); }
+.connect-allow { padding: 12px; border: var(--bw) solid var(--line); border-radius: var(--r-ctl); background: var(--nested); }
+.connect-allow p { margin-bottom: 10px; }

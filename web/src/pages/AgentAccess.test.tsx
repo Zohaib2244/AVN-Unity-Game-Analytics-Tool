@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Game, WorkspaceItem } from '@/lib/types';
-import { connectOptions, scopeText } from './AgentAccess';
+import { render, screen } from '@testing-library/react';
+import { StepText, connectGuides, maskSecret, scopeText } from './AgentAccess';
 
 
 const workspaces = [{ id: 'w1', name: 'Work', games: 3, members: 1, nutbot_access: 'leads' }, { id: 'w2', name: 'Other', games: 1, members: 1, nutbot_access: 'leads' }] as WorkspaceItem[];
@@ -22,18 +23,49 @@ describe('scopeText', () => {
   });
 });
 
-describe('connectOptions', () => {
-  const key = { endpoint: 'https://data.example.org/mcp', secret: 'avn_mcp_abc', link: null as string | null };
-  it('sends the key in the Authorization header for the agents that can', () => {
-    const [claude, codex, json] = connectOptions(key);
-    expect(claude!.text).toBe('claude mcp add --transport http avn-analytics https://data.example.org/mcp --header "Authorization: Bearer avn_mcp_abc"');
-    expect(codex!.text).toContain('url = "https://data.example.org/mcp"');
-    expect(codex!.text).toContain('Authorization = "Bearer avn_mcp_abc"');
-    expect(JSON.parse(json!.text).mcpServers['avn-analytics'].headers.Authorization).toBe('Bearer avn_mcp_abc');
+describe('connectGuides', () => {
+  const secret = 'avn_mcp_abcdefghijklmnopqrstuvwxyz';
+  const key = { endpoint: 'https://data.example.org/mcp', secret, link: null as string | null };
+  const fields = (guide: ReturnType<typeof connectGuides>[number]) => Object.fromEntries(guide.steps.flatMap((step) => step.fields ?? []).map((field) => [field.label, field]));
+
+  it('offers only the Claude app and ChatGPT', () => {
+    expect(connectGuides(key).map((guide) => guide.label)).toEqual(['Claude app', 'ChatGPT']);
   });
-  it('offers the link only when the key allows it', () => {
-    expect(connectOptions(key)[3]!.text).toBe('');
-    expect(connectOptions(key)[3]!.where).toMatch(/allow the link/);
-    expect(connectOptions({ ...key, link: 'https://data.example.org/mcp/avn_mcp_abc' })[3]!.text).toBe('https://data.example.org/mcp/avn_mcp_abc');
+
+  it('gives the Claude app the URL and the key as separate fields, the key in a header', () => {
+    const [claude] = connectGuides(key);
+    const given = fields(claude!);
+    expect(given['Remote MCP server URL']!.value).toBe('https://data.example.org/mcp');
+    expect(given['Header name']!.value).toBe('Authorization');
+    expect(given['Header value']).toEqual({ label: 'Header value', value: `Bearer ${secret}`, secret: true });
+    expect(given['Name']!.value).toBe('AVN Analytics');
+    expect(claude!.needsLink).toBe(false);
+    expect(claude!.steps.some((step) => step.text.includes('No sign-in'))).toBe(true);
+  });
+
+  it('asks for the link before giving ChatGPT any steps to paste', () => {
+    expect(connectGuides(key)[1]!.needsLink).toBe(true);
+    const chatgpt = connectGuides({ ...key, link: `https://data.example.org/mcp/${secret}` })[1]!;
+    expect(chatgpt.needsLink).toBe(false);
+    expect(fields(chatgpt)['Server URL']).toEqual({ label: 'Server URL', value: `https://data.example.org/mcp/${secret}`, secret: true });
+    expect(chatgpt.steps.some((step) => step.text.includes('No authentication'))).toBe(true);
+  });
+});
+
+describe('maskSecret', () => {
+  const secret = 'avn_mcp_WzIj8C8LNO93VeamIWOjVObnGTfk';
+  it('shows only the start and end of the key wherever it sits', () => {
+    expect(maskSecret(`Bearer ${secret}`, secret)).toBe('Bearer avn_mcp_WzIj…GTfk');
+    expect(maskSecret(`https://x.org/mcp/${secret}`, secret)).toBe('https://x.org/mcp/avn_mcp_WzIj…GTfk');
+    expect(maskSecret('Authorization', secret)).toBe('Authorization');
+  });
+});
+
+describe('StepText', () => {
+  it('puts the app’s own labels in bold and keeps the rest as text', () => {
+    render(<StepText text="Under **Authentication**, choose **No sign-in**." />);
+    expect(screen.getByText('Authentication').tagName).toBe('STRONG');
+    expect(screen.getByText('No sign-in').tagName).toBe('STRONG');
+    expect(screen.getByText(/Under/).textContent).toBe('Under Authentication, choose No sign-in.');
   });
 });
