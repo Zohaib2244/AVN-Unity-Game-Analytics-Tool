@@ -48,6 +48,8 @@ from . import (
 from .auth import AccessVerifier, Accounts, Principal
 from .config import Settings
 from .exports import build_export, period_bounds
+from .mcp_keys import McpKeys
+from .mcp_server import McpServer
 from .models import (
     AccessUpdate,
     AnalyticsThresholdOverrides,
@@ -68,6 +70,8 @@ from .models import (
     JourneyQuery,
     KeyCreate,
     MappingPreview,
+    McpKeyCreate,
+    McpKeyUpdate,
     Name,
     NutBotChat,
     NutBotChatCreate,
@@ -183,6 +187,8 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     )
     accounts = Accounts(storage, settings, verifier)
     nutbot = NutBot(settings, storage, accounts)
+    mcp_keys = McpKeys(storage, accounts)
+    mcp_server = McpServer(settings, accounts, nutbot, mcp_keys)
     export_slot = BoundedSemaphore(1)
 
     @asynccontextmanager
@@ -191,6 +197,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         accounts.initialize()
         if admin:
             nutbot.initialize()
+            mcp_keys.initialize()
         yield
 
     def current(request: Request) -> Principal:
@@ -351,6 +358,90 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     def nutbot_mcp_stream(request: Request):
         mcp_caller(request)
         return Response(status_code=405, headers={"Allow": "POST"})
+
+    # ---- the read-only MCP server for outside agents: the key is the login (see mcp_keys.py)
+
+    async def mcp_call(request: Request, url_secret: str | None):
+        if not settings.mcp_enabled:
+            raise HTTPException(404, "Not found")
+        header = request.headers.get("authorization", "")
+        if header.lower().startswith("bearer "):
+            key = mcp_keys.find(header[7:])
+        elif url_secret:
+            key = mcp_keys.find(url_secret, from_url=True)
+        else:
+            key = None
+        if key is None:
+            return JSONResponse(
+                {"error": "A valid MCP key is needed"},
+                401,
+                headers={"WWW-Authenticate": 'Bearer realm="avn-analytics"'},
+            )
+        try:
+            payload = await request.json()
+        except ValueError:
+            return JSONResponse({"error": "Invalid JSON"}, 400)
+        if not isinstance(payload, dict):
+            return JSONResponse({"error": "Batches are not supported"}, 400)
+        status, reply = await asyncio.to_thread(mcp_server.handle, key, payload)
+        return Response(status_code=202) if reply is None else JSONResponse(reply, status)
+
+    @app.post("/mcp", include_in_schema=False)
+    async def mcp_with_header(request: Request):
+        return await mcp_call(request, None)
+
+    @app.post("/mcp/{url_secret}", include_in_schema=False)
+    async def mcp_with_link(request: Request, url_secret: str):
+        return await mcp_call(request, url_secret)
+
+    @app.get("/mcp", include_in_schema=False)
+    @app.get("/mcp/{url_secret}", include_in_schema=False)
+    def mcp_stream(url_secret: str = ""):
+        return Response(status_code=405, headers={"Allow": "POST"})
+
+    def mcp_key_view(request: Request, key):
+        base = settings.mcp_public_url or str(request.base_url).rstrip("/")
+        return {
+            **key,
+            "endpoint": f"{base}/mcp",
+            "link": f"{base}/mcp/{key['secret']}" if key["url_access"] else None,
+            "workspaces": len(key["workspace_ids"]),
+            "games": len(mcp_keys.games(key)),
+        }
+
+    @admin_api.get("/v1/mcp-keys")
+    def list_mcp_keys(request: Request, principal: TeamAdmin):
+        return {
+            "enabled": settings.mcp_enabled,
+            "keys": [mcp_key_view(request, key) for key in mcp_keys.list()],
+        }
+
+    @admin_api.post("/v1/mcp-keys", status_code=201)
+    def create_mcp_key(request: Request, body: McpKeyCreate, principal: TeamAdmin):
+        key = mcp_keys.create(
+            principal,
+            body.name,
+            [str(item) for item in body.workspace_ids],
+            [str(item) for item in body.game_ids],
+            body.url_access,
+        )
+        return mcp_key_view(request, key)
+
+    @admin_api.patch("/v1/mcp-keys/{key_id}")
+    def update_mcp_key(request: Request, key_id: UUID, body: McpKeyUpdate, principal: TeamAdmin):
+        changes = body.model_dump(exclude_none=True)
+        for field in ("workspace_ids", "game_ids"):
+            if field in changes:
+                changes[field] = [str(item) for item in changes[field]]
+        return mcp_key_view(request, mcp_keys.update(principal, str(key_id), changes))
+
+    @admin_api.post("/v1/mcp-keys/{key_id}/regenerate")
+    def regenerate_mcp_key(request: Request, key_id: UUID, principal: TeamAdmin):
+        return mcp_key_view(request, mcp_keys.regenerate(principal, str(key_id)))
+
+    @admin_api.delete("/v1/mcp-keys/{key_id}", status_code=204)
+    def delete_mcp_key(key_id: UUID, principal: TeamAdmin):
+        mcp_keys.delete(principal, str(key_id))
 
     @admin_api.get("/v1/nutbot")
     async def nutbot_status(principal: Current):

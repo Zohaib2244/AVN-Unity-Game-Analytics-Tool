@@ -760,6 +760,21 @@ class AccessUpdate(StrictModel):
     emails: list[Email] = Field(max_length=500)
 
 
+class McpKeyCreate(StrictModel):
+    name: Annotated[str, Field(min_length=1, max_length=80)]
+    workspace_ids: list[UUID] = Field(default_factory=list, max_length=200)
+    game_ids: list[UUID] = Field(default_factory=list, max_length=200)
+    url_access: bool = False
+
+
+class McpKeyUpdate(StrictModel):
+    name: Annotated[str, Field(min_length=1, max_length=80)] | None = None
+    workspace_ids: list[UUID] | None = Field(default=None, max_length=200)
+    game_ids: list[UUID] | None = Field(default=None, max_length=200)
+    url_access: bool | None = None
+    enabled: bool | None = None
+
+
 class WorkspaceCreate(StrictModel):
     name: WorkspaceName
 

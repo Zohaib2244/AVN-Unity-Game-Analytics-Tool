@@ -393,6 +393,31 @@ NutBot is a chat assistant on every game page. You ask in plain words ("where do
 
 Then open **Workspaces** and choose who may use it. The panel's Assistant list shows which agents are signed in. To run other adapter builds than the image's, see `deploy/nutbot.compose.example.yaml`. Don't point NutBot at an agent that keeps a shell.
 
+## Read-only MCP server
+
+Any MCP-capable agent (Claude Code, Codex, Cursor, the Claude app, ...) can read a game's analytics through `POST /mcp` on the admin service. Nothing it can call changes data: the server serves a fixed list of read tools (the ones NutBot uses to look things up, plus `list_games`), each marked `readOnlyHint`; NutBot's tools that save, edit or build cards for the website are not on it.
+
+**Keys.** An admin makes keys on the **Agent access** page (in the account menu, next to Team): a key has a name, then the workspaces and/or single games it may read (a workspace includes games added to it later). The key text stays visible to the admin, so it can be copied again and shared. A key can be switched off, regenerated (the old text stops working) or deleted. The page shows each key's reach, call count and last use, with a Connect button that gives copy-paste setup for Claude Code, Codex, Cursor and the Claude app. A key is limited to `AVN_MCP_CALLS_PER_MINUTE` calls a minute. Key changes go in the activity log; individual calls do not.
+
+**Connecting.** Send the key as `Authorization: Bearer avn_mcp_...` to `https://<your host>/mcp`. This is the way the MCP specification prescribes, and what Claude Code, Codex and Cursor do. For a client that only takes a link (such as the Claude app), a key can also be allowed in the path, `https://<your host>/mcp/avn_mcp_...`; it is off for every key until the admin switches it on, and the link is then the password, so it can appear in proxy logs. A key is never accepted in a query string. Set `AVN_PUBLIC_MCP_URL` to the address people outside should use; it is what the website shows next to each key.
+
+**Exposing it.** `/mcp` carries its own login, so it can be reachable from outside while the rest of the admin service stays private: let `/mcp` and `/mcp/*` through the gateway in front of the admin service (like `POST /v1/events` on the collection service) and keep everything else behind it. Set `AVN_MCP=false` to remove the endpoint.
+
+**Tools** (45). Start with `list_games`, then `get_game_setup` (what the game sends and which tools have data), `get_data_health` (is data still arriving) and `get_analysis_guide`. Then, per game:
+- Overall: `get_overview`, `list_events`, `get_sessions`, `get_retention`, `get_event_activity`, `compare_segments`, `compare_versions` (two app versions side by side).
+- Levels: `get_level_progress`, `get_exits`, `get_level_detail`, `get_level_features`, `get_level_attempts` (one level's tries, joined by attempt), `get_level_designs` (a design reused at many level numbers).
+- Funnels and paths: `run_funnel`, `get_journeys`, `list_journey_players`.
+- Players: `find_players`, `get_player_profile`, `get_player_story`, `get_player_levels`, `get_player_events`, `get_player_raw_events`, `compare_player`, `compare_cohorts`, `compare_player_groups`, `get_behaviour`.
+- Ads: `get_ad_revenue` (impressions, revenue, eCPM, ARPDAU), `get_ad_health` (loads, fill, show failures, common errors), `get_ad_serving` (asked for, shown, held back and why, pacing), `get_ad_impact` (leaving the app on ads, retention by first-day ad exposure).
+- Acquisition: `get_acquisition` (installs and early behaviour by media source, campaign, channel, creative or site), `get_ltv` (ad revenue per player by day since install).
+- Game systems: `get_economy` (coins; power-ups), `get_onboarding` (tutorials, first session), `get_store` (screens, purchases), `get_stability` (how the previous run ended: crashes, ANRs, memory kills).
+- Anything else: `count_events` counts, sums or averages any event, filtered by parameter tests and grouped.
+- Saved: `list_saved` (funnels, player groups, highlights, reports), `get_report`, `explain_conditions`.
+
+Most of the tools above that read events take a `segment`: install-source words, `unattributed`, or players who ever sent a given event or parameter value (a tool's schema says whether it takes one). A tool says so when the game doesn't send the events it needs.
+
+Requests default to the last 30 days with editor and development builds left out; a tool that gets no `game_id` uses the key's only game or asks for one.
+
 ## Exporting data
 
 Each export is a ZIP containing:
@@ -531,6 +556,9 @@ Environment variables (see `.env.example`):
 | `AVN_BIND_HOST` | `127.0.0.1` | Address the ports bind to (`0.0.0.0` = all interfaces) |
 | `AVN_INGEST_PORT` / `AVN_ADMIN_PORT` | `8100` / `8101` | Host ports |
 | `AVN_MAX_EXPORT_BYTES` | `268435456` | Largest raw export |
+| `AVN_MCP` | `true` | Serve the read-only MCP server at `/mcp` (see [Read-only MCP server](#read-only-mcp-server)) |
+| `AVN_PUBLIC_MCP_URL` | none | Public address of this service, shown with each MCP key (for example `https://analytics.example.com`) |
+| `AVN_MCP_CALLS_PER_MINUTE` | `60` | Calls one MCP key may make per minute |
 | `AVN_PUBLIC_INGEST_URL` | none | Public collection address shown on the Game settings page |
 | `AVN_ACCESS_TEAM_DOMAIN` / `AVN_ACCESS_AUDIENCE` | none | Cloudflare Access team domain and application audience tag; set both to turn on [team access](#team-access-and-workspaces) |
 | `AVN_ADMIN_EMAIL` | none | Always an admin; the person named on the "no access" page |

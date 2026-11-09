@@ -24,7 +24,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from . import insights, journeys, nutbot_commands
+from . import insights, journeys, mcp_protocol, nutbot_commands
 from .exports import period_bounds
 from .models import (
     EventDefinition,
@@ -33,6 +33,8 @@ from .models import (
     FunnelQuery,
 )
 from .nutbot_acp import AcpHarness, Turn, hidden_model, scrub
+from .nutbot_acquisition import ACQUISITION_TOOLS, AcquisitionTools
+from .nutbot_ads import AD_TOOLS, AdTools
 from .nutbot_base import (
     RANGE_PROPS,
     STEPS,
@@ -41,10 +43,13 @@ from .nutbot_base import (
     _tool,
 )
 from .nutbot_chats import Chats, chat_title
+from .nutbot_extras import EXTRA_LABELS, EXTRA_TOOLS, ExtraTools
 from .nutbot_groups import GROUP_TOOLS, GroupTools
 from .nutbot_limits import Limits
+from .nutbot_playertools import PLAYER_LABELS, PLAYER_TOOLS, PlayerTools
 from .nutbot_proposals import PROPOSAL_TOOLS, ProposalTools
 from .nutbot_reports import REPORT_TOOLS, Reports, ReportTools
+from .nutbot_systems import SYSTEM_LABELS, SYSTEM_TOOLS, SystemTools
 from .nutbot_tools import ANALYSIS_TOOLS, AnalysisTools, compact_levels, player_rules
 
 MAX_MESSAGE = 4000
@@ -86,9 +91,17 @@ TOOL_LABELS = {
     "get_retention": "Reading retention",
     "get_sessions": "Reading sessions",
     "compare_segments": "Comparing side by side",
+    "get_ad_revenue": "Reading ad revenue",
+    "get_ad_health": "Checking ad health",
+    "get_ad_serving": "Checking how ads are served",
+    "get_acquisition": "Reading where players came from",
+    "get_ltv": "Reading player value by source",
     "save_funnel": "Saving a funnel",
     "set_event_label": "Updating the event dictionary",
     "show_in_dashboard": "Preparing a view",
+    **SYSTEM_LABELS,
+    **PLAYER_LABELS,
+    **EXTRA_LABELS,
 }
 
 
@@ -267,6 +280,11 @@ TOOLS = [
         },
     ),
     *ANALYSIS_TOOLS,
+    *AD_TOOLS,
+    *ACQUISITION_TOOLS,
+    *SYSTEM_TOOLS,
+    *PLAYER_TOOLS,
+    *EXTRA_TOOLS,
     *GROUP_TOOLS,
     *PROPOSAL_TOOLS,
     *REPORT_TOOLS,
@@ -362,7 +380,17 @@ def merge_fetches(log, fetches):
             entry.update(waiting[entry["tool"]].popleft())
 
 
-class NutBot(AnalysisTools, ProposalTools, GroupTools, ReportTools):
+class NutBot(
+    AnalysisTools,
+    AdTools,
+    AcquisitionTools,
+    SystemTools,
+    PlayerTools,
+    ExtraTools,
+    ProposalTools,
+    GroupTools,
+    ReportTools,
+):
     def __init__(self, settings, storage, accounts):
         self.settings = settings
         self.storage = storage
@@ -685,7 +713,7 @@ How you work
 - To build conditions for the pages (propose_players_view, propose_funnel, propose_highlight, propose_level_view): use real event and parameter names from list_events, test the rule first (find_players or run_funnel) so you can say how many players it matches, then propose it. A proposal is a card the person applies; it changes nothing by itself, so never say it is applied. explain_conditions reads a rule back in words.
 - If the header says a level page is open, that level is the subject of the question unless the person names others: call get_level_detail for it first (and look at the group of players it says is listed), and bring in other levels only when asked to compare.
 - Fetch once and widely, not level by level: for two or more levels call get_level_progress once (it is a small table of every level), then get_level_detail only for the few levels that stand out, at most three. For one player start with get_player_levels or get_player_events, and read get_player_story only if you still need it. Never repeat a call with the same arguments.
-- Use the tool that already answers: how many players did something and when, get_event_activity (find_players is for listing players); ads, fail reasons, power-ups on a level and whether players left after them, get_level_features; retention, get_retention; session length and why players left the app, get_sessions; countries, platforms or versions against each other, compare_segments in one call.
+- Use the tool that already answers: how many players did something and when, get_event_activity (find_players is for listing players); ads, fail reasons, power-ups on a level and whether players left after them, get_level_features; retention, get_retention; session length and why players left the app, get_sessions; countries, platforms or versions against each other, compare_segments in one call; what ads earn, get_ad_revenue; whether ads load and show, get_ad_health; how often ads are asked for, shown or held back and why, get_ad_serving; where players came from (media source, campaign, creative), get_acquisition; what each source's players earn, get_ltv. Tools whose schema lists `segment` take one (install source or any event parameter); the others would ignore it. Other tools: get_game_setup says what the game sends, get_data_health whether data arrives, get_stability crashes and memory kills, get_economy coins and power-ups, get_onboarding tutorials, get_store purchases, get_level_attempts one level's tries, get_level_designs, compare_versions two builds, count_events anything else.
 - When the person tells you what changed in a version, take that as given and compare that build with the one before; what moved after a change is an association, not proof it caused it.
 - Before you say you can't tell why players left a level, call get_level_detail for it: it shows what the players who left did last. If a tool result says it was cut, call again with a narrower range (for example from_level/to_level) instead of reporting levels as missing.
 - Offer a report (propose_report) only when the person asks or a skill tells you to. It is saved only when they press Save on its card, so never say it was saved. When a message begins with a skill's instructions, follow them.
@@ -703,44 +731,14 @@ Analysis guide
         run = self.runs.get(token or "")
         if run is None:
             return 401, {"error": "This NutBot session has ended"}
-        method, ident = payload.get("method"), payload.get("id")
 
-        def reply(result=None, error=None):
-            if error:
-                return 200, {
-                    "jsonrpc": "2.0",
-                    "id": ident,
-                    "error": {"code": -32000, "message": error},
-                }
-            return 200, {"jsonrpc": "2.0", "id": ident, "result": result}
-
-        if method == "initialize":
-            asked = (payload.get("params") or {}).get("protocolVersion") or "2025-06-18"
-            return reply(
-                {
-                    "protocolVersion": asked,
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "avn-analytics", "version": "1"},
-                }
-            )
-        if method in ("notifications/initialized", "notifications/cancelled") or (
-            method or ""
-        ).startswith("notifications/"):
-            return 202, None
-        if method == "ping":
-            return reply({})
-        if method == "tools/list":
-            return reply({"tools": TOOLS})
-        if method == "tools/call":
-            params = payload.get("params") or {}
-            name, arguments = params.get("name"), params.get("arguments") or {}
+        def call(name, arguments):
             run.calls += 1
             if run.calls > MAX_TOOL_CALLS:
-                text, error = "Too many tool calls in one answer. Summarise what you have.", True
-            else:
-                text, error = self._call(run, name, arguments)
-            return reply({"content": [{"type": "text", "text": text}], "isError": error})
-        return reply(error=f"Unknown method {method}")
+                return "Too many tool calls in one answer. Summarise what you have.", True
+            return self._call(run, name, arguments)
+
+        return mcp_protocol.handle(payload, tools=TOOLS, call=call, name="avn-analytics")
 
     def _call(self, run, name, arguments):
         began = time.perf_counter()

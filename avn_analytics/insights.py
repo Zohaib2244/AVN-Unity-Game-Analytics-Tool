@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from . import analytics, rules, session_state, stories
+from . import analytics, rules, segments, session_state, stories
 from .models import timestamp
 from .session_state import WATCHED_SQL, SessionState
 
@@ -190,6 +190,10 @@ def where(start, end, filters=None, column="client_ts", source=LEGACY):
     if excluded:
         clauses.append(f"{source.environment} NOT IN ({','.join('?' * len(excluded))})")
         args += excluded
+    for condition in filters.get("segments") or []:
+        sql, values = segments.clause(condition, source)
+        clauses.append(sql)
+        args += values
     for field_name, dimension in EXCLUDE_FIELDS.items():
         values = filters.get(field_name) or []
         if values:

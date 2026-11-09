@@ -48,6 +48,9 @@ class Settings:
     lan_admin: bool = True  # requests from the private network (no Cloudflare) count as admin
     # NutBot: an assistant that drives the dashboard through a local AI agent (claude, codex,
     # opencode) over the Agent Client Protocol. Which people may use it is set per workspace.
+    mcp_enabled: bool = True  # the read-only MCP server for outside agents (see mcp_server.py)
+    mcp_public_url: str = ""  # where /mcp is reachable from outside, shown with each key
+    mcp_calls_per_minute: int = 60  # per key
     nutbot_enabled: bool = True
     nutbot_internal_url: str = "http://127.0.0.1:8000"  # how the agent reaches this app
     nutbot_daily_limit: int = 100  # messages per person per day
@@ -92,6 +95,8 @@ class Settings:
         ):
             if not low <= getattr(self, name) <= high:
                 raise ValueError(f"AVN_{name.upper()} must be between {low} and {high}")
+        if not 1 <= self.mcp_calls_per_minute <= 6000:
+            raise ValueError("AVN_MCP_CALLS_PER_MINUTE must be between 1 and 6000")
         if self.nutbot_keep_days < 0 or not 1 <= self.nutbot_limit_warn <= 100:
             raise ValueError("AVN_NUTBOT_KEEP_DAYS must be 0 or more; AVN_NUTBOT_LIMIT_WARN 1-100")
 
@@ -136,6 +141,9 @@ class Settings:
             admin_email=os.environ.get("AVN_ADMIN_EMAIL", "").strip().lower(),
             lan_admin=os.environ.get("AVN_LAN_ADMIN", "true").strip().lower()
             not in ("0", "false", "no", "off"),
+            mcp_enabled=_flag("AVN_MCP", True),
+            mcp_public_url=os.environ.get("AVN_PUBLIC_MCP_URL", "").strip().rstrip("/"),
+            mcp_calls_per_minute=int(_text("AVN_MCP_CALLS_PER_MINUTE", "60")),
             nutbot_enabled=_flag("AVN_NUTBOT", True),
             nutbot_internal_url=os.environ.get("AVN_NUTBOT_INTERNAL_URL", "http://127.0.0.1:8000")
             .strip()
