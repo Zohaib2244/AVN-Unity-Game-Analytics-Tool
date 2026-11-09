@@ -56,6 +56,10 @@ services:
       AVN_ANALYTICS_ACTIVE_VIEWS: ${AVN_ANALYTICS_ACTIVE_VIEWS:-12}
       AVN_ANALYTICS_STORAGE_BYTES: ${AVN_ANALYTICS_STORAGE_BYTES:-1073741824}
       AVN_PUBLIC_INGEST_URL: ${AVN_PUBLIC_INGEST_URL:-}
+      # The read-only MCP server for outside agents (see README, Read-only MCP server).
+      AVN_MCP: ${AVN_MCP:-true}
+      AVN_PUBLIC_MCP_URL: ${AVN_PUBLIC_MCP_URL:-}
+      AVN_MCP_CALLS_PER_MINUTE: ${AVN_MCP_CALLS_PER_MINUTE:-60}
       # NutBot (see README): the agents, their models and limits. The adapters are in the image;
       # the sign-ins live in data/nutbot/home.
       AVN_NUTBOT: ${AVN_NUTBOT:-true}
