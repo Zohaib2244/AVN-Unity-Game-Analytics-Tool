@@ -92,11 +92,11 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
     return () => document.removeEventListener('keydown', onKey);
   }, [nutbot]);
 
-  const title = game ? (GAME_SECTIONS.find(([key]) => key === section)?.[2] ?? 'Overview') : ({ '/': 'Games', '/games': 'Games', '/games/new': 'Register game', '/team': 'Team', '/workspaces': 'Workspaces', '/status': 'Server status', '/settings': 'Settings' } as Record<string, string>)[pathname] || 'AVN Analytics';
+  const title = game ? (GAME_SECTIONS.find(([key]) => key === section)?.[2] ?? 'Overview') : ({ '/': 'Games', '/games': 'Games', '/games/new': 'Register game', '/team': 'Team', '/agent-access': 'Agent access', '/workspaces': 'Workspaces', '/status': 'Server status', '/settings': 'Settings' } as Record<string, string>)[pathname] || 'AVN Analytics';
   useEffect(() => { document.title = `${game ? `${title} · ${game.name}` : title} · AVN Analytics`; }, [title, game]);
 
   const accountItems = useMemo(() => [
-    ...(me.can_manage_team ? [{ id: '/workspaces', label: 'Workspaces', icon: 'grid' as IconName }, { id: '/team', label: 'Team', icon: 'team' as IconName }] : []),
+    ...(me.can_manage_team ? [{ id: '/workspaces', label: 'Workspaces', icon: 'grid' as IconName }, { id: '/team', label: 'Team', icon: 'team' as IconName }, { id: '/agent-access', label: 'Agent access', icon: 'key' as IconName }] : []),
     { id: '/status', label: 'Server status', icon: 'pulse' as IconName }, { id: '/settings', label: 'Settings', icon: 'sliders' as IconName }, { id: 'theme', label: 'Light or dark theme', icon: 'eye' as IconName },
   ], [me.can_manage_team]);
   const onAccount = (id: string) => (id === 'theme' ? toggleTheme() : navigate({ to: id }));
@@ -119,7 +119,7 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
   const navActive = game ? section : ['/', '/games', '/games/new'].includes(pathname) ? '/' : null;
   const onNav = (id: string) => navigate({ to: game ? gamePath(game, id) : id });
   const labels = Object.fromEntries(NAV_GROUPS.flatMap((group) => group.items.map((item) => [item.id, item])));
-  const tabs = game ? PHONE_TABS.map((key) => labels[key]!) : [{ id: '/', label: 'Games', icon: 'grid' as IconName }, ...accountItems.slice(0, 3).map((item) => ({ ...item, label: item.label.replace('Server status', 'Status') }))];
+  const tabs = game ? PHONE_TABS.map((key) => labels[key]!) : [{ id: '/', label: 'Games', icon: 'grid' as IconName }, ...accountItems.filter((item) => item.id !== '/agent-access').slice(0, 3).map((item) => ({ ...item, label: item.label.replace('Server status', 'Status') }))];
   const sheetSections = [
     ...(game ? NAV_GROUPS.map((group) => ({ label: group.label, items: group.items.filter((item) => !PHONE_TABS.includes(item.id)) })).filter((group) => group.items.length) : []),
     { label: 'Account', items: accountItems },

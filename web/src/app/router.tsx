@@ -5,6 +5,7 @@ import { Shell } from './Shell';
 import { GameSection } from './GameSection';
 import { HomePage } from '@/pages/Home';
 import { NewGamePage } from '@/pages/NewGame';
+import { AgentAccessPage } from '@/pages/AgentAccess';
 import { TeamPage, WorkspacesPage } from '@/pages/Team';
 import { StatusPage } from '@/pages/Status';
 import { SettingsPage } from '@/pages/Settings';
@@ -21,6 +22,7 @@ const newGame = createRoute({ getParentRoute: () => rootRoute, path: '/games/new
 const gameHome = createRoute({ getParentRoute: () => rootRoute, path: '/games/$gameId', component: GameSection, validateSearch: search });
 const gameSection = createRoute({ getParentRoute: () => rootRoute, path: '/games/$gameId/$section', component: GameSection, validateSearch: search });
 const team = createRoute({ getParentRoute: () => rootRoute, path: '/team', component: TeamPage });
+const agentAccess = createRoute({ getParentRoute: () => rootRoute, path: '/agent-access', component: AgentAccessPage });
 const workspaces = createRoute({ getParentRoute: () => rootRoute, path: '/workspaces', component: WorkspacesPage });
 const status = createRoute({ getParentRoute: () => rootRoute, path: '/status', component: StatusPage, validateSearch: search });
 const settings = createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: SettingsPage });
@@ -28,6 +30,6 @@ const settings = createRoute({ getParentRoute: () => rootRoute, path: '/settings
 // once the games are known, so here they only keep their query.
 const legacy = LEGACY_PAGES.map((path) => createRoute({ getParentRoute: () => rootRoute, path, validateSearch: search, beforeLoad: ({ search: query }) => { throw redirect({ to: '/games/$gameId/$section', params: { gameId: query.game || '-', section: path.slice(1) }, search: Object.fromEntries(Object.entries(query).filter(([key]) => key !== 'game')) }); } }));
 
-const routeTree = rootRoute.addChildren([home, games, newGame, gameHome, gameSection, team, workspaces, status, settings, ...legacy]);
+const routeTree = rootRoute.addChildren([home, games, newGame, gameHome, gameSection, team, agentAccess, workspaces, status, settings, ...legacy]);
 export const router = createRouter({ routeTree, defaultPreload: 'intent', scrollRestoration: true });
 declare module '@tanstack/react-router' { interface Register { router: typeof router } }

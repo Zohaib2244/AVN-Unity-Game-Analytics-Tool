@@ -14,6 +14,7 @@ import { Ico } from '@/components/icons';
 const ACTION_LABELS: Record<string, string> = {
   'game.register': 'Registered a game', 'game.update': 'Edited a game', 'game.delete': 'Deleted a game',
   'icon.set': 'Changed a game icon', 'icon.clear': 'Removed a game icon',
+  'mcp.key_create': 'Created an agent key', 'mcp.key_update': 'Changed an agent key', 'mcp.key_regenerate': 'Made a new agent key text', 'mcp.key_delete': 'Deleted an agent key',
   'key.create': 'Created an API key', 'key.delete': 'Deleted an API key',
   'dictionary.set': 'Edited the event dictionary', 'dictionary.delete': 'Removed a dictionary entry',
   'export.download': 'Exported data', 'user.add': 'Added a person', 'user.role': 'Changed a role',

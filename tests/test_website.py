@@ -31,6 +31,9 @@ def test_pages_assets_and_api_separation(website):
         "/dictionary",
         "/status",
         "/settings",
+        "/team",
+        "/agent-access",
+        "/workspaces",
         "/games/some-game/event-setup",
         "/games/some-game/mappings",
     ]:

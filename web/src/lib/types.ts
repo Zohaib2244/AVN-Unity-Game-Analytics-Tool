@@ -80,6 +80,12 @@ export type AuditEntry = { at: string; actor: string; action: string; detail: st
 
 export type WorkspaceItem = { id: string; name: string; games: number; members: number; nutbot_access: 'admins' | 'leads' | 'everyone' | string };
 
+export type McpKey = {
+  id: string; name: string; secret: string; workspace_ids: string[]; game_ids: string[]; url_access: boolean; enabled: boolean;
+  created_at: string; last_used_at: string | null; calls: number; endpoint: string; link: string | null; workspaces: number; games: number;
+};
+export type McpKeyList = { enabled: boolean; keys: McpKey[] };
+
 export type SdkInfo = { filename: string; size: number; sha256: string };
 
 export type ProcessingPending = { facts_remaining?: number; views_waiting?: number; lag_seconds?: number };
