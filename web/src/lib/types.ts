@@ -367,11 +367,16 @@ export type WorkspaceStandard = { version: number | null; builtin_version: numbe
 export type GameStandard = { game_version: number | null; workspace_version: number | null; outdated: boolean };
 
 /* ─── One player's summary (insights/player-summary): ads, levels, coins, powerups and habits over their whole history ─── */
-export type SummaryAdFormat = { shown: number; closed: number; failed: number; rewarded: number; placements: Record<string, number>; reasons: Record<string, number> };
+export type SummaryAdFormat = { shown: number; closed: number; failed: number; load_failed?: number; rewarded: number; revenue?: number; placements: Record<string, number>; reasons: Record<string, number> };
+export type SummaryAdFailure = { at: string; format: string; kind: 'show' | 'load'; placement: string | null; reason: string; level: number | null };
+export type SummaryCost = { state: 'ok' | 'organic' | 'no_record' | 'updated' | 'no_cost' | 'off' | 'no_app_id' | 'not_allowed' | 'failed'; campaign?: string; install_day?: string; cost?: number; earned?: number; paid_back_share?: number; paid_back_day?: number | null };
 export type PlayerSummaryData = {
   player: string; events_counted: number; partial: boolean; first_seen: string | null; last_seen: string | null;
   sessions: { count: number; active_days: number; per_day: Array<[string, number]> };
-  ads: { formats: Record<string, SummaryAdFormat>; shown: number; failed: number; average_seconds_on_screen: number | null };
+  ads: { formats: Record<string, SummaryAdFormat>; shown: number; failed: number; load_failed?: number; revenue?: number; average_seconds_on_screen: number | null; networks?: Record<string, { shown: number; revenue: number }>; failures?: SummaryAdFailure[]; failures_total?: number };
+  money?: { total: number; per_day: Array<[string, number]> };
+  install?: { first_open: string | null; attributed: boolean; media_source?: string | null; campaign?: string | null; channel?: string | null };
+  cost?: SummaryCost;
   levels: {
     cleared: number; highest: number | null; clears: number; fails: number; left: number; first_try_clears: number;
     average_seconds: number | null; median_seconds: number | null; fastest_seconds: number | null; slowest_seconds: number | null; average_moves: number | null;

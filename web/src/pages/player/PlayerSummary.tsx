@@ -16,6 +16,43 @@ export const plain = (text: string): string => { const spaced = text.replace(/_/
 const dayText = (value: string): string => new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
 const dash = (value: number | null | undefined, format: (n: number) => string = number): string => (value == null ? '—' : format(value));
 const seconds = (value: number | null | undefined): string => dash(value, duration);
+const usd = (value: number, digits = 3): string => `$${value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+const whenText = (value: string): string => new Date(value).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+
+const COST_WORDS: Record<string, string> = {
+  organic: 'Organic install: no cost.', no_record: 'No install record, so no cost.', updated: 'Updated from an older build, not a new install, so no cost.',
+  no_cost: 'The cost service has no cost for this campaign that day.', off: 'Cost isn’t connected.', no_app_id: 'Cost needs this game’s app ID.', not_allowed: 'Cost isn’t available for this game yet.', failed: 'Couldn’t reach the cost service.',
+};
+
+/** What the player earned, day by day, against what they cost. */
+function ValueCard({ data }: { data: PlayerSummaryData }): ReactElement | null {
+  const money = data.money; const cost = data.cost;
+  if (!money) return null;
+  const days = money.per_day.slice(-30);
+  const most = Math.max(0.000001, ...days.map(([, value]) => value));
+  const share = cost?.state === 'ok' ? cost.paid_back_share ?? 0 : null;
+  const where = data.install?.campaign ? data.install.campaign : data.install?.attributed ? plain(String(data.install.media_source ?? 'organic')) : 'no install record';
+  return (
+    <section className="ps-card ps-value">
+      <h3>Earned and cost <small>{where}{cost?.install_day ? ` · installed ${dayText(cost.install_day)}` : ''}</small></h3>
+      <div className="ps-value-top">
+        <div><span>Ad revenue</span><b>{usd(money.total)}</b></div>
+        <div><span>Cost to acquire</span><b>{cost?.state === 'ok' ? usd(cost.cost ?? 0, 2) : '—'}</b></div>
+        <div><span>Paid back</span><b className={share != null && share >= 1 ? 'good' : undefined}>{share != null ? `${Math.round(share * 100)}%` : '—'}</b></div>
+      </div>
+      {share != null ? <div className="ps-payback" role="img" aria-label={`Paid back ${Math.round(share * 100)}% of the cost`}><i style={{ width: `${Math.max(1, Math.min(1, share) * 100)}%` }} /></div> : null}
+      <p className="ps-note">{cost?.state === 'ok' ? `${cost.paid_back_day != null ? `Paid back the cost on day ${cost.paid_back_day} after install.` : 'Hasn’t paid back the cost yet.'} Cost is the campaign’s cost per install on the install day.` : COST_WORDS[cost?.state ?? 'off'] ?? ''}</p>
+      {days.length ? (
+        <>
+          <h4>Earned per day <small>{days.length < money.per_day.length ? `last ${days.length} days with revenue` : ''}</small></h4>
+          <svg viewBox="0 0 300 44" className="ps-days ps-earned" preserveAspectRatio="none" role="img" aria-label="Ad revenue per day">
+            {days.map(([day, value], index) => { const width = Math.min(292 / days.length, 22); const height = Math.max(1.5, (value / most) * 38); return <rect key={day} x={4 + index * width} y={42 - height} width={Math.max(1, width - 2)} height={height} rx="1"><title>{`${dayText(day)}: ${usd(value)}`}</title></rect>; })}
+          </svg>
+        </>
+      ) : <p className="ps-empty">No ad revenue from this player yet.</p>}
+    </section>
+  );
+}
 
 /** How many levels the player clears for each ad shown, e.g. "1 per 6.7 levels"; null when either is zero. */
 export const levelsPerAd = (cleared: number, shown: number): string | null => (cleared > 0 && shown > 0 ? `1 per ${(cleared / shown).toFixed(1)} levels` : null);
@@ -78,8 +115,8 @@ function AdsCard({ data }: { data: PlayerSummaryData }): ReactElement {
       {formats.length ? (
         <>
           <div className="ps-seg" aria-hidden="true">{formats.map(([format, entry]) => <i key={format} style={{ flex: Math.max(1, entry.shown), background: adColor(format) }} />)}</div>
-          <table className="ps-table"><thead><tr><th>Type</th><th>Shown</th><th>Closed</th><th>Failed</th></tr></thead><tbody>
-            {formats.map(([format, entry]) => <tr key={format}><td><span className="ps-dot" style={{ background: adColor(format) }} />{adName(format)}</td><td>{number(entry.shown)}</td><td>{number(entry.closed)}</td><td>{number(entry.failed)}</td></tr>)}
+          <table className="ps-table"><thead><tr><th>Type</th><th>Shown</th><th>Closed</th><th>Failed</th><th>Earned</th></tr></thead><tbody>
+            {formats.map(([format, entry]) => <tr key={format}><td><span className="ps-dot" style={{ background: adColor(format) }} />{adName(format)}</td><td>{number(entry.shown)}</td><td>{number(entry.closed)}</td><td>{number(entry.failed + (entry.load_failed ?? 0))}</td><td>{usd(entry.revenue ?? 0)}</td></tr>)}
           </tbody></table>
           <p className="ps-note">
             {rewarded?.shown ? `Rewarded: ${number(rewarded.rewarded)} of ${number(rewarded.shown)} watched to the reward (${Math.round((100 * rewarded.rewarded) / rewarded.shown)}%). ` : ''}
@@ -87,6 +124,15 @@ function AdsCard({ data }: { data: PlayerSummaryData }): ReactElement {
           </p>
           {Object.keys(placements).length ? <><h4>Where they appear</h4><Bars rows={Object.entries(placements).sort((a, b) => b[1] - a[1]).slice(0, 5)} /></> : null}
           {Object.keys(reasons).length ? <><h4>Why ads failed</h4><Bars rows={Object.entries(reasons).sort((a, b) => b[1] - a[1])} tone="var(--bad)" /></> : null}
+          {ads.networks && Object.keys(ads.networks).length ? (
+            <><h4>Who paid</h4><table className="ps-table"><thead><tr><th>Network</th><th>Ads</th><th>Earned</th></tr></thead><tbody>{Object.entries(ads.networks).slice(0, 5).map(([name, item]) => <tr key={name}><td>{name}</td><td>{number(item.shown)}</td><td>{usd(item.revenue)}</td></tr>)}</tbody></table></>
+          ) : null}
+          {ads.failures?.length ? (
+            <>
+              <h4>Failed ads <small>{(ads.failures_total ?? 0) > ads.failures.length ? `newest ${ads.failures.length} of ${number(ads.failures_total ?? 0)}` : 'newest first'}</small></h4>
+              <ul className="ps-fails">{ads.failures.map((item, index) => <li key={`${item.at}-${index}`}><time dateTime={item.at}>{whenText(item.at)}</time><span>{adName(item.format)} {item.kind === 'load' ? 'didn’t load' : 'not shown'}{item.level != null ? ` · level ${item.level}` : ''}{item.placement ? ` · ${plain(String(item.placement))}` : ''}</span><b title={item.reason}>{item.reason}</b></li>)}</ul>
+            </>
+          ) : null}
         </>
       ) : <p className="ps-empty">No ads shown to this player.</p>}
     </section>
@@ -200,8 +246,8 @@ export function PlayerSummaryView({ data }: { data: PlayerSummaryData }): ReactE
       <p className="ps-scope">All time<small> · not limited to the days chosen above</small></p>
       <div className="ps-tiles">{tiles.map(([label, value, note]) => <div className="ps-tile" key={label}><span>{label}</span><b>{value}</b>{note ? <small>{note}</small> : null}</div>)}</div>
       <div className="ps-grid">
-        <div className="ps-col"><LevelsCard data={data} /><HabitsCard data={data} /></div>
-        <div className="ps-col"><WalletCard data={data} /><AdsCard data={data} /></div>
+        <div className="ps-col"><ValueCard data={data} /><LevelsCard data={data} /><HabitsCard data={data} /></div>
+        <div className="ps-col"><AdsCard data={data} /><WalletCard data={data} /></div>
       </div>
     </div>
   );

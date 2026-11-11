@@ -262,3 +262,62 @@ def test_delivery_reports_load_times_only_where_the_plugin_sends_them(tmp_path):
     # loads are not ads the game asked to show
     wanted = {row["value"]: row["wanted"] for row in data["serving"]["groups"]}
     assert wanted == {"Interstitial": 1}
+
+
+def test_a_players_summary_says_what_they_cost_and_how_much_they_paid_back(game):
+    admin, game, _, _ = game
+
+    def summary(player):
+        answer = admin.get(
+            f"/v1/games/{game['id']}/insights/player-summary",
+            headers=AUTH,
+            params={"player": player},
+        )
+        assert answer.status_code == 200, answer.text
+        return answer.json()
+
+    u1 = summary("u1")
+    assert u1["install"]["campaign"] == "C1" and u1["install"]["first_open"] == "2026-10-01"
+    assert u1["money"]["per_day"] == [["2026-10-01", 0.015], ["2026-10-02", 0.02]]
+    assert u1["cost"] == {
+        "state": "ok",
+        "campaign": "C1",
+        "install_day": "2026-10-01",
+        "cost": 2.5,
+        "earned": 0.035,
+        "paid_back_share": 0.014,
+        "paid_back_day": None,
+    }
+    assert summary("u3")["cost"] == {"state": "organic"}
+    assert summary("u4")["cost"] == {"state": "no_record"}
+    assert summary("u6")["cost"]["state"] == "updated"
+
+
+def test_a_players_ad_failures_are_listed_newest_first_with_level_and_reason(tmp_path):
+    settings = Settings(data_dir=tmp_path / "data", admin_token=TOKEN)
+    sent = [
+        at("p", 1, "AD_ANALYSIS", hour=10, STATE="Failed", FORMAT="Interstitial",
+           PLACEMENT="level_interstitial", REASON="NotReady", LEVEL_NUMBER=7, AD_ID="a1"),
+        at("p", 1, "AD_ANALYSIS", hour=11, STATE="LoadFailed", FORMAT="AppOpen",
+           ERROR="No fill", AD_ID="a2"),
+        at("p", 1, "AD_ANALYSIS", hour=12, STATE="Show", FORMAT="Rewarded", AD_ID="a3"),
+        at("p", 1, "AD_ANALYSIS", hour=12, STATE="Revenue", FORMAT="Rewarded", AD_ID="a3",
+           NETWORK="AppLovin", REVENUE=0.04),
+    ]  # fmt: skip
+    with TestClient(create_app(settings, admin=True)) as admin:
+        created = register(admin)
+        with TestClient(create_app(settings)) as ingest:
+            assert send(ingest, created, sent).status_code == 200
+        ads_part = admin.get(
+            f"/v1/games/{created['id']}/insights/player-summary",
+            headers=AUTH,
+            params={"player": "p"},
+        ).json()["ads"]
+    assert [item["reason"] for item in ads_part["failures"]] == ["No fill", "NotReady"]
+    assert ads_part["failures"][1] | {"at": None} == {
+        "at": None, "format": "Interstitial", "kind": "show",
+        "placement": "level_interstitial", "reason": "NotReady", "level": 7,
+    }  # fmt: skip
+    assert ads_part["load_failed"] == 1 and ads_part["failed"] == 1
+    assert ads_part["networks"] == {"AppLovin": {"shown": 1, "revenue": 0.04}}
+    assert ads_part["formats"]["Rewarded"]["revenue"] == 0.04
