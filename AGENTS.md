@@ -84,6 +84,11 @@ Things the owner has already said they don't like (don't make them again):
 - A built screen that doesn't match the prototype they approved.
 - Analytical screens with many percentage columns and no plain-words answer; a column or number whose meaning isn't stated.
 - Main information buried among settings and secondary detail; everything on a page given the same weight.
+- Rows of controls stacked above the data: a page's tools share one line, and the first rows of data are on the first screen.
+- The same thing said twice on one screen (the date range, the chosen build, a count, a panel title repeating its tab), or one measure under two names.
+- Columns that say the same on every row; a number in a column that does not line up with the ones above and below it (keep one decimal, put any extra count before the figure).
+- Totals set in the pixel face: figures use the number face, titles keep the pixel face.
+- A box that scrolls inside a page that also scrolls, on wide screens.
 
 ## Design preferences
 

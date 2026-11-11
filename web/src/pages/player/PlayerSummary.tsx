@@ -4,7 +4,7 @@
 import type { ReactElement } from 'react';
 import { useRead } from '@/api';
 import { QueryRegion, Skeleton } from '@/components/feedback';
-import { duration, number } from '@/lib/format';
+import { duration, number, plural } from '@/lib/format';
 import { gameURL } from '@/lib/games';
 import type { Game, PlayerSummaryData, SummaryAdFormat } from '@/lib/types';
 
@@ -53,7 +53,7 @@ function Pace({ pace }: { pace: Array<[number, number]> }): ReactElement | null 
       <svg viewBox="0 0 300 64" className="ps-pace" preserveAspectRatio="none" role="img" aria-label="Time to clear each level">
         {pace.map(([level, time], index) => { const height = Math.max(1.5, Math.min(1, time / cap) * 56); return <rect key={level} x={4 + index * width} y={60 - height} width={Math.max(1, width - 1)} height={height} className={time > cap ? 'slow' : undefined}><title>{`Level ${level}: ${duration(time)}`}</title></rect>; })}
       </svg>
-      <p className="ps-note">Time to clear, level {pace[0]![0]} to {pace[pace.length - 1]![0]}. Taller is slower.</p>
+      <p className="ps-note">Time to clear, level {pace[0]![0]} to {pace[pace.length - 1]![0]}. Taller is slower; the bright bars took far longer than this player’s usual.</p>
     </>
   );
 }
@@ -97,12 +97,12 @@ function LevelsCard({ data }: { data: PlayerSummaryData }): ReactElement {
   const { levels } = data;
   return (
     <section className="ps-card">
-      <h3>Levels <small>{number(levels.clears)} clears · {number(levels.fails)} fails</small></h3>
+      <h3>Levels <small>{plural(levels.clears, 'clear')} · {plural(levels.fails, 'fail')}</small></h3>
       {levels.highest == null ? <p className="ps-empty">No level events from this player.</p> : (
         <>
           <Stats items={[
-            ['Levels cleared', number(levels.cleared)], ['First-try clears', firstTryShare(levels.first_try_clears, levels.cleared)], ['Average moves', dash(levels.average_moves)],
-            ['Average clear time', seconds(levels.average_seconds)], ['Fastest', seconds(levels.fastest_seconds)], ['Slowest', seconds(levels.slowest_seconds)],
+            ['First-try clears', firstTryShare(levels.first_try_clears, levels.cleared)], ['Average moves', dash(levels.average_moves)],
+            ['Fastest', seconds(levels.fastest_seconds)], ['Slowest', seconds(levels.slowest_seconds)],
             ['Restarts', number(levels.restarts)], ['Revives', number(levels.revives)], ['Quit mid-level', number(levels.left)],
           ]} />
           <h4>Pace</h4>
@@ -166,12 +166,11 @@ function HabitsCard({ data }: { data: PlayerSummaryData }): ReactElement {
   return (
     <section className="ps-card">
       <h3>Sessions and habits</h3>
-      <Stats items={[['Sessions', number(sessions.count)], ['Active days', number(sessions.active_days)], ['Sessions per active day', sessions.active_days ? (sessions.count / sessions.active_days).toFixed(1) : '—']]} />
       {days.length ? (
         <>
           <h4>Sessions per day <small>last {days.length} active day{days.length === 1 ? '' : 's'}</small></h4>
           <svg viewBox="0 0 300 40" className="ps-days" preserveAspectRatio="none" role="img" aria-label="Sessions per active day">
-            {days.map(([day, count], index) => { const width = 292 / days.length; const height = Math.max(2, (count / most) * 34); return <rect key={day} x={4 + index * width} y={38 - height} width={Math.max(1, width - 2)} height={height} rx="1"><title>{`${day}: ${count}`}</title></rect>; })}
+            {days.map(([day, count], index) => { const width = Math.min(292 / days.length, 22); const height = Math.max(2, (count / most) * 34); return <rect key={day} x={4 + index * width} y={38 - height} width={Math.max(1, width - 2)} height={height} rx="1"><title>{`${day}: ${count}`}</title></rect>; })}
           </svg>
         </>
       ) : null}
@@ -198,6 +197,7 @@ export function PlayerSummaryView({ data }: { data: PlayerSummaryData }): ReactE
   return (
     <div className="ps">
       {data.partial ? <p className="ps-warn" role="status">This player has more events than one summary reads; the numbers cover the latest {number(data.events_counted)}.</p> : null}
+      <p className="ps-scope">All time<small> · not limited to the days chosen above</small></p>
       <div className="ps-tiles">{tiles.map(([label, value, note]) => <div className="ps-tile" key={label}><span>{label}</span><b>{value}</b>{note ? <small>{note}</small> : null}</div>)}</div>
       <div className="ps-grid">
         <div className="ps-col"><LevelsCard data={data} /><HabitsCard data={data} /></div>

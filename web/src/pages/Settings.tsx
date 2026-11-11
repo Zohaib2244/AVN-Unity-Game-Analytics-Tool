@@ -22,7 +22,7 @@ export function Appearance(): ReactElement {
       <div className="panel-body">
         <p className="eyebrow">Theme</p>
         <div className="seg-row range-modes" id="theme-modes">
-          {(['dark', 'light'] as const).map((mode) => <button key={mode} type="button" data-theme-mode={mode} aria-pressed={theme === mode} onClick={() => setTheme(mode)}>{mode}</button>)}
+          {(['dark', 'light'] as const).map((mode) => <button key={mode} type="button" data-theme-mode={mode} aria-pressed={theme === mode} onClick={() => setTheme(mode)}>{mode === 'dark' ? 'Dark' : 'Light'}</button>)}
         </div>
         <p className="eyebrow">Palette</p>
         <div className="palette-grid" id="palette-grid">
@@ -65,14 +65,17 @@ export function SettingsPage(): ReactElement {
   const thresholds = overview.analytics_thresholds;
   return (
     <>
-      <Heading title="Settings" subtitle="Appearance and workspace details." />
-      <div className="section-grid">
+      <Heading title="Settings" subtitle="Appearance, analysis defaults and what this server hands out." />
+      {/* Two balanced columns: what you change on the left, what you download or read on the right. */}
+      <div className="settings-cols">
         <div>
-          <SdkPanel />
-          {standardWorkspace ? <StandardPanel workspace={standardWorkspace} canManage={canManageGames} /> : null}
           <Appearance />
           <ThresholdsForm key={`${thresholds.levels_min_players}-${thresholds.funnels_min_players}`} thresholds={thresholds} canManage={me.can_manage_team} workspace={workspace} />
           {me.can_manage_team ? <ProcessingPanel /> : null}
+        </div>
+        <div>
+          <SdkPanel />
+          {standardWorkspace ? <StandardPanel workspace={standardWorkspace} canManage={canManageGames} /> : null}
           <section className="panel section-spacing">
             <div className="panel-header"><h2>Workspace</h2><Ico name="server" size={17} /></div>
             <div className="panel-body">
@@ -85,8 +88,8 @@ export function SettingsPage(): ReactElement {
               <p className="help section-spacing">Storage location and limits are set in the server's .env file.</p>
             </div>
           </section>
+          <aside className="aside-card"><Ico name="shield" size={25} /><h3>Protect this workspace</h3><p>This dashboard has no sign-in of its own. Put it behind your own access control, such as Cloudflare Access, a VPN or a private network, and never expose it directly.</p></aside>
         </div>
-        <aside className="aside-card"><Ico name="shield" size={25} /><h3>Protect this workspace</h3><p>This dashboard has no sign-in of its own. Put it behind your own access control, such as Cloudflare Access, a VPN or a private network, and never expose it directly.</p></aside>
       </div>
     </>
   );

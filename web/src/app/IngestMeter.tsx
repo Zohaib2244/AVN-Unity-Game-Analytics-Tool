@@ -85,7 +85,7 @@ export function IngestMeter({ game }: { game: Game }): ReactElement {
       </button>
       {open ? createPortal(
         <div ref={panel} className="ingest-pop" role="dialog" aria-label={`Ingest for ${game.name}`} style={{ left: place?.left ?? -9999, bottom: place?.bottom ?? 0 }}>
-          <h3><span>Ingest · {game.name}</span><span className={`ingest-state ${state}`}>{word}</span></h3>
+          <h3><span>Ingest · {game.name}</span><span className={`ingest-state is-${state}`}>{word}</span></h3>
           <div className="ingest-top">
             <div><b>{number(data.events_24h)}</b><span>events in 24 h</span></div>
             <div><b>{number(data.players_now)}</b><span>players in the last {data.recent_minutes} min</span></div>

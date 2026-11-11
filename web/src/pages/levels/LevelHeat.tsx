@@ -1,9 +1,10 @@
+// In a cell the player count sits before the percentage, so the percentages line up down the column.
 // One percentage of the level table (the drop to the next level, or failers who quit), drawn against its threshold:
 // plain at or under it; over it, tinted and hotter the further over, with a ↓ so colour is never the only cue.
 // The colour is the theme's own warning → bad blend (see .heat in styles/app.css), so every palette follows.
 import type { CSSProperties, ReactElement, ReactNode } from 'react';
 import { Ico } from '@/components/icons';
-import { percent } from '@/lib/format';
+import { percentFixed as percent } from '@/lib/format';
 import { barScale, heatOf, showCount, type CountsShown, type DropStyle } from './levelDisplay';
 
 export function HeatValue({ value, threshold, style, counts, count, title, icon = true }: { value: number; threshold: number; style: DropStyle; counts: CountsShown; count: ReactNode; title: string; icon?: boolean }): ReactElement {
@@ -29,8 +30,8 @@ export function HeatValue({ value, threshold, style, counts, count, title, icon 
   }
   return (
     <span className={`heat heat-cell${over ? ' over' : ''}`} style={vars} title={tip}>
-      <span className="heat-p">{over && icon ? <Ico name="trend" size={12} /> : null}{percent(value)}</span>
       {number}
+      <span className="heat-p">{over && icon ? <Ico name="trend" size={12} /> : null}{percent(value)}</span>
     </span>
   );
 }

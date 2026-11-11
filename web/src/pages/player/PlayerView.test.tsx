@@ -42,7 +42,7 @@ describe('PlayerViewer', () => {
     expect(within(dialog).getByText('player-one')).toBeVisible();
     expect(within(dialog).getByRole('button', { name: 'Copy player ID' })).toHaveFocus();
     await user.tab({ shift: true });
-    expect(within(dialog).getByRole('button', { name: 'Player' })).toHaveFocus();
+    expect(within(dialog).getByRole('button', { name: 'Summary' })).toHaveFocus();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await waitFor(() => expect(trigger).toHaveFocus());
@@ -61,7 +61,7 @@ describe('PlayerViewer', () => {
     expect(navigation.to).toBe('/games/g1/levels');
     expect(navigation.resetScroll).toBe(false);
     expect(navigation.search({ level: '12', player: 'player-one' })).toEqual({ level: '12', player: 'player-two' });
-    await user.click(screen.getByRole('button', { name: 'Player' }));
+    await user.click(screen.getByRole('button', { name: 'Summary' }));
     expect(screen.getByText('Device information')).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Raw events' }));
     expect(screen.getByText('Player timeline')).toBeVisible();
@@ -73,10 +73,10 @@ describe('PlayerViewer', () => {
     const props = { game, filters, onClose: () => {} };
     const { rerender } = render(<PlayerViewer {...props} player="player-one" />);
     expect(screen.getByRole('button', { name: 'Raw events' })).toHaveAttribute('aria-pressed', 'true');
-    await user.click(screen.getByRole('button', { name: 'Player' }));
+    await user.click(screen.getByRole('button', { name: 'Summary' }));
     rerender(<PlayerViewer {...props} player="player-two" />);
     expect(screen.getByRole('button', { name: 'Raw events' })).toHaveAttribute('aria-pressed', 'true');
-    await user.click(screen.getByRole('button', { name: 'Event Analysis' }));
+    await user.click(screen.getByRole('button', { name: 'Event analysis' }));
     rerender(<PlayerViewer {...props} player={null} />);
     rerender(<PlayerViewer {...props} player="player-two" />);
     expect(screen.getByRole('button', { name: 'Raw events' })).toHaveAttribute('aria-pressed', 'true');

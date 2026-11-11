@@ -37,7 +37,6 @@ export function LevelFeatures({ game, filters, scope, excludeReturners, onOpen }
   const kind = kindOf(prefs.subject, prefs.split);
   const values = query.data?.kinds[kind];
   const value = chosenValue(values, prefs.value);
-  const subject = prefs.subject === 'ads' ? `ads · by ${SPLITS[prefs.split].toLowerCase()}` : SUBJECTS[prefs.subject].toLowerCase();
 
   let body: ReactElement;
   if (!query.data) body = query.isError ? <LoadError error={query.error} onRetry={() => void query.refetch()} /> : <Skeleton kind="table" rows={6} columns={6} />;
@@ -48,7 +47,7 @@ export function LevelFeatures({ game, filters, scope, excludeReturners, onOpen }
   return (
     <section className="panel level-features">
       <div className="panel-header">
-        <div><h2>{MODES[prefs.mode]} · {subject}{prefs.mode === 'drop' && excludeReturners ? ' · no return observed' : ''}</h2><p>{prefs.mode === 'occurrence' ? 'Share of each level’s starters who met it, with how often per player in small type.' : 'Do players who ran into this leave more often than players who didn’t?'}</p></div>
+        <div><h2>{prefs.mode === 'occurrence' ? 'Who met it, level by level' : 'Do players who ran into this leave more often?'}</h2><p>{prefs.mode === 'occurrence' ? 'Share of each level’s starters; the small ×number is how often per player.' : `Compared with players on the same level who didn’t${excludeReturners ? ' · players who came back are not counted as gone' : ''}.`}</p></div>
       </div>
       <div className="panel-body">
         <div className="level-analysis-controls feature-controls">
@@ -74,7 +73,7 @@ export function LevelFeatures({ game, filters, scope, excludeReturners, onOpen }
 }
 
 function LevelCell({ row, onOpen }: { row: LevelFeatureRow; onOpen: (level: number) => void }): ReactElement {
-  return <td><button type="button" className="text-link level-jump-link" onClick={() => onOpen(row.level)}>{row.level}</button>{row.low_sample ? <> <span className="level-sample-marker" title={`Small sample: ${number(row.started)} starters`}>small</span></> : null}</td>;
+  return <td><button type="button" className="level-open level-jump-link" onClick={() => onOpen(row.level)}>{row.level}</button>{row.low_sample ? <> <span className="level-sample-marker" title={`Small sample: ${number(row.started)} starters`}>small</span></> : null}</td>;
 }
 
 function Occurrence({ rows, kind, values, more, onOpen }: { rows: LevelFeatureRow[]; kind: ReturnType<typeof kindOf>; values: string[]; more: number; onOpen: (level: number) => void }): ReactElement {
@@ -82,15 +81,15 @@ function Occurrence({ rows, kind, values, more, onOpen }: { rows: LevelFeatureRo
     <>
       <div className="level-scroll" tabIndex={0} role="region" aria-label="Occurrence by level">
         <table className="compact-table">
-          <thead><tr><th>Level</th><th>Starters</th>{values.map((value) => <th key={value}>{valueLabel(value)}</th>)}</tr></thead>
+          <thead><tr><th>Level</th><th className="num">Started</th>{values.map((value) => <th key={value} className="num">{valueLabel(value)}</th>)}</tr></thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.level}>
                 <LevelCell row={row} onOpen={onOpen} />
-                <td>{number(row.started)}</td>
+                <td className="num">{number(row.started)}</td>
                 {values.map((value) => {
                   const cell = occurrence(row, kind, value);
-                  return <td key={value} title={cell.players ? `${number(cell.players)} players` : undefined}>{cell.players ? <>{pct(cell.share)} <small className="muted">{cell.perPlayer != null ? `×${(Math.round(cell.perPlayer * 10) / 10).toString()}` : ''}</small></> : <span className="muted">—</span>}</td>;
+                  return <td key={value} className="num" title={cell.players ? `${number(cell.players)} players` : undefined}>{cell.players ? <>{pct(cell.share)} <small className="muted">{cell.perPlayer != null ? `×${(Math.round(cell.perPlayer * 10) / 10).toString()}` : ''}</small></> : <span className="muted">—</span>}</td>;
                 })}
               </tr>
             ))}
@@ -138,7 +137,7 @@ function Drop({ rows, kind, value, basis, subject, split, onOpen }: { rows: Leve
           <tbody>
             {shown.map((item) => (
               <tr key={item.level} className={item.reliable ? undefined : 'drop-faint'}>
-                <td><button type="button" className="text-link level-jump-link" onClick={() => onOpen(item.level)}>{item.level}</button></td>
+                <td><button type="button" className="level-open level-jump-link" onClick={() => onOpen(item.level)}>{item.level}</button></td>
                 <td className="num">{number(item.started)}</td>
                 <td className="num">{number(item.met)} <small className="muted">{item.started ? `${Math.round((100 * item.met) / item.started)}%` : ''}</small></td>
                 <td className="num">{pct(item.withRate)}</td>

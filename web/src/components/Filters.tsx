@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, t
 import { AnimatePresence, motion } from 'motion/react';
 import { Popover, Segmented } from '@avn/ui';
 import { useRead } from '@/api';
-import { dimensionText, number, prettyDay } from '@/lib/format';
+import { dimensionText, number } from '@/lib/format';
 import { gameURL } from '@/lib/games';
 import { DIMENSION_LABELS, MENU_DIMENSIONS, activeFilters, choiceOf, filterState, saveFilters, timezoneOffset, withChoice, type ActiveFilters, type Dimension, type DimensionChoice, type Facets, type FilterState } from '@/lib/filters';
 import type { Game } from '@/lib/types';
@@ -80,9 +80,15 @@ export function FilterBar({ game, state, onChange, context, children }: { game: 
   const chips = MENU_DIMENSIONS.map((dimension) => ({ dimension, ...choiceOf(state, dimension) })).filter((chip) => chip.values.length);
   const active = activeFilters(state);
   const hidden = state.hideTest && !state.environment.length;
-  const parts = [`${prettyDay(state.range.from)}${state.range.from === state.range.to ? '' : ` → ${prettyDay(state.range.to)}`}`, state.timezone === 'utc' ? 'UTC' : 'Local time', 'player ID = user_id, otherwise device_id'];
+  // The build switch already says which build is shown, so that build gets no chip and no count of its own.
+  const onSwitch = (state.versionMode === 'latest' || state.versionMode === 'previous') && choiceOf(state, 'app_version').mode === 'in';
+  const shownChips = onSwitch ? chips.filter((chip) => chip.dimension !== 'app_version') : chips;
+  const counted = active - (onSwitch && state.app_version.length ? 1 : 0);
+  // Only what the controls above do not already say: the dates are on the range button (full dates on hover).
+  const parts: string[] = state.timezone === 'utc' ? ['Times in UTC'] : [];
   if (context?.anonymous_events) parts.push(`${number(context.anonymous_events)} event${context.anonymous_events === 1 ? '' : 's'} without a player ID`);
   if (context?.excluded_events) parts.push(`${number(context.excluded_events)} event${context.excluded_events === 1 ? '' : 's'} outside active filters`);
+  const offer = !!(context?.excluded_events && hidden);
   return (
     <>
       <div className="filter-bar">
@@ -96,32 +102,34 @@ export function FilterBar({ game, state, onChange, context, children }: { game: 
           ]} />
         </div>
         {children}
-        <button ref={button} type="button" className="btn filters-open" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}><Ico name="funnel" size={14} /> Filters {active ? <span className="count">{active}</span> : null}</button>
+        <button ref={button} type="button" className="btn filters-open" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}><Ico name="funnel" size={14} /> Filters {counted ? <span className="count">{counted}</span> : null}</button>
       </div>
       <div className="filter-chips">
         <AnimatePresence initial={false} mode="popLayout">
-          {chips.map((chip) => (
+          {shownChips.map((chip) => (
             <motion.span key={chip.dimension} layout className={`filter-chip${chip.mode === 'not' ? ' out' : ''}`} {...POP}>
               <button type="button" className="filter-chip-open" title={`Change ${DIMENSION_LABELS[chip.dimension].toLowerCase()} filter`} onClick={() => openOn(chip.dimension)}>
                 <Ico name={chip.mode === 'not' ? 'ban' : DIMENSION_ICONS[chip.dimension]} size={13} />
                 <span className="filter-chip-label">{DIMENSION_LABELS[chip.dimension]}</span>
                 <em>{chip.mode === 'not' ? 'is not' : 'is'}</em>
-                <span>{choiceText(chip.dimension, chip)}{chip.dimension === 'app_version' && chip.mode === 'in' && state.versionMode === 'latest' ? ' (latest)' : chip.dimension === 'app_version' && chip.mode === 'in' && state.versionMode === 'previous' ? ' (previous)' : ''}</span>
+                <span>{choiceText(chip.dimension, chip)}</span>
               </button>
               <button type="button" className="filter-chip-x" aria-label={`Remove ${DIMENSION_LABELS[chip.dimension]} filter`} title="Remove this filter" onClick={() => removeCategory(chip.dimension)}><Ico name="close" size={11} /></button>
             </motion.span>
           ))}
         </AnimatePresence>
         {hidden ? <span className="filter-note"><Ico name="shield" size={12} /> Editor & development data hidden</span> : null}
-        {chips.length > 1 ? <button type="button" className="filter-clear" onClick={() => clear(true)}>Clear all</button> : null}
+        {shownChips.length > 1 ? <button type="button" className="filter-clear" onClick={() => clear(true)}>Clear all</button> : null}
       </div>
-      <div className="analysis-context" aria-live="polite">
-        <span>{parts.join(' · ')}</span>
-        <span>
-          {context?.low_sample ? <span className="sample-warning">Small sample: {number(context.players || 0)} of {number(context.minimum_players)} players</span> : null}
-          {context?.excluded_events && hidden ? <button type="button" className="filter-clear" onClick={() => set({ hideTest: false })}>Include editor & development data</button> : null}
-        </span>
-      </div>
+      {parts.length || context?.low_sample || offer ? (
+        <div className="analysis-context" aria-live="polite">
+          <span>{parts.join(' · ')}</span>
+          <span>
+            {context?.low_sample ? <span className="sample-warning">Small sample: {number(context.players || 0)} of {number(context.minimum_players)} players</span> : null}
+            {offer ? <button type="button" className="filter-clear" onClick={() => set({ hideTest: false })}>Include editor & development data</button> : null}
+          </span>
+        </div>
+      ) : null}
       <Popover position="fixed" open={open} onClose={() => setOpen(false)} anchor={button} width={340} className="filter-pop">
         <FilterMenu state={state} facets={facets} initial={category} onDone={(draft) => { onChange((s) => ({ ...s, ...draft })); setOpen(false); }} />
       </Popover>

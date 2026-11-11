@@ -1,7 +1,7 @@
 // Bars per day: one value a day, a dotted grid at 0, half and the peak, and a tooltip naming the day and its
 // value. softFrom fades the days that can still change; marker draws one labelled line on a day.
 import { useRef, useState, type ReactElement } from 'react';
-import { number, prettyDay } from '@/lib/format';
+import { number, prettyDay, shortDay } from '@/lib/format';
 import type { DayRange } from '@/lib/filters';
 import type { OverviewDay, OverviewMeasure } from '@/lib/types';
 import { CHART, chartGeometry, dailySeries, type DayPoint } from './maths';
@@ -27,7 +27,7 @@ export function DayChart({ series, label, tip: unit, format = number, softFrom, 
       <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label} onPointerLeave={() => setTip(null)}>
         {ticks.map((value) => <g key={value}><line className="chart-grid" x1={left} x2={width} y1={y(value)} y2={y(value)} /><text className="chart-axis" x={left - 6} y={y(value) + 4} textAnchor="end">{format(value)}</text></g>)}
         {bars.map((bar) => <rect key={bar.day} className={`chart-bar${softFrom && bar.day >= softFrom ? ' soft' : ''}`} x={bar.x} y={bar.y} width={bar.width} height={bar.height} rx={bar.rx} />)}
-        {bars.map((bar) => (bar.labelled ? <text key={bar.day} className="chart-axis" x={bar.labelX} y={height - 6} textAnchor="middle">{bar.day.slice(5)}</text> : null))}
+        {bars.map((bar) => (bar.labelled ? <text key={bar.day} className="chart-axis" x={bar.labelX} y={height - 6} textAnchor="middle">{shortDay(bar.day)}</text> : null))}
         {marked && marker ? <g><line className="chart-marker" x1={marked.hitX} x2={marked.hitX} y1={0} y2={height - bottom} /><text className="chart-marker-label" x={marked.hitX + 5} y={11}>{marker.label}</text></g> : null}
         {bars.map((bar) => <rect key={bar.day} className={`chart-hit${tip?.day === bar.day ? ' on' : ''}`} x={bar.hitX} y={0} width={step} height={height - bottom} onPointerEnter={(event) => show(event, bar)} />)}
       </svg>

@@ -15,7 +15,7 @@ import { Ico } from '@/components/icons';
 interface VersionRow { app_version: string; events: number; players: number; first_seen: string | null; last_seen: string | null }
 interface Versions { versions: VersionRow[]; deleting: string[] }
 
-const day = (value: string | null): string => (value ? new Date(value).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—');
+const day = (value: string | null): string => (value ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
 
 /** Newest numbered release first, then versions that aren't x.y.z. */
 export function newestFirst(rows: VersionRow[]): VersionRow[] {

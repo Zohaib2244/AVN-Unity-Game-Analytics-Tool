@@ -156,12 +156,11 @@ function PlayerDetails({ game, player, filters }: { game: Game; player: string; 
           <button type="button" aria-pressed={timezone === 'utc'} onClick={() => setTimezone('utc')}>UTC</button>
         </div>
       </div>
-      <div className="analysis-context">{timezone === 'utc' ? 'UTC' : 'Local time'} · player ID = user_id, otherwise device_id</div>
       <QueryRegion query={story} path={storyPath} skeleton={<Skeleton kind="stats" />}>{(data) => <Stats data={data} timezone={timezone} />}</QueryRegion>
       <div className="range-modes route-tabs" role="group" aria-label="View">
         <button type="button" aria-pressed={tab === 'raw'} onClick={() => chooseTab('raw')}>Raw events</button>
-        <button type="button" aria-pressed={tab === 'analysis'} onClick={() => chooseTab('analysis')}>Event Analysis</button>
-        <button type="button" aria-pressed={tab === 'info'} onClick={() => chooseTab('info')}>Player</button>
+        <button type="button" aria-pressed={tab === 'analysis'} onClick={() => chooseTab('analysis')}>Event analysis</button>
+        <button type="button" aria-pressed={tab === 'info'} onClick={() => chooseTab('info')}>Summary</button>
       </div>
       {tab === 'info' ? (
         <div className="player-tab">
@@ -177,18 +176,19 @@ function PlayerDetails({ game, player, filters }: { game: Game; player: string; 
   );
 }
 
+/** The player's numbers for the days chosen above, on one line: the Summary tab holds the all-time ones. */
 function Stats({ data, timezone }: { data: PlayerStory; timezone: Timezone }): ReactElement {
   const items: Array<[string, string, string]> = [
-    ['Sessions', number(data.sessions), data.first_seen ? `${analysisDate(data.first_seen, timezone)} → ${analysisDate(data.last_seen, timezone)}` : ''],
+    ['Sessions', number(data.sessions), ''],
     ['Events', number(data.events), ''],
-    ['Play time', duration(data.total_play_seconds), data.average_session_seconds != null ? `${duration(data.average_session_seconds)} average session` : ''],
+    ['Play time', duration(data.total_play_seconds), data.average_session_seconds != null ? `${duration(data.average_session_seconds)} a session` : ''],
     ['Highest level', data.highest_level != null ? number(data.highest_level) : '—', ''],
   ];
   return (
-    <div className="stat-strip">
-      {items.map(([label, value, note]) => (
-        <div className="stat" key={label}><span className="stat-label">{label}</span><strong className="stat-value">{value}</strong>{note ? <span className="stat-note">{note}</span> : null}</div>
-      ))}
+    <div className="stat-line" aria-label="In the selected days">
+      <span className="stat-line-scope">In these days</span>
+      {items.map(([label, value, note]) => <span className="stat-line-item" key={label}><b>{value}</b> {label.toLowerCase()}{note ? <small> · {note}</small> : null}</span>)}
+      {data.first_seen ? <span className="stat-line-when">{analysisDate(data.first_seen, timezone)} → {analysisDate(data.last_seen, timezone)}</span> : null}
     </div>
   );
 }

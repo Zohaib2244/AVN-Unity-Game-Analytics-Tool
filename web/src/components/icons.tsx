@@ -7,6 +7,7 @@ const PATHS: Record<string, string> = {
   game: '<path d="M7 8h10c3 0 4 3 4 7s-2 5-4 2l-1-1H8l-1 1c-2 3-4 2-4-2s1-7 4-7Z"/><path d="M8 10v5m-2.5-2.5h5m5-1h.01m2 2h.01"/>',
   key: '<circle cx="8" cy="9" r="5"/><path d="m12 12 9 9m-5-5 3-3m-1 5 3-3"/>',
   export: '<path d="M12 3v12m-4-4 4 4 4-4M4 15v5h16v-5"/>',
+  upload: '<path d="M12 15V3m-4 4 4-4 4 4M4 15v5h16v-5"/>',
   book: '<path d="M12 6c-3-3-7-3-10-2v15c4-1 7-1 10 2 3-3 6-3 10-2V4c-3-1-7-1-10 2Z"/><path d="M12 6v15"/>',
   pulse: '<path d="M2 12h5l3-8 4 16 3-8h5"/>',
   settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor" stroke="none"/><circle cx="15" cy="17" r="3" fill="currentColor" stroke="none"/>',

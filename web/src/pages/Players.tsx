@@ -99,23 +99,24 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
   }, [game, navigate, query]);
   const close = () => { setBrowse(undefined); const { player: _player, ...rest } = query; void navigate({ to: gamePath(game, 'players'), search: rest, resetScroll: false }); };
 
-  const active = body.conditions.length + body.metrics.length;
   const options = sortOptions(body.metrics);
   if (player) return <PlayerPage game={game} player={player} filters={filters} browse={browse} onBack={close} />;
   return (
     <>
-      <Heading title="Players" subtitle="A player uses user_id when available, otherwise device_id. Open one to read their events, sort the list, or add event-based columns." />
+      <Heading title="Players" subtitle="Open a player to read their events." />
       <FilterBar game={game} state={filters} onChange={setFilters} context={players.data?.context || {}} />
       <PlayerRuleBar conditions={view.conditions} metrics={view.metrics} total={total} onEdit={() => setRulesOpen(true)} onRemoveRule={removeRule} onRemoveMetric={removeMetric} onClear={clearRules} />
-      <section className="panel section-spacing">
-        <div className="panel-header">
-          <div><h2>Players <span className="count">{number(total ?? 0)}</span></h2></div>
-          <div className="quiet-actions"><FreshStamp /><div className="search"><Ico name="search" size={16} /><input type="search" aria-label="Search players" placeholder="Search by user or install ID…" value={typed} onChange={(e) => setTyped(e.target.value)} /></div></div>
-        </div>
-        <div className="players-toolbar">
-          <label className="inline-field">Sort by<select value={sort} onChange={(e) => { setView((v) => ({ ...v, sort: e.target.value })); reload(); }}>{options.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-          <button type="button" className="button small-button" onClick={() => { setView((v) => ({ ...v, order: v.order === 'desc' ? 'asc' : 'desc' })); reload(); }}>{view.order === 'desc' ? '↓' : '↑'} {orderLabel(sort, view.order, body.metrics)}</button>
-          <button type="button" className="button small-button rules-toggle" aria-haspopup="dialog" onClick={() => setRulesOpen(true)}><Ico name="funnel" size={14} /> Event rules {active ? <span className="count">{active}</span> : null}</button>
+      <section className="panel section-spacing players-panel">
+        {/* One line: find a player, then how the list is ordered and what extra columns it has. The rule bar above carries the count. */}
+        <div className="panel-header players-head">
+          <h2 className="sr-only">Players</h2>
+          <div className="search"><Ico name="search" size={16} /><input type="search" aria-label="Search players" placeholder="Search by player ID…" value={typed} onChange={(e) => setTyped(e.target.value)} /></div>
+          <div className="quiet-actions">
+            <FreshStamp />
+            <label className="inline-field icon-field"><Ico name="sort" size={14} /><span className="sr-only">Sort by</span><select aria-label="Sort by" value={sort} onChange={(e) => { setView((v) => ({ ...v, sort: e.target.value })); reload(); }}>{options.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+            <button type="button" className="btn" title="Switch the order" onClick={() => { setView((v) => ({ ...v, order: v.order === 'desc' ? 'asc' : 'desc' })); reload(); }}>{view.order === 'desc' ? '↓' : '↑'} {orderLabel(sort, view.order, body.metrics)}</button>
+            <button type="button" className="btn rules-toggle" aria-haspopup="dialog" onClick={() => setRulesOpen(true)}><Ico name="plus" size={14} /> Add column {body.metrics.length ? <span className="count">{body.metrics.length}</span> : null}</button>
+          </div>
         </div>
         <QueryRegion query={players} path={`${gameURL(game)}/insights/players`} skeleton={<Skeleton kind="table" rows={8} columns={7} />}>
           {(data) => (data.players.length ? (

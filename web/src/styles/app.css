@@ -791,3 +791,128 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
 .copy-field-value .link-button { flex-shrink: 0; color: var(--muted); }
 .connect-allow { padding: 12px; border: var(--bw) solid var(--line); border-radius: var(--r-ctl); background: var(--nested); }
 .connect-allow p { margin-bottom: 10px; }
+
+/* ─── UX pass: less chrome above the data, one home for each control ─── */
+/* The date field is as wide as its dates and looks like the other controls, not like a disabled input. */
+.range-compact .range-input { width: auto; min-width: 0; padding: 7px 12px; background: transparent; border: var(--bw) solid var(--line-strong); border-radius: var(--r-ctl); color: var(--text); font-weight: 600; }
+.range-compact .range-input:hover { border-color: var(--accent); }
+/* View tabs: hovering hints, the chosen one stands out (it was the other way round). */
+.range-modes button:hover:not([aria-pressed="true"]), .route-tabs button:hover:not([aria-pressed="true"]), .route-filters button:hover:not([aria-pressed="true"]):not(:disabled) { color: var(--text); border-color: var(--line-strong); background: var(--nested); }
+.route-tabs button[aria-pressed="true"] { box-shadow: inset 0 -2px var(--accent); }
+
+/* Levels: the views and "which players" share one line. */
+.levels-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 0 0 14px; }
+.levels-bar .levels-views { margin: 0; }
+.levels-bar .level-scope-controls { gap: 6px 14px; }
+.levels-bar .segmented button { display: inline-flex; align-items: center; gap: 6px; }
+.level-scope-controls .level-return-option { min-height: 32px; }
+.levels-panel .levels-navigation { padding: 10px 16px; }
+.levels-navigation #levels-jump { max-width: 140px; }
+/* The answer in words, then the other levels worth a look. */
+.levels-answer { justify-content: space-between; padding: 10px 16px; }
+.levels-answer p { margin: 0; color: var(--text); font-size: var(--fs-md); max-width: 75ch; }
+.levels-answer p strong { font-family: var(--font-mono); }
+.answer-level { padding: 0; border: 0; background: none; font: inherit; font-weight: 700; color: var(--accent-text, var(--accent)); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.answer-others { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.answer-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 10px; border: var(--bw) solid var(--line-strong); border-radius: 99px; background: none; color: var(--muted); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.answer-chip b { color: var(--text); }
+.answer-chip em { font-style: normal; font-family: var(--font-mono); }
+.answer-chip:hover, .answer-level:hover { color: var(--text); border-color: var(--accent); }
+.answer-chip:focus-visible, .answer-level:focus-visible, .level-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+/* The table: the level sits next to its numbers, rows are compact, and the level number is the link. */
+.levels-grid > thead th:first-child, .levels-grid > tbody > tr > td:first-child { width: 1%; padding-right: 28px; }
+.levels-grid > tbody > tr > td { padding-block: 5px; }
+.level-open { font-family: var(--font-mono); font-weight: 700; color: var(--text); text-decoration: none; }
+tr:hover > td > .level-open { color: var(--accent-text, var(--accent)); text-decoration: underline; text-underline-offset: 3px; }
+.level-restarts { display: inline-flex; align-items: center; gap: 3px; margin-right: 10px; color: var(--dim); font-size: 11px; }
+.level-fails { display: inline-block; min-width: 3ch; }
+.table-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 16px; border-top: var(--bw) solid var(--line); }
+.table-foot select { width: auto; min-height: 34px; }
+.display-pop { width: 320px !important; }
+/* Wide screens: the page scrolls, not a box inside it, and the headings stay under the top bar. */
+@media (min-width: 1000px) {
+  .panel.levels-panel { overflow: visible; }
+  .levels-panel .levels-scroll { max-height: none; overflow: visible; }
+  .levels-panel .levels-scroll thead { top: 52px; }
+}
+
+/* Players: one header line (find, order, columns); the page scrolls and the headings stay under the top bar. */
+.players-head { flex-wrap: wrap; gap: 10px 12px; }
+.players-head .search { flex: 1 1 240px; max-width: 360px; min-width: 0; }
+.players-head .quiet-actions { gap: 8px; }
+.players-head select { width: auto; min-height: 36px; }
+.players-head .btn { min-height: 36px; }
+.players-table th.after-num, .players-table td.after-num { padding-left: 32px; }
+/* A sorted number column keeps its heading flush with its numbers: the arrow goes in front. */
+th.sortable.num .sort-arrow { order: -1; }
+.players-table td { padding-block: 7px; }
+@media (min-width: 1000px) {
+  .panel.players-panel { overflow: visible; }
+  .players-panel .players-table { max-height: none; min-height: 0; overflow: visible; }
+  .players-panel .players-table thead th { top: 52px; }
+}
+.players-table th.sortable { padding-inline: 0; }
+.players-table th.sortable.after-num { padding-left: 25px; }
+
+/* Player: the days' numbers on one line, so the events start higher. */
+.stat-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 22px; margin: 2px 2px 16px; font-size: var(--fs-md); color: var(--muted); }
+.stat-line-scope { font-family: var(--font-mono); font-size: var(--fs-micro); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.stat-line-item b { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.stat-line-item small, .stat-line-when { font-size: var(--fs-sm); color: var(--dim); }
+.stat-line-when { margin-left: auto; }
+/* Highlights: one wrapping line of chips instead of a block per group. */
+.raw-timeline .hl-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding-top: 10px; padding-bottom: 10px; }
+.raw-timeline .hl-picker[hidden] { display: none; }
+.raw-timeline .hl-picker-head { display: contents; }
+.raw-timeline .hl-picker-head .button { order: 9; margin-left: auto; }
+.raw-timeline .hl-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.raw-timeline .hl-group-name { padding: 0; font-family: var(--font-mono); font-size: var(--fs-micro); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.raw-timeline .hl-chips { gap: 6px; }
+.raw-timeline .highlight-setup { padding-top: 0; padding-bottom: 8px; }
+/* The timeline's own controls read as one family. */
+.raw-timeline .highlight-setup > summary, .raw-timeline .param-chooser > summary, .raw-timeline .param-bar .check-row { font-family: var(--font-ui); font-size: var(--fs-sm); color: var(--muted); padding-block: 6px; }
+.raw-timeline .tl-layout { padding-top: 6px; }
+.raw-timeline .level-mark { margin: 0 0 0 4px; }
+
+/* Figures in the plain number face: in the pixel face 5, 8 and S are too alike to read a total at a glance.
+   Titles keep the pixel face. (A departure from the style's "number in the display font".) */
+.k-v, .tile .tv, .mini b, .rb-count b, .fhead .big, .range-total strong, .stat-value, .metric-value, .storage-number, .card-dau strong, .activity-stats dd, .ps-tile b, .funnel-headline strong, .group-difference strong, .srv-top .big, .preview b.n { font-family: var(--font-mono); font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.ps-scope { margin: 0 0 8px; font-family: var(--font-mono); font-size: var(--fs-micro); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.ps-scope small { font-family: var(--font-ui); font-size: var(--fs-sm); letter-spacing: 0; text-transform: none; }
+/* A select with a label above it used to sit lower than the buttons beside it: line the row up on its bottom edge. */
+.games-toolbar, .level-drill-head { align-items: flex-end; }
+
+/* Shell: the workspace switch is one quiet line (it rarely changes); the page's freshness is said once, by its panels. */
+.nav-links { display: contents; }
+@container app (min-width: 901px) {
+  .side .ws-switch { display: flex; align-items: center; gap: 8px; }
+  .side .ws-switch .eyebrow { margin: 0; flex: none; }
+  .side .ws-switch select { flex: 1; min-width: 0; min-height: 32px; padding-block: 4px; border-color: var(--line); background-color: transparent; font-size: var(--fs-sm); }
+}
+.topbar .refresh-updated { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Overview */
+.look-action .s { display: block; }
+.look-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.setup.closed { margin-bottom: 12px; }
+
+/* Settings: two balanced columns of panels with a steady gap, and a save button clear of its fields. */
+.settings-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.settings-cols > div { display: grid; gap: 16px; min-width: 0; }
+.settings-cols > div > * { margin: 0; }
+.settings-cols .threshold-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 14px; }
+@media (max-width: 1100px) { .settings-cols { grid-template-columns: 1fr; } }
+
+.settings-cols .panel-header { flex-wrap: nowrap; }
+.settings-cols .panel-header > div { min-width: 0; }
+.settings-cols .panel-header > svg { flex: none; }
+/* Phone: the Levels views are one sideways-scrolling row and the table's tools share one line. */
+@media (max-width: 620px) {
+  .levels-bar .levels-views { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none; }
+  .levels-bar .levels-views button { flex: none; }
+  .levels-navigation .quiet-actions { flex-wrap: nowrap; width: 100%; margin-left: 0; }
+  .levels-navigation .quiet-actions .inline-field { flex: 1; min-width: 0; }
+  .levels-navigation .quiet-actions select { width: 100%; }
+  .players-head .quiet-actions { width: 100%; }
+  .stat-line-when { margin-left: 0; }
+}

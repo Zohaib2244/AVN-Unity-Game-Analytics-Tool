@@ -38,7 +38,7 @@ export function StandardPanel({ workspace, canManage }: { workspace: string; can
             </ul>
             <div className="error" role="alert">{error}</div>
             <div className="sdk-actions">
-              {canManage ? <><label className="button primary" htmlFor="standard-file"><Ico name="export" size={15} /> Upload .md</label><input ref={input} id="standard-file" type="file" accept=".md,text/markdown,text/plain" hidden onChange={() => void upload()} /></> : null}
+              {canManage ? <><label className="button primary" htmlFor="standard-file"><Ico name="upload" size={15} /> Upload .md</label><input ref={input} id="standard-file" type="file" accept=".md,text/markdown,text/plain" hidden onChange={() => void upload()} /></> : null}
               <button type="button" className="button" onClick={() => void download()}><Ico name="export" size={15} /> Download setup files</button>
               {canManage && standard.source === 'uploaded' ? <button type="button" className="button" onClick={() => setResetting(true)}>Use built-in (v{standard.builtin_version})</button> : null}
             </div>

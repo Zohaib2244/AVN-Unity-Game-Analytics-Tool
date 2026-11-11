@@ -1,7 +1,7 @@
 // App shell (avn-ux shell.md): grouped sidebar with one sliding highlight, top bar, account menu,
 // command palette (Ctrl/Cmd + K), tablet rail and phone tab bar, refresh and auto-refresh, the bell,
 // copy link, theme switch, shortcuts (Ctrl /), offline banner, request activity.
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type ReactElement, type ReactNode } from 'react';
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router';
 import { IngestMeter } from './IngestMeter';
 import { AccountMenu, AppShell, BellButton, CommandPalette, IconButton, MoreSheet, NotificationList, Page, Popover, SearchButton, ShortcutsDialog, Sidebar, SidebarNav, SingleSelect, TabBar, TopBar, Workspace, type CommandItem, type IconName, type NavGroup } from '@avn/ui';
@@ -118,6 +118,14 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
   const workspaceNav: NavGroup[] = [{ label: 'Workspace', items: [{ id: '/', label: 'Games', icon: 'grid' }] }];
   const navActive = game ? section : ['/', '/games', '/games/new'].includes(pathname) ? '/' : null;
   const onNav = (id: string) => navigate({ to: game ? gamePath(game, id) : id });
+  const navInNewTab = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!(event.button === 1 || event.metaKey || event.ctrlKey)) return;
+    const label = (event.target as Element).closest('button')?.textContent?.trim();
+    const item = (game ? NAV_GROUPS : workspaceNav).flatMap((group) => group.items).find((entry) => entry.label === label);
+    if (!item) return;
+    event.preventDefault(); event.stopPropagation();
+    window.open(game ? gamePath(game, item.id) : item.id, '_blank', 'noopener');
+  };
   const labels = Object.fromEntries(NAV_GROUPS.flatMap((group) => group.items.map((item) => [item.id, item])));
   const tabs = game ? PHONE_TABS.map((key) => labels[key]!) : [{ id: '/', label: 'Games', icon: 'grid' as IconName }, ...accountItems.filter((item) => item.id !== '/agent-access').slice(0, 3).map((item) => ({ ...item, label: item.label.replace('Server status', 'Status') }))];
   const sheetSections = [
@@ -141,7 +149,10 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
           </div>
         </>
       ) : null}
-      <SidebarNav groups={game ? NAV_GROUPS : workspaceNav} active={navActive} onSelect={onNav} label={game ? 'Game' : 'Workspace'} />
+      {/* The shared nav draws buttons, not links: give them what a link does with Ctrl/Cmd-click and middle-click. */}
+      <div className="nav-links" onClickCapture={navInNewTab} onAuxClick={navInNewTab}>
+        <SidebarNav groups={game ? NAV_GROUPS : workspaceNav} active={navActive} onSelect={onNav} label={game ? 'Game' : 'Workspace'} />
+      </div>
       {game ? <IngestMeter game={game} /> : null}
       <AccountMenu name={accountName} role={`${ROLE_LABELS[role] || role}${me.source === 'lan' ? ' · local network' : ''}`} initial={accountName.slice(0, 1).toUpperCase()} items={accountItems} onSelect={onAccount} />
     </Sidebar>

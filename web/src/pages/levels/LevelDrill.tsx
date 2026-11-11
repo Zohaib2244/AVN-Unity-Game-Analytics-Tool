@@ -150,7 +150,7 @@ export function LevelDrill({ game, filters, scope, excludeReturners, level, row,
           {LEVEL_DRILL_GROUPS.map(([key, label]) => <button key={key} type="button" data-drill-group={key} aria-pressed={state.group === key} onClick={() => { if (state.group !== key) setState({ group: key, lastAction: null, cause: null, ending: null }); }}>{excludeReturners && key === 'left' ? 'Stopped during level · no return' : excludeReturners && key === 'finished_stopped' ? 'Stopped after finishing · no return' : excludeReturners && key === 'failed_left' ? 'Failed · no return' : label}{counts ? <> <span className="drill-count">{number(counts[key])}</span></> : null}</button>)}
         </div>
         <div className="quiet-actions">
-          <label className="inline-field">Sort<select data-drill-sort value={state.sort} onChange={(event) => setState({ sort: event.target.value as DrillSort })}><option value="exit_at">Latest on this level</option><option value="tries">Most tries</option><option value="fails">Most fails</option></select></label>
+          <label className="inline-field icon-field"><Ico name="sort" size={14} /><span className="sr-only">Sort</span><select data-drill-sort aria-label="Sort players" value={state.sort} onChange={(event) => setState({ sort: event.target.value as DrillSort })}><option value="exit_at">Latest on this level</option><option value="tries">Most tries</option><option value="fails">Most fails</option></select></label>
           <button type="button" className="button" data-drill-csv onClick={exportCSV}><Ico name="export" size={14} /> CSV</button>
         </div>
       </div>
@@ -163,11 +163,14 @@ export function LevelDrill({ game, filters, scope, excludeReturners, level, row,
           const players = extra.path === firstPath ? [...result.players, ...extra.players] : result.players;
           const total = extra.path === firstPath && extra.total != null ? extra.total : result.total;
           if (!players.length) return <p className="help">Nobody is in this group in the selected days and filters.</p>;
+          // Columns that say the same thing on every row are left out: nobody came back in a no-return group, and one build needs no column.
+          const showLater = !returned && players.some((item) => item.came_back);
+          const showVersion = new Set(players.map((item) => item.app_version || '')).size > 1;
           return (
             <>
               <div className="table-wrap">
                 <table className="compact-table">
-                  <thead><tr><th>Player</th>{quitting ? <th title="Hover or click one to see the exact last event">{returned ? 'Why they left' : 'How it ended'}</th> : null}{returned ? <><th className="num">Away</th><th>Then</th></> : null}<th className="num">Tries</th><th className="num">Fails</th><th>Last on this level</th>{returned ? null : <th className="col-secondary">Opened the game later</th>}<th className="col-secondary">Version</th><th className="num">Session length</th></tr></thead>
+                  <thead><tr><th>Player</th>{quitting ? <th title="Hover or click one to see the exact last event">{returned ? 'Why they left' : 'How it ended'}</th> : null}{returned ? <><th className="num">Away</th><th>Then</th></> : null}<th className="num">Tries</th><th className="num">Fails</th><th>Last on this level</th>{showLater ? <th className="col-secondary" title="Any later session by the end date">Opened the game later</th> : null}{showVersion ? <th className="col-secondary">Version</th> : null}<th className="num" title="The whole session they were last on this level in, not only the time on the level">Session length</th></tr></thead>
                   <tbody>
                     {players.map((item, index) => (
                       <tr key={item.player} data-player={item.player}>
@@ -182,8 +185,8 @@ export function LevelDrill({ game, filters, scope, excludeReturners, level, row,
                         <td className="num">{number(item.tries)}</td>
                         <td className="num">{number(item.fails)}</td>
                         <td className="small muted">{analysisDate(item.exit_at, filters.timezone)}</td>
-                        {returned ? null : <td className="col-secondary">{item.came_back ? <span className="pill good">came back</span> : <span className="small muted">—</span>}</td>}
-                        <td className="small col-secondary">{item.app_version || '—'}</td>
+                        {showLater ? <td className="col-secondary">{item.came_back ? <span className="pill good">came back</span> : <span className="small muted">—</span>}</td> : null}
+                        {showVersion ? <td className="small col-secondary">{item.app_version || '—'}</td> : null}
                         <td className="num">{duration(item.session_seconds)}</td>
                       </tr>
                     ))}
@@ -195,7 +198,7 @@ export function LevelDrill({ game, filters, scope, excludeReturners, level, row,
                 <span className="small muted">{number(players.length)} of {number(total)}</span>
                 {players.length < total ? <button type="button" className="button" data-drill-more disabled={more.loading} aria-busy={more.loading || undefined} onClick={() => showMore(players.length)}>{more.loading ? <Spinner label="Loading…" /> : 'Show more'}</button> : null}
               </div>
-              <p className="help">Session length is the whole session they were last on this level in, not only the time on the level. “Came back” means any later session by the end date. Left means the end of the session reached us; Last seen means it didn't. Hover or click one to see the last event the game logged in that session (session start and end aside), when it came, and what they did right after the level. Open a player to start at their last event on this level.</p>
+              <p className="foot-note">Session length is the whole session, not only this level{quitting ? <> · “Left” means the session’s end reached us, “Last seen” means it didn’t · point at one for the exact last event</> : null}.</p>
             </>
           );
         }}

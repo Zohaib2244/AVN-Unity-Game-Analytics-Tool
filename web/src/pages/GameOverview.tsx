@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore, type ReactElement } from 're
 import { Link } from '@tanstack/react-router';
 import { Freshness, Segmented, Tag } from '@avn/ui';
 import { freshness, markFresh, refreshAll, useRead } from '@/api';
-import { addDays, daysBetween, number, percent, platformLabel, shortDay } from '@/lib/format';
+import { addDays, daysBetween, number, percent, platformLabel, shortDay, today } from '@/lib/format';
 import { DIMENSIONS, DIMENSION_LABELS, filterQuery, type Dimension } from '@/lib/filters';
 import { gamePath, gameURL } from '@/lib/games';
 import type { Game, OverviewMeasure, OverviewSummary } from '@/lib/types';
@@ -15,7 +15,7 @@ import { Ico } from '@/components/icons';
 import { ActiveUsers } from './overview/ActiveUsers';
 import { BreakdownTable } from './overview/BreakdownTable';
 import { DailyChart } from './overview/DailyChart';
-import { MappingNotice } from './overview/MappingNotice';
+import { useMappingLook } from './overview/MappingNotice';
 import { StandardNotice } from './event-setup/StandardNotice';
 import { PinnedReports } from './overview/Pinned';
 import { SectionTiles, SetupChecklist, useFacts } from './overview/Setup';
@@ -43,6 +43,7 @@ export function GameOverviewPage({ game }: { game: Game }): ReactElement {
   const toggle = (key: Dimension, value: string) => onChange((s) => { const list = toggleValue(s[key], value); return { ...s, [key]: list, ...(key === 'app_version' ? { versionMode: list.length ? 'custom' : 'all' } : {}) }; });
   const active = data?.active;
   const context = data?.context;
+  const mapping = useMappingLook(game);
   const looks = data ? [
     context?.low_sample ? { kind: 'warn' as const, tag: 'Sample', title: 'Small sample', note: `${number(data.players || 0)} of ${number(context.minimum_players)} players` } : null,
     context?.anonymous_events ? { kind: 'warn' as const, tag: 'Data', title: `${number(context.anonymous_events)} event${context.anonymous_events === 1 ? '' : 's'} without a player ID`, note: 'They do not count toward players.' } : null,
@@ -51,7 +52,6 @@ export function GameOverviewPage({ game }: { game: Game }): ReactElement {
     <>
       <Heading title={game.name} subtitle={`${platformLabel(game.platform)} · ${game.bundle_id}`} actions={<Link className="button primary" to={gamePath(game, 'exports')}><Ico name="export" size={15} /> Export data</Link>} />
       {game.archived_at ? <div className="archived-banner"><Ico name="lock" size={18} /><div><strong>Archived.</strong> Collection is paused for this platform.</div><Link className="button" to={gamePath(game, 'settings')}>Game settings</Link></div> : null}
-      <MappingNotice game={game} />
       <StandardNotice game={game} />
       <FilterBar game={game} state={state} onChange={onChange} context={data ? { ...data.context, players: data.players } : undefined} />
       {data ? <SetupChecklist game={game} data={data} facts={facts} /> : null}
@@ -72,7 +72,7 @@ export function GameOverviewPage({ game }: { game: Game }): ReactElement {
             <div className="kpis">
               <Metric label="Players" value={number(summary.players)} note={`${number(summary.new_players)} new · unique player IDs`} />
               <Metric label="Sessions" value={number(summary.sessions)} note={summary.players ? `${(summary.sessions / summary.players).toFixed(1)} per player` : 'with a player ID'} />
-              <Metric label="Daily active" value={number(a.dau || 0)} note={summary.events ? <><span className={`d ${change < 0 ? 'down' : 'up'}`}>{signed(change, number)}</span> vs {shortDay(addDays(a.last_day, -1))}</> : 'no events yet'} />
+              <Metric label="Daily active" value={number(a.dau || 0)} note={!summary.events ? 'no events yet' : a.last_day === today() ? `so far today · ${number(a.dau_previous || 0)} on ${shortDay(addDays(a.last_day, -1))}` : <><span className={`d ${change < 0 ? 'down' : 'up'}`}>{signed(change, number)}</span> vs {shortDay(addDays(a.last_day, -1))}</>} />
               <Metric label="Stickiness" value={a.stickiness == null ? '—' : <>{a.stickiness}<small>%</small></>} note="avg DAU ÷ MAU" />
             </div>
           );
@@ -90,7 +90,9 @@ export function GameOverviewPage({ game }: { game: Game }): ReactElement {
         </section>
         <section className="panel">
           <div className="panel-header"><h2>Needs a look</h2></div>
-          {data ? (looks.length
+          {/* A mapping problem is something to look at, so it lives here rather than in a banner above a panel saying all is well. */}
+          {mapping ? <div className="look look-action"><Tag kind="warn">Setup</Tag><div><b>Mappings need attention</b><span className="s">{mapping.text} If your game has no levels, dismiss this.</span><span className="look-buttons"><Link className="btn sm" to={gamePath(game, 'event-setup')} hash="mappings">Open event setup</Link><button type="button" className="btn sm ghost" onClick={mapping.dismiss}>Dismiss</button></span></div></div> : null}
+          {data ? (looks.length || mapping
             ? looks.map((item) => <div key={item.tag} className="look"><Tag kind={item.kind}>{item.tag}</Tag><div><b>{item.title}</b><span className="s">{item.note}</span></div></div>)
             : <div className="empty-scene"><DoraScene /><p>Nothing needs a look in this range. Dora is asleep on the monitor.</p></div>) : null}
         </section>

@@ -68,15 +68,18 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
 
   return (
     <>
-      <Heading title="Levels" subtitle="Follow the same players from one level’s start to the next, with a breakdown of where progress stops." />
+      <Heading title="Levels" subtitle="Where players stop, level by level." />
       {view !== 'groups' ? <FilterBar game={game} state={filters} onChange={updateFilters} context={levels.data ? { anonymous_events: levels.data.context.anonymous_events } : {}} /> : null}
-      <div className="range-modes route-tabs levels-views" role="group" aria-label="Levels view">
-        <button type="button" aria-pressed={view === 'table'} onClick={() => chooseView('table')}>Level Flow</button>
-        <button type="button" aria-pressed={view === 'features'} onClick={() => chooseView('features')}>Occurrence &amp; drop</button>
-        <button type="button" aria-pressed={view === 'compare'} onClick={() => chooseView('compare')}>Compare releases</button>
-        <button type="button" aria-pressed={view === 'groups'} onClick={() => chooseView('groups')}>Compare player groups</button>
+      <div className="levels-bar">
+        <div className="range-modes route-tabs levels-views" role="group" aria-label="Levels view">
+          <button type="button" aria-pressed={view === 'table'} onClick={() => chooseView('table')}>Level flow</button>
+          <button type="button" aria-pressed={view === 'features'} onClick={() => chooseView('features')}>Occurrence &amp; drop</button>
+          <button type="button" aria-pressed={view === 'compare'} onClick={() => chooseView('compare')}>Compare releases</button>
+          <button type="button" aria-pressed={view === 'groups'} onClick={() => chooseView('groups')}>Compare player groups</button>
+        </div>
+        {/* Which players the numbers count sits in one place for every view that uses it. */}
+        {view !== 'groups' ? <LevelScopeControls nav={nav} onChange={setNav} /> : null}
       </div>
-      {view !== 'groups' && (view !== 'table' || pageLevel != null) ? <LevelScopeControls nav={nav} onChange={setNav} /> : null}
       {view === 'groups' ? (
         <PlayerGroups game={game} filters={filters} onFilters={updateFilters} onOpenPlayer={openPlayer} />
       ) : view === 'features' ? (

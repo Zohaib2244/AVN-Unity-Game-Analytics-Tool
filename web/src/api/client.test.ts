@@ -65,6 +65,8 @@ describe('slow loads', () => {
     expect(slowLoadMessage(2)).toMatch(/Reading your events.*opens instantly/);
     expect(slowLoadMessage(2)).not.toMatch(/Last time/);
     expect(slowLoadMessage(3, 6200)).toMatch(/Last time it took about 6 s\./);
+    // Long past the usual wait, quoting it would contradict the counter beside it.
+    expect(slowLoadMessage(12, 2000)).not.toMatch(/Last time/);
     expect(slowLoadMessage(12)).toMatch(/Still loading analytics data/);
     expect(slowLoadMessage(45)).toMatch(/longer than usual.*stops after a minute/);
     expect(slowLoadMessage(45, null, false)).not.toMatch(/days/);

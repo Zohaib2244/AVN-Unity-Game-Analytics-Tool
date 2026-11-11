@@ -3,7 +3,7 @@
 // shows every preset as a segment (forms, settings).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { Calendar, Popover, SingleSelect } from '@avn/ui';
-import { addDays, dateToDay, dayToDate, daysBetween, monthEnd, monthStart, shiftMonth, shortDay, today } from '@/lib/format';
+import { addDays, dateToDay, dayToDate, daysBetween, monthEnd, monthStart, prettyDay, shiftMonth, shortDay, today } from '@/lib/format';
 import type { DayRange } from '@/lib/filters';
 import { Ico } from './icons';
 
@@ -26,6 +26,8 @@ export function resolveRange(initialPreset = '7', initialRange: DayRange | null 
   const [from, to] = PRESETS[2]![2](); return { from, to, preset: '7' };
 }
 
+/** The full dates, for the tooltip of the short range. */
+export const rangeTitle = (range: DayRange): string => (range.from === range.to ? prettyDay(range.from) : `${prettyDay(range.from)} → ${prettyDay(range.to)}`);
 export const rangeText = (range: DayRange): string => (range.from === range.to ? shortDay(range.from) : `${shortDay(range.from)} – ${shortDay(range.to)}`);
 
 export function DateRange({ value, onChange, compact = false, label = 'Date range' }: { value: DayRange; onChange: (range: DayRange) => void; compact?: boolean; label?: string }): ReactElement {
@@ -59,7 +61,7 @@ export function DateRange({ value, onChange, compact = false, label = 'Date rang
       <div className="range range-compact">
         <button ref={menuButton} type="button" className="select" aria-haspopup="listbox" aria-expanded={menu} aria-label={label} onClick={() => setMenu((open) => !open)}><span>{presetLabel(value.preset)}</span><Ico name="chevron" size={12} /></button>
         <button type="button" className="range-nav" onClick={() => step(-1)} aria-label="Previous range">‹</button>
-        <button ref={daysButton} type="button" className="range-input" aria-label="Selected days" aria-haspopup="dialog" aria-expanded={calendar} onClick={() => setCalendar((open) => !open)}>{rangeText(value)}</button>
+        <button ref={daysButton} type="button" className="range-input" aria-label="Selected days" title={rangeTitle(value)} aria-haspopup="dialog" aria-expanded={calendar} onClick={() => setCalendar((open) => !open)}>{rangeText(value)}</button>
         <button type="button" className="range-nav" onClick={() => step(1)} aria-label="Next range">›</button>
         <Popover position="fixed" open={menu} onClose={closeMenu} anchor={menuButton} width={280}>
           <SingleSelect options={options} value={value.preset || 'custom'} onChange={(key) => { closeMenu(); choose(key); }} />

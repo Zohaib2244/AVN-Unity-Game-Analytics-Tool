@@ -1,5 +1,5 @@
-// "Level Flow": the table of every level with its scope, sort, display settings (columns, heat, flags),
-// jump-to-level and paging, plus a Summary dialog (the levels worth a look and players remaining by level).
+// "Level flow": one toolbar (jump to a level, the flags, sort, Display, Chart), a plain-words answer naming the
+// levels worth a look, the table of every level and its paging. Chart opens players remaining by level.
 // A row or a level opens that level's page. Drops and quits are drawn against per-game flag thresholds.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactElement } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
@@ -9,7 +9,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Empty, QueryRegion, Skeleton, useNotify } from '@/components/feedback';
 import { Ico, type IcoName } from '@/components/icons';
 import type { ActiveFilters } from '@/lib/filters';
-import { duration, number } from '@/lib/format';
+import { duration, number, plural } from '@/lib/format';
 import { useStored } from '@/lib/store';
 import { POP } from '@/lib/motion';
 import { gamePath } from '@/lib/games';
@@ -18,8 +18,7 @@ import { clampPage, levelDrillGroup, pageSizeOf, pageCount, sortLevels, type Lev
 import { drillPagePath } from './levelPaths';
 import { HeatValue } from './LevelHeat';
 import { LevelDisplayMenu } from './LevelDisplayMenu';
-import { LevelSummary } from './LevelSummary';
-import { LevelScopeControls } from './LevelScopeControls';
+import { LevelAnswer, LevelSummary } from './LevelSummary';
 import { cleanDisplay, displayKey, heatOf, type LevelDisplay } from './levelDisplay';
 import { forgetSpot, rememberSpot, returnSpot, scrollBackTo } from './levelReturn';
 
@@ -99,7 +98,7 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
     if (!highlight) return;
     const row = box.current?.querySelector<HTMLElement>(`[data-level-row="${highlight.level}"]`);
     row?.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-    row?.querySelector<HTMLElement>('.level-toggle')?.focus({ preventScroll: true });
+    row?.querySelector<HTMLElement>('.level-open')?.focus({ preventScroll: true });
   }, [highlight]);
 
   useLayoutEffect(() => {
@@ -118,34 +117,21 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
   const columns = display.columns;
   return (
     <section ref={box} className="panel levels-panel" onClickCapture={() => rememberSpot(game.id, { y: window.scrollY, page: current })}>
-      <div className="panel-header">
-        <div><h2 className="with-icon"><Ico name="chart" size={16} /> Level Flow</h2></div>
-        <div className="quiet-actions">
-          <LevelScopeControls nav={nav} onChange={onNav} />
-          <label className="inline-field icon-field"><Ico name="sort" size={14} /><span className="sr-only">Sort</span><select id="levels-sort" aria-label="Sort" value={nav.sort} onChange={(event) => { setPage(0); onNav({ sort: event.target.value as LevelSort }); }}>
-            {SORTS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-          </select></label>
-          <LevelDisplayMenu display={display} onChange={setDisplay} />
-          <button type="button" className="btn" disabled={!data?.levels.length} onClick={() => setSummary(true)}><Ico name="chart" size={14} /> Summary</button>
-        </div>
-      </div>
       <div className="levels-navigation">
         <form id="levels-jump-form" onSubmit={onJumpSubmit}>
           <label htmlFor="levels-jump" className="icon-field"><Ico name="search" size={14} /><span className="sr-only">Jump to level</span></label>
-          <input id="levels-jump" type="number" min={0} max={1000000} required placeholder="Jump to level" value={jumpText} onChange={(event) => setJumpText(event.target.value)} />
-          <button type="submit" className="button small-button">Go</button>
+          <input id="levels-jump" type="text" inputMode="numeric" pattern="[0-9]*" required placeholder="Jump to level" title="Type a level number and press Enter" value={jumpText} onChange={(event) => setJumpText(event.target.value)} />
         </form>
         <span className="level-flags" title="Cells over these percentages are tinted: hotter the further over. Change them in Display.">
           <Ico name="flag" size={13} /> Flagging drops &gt; {display.dropFlag}%{columns.failquit ? ` · quits > ${display.quitFlag}%` : ''}
           <AnimatePresence initial={false} mode="popLayout">{flagged ? <motion.b key="n" className="level-flagged" {...POP}>{flagged} flagged</motion.b> : null}</AnimatePresence>
         </span>
         <div className="quiet-actions">
-          <span id="levels-page-info" className="small muted" aria-live="polite">{data?.levels.length ? `${current * size + 1}–${Math.min((current + 1) * size, sorted.length)} of ${number(sorted.length)}` : data ? '0 levels' : ''}</span>
-          <button type="button" className="button small-button icon-only" id="levels-previous-page" aria-label="Previous page" disabled={!data?.levels.length || current === 0} onClick={() => setPage(current - 1)}><Ico name="prev" size={14} /></button>
-          <button type="button" className="button small-button icon-only" id="levels-next-page" aria-label="Next page" disabled={!data?.levels.length || current + 1 >= pages} onClick={() => setPage(current + 1)}><Ico name="next" size={14} /></button>
-          <label className="inline-field"><span className="sr-only">Rows per page</span><select id="levels-page-size" aria-label="Rows per page" value={nav.pageSize} onChange={(event) => { setPage(0); onNav({ pageSize: event.target.value as LevelPageSize }); }}>
-            {PAGE_SIZES.map(([key, label]) => <option key={key} value={key}>{label === 'All' ? 'All rows' : `${label} rows`}</option>)}
+          <label className="inline-field icon-field"><Ico name="sort" size={14} /><span className="sr-only">Sort</span><select id="levels-sort" aria-label="Sort" value={nav.sort} onChange={(event) => { setPage(0); onNav({ sort: event.target.value as LevelSort }); }}>
+            {SORTS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </select></label>
+          <LevelDisplayMenu display={display} onChange={setDisplay} />
+          <button type="button" className="btn" disabled={!data?.levels.length} onClick={() => setSummary(true)}><Ico name="chart" size={14} /> Chart</button>
         </div>
       </div>
       <QueryRegion query={query} path={path} skeleton={<Skeleton kind="table" rows={8} columns={6} />}>
@@ -155,16 +141,17 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
           }
           return (
             <>
+              <LevelAnswer levels={result.levels} minimum={minimum} excludeReturners={nav.excludeReturners} onJump={jumpTo} />
               <LevelSummary open={summary} onClose={() => setSummary(false)} levels={result.levels} minimum={minimum} dropFlag={display.dropFlag} quitFlag={display.quitFlag} firstSession={scope === 'first_session'} excludeReturners={nav.excludeReturners} onJump={jumpTo} onOpen={onOpen} />
               <div className="table-wrap level-scroll levels-scroll" tabIndex={0} role="region" aria-label="Level results">
                 <table className="levels-grid">
                   <thead><tr><th>Level</th>
                     {columns.started ? <Th icon="play">Started</Th> : null}
                     {columns.finished ? <Th icon="check">Finished</Th> : null}
-                    {columns.drop ? <Th icon="trend" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">{nav.excludeReturners ? 'Stopped · no return observed' : 'Drop to next'}</Th> : null}
+                    {columns.drop ? <Th icon="trend" title="Players who started this level but did not later start the next numbered level ÷ players who started this level">{nav.excludeReturners ? 'Drop to next level · no return' : 'Drop to next level'}</Th> : null}
                     {columns.failquit ? <Th icon="exit" title="Of the players who failed this level, the share who then did not pass it or play on">Failed → quit</Th> : null}
                     {columns.tries ? <Th icon="refresh">Tries / player</Th> : null}
-                    {columns.fails ? <Th icon="alert">Fails</Th> : null}
+                    {columns.fails ? <Th icon="alert" title="Times the level was failed. The small number with ↻ is how often it was restarted.">Fails</Th> : null}
                     {columns.time ? <Th icon="clock">Median time</Th> : null}
                   </tr></thead>
                   <tbody>
@@ -173,8 +160,7 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
                         onClick={(event) => openRow(event, row.level)}
                         onPointerOver={(event) => { if (event.pointerType === 'mouse') void prefetch(drillPagePath(game, filters, scope, row.level, { group: levelDrillGroup(row), sort: 'exit_at', lastAction: null }, 0, nav.excludeReturners)); }}>
                         <td className="level-number-cell">
-                          <Link to={gamePath(game, 'levels')} search={{ level: String(row.level) }} className="level-toggle" aria-label={`Open the players behind level ${row.level}`}><Ico name="chevron" size={14} /></Link>
-                          <strong>{row.level}</strong>
+                          <Link to={gamePath(game, 'levels')} search={{ level: String(row.level) }} className="level-open" aria-label={`Open the players behind level ${row.level}`}>{row.level}</Link>
                           {row.low_sample ? <> <span className="level-sample-marker" role="img" aria-label={`Small sample: ${number(row.started)} of ${number(minimum)} players`} title={`Small sample: ${number(row.started)} players started; threshold is ${number(minimum)}`}>·</span></> : null}
                         </td>
                         {columns.started ? <td className="num">{number(row.started)}</td> : null}
@@ -182,12 +168,22 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
                         {columns.drop ? <td className="num"><DropCell game={game} row={row} display={display} excludeReturners={nav.excludeReturners} /></td> : null}
                         {columns.failquit ? <td className="num"><FailQuitCell game={game} row={row} display={display} excludeReturners={nav.excludeReturners} /></td> : null}
                         {columns.tries ? <td className="num">{row.tries_per_player ?? '—'}</td> : null}
-                        {columns.fails ? <td className="num">{number(row.fails)}{row.restarts ? <span className="muted small"> · {row.restarts} restart{row.restarts === 1 ? '' : 's'}</span> : null}</td> : null}
+                        {columns.fails ? <td className="num">{row.restarts ? <span className="level-restarts" title={`${number(row.restarts)} restart${row.restarts === 1 ? '' : 's'}`}><Ico name="refresh" size={11} />{number(row.restarts)}</span> : null}<span className="level-fails">{number(row.fails)}</span></td> : null}
                         {columns.time ? <td className="num">{duration(row.median_seconds)}</td> : null}
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              </div>
+              <div className="table-foot levels-foot">
+                <span id="levels-page-info" className="small muted" aria-live="polite">{`${current * size + 1}–${Math.min((current + 1) * size, sorted.length)} of ${plural(sorted.length, 'level')}`}{result.levels.some((row) => row.low_sample) ? ` · a dot after a level means fewer than ${number(minimum)} players started it` : ''}</span>
+                <div className="quiet-actions">
+                  <label className="inline-field"><span className="sr-only">Rows per page</span><select id="levels-page-size" aria-label="Rows per page" value={nav.pageSize} onChange={(event) => { setPage(0); onNav({ pageSize: event.target.value as LevelPageSize }); }}>
+                    {PAGE_SIZES.map(([key, label]) => <option key={key} value={key}>{label === 'All' ? 'All rows' : `${label} rows`}</option>)}
+                  </select></label>
+                  <button type="button" className="btn" id="levels-previous-page" disabled={current === 0} onClick={() => setPage(current - 1)}>Previous</button>
+                  <button type="button" className="btn" id="levels-next-page" disabled={current + 1 >= pages} onClick={() => setPage(current + 1)}>Next</button>
+                </div>
               </div>
             </>
           );

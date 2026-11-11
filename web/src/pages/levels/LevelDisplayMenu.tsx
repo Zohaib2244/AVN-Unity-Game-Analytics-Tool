@@ -6,6 +6,9 @@ import { Ico } from '@/components/icons';
 import { OptionList } from '@/components/OptionList';
 import { DEFAULT_DISPLAY, FLAG_RANGE, LEVEL_COLUMNS, type CountsShown, type DropStyle, type LevelColumn, type LevelDisplay } from './levelDisplay';
 
+/** The shared Popover keeps itself on screen by the window's width, which includes the page scrollbar: allow for it. */
+const scrollbarWidth = (): number => (typeof window === 'undefined' ? 0 : Math.max(0, window.innerWidth - document.documentElement.clientWidth));
+
 function Flag({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void }): ReactElement {
   return (
     <label className="display-flag">
@@ -25,7 +28,7 @@ export function LevelDisplayMenu({ display, onChange }: { display: LevelDisplay;
       <button ref={button} type="button" className="btn" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <Ico name="sliders" size={14} /> Display {changed ? <span className="count" aria-label="changed from the defaults">•</span> : null}
       </button>
-      <Popover position="fixed" open={open} onClose={() => setOpen(false)} anchor={button} width={320} className="display-pop">
+      <Popover position="fixed" open={open} onClose={() => setOpen(false)} anchor={button} width={320 + scrollbarWidth()} className="display-pop">
         <div className="pop-scroll display-menu">
           <div className="pop-grp"><span className="eyebrow">Columns</span></div>
           <div className="opt locked"><input type="checkbox" className="cb-in" checked disabled aria-label="Level is always shown" /><span className="ot">Level</span><span className="oc">always</span></div>

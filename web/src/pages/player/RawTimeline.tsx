@@ -261,7 +261,7 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
       return (
         <span key={key} className={joinClass('chip', hit && `highlight-ink highlight-${hit.rule.color}`, off && 'chip-off', kind === 'link' && 'chip-link')}>
           <button type="button" className="chip-key" onClick={() => toggleHide(key)} title={off ? `Show ${key} again in clean view` : `Hide ${key} in every event`}>{key}</button>{' '}
-          <button type="button" className={joinClass('chip-value', picked && 'on')} aria-pressed={picked} onClick={(event) => quickHighlight(event.currentTarget, item, key, value)} title={kind === 'link' ? `${chipTitle(value)} · highlight every event with this ID` : `${chipTitle(value)} · highlight every ${eventLabel(item.name)} event with this value`}>{chipValue(value)}</button>
+          <button type="button" className={joinClass('chip-value', picked && 'on')} aria-pressed={picked} onClick={(event) => quickHighlight(event.currentTarget, item, key, value)} title={kind === 'link' ? `${chipTitle(value)} · highlight every event with this ID` : `${chipTitle(value)} · highlight every ${eventLabel(item.name)} event with this value`}>{kind === 'link' && typeof value === 'string' && value.length > 12 ? `${value.slice(0, 8)}…` : chipValue(value)}</button>
         </span>
       );
     };
@@ -283,9 +283,9 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
         <span className={joinClass('journey-gap', item.gap != null && item.gap > 60 && 'long')}>{item.gap == null ? '' : `+${duration(item.gap)}`}</span>
         <span className="journey-lanes" aria-hidden="true">{lanes.map((name) => <i key={name} className={name === item.name ? 'dot' : undefined} style={{ '--lane': colorOf(name) } as React.CSSProperties} />)}</span>
         <span className="journey-name">
-          {level != null ? <span className="level-mark" title={`Level ${level}`}>L{level}</span> : null}
           <span title={item.name}>{eventLabel(item.name)}</span>
           {shape.state ? <button type="button" className={joinClass('state-badge', rules.some((rule) => rule.label === quickLabel(item, 'STATE', shape.state)) && 'on')} onClick={(event) => quickHighlight(event.currentTarget, item, 'STATE', shape.state)} title={`Highlight every ${eventLabel(item.name)} ${shape.state}`}>{shape.state}</button> : null}
+          {level != null ? <span className="level-mark" title={`Level ${level}`}>L{level}</span> : null}
           {run ? <span className="chip chip-count" title={`${run.length} identical events in a row`}>×{run.length}</span> : null}
           {note ? <span className="event-note">{note}</span> : null}
           {focused && focus ? <span className="highlight-tag focus-tag">{focus.label}</span> : null}
@@ -376,12 +376,12 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
     <section className="panel raw-timeline">
       <div className="panel-header">
         <div>
-          <h2>{analysis ? 'Event Analysis' : 'Timeline'}</h2>
-          <p>{analysis ? 'What this player called, and how often · counts follow the session selected below' : `Every event, grouped by session · times in ${timezone === 'utc' ? 'UTC' : 'your local time'} · the gap is the time since the previous event`}</p>
+          <h2>{analysis ? 'Event analysis' : 'Timeline'}</h2>
+          <p role="status">{analysis ? 'What this player called, and how often · counts follow the session selected below' : `${number(events.length)} events${complete ? '' : ' so far · loading the rest…'} · times in ${timezone === 'utc' ? 'UTC' : 'your local time'}`}</p>
         </div>
         <div className="segmented" role="group" aria-label="Timeline mode" hidden={analysis}>
-          <button type="button" aria-pressed={mode === 'highlight'} onClick={() => setMode('highlight')}>Highlight timeline</button>
-          <button type="button" aria-pressed={mode === 'filter'} onClick={() => setMode('filter')}>Filter timeline</button>
+          <button type="button" aria-pressed={mode === 'highlight'} onClick={() => setMode('highlight')}>Highlight</button>
+          <button type="button" aria-pressed={mode === 'filter'} onClick={() => setMode('filter')}>Filter</button>
         </div>
       </div>
       <p className="timeline-focus-note panel-body" role="status" hidden={analysis || !focus}>
@@ -426,7 +426,7 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
               <button type="button" className="button" title="Shortcut: J" disabled={!matchIndices.length} onClick={() => jumpTo(highlightNavigationIndex(matchIndices, current, true))}>Next →</button>
             </div>
             <span role="status" aria-live="polite">{`${position < 0 ? '0' : number(position + 1)} / ${number(matchIndices.length)} matching events${complete ? '' : ' · loading timeline…'}`}</span>
-            <span className="small muted">Keys: J next · K previous</span>
+            
           </div>
           <div className="param-bar" hidden={analysis}>
             <div className="segmented" role="group" aria-label="Parameters shown">
@@ -465,9 +465,7 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
               <div className="search"><Ico name="search" size={16} /><input ref={searchRef} id={searchId} type="search" aria-label="Filter events" placeholder="Filter by event or parameter…" value={filterText} onChange={(event) => setFilterText(event.target.value)} /></div>
             </div>
           </div>
-          <p className={joinClass('help panel-body', failure && 'error')} role="status" hidden={analysis}>
-            {failure || `${number(events.length)} events ${complete ? 'in the full selected date range' : 'loaded · loading the rest of the timeline…'}`}
-          </p>
+          {failure && !analysis ? <p className="help panel-body error" role="alert">{failure}</p> : null}
           {analysis ? (
             <EventAnalysis events={items} session={shownSession} complete={complete} failure={failure} timezone={timezone} onJump={jumpFromAnalysis} onHighlight={highlightFromAnalysis} onRetry={() => setAttempt((count) => count + 1)} />
           ) : (

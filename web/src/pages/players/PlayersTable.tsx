@@ -30,18 +30,24 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSor
   // table would remount all its rows (a flicker) each time the drawer opens or closes; so read it through a ref.
   const open = useRef(onOpen);
   open.current = onOpen;
+  const varies = useMemo(() => ({ id: new Set(rows.map((row) => !!row.has_user_id)).size > 1, platform: new Set(rows.map((row) => row.platform || '')).size > 1, version: new Set(rows.map((row) => row.app_version || '')).size > 1 }), [rows]);
   const columns = useMemo(() => [
-    column.accessor('player', { id: 'player', header: 'Player', enableSorting: false, cell: ({ row }) => (
+    column.accessor('player', { id: 'player', header: () => <span title="A player is their user_id when the game sends one, otherwise the device’s install ID">Player</span>, enableSorting: false, cell: ({ row }) => (
       <>
         <Link to={gamePath(game, 'players')} search={{ player: row.original.player }} className="row-title" onClick={(event: MouseEvent) => { if (plainClick(event)) open.current(row.original.player, row.index); }}><span className="mono">{shortId(row.original.player)}</span></Link>
-        <p className="small muted">{row.original.has_user_id ? 'User ID' : 'Install ID'} · {platformLabel(row.original.platform || '—')}{row.original.app_version ? ` · ${row.original.app_version}` : ''}{TEST_ENVIRONMENTS.includes(row.original.environment || '') ? <span className="pill"> {row.original.environment}</span> : null}</p>
+        {(() => {
+          // Only what differs between the rows shown is worth a second line; the same words on every row are noise.
+          const parts = [varies.id ? (row.original.has_user_id ? 'User ID' : 'Install ID') : '', varies.platform ? platformLabel(row.original.platform || '—') : '', varies.version ? row.original.app_version || '' : ''].filter(Boolean);
+          const test = TEST_ENVIRONMENTS.includes(row.original.environment || '');
+          return parts.length || test ? <p className="small muted">{parts.join(' · ')}{test ? <span className="pill"> {row.original.environment}</span> : null}</p> : null;
+        })()}
       </>
     ) }),
-    column.accessor('events', { id: 'events', header: 'Events', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => number(getValue()) }),
-    column.accessor('sessions', { id: 'sessions', header: 'Sessions', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => number(getValue()) }),
-    column.display({ id: 'level', header: 'Level', enableSorting: false, meta: { className: 'num' }, cell: ({ row }) => (row.original.highest_level != null ? number(row.original.highest_level) : '—') }),
+    column.display({ id: 'level', header: () => <span title="The highest level they reached">Level</span>, enableSorting: false, meta: { className: 'num' }, cell: ({ row }) => (row.original.highest_level != null ? number(row.original.highest_level) : '—') }),
     column.accessor('total_play_seconds', { id: 'playtime', header: 'Playtime', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => duration(getValue()) }),
-    column.accessor('last_seen', { id: 'last_seen', header: 'Last active', meta: { className: 'small muted', sortable: true }, cell: ({ getValue }) => <span title={analysisDate(getValue(), timezone)}>{recent(getValue(), timezone)}</span> }),
+    column.accessor('sessions', { id: 'sessions', header: 'Sessions', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => number(getValue()) }),
+    column.accessor('events', { id: 'events', header: 'Events', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => number(getValue()) }),
+    column.accessor('last_seen', { id: 'last_seen', header: 'Last active', meta: { className: 'small muted after-num', sortable: true }, cell: ({ getValue }) => <span title={analysisDate(getValue(), timezone)}>{recent(getValue(), timezone)}</span> }),
     column.display({ id: 'last_event', header: 'Last event', enableSorting: false, meta: { className: 'last-event' }, cell: ({ row }) => {
       const last = row.original.last_event;
       if (!last) return '—';
@@ -49,7 +55,7 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSor
     } }),
     ...metrics.map((metric, position) => column.display({ id: `metric${position}`, header: metricLabel(metric), meta: { className: 'num metric', sortable: true }, cell: ({ row }) => metricValue(metric, row.original.metrics[position], timezone) })),
     column.accessor('country', { id: 'country', header: 'Country', enableSorting: false, meta: { className: 'small' }, cell: ({ getValue }) => (getValue() ? <abbr className="cc" title={countryName(getValue())}>{getValue()}</abbr> : '—') }),
-  ], [game, metrics, timezone]);
+  ], [game, metrics, timezone, varies]);
   const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel(), manualSorting: true, state: { sorting: [{ id: sort, desc: order === 'desc' }] } });
   const onRowKey = (event: KeyboardEvent<HTMLTableRowElement>, player: string, index: number) => { if (event.key === 'Enter' && event.target === event.currentTarget) { event.preventDefault(); onOpen(player, index); } };
   return (
@@ -61,9 +67,10 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSor
               {group.headers.map((header) => {
                 const meta = header.column.columnDef.meta || {};
                 const sorted = header.column.getIsSorted();
-                if (!meta.sortable) return <th key={header.id} className={meta.className}>{flexRender(header.column.columnDef.header, header.getContext())}</th>;
+                const headClass = (meta.className || '').split(' ').filter((name) => name === 'num' || name === 'metric' || name === 'after-num').join(' ');
+                if (!meta.sortable) return <th key={header.id} className={headClass}>{flexRender(header.column.columnDef.header, header.getContext())}</th>;
                 return (
-                  <th key={header.id} className={`${meta.className || ''} sortable ${sorted ? 'sorted' : ''}`} aria-sort={sorted ? (sorted === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                  <th key={header.id} className={`${headClass} sortable ${sorted ? 'sorted' : ''}`} aria-sort={sorted ? (sorted === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <button type="button" onClick={() => onSort(header.column.id)}>{flexRender(header.column.columnDef.header, header.getContext())}<span className="sort-arrow">{sorted ? (sorted === 'asc' ? '▲' : '▼') : ''}</span></button>
                   </th>
                 );

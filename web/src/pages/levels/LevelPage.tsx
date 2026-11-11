@@ -55,7 +55,7 @@ export function LevelPage({ game, filters, scope, excludeReturners, level, query
                 <div className="level-page-summary">
                   <span><strong>{number(row.started)}</strong> started</span>
                   <span><strong>{number(row.completed)}</strong> finished{row.completion != null ? ` · ${percent(row.completion)}` : ''}</span>
-                  {drop?.available ? <span><strong>{percent(drop.drop_percent ?? 0)}</strong> {excludeReturners ? 'stopped · no return observed' : 'dropped'} · {number(drop.total_drop)} did not start level {drop.next_level}</span> : <span className="muted">drop: not enough data</span>}
+                  {drop?.available ? <span><strong>{percent(drop.drop_percent ?? 0)}</strong> drop to next level · {number(drop.total_drop)} did not start level {drop.next_level}{excludeReturners ? ' or come back' : ''}</span> : <span className="muted">drop: not enough data</span>}
                   <span><strong>{row.tries_per_player ?? '—'}</strong> tries / player</span>
                   <span>median <strong>{duration(row.median_seconds)}</strong></span>
                 </div>

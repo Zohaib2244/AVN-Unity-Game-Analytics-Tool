@@ -159,7 +159,7 @@ export function HighlightSetup({ game, rules, catalog, events, counts, complete,
       <div className="hl-picker panel-body" hidden={hidden} role="group" aria-label="Highlights">
         <div className="hl-picker-head">
           <strong>Highlights</strong>
-          <span className="small muted">{complete ? 'Pick what to mark in the timeline' : 'Loading the timeline…'}</span>
+          {complete ? null : <span className="small muted">Loading the timeline…</span>}
           <button type="button" className="button small-button" id="highlight-add" disabled={rules.length >= MAX_HIGHLIGHTS} onClick={add}>+ Custom rule</button>
         </div>
         {offered.length ? GROUPS.map((group) => {

@@ -3,7 +3,7 @@
 export type LevelColumn = 'started' | 'finished' | 'drop' | 'failquit' | 'tries' | 'fails' | 'time';
 export const LEVEL_COLUMNS: Array<{ key: LevelColumn; label: string; note?: string }> = [
   { key: 'started', label: 'Started' }, { key: 'finished', label: 'Finished' }, { key: 'drop', label: 'Drop to next level' },
-  { key: 'failquit', label: 'Failed → quit', note: 'per game' }, { key: 'tries', label: 'Tries per player' }, { key: 'fails', label: 'Fails' }, { key: 'time', label: 'Median time' },
+  { key: 'failquit', label: 'Failed → quit' }, { key: 'tries', label: 'Tries per player' }, { key: 'fails', label: 'Fails' }, { key: 'time', label: 'Median time' },
 ];
 export type DropStyle = 'cell' | 'bar';
 export type CountsShown = 'flag' | 'hover' | 'always';

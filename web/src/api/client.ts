@@ -94,7 +94,8 @@ export function usualWait(path: string): number | null {
 /** `ranged` is false for reads with no days to narrow (settings, versions), which get no "fewer days" advice. */
 export function slowLoadMessage(seconds: number, usual: number | null = null, ranged = true): string {
   if (seconds < 2) return '';
-  const last = usual ? ` Last time it took about ${Math.max(1, Math.round(usual / 1000))} s.` : '';
+  // Quoting the usual wait only helps while this load is still near it; past three times as long it reads as a contradiction.
+  const last = usual && seconds * 1000 <= usual * 3 ? ` Last time it took about ${Math.max(1, Math.round(usual / 1000))} s.` : '';
   if (!ranged) {
     if (seconds < 30) return `Still loading.${last}`;
     return 'This is taking longer than usual. It stops after a minute and lets you try again.';

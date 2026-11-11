@@ -22,8 +22,8 @@ describe('Appearance', () => {
   it('switches the theme', async () => {
     const user = userEvent.setup();
     render(<Appearance />);
-    await user.click(screen.getByRole('button', { name: 'light' }));
+    await user.click(screen.getByRole('button', { name: 'Light' }));
     expect(document.documentElement.getAttribute('data-theme')).toBe('light');
-    expect(screen.getByRole('button', { name: 'light' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Light' })).toHaveAttribute('aria-pressed', 'true');
   });
 });

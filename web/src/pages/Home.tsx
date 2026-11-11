@@ -6,7 +6,7 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import { useSession } from '@/app/session';
 import { lastBrowserPage } from '@/app/browserPage';
 import { PLATFORM_ORDER, gameGroups, gamePath, type GameGroup } from '@/lib/games';
-import { displayDate, number, platformLabel } from '@/lib/format';
+import { agoText, displayDate, number, platformLabel } from '@/lib/format';
 import { Empty, Heading, LoadError, Metric, useNotify } from '@/components/feedback';
 import { GameAvatar } from '@/components/GameAvatar';
 import { Ico } from '@/components/icons';
@@ -46,11 +46,11 @@ export function GameCard({ group, canManage, totalsReady = true, totalsFailed = 
       <p className="mono">{[...new Set(group.variants.map((item) => item.bundle_id))].join(' · ')}</p>
       {group.notes ? <p className="game-notes">{group.notes}</p> : null}
       <div className="card-variants">
-        {group.variants.map((item) => <Link key={item.id} className={`pill ${item.archived_at ? 'bad' : ''}`} to={gamePath(item)} title={`Open the ${platformLabel(item.platform)} version`}>{platformLabel(item.platform)}{totalsReady ? ` · ${number(item.events)}` : ''}</Link>)}
+        {group.variants.map((item) => <Link key={item.id} className={`pill ${item.archived_at ? 'bad' : ''}`} to={gamePath(item)} title={`Open the ${platformLabel(item.platform)} version`}>{platformLabel(item.platform)}{totalsReady && group.variants.length > 1 ? ` · ${number(item.events)}` : ''}</Link>)}
         {missing.map((platform) => <Link key={platform} className="pill variant-add" to="/games/new" search={{ name: group.name, bundle_id: group.primary.bundle_id, platform }}>+ {platformLabel(platform)}</Link>)}
       </div>
       {group.archived ? null : <p className="card-dau" title="Daily active users: distinct player IDs with an event on that local day, editor and development data left out"><strong>{totalsReady ? number(group.dau_today) : '—'}</strong> DAU today <span>{totalsReady ? `· ${number(group.dau_yesterday)} yesterday` : totalsFailed ? '· Unavailable' : '· Loading…'}</span></p>}
-      <div className="game-card-footer"><span>{totalsReady ? `${number(group.events)} events` : totalsFailed ? 'Totals unavailable' : 'Loading totals…'}</span><span>{group.archived ? 'Collection paused' : !totalsReady ? (totalsFailed ? 'Activity unavailable' : 'Loading activity…') : group.last_event ? `Last event ${displayDate(group.last_event)}` : 'Awaiting events'} <Ico name="arrow" size={12} /></span></div>
+      <div className="game-card-footer"><span>{totalsReady ? `${number(group.events)} events` : totalsFailed ? 'Totals unavailable' : 'Loading totals…'}</span><span>{group.archived ? 'Collection paused' : !totalsReady ? (totalsFailed ? 'Activity unavailable' : 'Loading activity…') : group.last_event ? <span title={displayDate(group.last_event)}>Last event {agoText(group.last_event)}</span> : 'Awaiting events'} <Ico name="arrow" size={12} /></span></div>
     </article>
   );
 }

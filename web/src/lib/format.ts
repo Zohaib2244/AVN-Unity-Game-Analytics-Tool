@@ -2,7 +2,11 @@
 
 export const number = (value: number | null | undefined): string => new Intl.NumberFormat().format(value || 0);
 export const percent = (value: number | string): string => `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
-export const displayDate = (value: string | null | undefined): string => (value ? new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'No events yet');
+/** A percentage in a column: always one decimal, so the figures line up (8.0%, not 8%). */
+export const percentFixed = (value: number | string): string => `${Number(value).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+/** One written form for a date with its time on every page: day, short month, year, then the time. */
+const DATE_TIME = { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' } as const;
+export const displayDate = (value: string | null | undefined): string => (value ? new Date(value).toLocaleString(undefined, DATE_TIME) : 'No events yet');
 export const fileSize = (value: number): string => (value >= 1073741824 ? `${(value / 1073741824).toFixed(1)} GB` : value >= 1048576 ? `${(value / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round((value || 0) / 1024))} KB`);
 export const platformLabel = (platform: string): string => ({ android: 'Android', ios: 'iOS' } as Record<string, string>)[platform] || platform;
 export const plural = (count: number, word: string, many = `${word}s`): string => `${number(count)} ${count === 1 ? word : many}`;
@@ -30,7 +34,7 @@ export const dateToDay = (date: Date): string => `${date.getFullYear()}-${String
 export type Timezone = 'local' | 'utc';
 const timeZoneOptions = (timezone: Timezone) => (timezone === 'utc' ? { timeZone: 'UTC' } : {});
 export const clock = (value: string, timezone: Timezone = 'local'): string => new Date(value).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23', ...timeZoneOptions(timezone) });
-export const analysisDate = (value: string | null | undefined, timezone: Timezone = 'local'): string => (value ? new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short', ...timeZoneOptions(timezone) }) : 'No events yet');
+export const analysisDate = (value: string | null | undefined, timezone: Timezone = 'local'): string => (value ? new Date(value).toLocaleString(undefined, { ...DATE_TIME, ...timeZoneOptions(timezone) }) : 'No events yet');
 export function duration(seconds: number | null | undefined): string {
   if (seconds == null) return '—';
   const value = Math.round(seconds);

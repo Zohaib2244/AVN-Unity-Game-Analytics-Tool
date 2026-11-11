@@ -23,6 +23,19 @@ const dismissKey = (game: Pick<Game, 'id'>) => `avn-mapping-dismissed-${game.id}
 /** Whether the notice should show: there are events, there are issues, and this set of issues was not dismissed. */
 export const mappingNoticeShown = (status: MappingStatus | undefined, dismissed: string | null): boolean => Boolean(status && status.has_events && status.issues.length && dismissed !== mappingSignature(status));
 
+/** The same notice as a "Needs a look" item: its words and how to dismiss it, or null when there is nothing to say. */
+export function useMappingLook(game: Pick<Game, 'id'>): { text: string; dismiss: () => void } | null {
+  const status = useRead<MappingStatus>(`${gameURL(game)}/mappings/status`);
+  const [dismissed, setDismissed] = useState<string | null>(() => storeGet<string>(dismissKey(game)));
+  if (!status.data || !mappingNoticeShown(status.data, dismissed)) return null;
+  const issues = status.data.issues;
+  const signature = mappingSignature(status.data);
+  return {
+    text: `${mappingIssueText(issues[0]!)}${issues.length > 1 ? ` And ${issues.length - 1} more.` : ''}`,
+    dismiss: () => { storeSet(dismissKey(game), signature); setDismissed(signature); },
+  };
+}
+
 export function MappingNotice({ game }: { game: Pick<Game, 'id'> }): ReactElement | null {
   const status = useRead<MappingStatus>(`${gameURL(game)}/mappings/status`);
   const [dismissed, setDismissed] = useState<string | null>(() => storeGet<string>(dismissKey(game)));

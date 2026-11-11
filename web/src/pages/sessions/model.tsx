@@ -1,6 +1,6 @@
 // The words and small sums of the Sessions page, and its one table with bars.
 import type { ReactElement } from 'react';
-import { duration, number, percent } from '@/lib/format';
+import { duration, number, percentFixed } from '@/lib/format';
 import type { SessionReport } from '@/lib/types';
 
 export type TrendMeasure = 'median_seconds' | 'average_seconds' | 'sessions';
@@ -35,7 +35,7 @@ export const importanceLabel = (importance: string | null): string => (importanc
 /** "None" is an answer (no ad was open); a missing field arrives as "unknown" and must not read like it. */
 export const adLabel = (ad: string): string => (ad === 'None' ? 'No ad open' : ad === 'unknown' ? 'Unknown' : ad);
 
-export const share = (part: number, total: number): string => (total ? percent((100 * part) / total) : '—');
+export const share = (part: number, total: number): string => (total ? percentFixed((100 * part) / total) : '—');
 
 export function BarTable({ head, unit, rows, total }: { head: string; unit: string; rows: Array<{ label: string; value: number }>; total: number }): ReactElement {
   const peak = Math.max(1, ...rows.map((row) => row.value));

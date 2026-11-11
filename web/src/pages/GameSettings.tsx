@@ -214,7 +214,7 @@ export function GameSettingsPage({ game }: { game: Game }): ReactElement {
       return (
         <>
           <Heading title="Game settings" subtitle={`${detail.bundle_id} · ${platformLabel(detail.platform)}`} actions={
-            <div className="heading-actions">{manage ? <button type="button" className="button" onClick={() => setEditing(true)}><Ico name="settings" size={15} /> Edit</button> : null}<Link className="button primary" to={gamePath(game, 'exports')}><Ico name="export" size={15} /> Export data</Link></div>
+            <div className="heading-actions">{manage ? <button type="button" className="button" onClick={() => setEditing(true)}><Ico name="settings" size={15} /> Edit</button> : null}<Link className="button" to={gamePath(game, 'exports')}><Ico name="export" size={15} /> Export data</Link></div>
           } />
           {archived ? <div className="archived-banner"><Ico name="lock" size={18} /><div><strong>Archived {displayDate(detail.archived_at)}.</strong> Collection is paused: the server refuses new events, and the Unity SDK keeps them queued on players’ devices until you restore the game.</div>{manage ? <button type="button" className="button" onClick={() => void restore()}>Restore game</button> : null}</div> : null}
           <section className="kpis">
@@ -235,7 +235,7 @@ export function GameSettingsPage({ game }: { game: Game }): ReactElement {
                     <span>{platformLabel(detail.platform)} · {archived ? <span className="pill bad">Archived · collection paused</span> : <span className="pill good">{detail.last_event ? 'Active' : 'Ready for events'}</span>}</span>
                     {manage ? (
                       <div className="icon-actions">
-                        <label className="button small-button" htmlFor="icon-file"><Ico name="export" size={13} /> {detail.icon_updated_at ? 'Change icon' : 'Upload icon'}</label>
+                        <label className="button small-button" htmlFor="icon-file"><Ico name="upload" size={13} /> {detail.icon_updated_at ? 'Change icon' : 'Upload icon'}</label>
                         <input ref={iconInput} id="icon-file" type="file" accept="image/*" hidden onChange={() => void changeIcon()} />
                         {variants.some((item) => item.icon_updated_at) ? <button type="button" className="button small-button danger-text" id="icon-remove" onClick={() => void dropIcon()}>Remove icon</button> : null}
                       </div>
@@ -259,7 +259,8 @@ export function GameSettingsPage({ game }: { game: Game }): ReactElement {
               <p>Send batches to this address with one of the game’s API keys in the <code>X-API-Key</code> header.</p>
               <div className="connection"><code>POST {overview.ingest_url}</code><CopyButton text={overview.ingest_url} label="Copy collection address" done="Address copied." /></div>
               <Link className="button" to={gamePath(game, 'keys')}><Ico name="key" size={15} /> Manage API keys <span className="muted">({detail.keys_active} active)</span></Link>
-              <p className="small muted">Set <code>AVN_PUBLIC_INGEST_URL</code> on the server to show your public address here.</p>
+              {/* Only worth saying while the address is still a local one. */}
+              {/^https:\/\/(?!localhost|127\.)/.test(overview.ingest_url) ? null : <p className="small muted">Set <code>AVN_PUBLIC_INGEST_URL</code> on the server to show your public address here.</p>}
             </aside>
           </div>
           {manage ? <AccessPanel game={game} /> : null}
