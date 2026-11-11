@@ -28,8 +28,11 @@ from pydantic import Field
 from starlette.background import BackgroundTask
 
 from . import (
+    acquisition_report,
+    ads,
     avn_events_standard,
     cleanup,
+    costs,
     device_specs,
     dictionary_import,
     events,
@@ -43,6 +46,7 @@ from . import (
     player_groups,
     player_summary,
     sdk_package,
+    segments,
     session_report,
 )
 from .auth import AccessVerifier, Accounts, Principal
@@ -55,6 +59,7 @@ from .models import (
     AnalyticsThresholdOverrides,
     AnalyticsThresholds,
     Batch,
+    CostSettingsUpdate,
     DeleteVersions,
     EnvironmentFix,
     EventActivityQuery,
@@ -94,6 +99,7 @@ from .models import (
     timestamp,
 )
 from .nutbot import NutBot
+from .nutbot_base import ToolError
 from .readbudget import ReadBudget
 from .storage import Storage
 from .website import add_website
@@ -949,8 +955,12 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         not_build: Values = None,
         not_country: Values = None,
         not_platform: Values = None,
+        source: Values = None,
+        campaign: Values = None,
+        no_install_record: bool = False,
+        paid_installs: bool = False,
     ):
-        return Filters(
+        chosen = Filters(
             environments=env or [],
             exclude_environments=not_env or [],
             app_versions=version or [],
@@ -962,6 +972,21 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             exclude_countries=not_country or [],
             exclude_platforms=not_platform or [],
         ).model_dump()
+        # Install source (segments.py): players from these media sources or campaigns, or with
+        # no install record at all. Only reads that go through insights.where apply it, so the
+        # website offers it only on pages whose reads do.
+        wanted = {
+            **({"media_source": source} if source else {}),
+            **({"campaign": campaign} if campaign else {}),
+            **({"unattributed": True} if no_install_record else {}),
+            **({"attribution_status": ["Non-organic"]} if paid_installs else {}),
+        }
+        if wanted:
+            try:
+                chosen["segments"] = segments.parse(wanted)
+            except ToolError as error:
+                raise HTTPException(400, str(error)) from None
+        return chosen
 
     Filtered = Annotated[dict, Depends(filters)]
 
@@ -1085,6 +1110,143 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             (days, chosen, tz_offset),
             lambda: insights.retention(storage, str(game_id), *days, chosen, tz_offset),
         )
+
+    # ─── Ads and Acquisition pages (ads.py, acquisition_report.py, costs.py) ───
+    def _readable(compute):
+        try:
+            return compute()
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from None
+
+    @admin_api.get("/v1/games/{game_id}/insights/ads/revenue")
+    def insights_ad_revenue(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+        group_by: Annotated[str, Query(max_length=20)] = "format",
+        then_by: Annotated[str, Query(max_length=20)] = "",
+    ):
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "ad-revenue",
+            (days, chosen, group_by, then_by),
+            lambda: _readable(
+                lambda: ads.revenue(
+                    storage, str(game_id), *days, chosen, group_by, 40, then_by or None
+                )
+            ),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/ads/delivery")
+    def insights_ad_delivery(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "ad-delivery",
+            (days, chosen),
+            lambda: ads.delivery(storage, str(game_id), *days, chosen),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/ads/placements")
+    def insights_ad_placements(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        days = day_range(start, end, tz_offset)
+
+        def compute():
+            served = ads.serving(storage, str(game_id), *days, chosen, "placement", 40)
+            money = ads.revenue(storage, str(game_id), *days, chosen, "placement", 40)
+            return {"serving": served, "revenue": money}
+
+        return cached(game_id, "ad-placements", (days, chosen), compute)
+
+    @admin_api.get("/v1/games/{game_id}/insights/ads/creatives")
+    def insights_ad_creatives(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "ad-creatives",
+            (days, chosen),
+            lambda: ads.creatives(storage, str(game_id), *days, chosen, 40),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/acquisition")
+    def insights_acquisition(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        group_by: Annotated[str, Query(max_length=20)] = "campaign",
+    ):
+        # Install days are UTC days, like the cost service's rows.
+        days = day_range(start, end)
+        return cached(
+            game_id,
+            "acquisition",
+            (days, chosen, group_by),
+            lambda: _readable(
+                lambda: acquisition_report.report(
+                    storage, str(game_id), *days, chosen, start, end, group_by
+                )
+            ),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/acquisition/cohorts")
+    def insights_acquisition_cohorts(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        cohort: Annotated[str, Query(max_length=200)] = "",
+    ):
+        days = day_range(start, end)
+        return cached(
+            game_id,
+            "acquisition-cohorts",
+            (days, chosen, cohort),
+            lambda: _readable(
+                lambda: acquisition_report.cohorts(
+                    storage, str(game_id), *days, chosen, start, end, cohort or None
+                )
+            ),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/cost-settings")
+    def get_cost_settings(game_id: UUID):
+        game = storage.get_game(str(game_id))
+        return {**costs.settings(storage, game), "configured": bool(settings.cost_api_url)}
+
+    @admin_api.put("/v1/games/{game_id}/cost-settings")
+    def put_cost_settings(game_id: UUID, update: CostSettingsUpdate, principal: Manager):
+        game = storage.get_game(str(game_id))
+        try:
+            result = costs.save_settings(
+                storage, game, update.app_id, update.goals.model_dump() if update.goals else None
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from None
+        accounts.audit(principal, "game.cost_settings", str(game_id), "app ID or return goals")
+        storage.reads.clear()
+        return {**result, "configured": bool(settings.cost_api_url)}
 
     @admin_api.get("/v1/games/{game_id}/insights/catalog")
     def insights_catalog(

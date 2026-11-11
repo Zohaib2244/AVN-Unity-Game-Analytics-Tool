@@ -536,6 +536,40 @@ Event names start with a letter and contain letters, digits or underscores (80 m
 - Only `POST /v1/events` should be reachable publicly. The management website and admin API stay on a private port, protected by an admin token or by whatever sits in front of it (a VPN, SSH forwarding, or an access gateway such as Cloudflare Access).
 - Use random installation IDs, not hardware identifiers, and update your store privacy disclosures if you collect device, user or country data.
 
+## Ads and Acquisition
+
+Two pages for games that send ad and attribution events (`AD_ANALYSIS` with Show, Revenue,
+Closed, Failed and Blocked, `AD_HEALTH_ANALYSIS` snapshots and `ATTRIBUTION_ANALYSIS` Install).
+A game that doesn't send them gets a sentence saying so, not zeros. Money is USD.
+
+**Ads** answers what ads earn (by format, network, placement, ad unit, country, version or day,
+each split once more), how many ads the game wanted and how many it showed (with what held them
+back: the game's own rules, or no ad ready), whether the networks loaded them and how long loads
+took (only where the ad plugin reports `Loaded` with `LOAD_MS`), what each rewarded placement
+earns, and which creatives players leave on: the share of a creative's shows after which no
+level was played in that session, against the same share over every creative, for creatives
+shown at least 30 times. Players whose last events never arrived count as having left, so the
+gap to the usual share is what points at a creative.
+
+**Acquisition** groups players whose first open is in the range by campaign, media source or
+channel: installs, day 1/3/7 retention and ad revenue per install by day since install. With a
+cost endpoint (`AVN_COST_API_URL`) it adds cost, cost per install and return (revenue per
+install / cost per install), install-day cohorts per campaign, and return goals ("by day 7,
+cover 75% of the cost") set on the page, for the game and per campaign.
+
+The attribution service counts every install; this app only sees players on a build that sends
+AVN events. So cost per install divides by the service's installs, return uses the revenue per
+player this app sees, and each row shows the share of the service's installs seen here. Players
+whose ad click is older than the game's first AVN data (or more than 7 days before their first
+open) updated into such a build rather than installed it, and are left out of value and return.
+The cost endpoint's days may be in another time zone and its newest days still grow, so the last
+four days are marked not final.
+
+The cost endpoint is asked at most every 3 hours per game, when a page needs it, and its rows are
+kept so the page still has costs when it is down. A game is known to it by its bundle ID on
+Android; an iOS game needs its store ID (such as `id123456789`), set on the Acquisition page. An
+endpoint that refuses a game makes the page say cost isn't available for that game.
+
 ## Configuration
 
 Environment variables (see `.env.example`):
@@ -564,6 +598,7 @@ Environment variables (see `.env.example`):
 | `AVN_MCP` | `true` | Serve the read-only MCP server at `/mcp` (see [Read-only MCP server](#read-only-mcp-server)) |
 | `AVN_PUBLIC_MCP_URL` | none | Public address of this service, shown with each MCP key (for example `https://analytics.example.com`) |
 | `AVN_MCP_CALLS_PER_MINUTE` | `60` | Calls one MCP key may make per minute |
+| `AVN_COST_API_URL` | none | Campaign cost endpoint for the Acquisition page (see [Ads and Acquisition](#ads-and-acquisition)); empty leaves cost out |
 | `AVN_PUBLIC_INGEST_URL` | none | Public collection address shown on the Game settings page |
 | `AVN_ACCESS_TEAM_DOMAIN` / `AVN_ACCESS_AUDIENCE` | none | Cloudflare Access team domain and application audience tag; set both to turn on [team access](#team-access-and-workspaces) |
 | `AVN_ADMIN_EMAIL` | none | Always an admin; the person named on the "no access" page |

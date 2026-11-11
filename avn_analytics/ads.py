@@ -53,6 +53,11 @@ HEALTH_COUNTERS = (
     "recovered",
     "timeouts",
 )
+# The newer plugin also reports each load (LoadSent, Loaded, LoadFailed) and the creative shown;
+# those are not requests to show an ad, so "wanted" leaves them out.
+LOAD_STATES = "('LoadSent', 'Loaded', 'LoadFailed', 'Creative')"
+MIN_CREATIVE_SHOWS = 30  # below this a creative's "left after it" share is noise
+MAX_LOAD_TIMES = 200_000
 MAX_GAP_ROWS = 200_000
 ERROR_TEXT = 100  # characters of a load error that identify it
 
@@ -97,7 +102,9 @@ def _ad_events(connection, source, start, end, filters):
                    {param("NETWORK")} AS network, {param("AD_UNIT")} AS ad_unit,
                    {param("REASON")} AS reason, CAST({param("REVENUE")} AS REAL) AS revenue,
                    CAST({param("SECONDS_ON_SCREEN")} AS REAL) AS seconds,
-                   CAST({param("REWARDED")} AS INTEGER) AS rewarded
+                   CAST({param("REWARDED")} AS INTEGER) AS rewarded,
+                   CAST({param("LOAD_MS")} AS REAL) AS load_ms, {param("ERROR")} AS error,
+                   {param("CREATIVE_ID")} AS creative_id
             FROM {source.table} WHERE name=? AND {condition}""",
         [AD_EVENT, *args],
     )
@@ -111,9 +118,16 @@ def _absent(what, sends):
     }
 
 
-def revenue(storage, game_id, start, end, filters, group_by=None, limit=15):
-    """Ad money: impressions, revenue, eCPM and revenue per player, in total and by group."""
+def revenue(storage, game_id, start, end, filters, group_by=None, limit=15, then_by=None):
+    """Ad money: impressions, revenue, eCPM and revenue per player, in total and by group.
+
+    then_by splits each group once more (network, then format): every group gets a `split` of
+    the second dimension's values with their own impressions, revenue and eCPM.
+    """
     group_by = _choice(group_by, REVENUE_GROUPS, "format", "group_by")
+    if then_by:
+        then_by = _choice(then_by, REVENUE_GROUPS, "format", "then_by")
+        then_by = None if then_by == group_by else then_by
     storage.get_game(game_id)
     with storage.connect(storage.game_path(game_id)) as connection:
         source = insights.read_source(storage, connection)
@@ -158,6 +172,18 @@ def revenue(storage, game_id, start, end, filters, group_by=None, limit=15):
                 (max(1, min(int(limit), 40)),),
             )
         ]
+        matrix = (
+            [
+                dict(row)
+                for row in connection.execute(
+                    f"""SELECT {group_by} AS value, {then_by} AS then_value,
+                               count(*) AS impressions, sum(revenue) AS revenue
+                        FROM ad_events WHERE state='Revenue' GROUP BY 1, 2"""
+                )
+            ]
+            if then_by
+            else []
+        )
     full = counts["revenue"] or 0.0
     banner_money = banner["revenue"] or 0.0
     total = full + banner_money
@@ -205,6 +231,26 @@ def revenue(storage, game_id, start, end, filters, group_by=None, limit=15):
             for row in groups
         ],
     }
+    if then_by:
+        totals = defaultdict(float)
+        for cell in matrix:
+            totals[cell["then_value"]] += cell["revenue"] or 0.0
+        result["then_by"] = then_by
+        result["then_values"] = [
+            value for value, _ in sorted(totals.items(), key=lambda item: -item[1])[:5]
+        ]
+        for group in result["groups"]:
+            group["split"] = {
+                str(cell["then_value"]): {
+                    "impressions": cell["impressions"],
+                    "revenue": _money(cell["revenue"]),
+                    "ecpm": round((cell["revenue"] or 0) / cell["impressions"] * 1000, 2)
+                    if cell["impressions"]
+                    else None,
+                }
+                for cell in matrix
+                if cell["value"] == group["value"]
+            }
     if not counts["impressions"]:
         result["note"] = (
             "Ads were recorded but no Revenue events: this game may not send AD_ANALYSIS Revenue."
@@ -319,8 +365,8 @@ def serving(storage, game_id, start, end, filters, group_by=None, limit=15):
                        count(DISTINCT CASE WHEN state='Closed' AND rewarded IS NOT NULL THEN ad_id
                            END) AS rewarded_asked,
                        avg(CASE WHEN state='Closed' THEN seconds END) AS seconds
-                FROM ad_events WHERE ad_id IS NOT NULL GROUP BY value
-                ORDER BY wanted DESC LIMIT ?""",
+                FROM ad_events WHERE ad_id IS NOT NULL AND state NOT IN {LOAD_STATES}
+                GROUP BY value ORDER BY wanted DESC LIMIT ?""",
             (max(1, min(int(limit), 40)),),
         ).fetchall()
         reasons = connection.execute(
@@ -561,4 +607,120 @@ def impact(storage, game_id, start, end, filters):
         ),
         "leaving_on_ads": leaving,
         "first_day_retention": retention,
+    }
+
+
+def delivery(storage, game_id, start, end, filters):
+    """From wanted to shown, per format: what the game asked for and lost (serving), whether the
+    networks loaded (health), and how long loads took where the game's ad plugin reports them."""
+    served = serving(storage, game_id, start, end, filters, group_by="format")
+    healthy = health(storage, game_id, start, end, filters, group_by="format")
+    times, errors = {}, []
+    with storage.connect(storage.game_path(game_id)) as connection:
+        source = insights.read_source(storage, connection)
+        _ad_events(connection, source, start, end, filters)
+        loads = defaultdict(list)
+        for row in connection.execute(
+            f"""SELECT format, load_ms FROM ad_events
+                WHERE state='Loaded' AND load_ms IS NOT NULL LIMIT {MAX_LOAD_TIMES}"""
+        ):
+            loads[row["format"]].append(row["load_ms"])
+        for name, values in loads.items():
+            values.sort()
+            times[name] = {
+                "loads": len(values),
+                "median_ms": round(_percentile(values, 0.5)),
+                "p90_ms": round(_percentile(values, 0.9)),
+            }
+        errors = [
+            dict(row)
+            for row in connection.execute(
+                f"""SELECT format, substr(coalesce(error, reason, 'unspecified'), 1, {ERROR_TEXT})
+                           AS error, count(*) AS loads, count(DISTINCT player) AS players
+                    FROM ad_events WHERE state='LoadFailed' GROUP BY 1, 2
+                    ORDER BY loads DESC LIMIT 10"""
+            )
+        ]
+    return {
+        "available": bool(served.get("available") or healthy.get("available")),
+        "serving": served,
+        "health": healthy,
+        "load_times": times,
+        "load_times_sent": bool(times),
+        "load_failures": errors,
+    }
+
+
+def creatives(storage, game_id, start, end, filters, limit=20):
+    """The ads players leave on: per creative, how often no level was played after it in that
+    session, against the same share over every creative. Only creatives shown often enough are
+    judged. A player whose last events never arrived counts as having left, so this leans high
+    for everyone alike; it is the gap to the usual share that points at a creative."""
+    storage.get_game(game_id)
+    with storage.connect(storage.game_path(game_id)) as connection:
+        source = insights.read_source(storage, connection)
+        _ad_events(connection, source, start, end, filters)
+        condition, args = insights.where(start, end, filters, source=source)
+        connection.execute("DROP TABLE IF EXISTS temp.last_play")
+        connection.execute(
+            f"""CREATE TEMP TABLE last_play AS
+                SELECT {source.player} AS player, {source.session} AS session_id,
+                       max(client_ts) AS last_ts
+                FROM {source.table} WHERE name=? AND {condition} GROUP BY 1, 2""",
+            [LEVEL_EVENT, *args],
+        )
+        connection.execute("DROP TABLE IF EXISTS temp.shown_ads")
+        connection.execute(
+            """CREATE TEMP TABLE shown_ads AS
+               SELECT ad_id, max(creative_id) AS creative, max(network) AS network,
+                      max(format) AS format, max(player) AS player, max(session_id) AS session_id,
+                      min(CASE WHEN state='Show' THEN client_ts END) AS shown_at
+               FROM ad_events WHERE ad_id IS NOT NULL GROUP BY ad_id
+               HAVING creative IS NOT NULL AND shown_at IS NOT NULL"""
+        )
+        total = dict(
+            connection.execute(
+                """SELECT count(*) AS shown, count(DISTINCT creative) AS creatives,
+                          sum(CASE WHEN p.last_ts IS NULL OR p.last_ts <= s.shown_at THEN 1 ELSE 0
+                              END) AS left_after
+                   FROM shown_ads s LEFT JOIN last_play p
+                     ON p.player = s.player AND p.session_id = s.session_id"""
+            ).fetchone()
+        )
+        if not total["shown"]:
+            return {
+                "available": False,
+                "note": "No shown ad in this range names its creative (CREATIVE_ID).",
+            }
+        rows = [
+            dict(row)
+            for row in connection.execute(
+                """SELECT s.creative AS creative, max(s.network) AS network,
+                          max(s.format) AS format, count(*) AS shown,
+                          count(DISTINCT s.player) AS players,
+                          sum(CASE WHEN p.last_ts IS NULL OR p.last_ts <= s.shown_at THEN 1 ELSE 0
+                              END) AS left_after
+                   FROM shown_ads s LEFT JOIN last_play p
+                     ON p.player = s.player AND p.session_id = s.session_id
+                   GROUP BY s.creative HAVING shown >= ?
+                   ORDER BY 1.0 * left_after / shown DESC, shown DESC LIMIT ?""",
+                (MIN_CREATIVE_SHOWS, max(1, min(int(limit), 100))),
+            )
+        ]
+        judged = connection.execute(
+            "SELECT count(*) FROM (SELECT 1 FROM shown_ads GROUP BY creative HAVING count(*) >= ?)",
+            (MIN_CREATIVE_SHOWS,),
+        ).fetchone()[0]
+    return {
+        "available": True,
+        "means": (
+            "left_share is the share of a creative's shows after which the player played no "
+            "level in that session; usual_share is the same over every creative."
+        ),
+        "shown_with_creative": total["shown"],
+        "creatives": total["creatives"],
+        "creatives_judged": judged,
+        "minimum_shows": MIN_CREATIVE_SHOWS,
+        "usual_share": _ratio(total["left_after"], total["shown"]),
+        "rows": [{**row, "left_share": _ratio(row["left_after"], row["shown"])} for row in rows],
     }

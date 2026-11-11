@@ -40,6 +40,9 @@ class Settings:
     analytics_active_views: int = 12
     analytics_storage_bytes: int = 1_073_741_824
     public_ingest_url: str = ""
+    # Campaign cost (costs.py): the endpoint asked for what each campaign spent per day. Empty
+    # leaves cost, cost per install and return out of the Acquisition page.
+    cost_api_url: str = ""
     # Team access. Enabled when both the Cloudflare Access team domain and the application's
     # audience tag are set; otherwise every request is an admin (the original single-user mode).
     access_team_domain: str = ""  # e.g. example.cloudflareaccess.com
@@ -141,6 +144,7 @@ class Settings:
             admin_email=os.environ.get("AVN_ADMIN_EMAIL", "").strip().lower(),
             lan_admin=os.environ.get("AVN_LAN_ADMIN", "true").strip().lower()
             not in ("0", "false", "no", "off"),
+            cost_api_url=os.environ.get("AVN_COST_API_URL", "").strip(),
             mcp_enabled=_flag("AVN_MCP", True),
             mcp_public_url=os.environ.get("AVN_PUBLIC_MCP_URL", "").strip().rstrip("/"),
             mcp_calls_per_minute=int(_text("AVN_MCP_CALLS_PER_MINUTE", "60")),

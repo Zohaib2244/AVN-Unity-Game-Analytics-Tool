@@ -390,3 +390,56 @@ export type IngestMeterData = {
   now: string; last_event_at: string | null; recent_minutes: number; recent_events: number; per_minute: number; players_now: number;
   events_24h: number; hourly: Array<{ hour: string; events: number }>; versions: Array<{ version: string; events: number }>; stored_bytes: number;
 };
+
+/* ─── Ads (ads.py) ─── */
+export type AdSplit = { impressions: number; revenue: number; ecpm: number | null };
+export type AdRevenueGroup = { value: string | null; impressions: number; revenue: number; ecpm: number | null; players: number; share_of_full_screen_revenue: number | null; split?: Record<string, AdSplit> };
+export type AdRevenue = {
+  available: boolean; note?: string;
+  full_screen: { impressions: number; revenue: number; ecpm: number | null; players_paid_for: number };
+  banner: { impressions: number; revenue: number; ecpm: number | null };
+  total_revenue: number; active_players: number; revenue_per_active_player: number | null; arpdau: number | null;
+  ads_shown: number; ads_shown_with_revenue_reported: number; share_of_shows_with_revenue: number | null;
+  group_by: string; groups: AdRevenueGroup[]; then_by?: string; then_values?: string[];
+};
+export type AdServingGroup = {
+  value: string | null; wanted: number; shown: number; shown_share: number | null; blocked: number; blocked_by: Record<string, number>;
+  failed: number; failed_by: Record<string, number>; closed: number; with_revenue: number; reward_given_share: number | null; average_seconds_on_screen: number | null;
+};
+export type AdServing = { available: boolean; note?: string; groups: AdServingGroup[]; pacing?: { sessions: number; ads_shown_per_session: number | null; median_seconds_between_interstitials: number | null } };
+export type AdHealthGroup = { value: string | null; players: number; loaded: number; load_failed: number; load_success_rate: number | null; not_ready: number; show_calls: number; show_calls_failed: number; impressions: number };
+export type AdHealth = { available: boolean; note?: string; groups?: AdHealthGroup[]; last_load_errors?: Array<{ error: string; format: string; snapshots: number; players: number }> };
+export type AdDelivery = {
+  available: boolean; serving: AdServing; health: AdHealth;
+  load_times: Record<string, { loads: number; median_ms: number; p90_ms: number }>; load_times_sent: boolean;
+  load_failures: Array<{ format: string; error: string; loads: number; players: number }>;
+};
+export type AdPlacements = { serving: AdServing; revenue: AdRevenue };
+export type AdCreatives = {
+  available: boolean; note?: string; shown_with_creative?: number; creatives?: number; creatives_judged?: number; minimum_shows?: number; usual_share?: number | null;
+  rows?: Array<{ creative: string; network: string | null; format: string | null; shown: number; players: number; left_after: number; left_share: number | null }>;
+};
+
+/* ─── Acquisition (acquisition_report.py, costs.py) ─── */
+export type ReturnGoal = { day: number; percent: number };
+export type ReturnGoals = { game: ReturnGoal[]; campaigns: Record<string, ReturnGoal[]> };
+export type CostState = { state: 'off' | 'no_app_id' | 'not_allowed' | 'ok' | 'failed'; app_id?: string; fetched_at?: string; detail?: string; not_final_from?: string | null };
+export type ValueByDay = Record<string, { players: number; per_player: number | null }>;
+export type AcquisitionRow = {
+  value: string; installs: number; paid?: boolean;
+  retention: Record<string, { players: number; rate: number | null }>;
+  value_per_install: ValueByDay;
+  cost: number | null; service_installs: number | null; cost_per_install: number | null; seen_share: number | null;
+  return: Record<string, number | null>;
+};
+export type AcquisitionReport = {
+  available: boolean; note?: string; group_by: string; installs: number; updated_players_left_out: number; last_day: string;
+  cost: CostState; goals: ReturnGoals; all_paid: AcquisitionRow; rows: AcquisitionRow[];
+};
+export type CohortDay = { day: string; installs: number; value_per_install: ValueByDay; cost: number | null; service_installs: number | null; cost_per_install: number | null; seen_share: number | null; return: Record<string, number | null>; final: boolean };
+export type AcquisitionCohorts = {
+  available: boolean; note?: string; campaign: string; campaigns: string[]; last_day: string; cost: CostState;
+  goals: ReturnGoal[]; game_goals: ReturnGoal[]; has_own_goals: boolean;
+  days: CohortDay[]; by_calendar_day: Array<{ day: string; revenue: number; cost: number | null }>;
+};
+export type CostSettings = { app_id: string; typed_app_id: string; default_app_id: string; goals: ReturnGoals; configured: boolean };

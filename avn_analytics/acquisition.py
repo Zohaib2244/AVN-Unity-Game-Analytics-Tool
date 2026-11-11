@@ -60,14 +60,16 @@ def _load(storage, game_id, start, end, filters):
                        coalesce(a.channel, '{UNATTRIBUTED}') AS channel,
                        coalesce(a.creative, '{UNATTRIBUTED}') AS creative,
                        coalesce(a.site, '{UNATTRIBUTED}') AS site,
-                       coalesce(a.status, '{UNATTRIBUTED}') AS status
+                       coalesce(a.status, '{UNATTRIBUTED}') AS status,
+                       a.pid IS NOT NULL AS attributed, a.click AS click
                 FROM (SELECT {player} AS pid, substr(min(client_ts), 1, 10) AS cday
                       FROM {table} WHERE name=? AND {condition} AND {player} IS NOT NULL
                       GROUP BY pid) f
                 LEFT JOIN (SELECT {player} AS pid, {param("MEDIA_SOURCE")} AS media_source,
                                   {param("CAMPAIGN")} AS campaign, {param("CHANNEL")} AS channel,
                                   {param("AD")} AS creative, {param("SITE_ID")} AS site,
-                                  {param("AF_STATUS")} AS status, min(client_ts) AS first
+                                  {param("AF_STATUS")} AS status,
+                                  {param("CLICK_TIME")} AS click, min(client_ts) AS first
                            FROM {table}
                            WHERE name=? AND {param("STATE")}='Install' AND {player} IS NOT NULL
                            GROUP BY pid) a ON a.pid = f.pid
@@ -109,14 +111,14 @@ def _load(storage, game_id, start, end, filters):
                 highest[row["pid"]] = max(highest.get(row["pid"], 0), row["level"])
             if row["clicked"]:
                 clicked.add(row["pid"])
-        last_day = connection.execute(
-            f"SELECT max(substr(client_ts, 1, 10)) FROM {table}"
-        ).fetchone()[0]
+        last_day, first_day = connection.execute(
+            f"SELECT max(substr(client_ts, 1, 10)), min(substr(client_ts, 1, 10)) FROM {table}"
+        ).fetchone()
     for item in cohort:
         item["days"] = days.get(item["pid"], {})
         item["level"] = highest.get(item["pid"])
         item["clicked"] = item["pid"] in clicked
-    return {"players": cohort, "last_day": last_day}
+    return {"players": cohort, "last_day": last_day, "first_day": first_day}
 
 
 def _day_after(day, offset):

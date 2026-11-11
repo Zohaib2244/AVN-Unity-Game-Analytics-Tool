@@ -65,8 +65,12 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
   const body = useMemo(() => rulesBody(view), [view]);
   const rulesJSON = body.conditions.length || body.metrics.length ? JSON.stringify(body) : '';
   const sort = validSort(view.sort, body.metrics);
-  useEffect(() => { setOffset(0); }, [filters, search, sort, view.order, rulesJSON]);
-  const playersPath = `${gameURL(game)}/insights/players?${filterQuery(filters)}&${new URLSearchParams({ search, offset: String(offset), sort, order: view.order, ...(rulesJSON ? { rules: rulesJSON } : {}) })}`;
+  // Opened from Ads or Acquisition ("See these players"): keep only that install source, shown as a chip.
+  const fromSource: Array<[string, string]> = query.campaign ? [['campaign', query.campaign]] : query.source ? [['source', query.source]] : query.install === 'paid' ? [['paid_installs', 'true']] : query.install === 'none' ? [['no_install_record', 'true']] : [];
+  const sourceText = query.campaign ?? query.source ?? (query.install === 'paid' ? 'Paid installs' : query.install === 'none' ? 'No install record' : '');
+  const clearSource = () => { const { campaign: _c, source: _s, install: _i, ...rest } = query; void navigate({ to: gamePath(game, 'players'), search: rest, replace: true }); };
+  useEffect(() => { setOffset(0); }, [filters, search, sort, view.order, rulesJSON, sourceText]);
+  const playersPath = `${gameURL(game)}/insights/players?${filterQuery(filters)}&${new URLSearchParams([['search', search], ['offset', String(offset)], ['sort', sort], ['order', view.order], ...(rulesJSON ? [['rules', rulesJSON]] : []), ...fromSource])}`;
   const players = useRead<PlayersResult>(playersPath);
   useEffect(() => { if (players.data) markFresh(); }, [players.data]);
   const total = players.data?.total ?? null;
@@ -105,6 +109,7 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
     <>
       <Heading title="Players" subtitle="Open a player to read their events." />
       <FilterBar game={game} state={filters} onChange={setFilters} context={players.data?.context || {}} />
+      {sourceText ? <div className="filter-chips source-chip"><span className="filter-chip"><span className="filter-chip-open"><Ico name="users" size={13} /><span className="filter-chip-label">Install source</span><em>is</em><span>{sourceText}</span></span><button type="button" className="filter-chip-x" aria-label="Show players from every install source" onClick={clearSource}><Ico name="close" size={11} /></button></span></div> : null}
       <PlayerRuleBar conditions={view.conditions} metrics={view.metrics} total={total} onEdit={() => setRulesOpen(true)} onRemoveRule={removeRule} onRemoveMetric={removeMetric} onClear={clearRules} />
       <section className="panel section-spacing players-panel">
         {/* One line: find a player, then how the list is ordered and what extra columns it has. The rule bar above carries the count. */}

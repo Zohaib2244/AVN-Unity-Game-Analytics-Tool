@@ -781,3 +781,27 @@ class WorkspaceCreate(StrictModel):
 
 class WorkspaceMove(StrictModel):
     workspace_id: UUID
+
+
+class ReturnGoal(StrictModel):
+    """By day N after install, ad revenue should cover this percentage of the cost."""
+
+    day: Annotated[int, Field(ge=0, le=90)]
+    percent: Annotated[float, Field(gt=0, le=1000)]
+
+
+class ReturnGoals(StrictModel):
+    game: Annotated[list[ReturnGoal], Field(max_length=6)] = []
+    campaigns: Annotated[
+        dict[
+            Annotated[str, Field(max_length=200)], Annotated[list[ReturnGoal], Field(max_length=6)]
+        ],
+        Field(max_length=50),
+    ] = {}
+
+
+class CostSettingsUpdate(StrictModel):
+    """The game's app ID at the cost service (iOS needs its store ID) and its return goals."""
+
+    app_id: Annotated[str, Field(max_length=200)] | None = None
+    goals: ReturnGoals | None = None

@@ -14,6 +14,8 @@ import { FunnelsPage } from '@/pages/Funnels';
 import { LevelsPage } from '@/pages/Levels';
 import { PlayersPage } from '@/pages/Players';
 import { SessionsPage } from '@/pages/Sessions';
+import { AdsPage } from '@/pages/Ads';
+import { AcquisitionPage } from '@/pages/Acquisition';
 import { ExportsPage } from '@/pages/Exports';
 import { DictionaryPage } from '@/pages/Dictionary';
 import { EventSetupPage } from '@/pages/EventSetup';
@@ -21,7 +23,7 @@ import { KeysPage } from '@/pages/Keys';
 import { GameSettingsPage } from '@/pages/GameSettings';
 
 const PAGES: Record<Section, (props: { game: Game }) => ReactElement> = {
-  overview: GameOverviewPage, funnels: FunnelsPage, levels: LevelsPage, players: PlayersPage, sessions: SessionsPage, exports: ExportsPage,
+  overview: GameOverviewPage, funnels: FunnelsPage, levels: LevelsPage, players: PlayersPage, sessions: SessionsPage, ads: AdsPage, acquisition: AcquisitionPage, exports: ExportsPage,
   dictionary: DictionaryPage, 'event-setup': EventSetupPage, keys: KeysPage, settings: GameSettingsPage,
 };
 
