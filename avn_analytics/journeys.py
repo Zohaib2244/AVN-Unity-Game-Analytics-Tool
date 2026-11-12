@@ -744,12 +744,19 @@ class _Features:
     def finish(self, events, groups):
         """{level: {key: [count, dropped, left the session, left right after]}} for the levels
         this player started in the range; "*" counts the player themselves."""
+        # A player's last level event and latest next-level start in that session answer
+        # every level. Walking the whole history per level was quadratic for long players.
+        last_levels = {
+            info[1]: (index, row["session_id"]) for index, (row, info) in enumerate(events) if info
+        }
+        last_starts = {(session, number): position for position, number, session in self.starts}
         result = {}
         for number, mine in groups.items():
             if "started" not in mine:
                 continue
             dropped = int("total_drop" in mine)
-            left = int(self._left_session(events, number))
+            last = last_levels.get(number)
+            left = int(last is not None and last_starts.get((last[1], number + 1), -1) <= last[0])
             row = result[number] = {"*": [1, dropped, left, 0]}
             for name, count in self.counts.get(number, {}).items():
                 right = int(
@@ -760,21 +767,6 @@ class _Features:
                 )
                 row[name] = [count, dropped, left, right]
         return result
-
-    def _left_session(self, events, number):
-        """True when no start of the next level follows the player's last event on this level in
-        the same session."""
-        last = max(
-            (index for index, (_, info) in enumerate(events) if info and info[1] == number),
-            default=None,
-        )
-        if last is None:
-            return False
-        session = events[last][0]["session_id"]
-        return not any(
-            position > last and level == number + 1 and at == session
-            for position, level, at in self.starts
-        )
 
 
 def _player_transitions(player, events, latest, scope, start, reader):

@@ -5,6 +5,7 @@ level events are folded into one line, noise is dropped, and sessions become cha
 (many players at once) group players by the shape of their story.
 """
 
+import json
 import re
 from collections import Counter
 from datetime import datetime
@@ -192,6 +193,8 @@ class Labeler:
 
     def __init__(self, definitions=None):
         self.definitions = definitions or {}
+        self._level_fields = {}
+        self._level_meanings = {}
 
     def hidden(self, name):
         return bool((self.definitions.get(name) or {}).get("hidden"))
@@ -210,6 +213,33 @@ class Labeler:
 
     def level_info(self, name, params, app_version=None):
         """(verb, level number) when the event is a level start/complete/fail/restart."""
+        # SDK sequence numbers, ad IDs and other changing metadata do not usually change
+        # a level's meaning. Share this work with labels and actions as well as the scan.
+        shape = (name, app_version, tuple(params))
+        fields = self._level_fields.get(shape)
+        if fields is None:
+            mapped = {
+                str(rule[field]).lower()
+                for _, rule in active_mappings(self.definitions.get(name), app_version)
+                for field in ("param", "number_param")
+                if rule.get(field)
+            }
+            level_name = bool(LEVELISH_KEY.search(name))
+            fields = self._level_fields[shape] = tuple(
+                field
+                for field in params
+                if field.lower() in mapped
+                or field.lower() in LEVEL_VERBS
+                or LEVEL_KEY.match(field)
+                or (level_name and field.lower() in ("action", "status", "state"))
+            )
+        # Preserve parameter order and all explicit mapping inputs (even seq) exactly.
+        key = (name, app_version, json.dumps([(field, params[field]) for field in fields]))
+        if key not in self._level_meanings:
+            self._level_meanings[key] = self._level_info(name, params, app_version)
+        return self._level_meanings[key]
+
+    def _level_info(self, name, params, app_version):
         canonical_verbs = {
             "level_started": "started",
             "level_completed": "completed",
