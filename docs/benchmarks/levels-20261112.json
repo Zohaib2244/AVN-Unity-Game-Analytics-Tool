@@ -1,0 +1,78 @@
+{
+  "measured_on": "2026-11-12",
+  "fixture": {
+    "events": 419800,
+    "players": 400,
+    "tail_levels": 4000,
+    "normal_levels": 200,
+    "generate_seconds": 44.986
+  },
+  "baseline": {
+    "ref": "e47ce52a5a68cb1880b38b046f1d21984f2d10a4",
+    "limits": "unrestricted local process",
+    "prepared": false,
+    "error": "ValueError: Prepared Levels exceeds the bounded reducer memory budget",
+    "prepare_seconds": 45.83,
+    "ticks": 43,
+    "summary_answer_bytes": null,
+    "raw_events": 419800,
+    "raw_unchanged": true,
+    "derived_bytes": 4631702,
+    "peak_mb": 229.6
+  },
+  "candidate": {
+    "branch": "fix/levels-prepared-performance",
+    "view_version": 6,
+    "cpu_limit": 0.5,
+    "memory_limit_mib": 512,
+    "prepared": true,
+    "prepare_seconds": 126.994,
+    "ticks": 44,
+    "levels": 4000,
+    "timings": {
+      "levels": {
+        "p50_ms": 602.42,
+        "max_ms": 665.77
+      },
+      "features": {
+        "p50_ms": 574.26,
+        "max_ms": 635.59
+      },
+      "players": {
+        "p50_ms": 1014.53,
+        "max_ms": 1080.0
+      }
+    },
+    "prepared_peak_mb": 122.4,
+    "exact": true,
+    "summary_answer_bytes": 132600,
+    "raw_events": 419802,
+    "raw_counts_unchanged": true,
+    "derived_bytes": 4678098,
+    "peak_mb": 297.7,
+    "refresh": {
+      "accepted": 2,
+      "commit_to_ready_seconds": 25.662,
+      "exact": true
+    }
+  },
+  "method": {
+    "samples_per_endpoint": 5,
+    "read_measurement": "Python dashboard entrypoints; excludes HTTP serialization and browser rendering",
+    "cache": "new Storage instance, response cache disabled, source freshness verified",
+    "parity": "table, features, level-1 started player page; live facts equality",
+    "refresh": "appends two synthetic events after read-only timing and parity, including the long-history player",
+    "fixture_reuse": "two events from an earlier refresh probe exist in the candidate starting count",
+    "baseline_comparison": "baseline preparation fails; CPU limits differ, so preparation times are not a speed comparison",
+    "prepared_peak_mb": "peak RSS through preparation and prepared reads",
+    "peak_mb": "peak RSS including the subsequent full live parity calculation"
+  },
+  "validation": {
+    "scripts_check_sh": "passed",
+    "python_tests": 613,
+    "web_unit_tests": 320,
+    "targeted_browser_tests": 27,
+    "browser_exit_code": 0,
+    "realistic_browser_review": "250k-event synthetic game, 1440/900/390 pixels, dark/light, nutmeg/slate; no page overflow or browser errors"
+  }
+}

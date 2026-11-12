@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { affectedRead, freshnessMs, queryClient, readKey, write } from './queries';
+import { affectedRead, freshnessMs, queryClient, read, readKey, write } from './queries';
 
-afterEach(() => { queryClient.clear(); vi.unstubAllGlobals(); });
+afterEach(() => { queryClient.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it('keeps unrelated games fresh but invalidates derived data after mapping edits', () => {
   expect(affectedRead('/v1/games/a/dictionary/start/mappings', '/v1/games/a/insights/summary?days=30')).toBe(true);
@@ -42,4 +42,32 @@ it('refreshes player group counts after save, deletion and Undo', () => {
     expect(affectedRead(`/v1/games/a/insights/group-library${suffix}`, '/v1/games/a/insights/player-group-counts?start=2026-10-01')).toBe(true);
     expect(affectedRead(`/v1/games/a/insights/group-library${suffix}`, '/v1/games/b/insights/player-group-counts')).toBe(false);
   }
+});
+
+it('polls a pending view until ready without caching its pending response as data', async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Preparing this view…' }), { status: 202, headers: { 'Retry-After': '2' } }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ levels: [1] }), { status: 200 }));
+  vi.stubGlobal('fetch', fetch);
+  const path = '/v1/games/a/insights/levels';
+  const pending = read(path);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(queryClient.getQueryData(readKey(path))).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(await pending).toEqual({ levels: [1] });
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it('cancels preparation polling when its query is cancelled', async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn().mockImplementation(async () => new Response('{}', { status: 202 }));
+  vi.stubGlobal('fetch', fetch);
+  const path = '/v1/games/a/insights/levels';
+  const pending = read(path).catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(0);
+  await queryClient.cancelQueries({ queryKey: readKey(path) });
+  await pending;
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(fetch).toHaveBeenCalledTimes(1);
 });

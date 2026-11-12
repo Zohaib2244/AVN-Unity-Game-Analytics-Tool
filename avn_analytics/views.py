@@ -16,24 +16,28 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
 
-from . import analytics
+from fastapi import HTTPException
+
+from . import analytics, level_views
 
 logger = logging.getLogger(__name__)
 
-VERSION = 5
+VERSION = 6
 EXPIRY = 86400
 BATCH_PLAYERS = 20
 # What one Levels step may read: a batch of players, or a single heavy player on their own.
 BATCH_ROWS, BATCH_BYTES = 25_000, 16 * 1024 * 1024
 SOLO_ROWS, SOLO_BYTES = 200_000, 128 * 1024 * 1024
 MAX_SECONDS = 30.0
+SUMMARY_MEMORY_BYTES = 64 * 1024 * 1024
+PLAYER_SUMMARY_BYTES = 16 * 1024 * 1024
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS analytics_views (
     key TEXT PRIMARY KEY, spec TEXT NOT NULL, touched REAL NOT NULL,
     fingerprint TEXT, watermark INTEGER, contexts INTEGER,
     source_at REAL, checked_at REAL, answer BLOB,
     stage TEXT, cursor INTEGER NOT NULL DEFAULT 0,
-    error TEXT, retry_at REAL NOT NULL DEFAULT 0
+    error TEXT, retry_at REAL NOT NULL DEFAULT 0, error_version INTEGER
 );
 CREATE TABLE IF NOT EXISTS analytics_parts (
     view_key TEXT NOT NULL REFERENCES analytics_views(key) ON DELETE CASCADE,
@@ -57,6 +61,10 @@ def install(connection):
         connection.execute(
             "ALTER TABLE analytics_views ADD COLUMN retry_at REAL NOT NULL DEFAULT 0"
         )
+    if "error_version" not in columns:
+        connection.execute("ALTER TABLE analytics_views ADD COLUMN error_version INTEGER")
+    for statement in analytics._statements(level_views.SCHEMA):
+        connection.execute(statement)
 
 
 def pack(value):
@@ -114,7 +122,7 @@ def _running(storage, now):
     )
 
 
-def answer(storage, game_id, kind, parts, compute):
+def answer(storage, game_id, kind, parts, compute, *, level=None, defer=False):
     if storage.settings.analytics_read_mode != "prepared":
         return compute()
     storage.get_game(game_id)
@@ -135,7 +143,9 @@ def answer(storage, game_id, kind, parts, compute):
     key = hashlib.sha256(spec.encode()).hexdigest()
     now = time.time()
     with storage.connect(storage.game_path(game_id)) as connection:
-        row = connection.execute("SELECT * FROM analytics_views WHERE key=?", (key,)).fetchone()
+        row = connection.execute(
+            "SELECT touched FROM analytics_views WHERE key=?", (key,)
+        ).fetchone()
         # Do not write on every read. A minute granularity is enough for LRU/expiry.
         if row is None or now - row["touched"] > 60:
             connection.execute(
@@ -148,6 +158,11 @@ def answer(storage, game_id, kind, parts, compute):
                 "ORDER BY touched DESC, key LIMIT -1 OFFSET ?)",
                 (storage.settings.analytics_active_views,),
             )
+    # The answer and its published player map must come from one read snapshot. Registration
+    # is a separate short write so a read never upgrades a stale snapshot while a worker publishes.
+    with storage.connect(storage.game_path(game_id)) as connection:
+        connection.execute("BEGIN")
+        row = connection.execute("SELECT * FROM analytics_views WHERE key=?", (key,)).fetchone()
         reason = None
         if row is None or row["answer"] is None:
             reason = "missing"
@@ -159,6 +174,11 @@ def answer(storage, game_id, kind, parts, compute):
             reason = "definitions_changed"
         elif not contexts_compatible(connection, row["contexts"], row["watermark"]):
             reason = "context_changed"
+        groups = (
+            level_views.read_groups(connection, key, level)
+            if reason is None and level is not None
+            else None
+        )
     if reason is None and not _running(storage, now):
         reason = "worker_unavailable"
     if reason is None:
@@ -169,13 +189,29 @@ def answer(storage, game_id, kind, parts, compute):
             (time.monotonic() - began) * 1000,
         )
         if kind == "levels":
-            return restore_scan(result)
+            result = restore_scan(result)
+            if groups is not None and level in result["transitions"]:
+                result["transitions"][level]["groups"] = groups
+            return result
         # Confidence is presentation state, so a threshold edit needs no event rebuild.
         threshold = storage.analytics_thresholds(game_id)["retention_min_users"]
         result["context"].update(
             minimum_players=threshold, low_sample=0 < result["players"] < threshold
         )
         return result
+    if defer and kind == "levels" and _running(storage, now):
+        if (
+            row is not None
+            and row["error"]
+            and row["error_version"] == VERSION
+            and row["retry_at"] > now
+        ):
+            raise HTTPException(422, "This view couldn't be prepared. Try fewer days or players.")
+        raise HTTPException(
+            202,
+            "Preparing this view… It will appear here when ready.",
+            headers={"Retry-After": "2"},
+        )
     try:
         return compute()
     finally:
@@ -201,12 +237,13 @@ def restore_scan(scan):
 
 
 def backlog(storage, connection, now):
-    rows = connection.execute("SELECT source_at, answer FROM analytics_views").fetchall()
+    rows = connection.execute(
+        "SELECT source_at, answer IS NOT NULL AS ready FROM analytics_views"
+    ).fetchall()
     seconds = now.timestamp()
     ages = [seconds - row["source_at"] for row in rows if row["source_at"] is not None]
     waiting = sum(
-        row["answer"] is None
-        or seconds - row["source_at"] > storage.settings.analytics_refresh_seconds
+        not row["ready"] or seconds - row["source_at"] > storage.settings.analytics_refresh_seconds
         for row in rows
     )
     return {"views": len(rows), "views_waiting": waiting, "lag_seconds": max(ages, default=0)}
@@ -266,6 +303,17 @@ def _space(storage):
             total += connection.execute(
                 "SELECT coalesce(sum(length(player)+256),0) FROM analytics_queue"
             ).fetchone()[0]
+            total += connection.execute(
+                "SELECT coalesce(sum(bytes+length(token)+256),0) FROM analytics_group_tokens"
+            ).fetchone()[0]
+            total += connection.execute(
+                "SELECT coalesce(sum(length(player)+length(token)+256),0) "
+                "FROM analytics_level_players"
+            ).fetchone()[0]
+            total += connection.execute(
+                "SELECT coalesce(sum(length(player)+length(token)+256),0) "
+                "FROM analytics_level_staging"
+            ).fetchone()[0]
     return total
 
 
@@ -276,10 +324,11 @@ def refresh(worker, game_id, revision):
     with storage.connect(path) as connection:
         connection.execute("DELETE FROM analytics_views WHERE touched<?", (now - EXPIRY,))
         row = connection.execute(
-            "SELECT * FROM analytics_views WHERE retry_at<=? "
+            "SELECT * FROM analytics_views WHERE (retry_at<=? OR "
+            "(error IS NOT NULL AND (error_version IS NULL OR error_version!=?))) "
             "AND (checked_at IS NULL OR checked_at<?) "
             "ORDER BY coalesce(checked_at,0), touched DESC LIMIT 1",
-            (now, now - storage.settings.analytics_refresh_seconds),
+            (now, VERSION, now - storage.settings.analytics_refresh_seconds),
         ).fetchone()
     if row is None or worker.should_stop(revision):
         return False
@@ -302,8 +351,13 @@ def refresh(worker, game_id, revision):
             error = TimeoutError("Prepared computation exceeded its snapshot budget")
         with storage.connect(path) as connection:
             connection.execute(
-                "UPDATE analytics_views SET error=?,retry_at=? WHERE key=?",
-                (f"{type(error).__name__}: {str(error)[:300]}", time.time() + 60, row["key"]),
+                "UPDATE analytics_views SET error=?,retry_at=?,error_version=? WHERE key=?",
+                (
+                    f"{type(error).__name__}: {str(error)[:300]}",
+                    time.time() + 60,
+                    VERSION,
+                    row["key"],
+                ),
             )
         raise error
 
@@ -334,7 +388,8 @@ def _level_contributions(connection, key, queued, parts, reader, check, max_rows
             if counted
             else {"progress": {}, "groups": {}, "observed": [], "features": {}}
         )
-        contributions.append((key, player, pack(value), len(events)))
+        summary, token, details = level_views.contribution(value)
+        contributions.append((key, player, summary, len(events), token, details))
     return contributions
 
 
@@ -468,11 +523,19 @@ def _refresh(worker, game_id, revision, row, began):
                     return False
                 if not incremental:
                     connection.execute("DELETE FROM analytics_parts WHERE view_key=?", (key,))
+                    connection.execute(
+                        "DELETE FROM analytics_level_staging WHERE view_key=?", (key,)
+                    )
                 elif removed:
                     connection.executemany(
                         "DELETE FROM analytics_parts WHERE view_key=? AND player=?",
                         ((key, player) for player in removed),
                     )
+                    connection.executemany(
+                        "DELETE FROM analytics_level_staging WHERE view_key=? AND player=?",
+                        ((key, player) for player in removed),
+                    )
+                level_views.cleanup(connection, key)
                 connection.execute("DELETE FROM analytics_queue WHERE view_key=?", (key,))
                 connection.executemany(
                     "INSERT INTO analytics_queue VALUES(?,?,?)",
@@ -511,10 +574,7 @@ def _refresh(worker, game_id, revision, row, began):
                         if alone:
                             raise
                         queued = queued[: len(queued) // 2]
-                if (
-                    sum(len(item[2]) + len(str(item[1]).encode()) + 256 for item in contributions)
-                    > remaining
-                ):
+                if sum(level_views.contribution_bytes(item) for item in contributions) > remaining:
                     raise ValueError("Prepared answers exceed the derived storage budget")
                 _guard(worker, revision, began)
                 connection.rollback()
@@ -522,13 +582,10 @@ def _refresh(worker, game_id, revision, row, began):
                 connection.execute("BEGIN IMMEDIATE")
                 if not _fenced(connection, worker, row):
                     return False
-                connection.executemany(
-                    "DELETE FROM analytics_parts WHERE view_key=? AND player=?",
-                    ((key, item["player"]) for item in queued),
+                level_views.store(
+                    connection, key, contributions, [item["player"] for item in queued]
                 )
-                connection.executemany(
-                    "INSERT OR REPLACE INTO analytics_parts VALUES(?,?,?,?)", contributions
-                )
+                _guard(worker, revision, began)
                 connection.execute(
                     "UPDATE analytics_views SET cursor=?,stage=? WHERE key=?",
                     (queued[-1]["ordinal"] + 1, json.dumps(stage), key),
@@ -539,16 +596,15 @@ def _refresh(worker, game_id, revision, row, began):
             ).fetchone()[0]
             if count > journeys.MAX_FUNNEL_EVENTS:
                 raise ValueError("Levels history exceeds the existing event limit")
-            totals = journeys._LevelTotals()
-            decoded_bytes = 0
+            totals = journeys._LevelSummary(memory_budget=SUMMARY_MEMORY_BYTES)
             for part in connection.execute(
                 "SELECT part FROM analytics_parts WHERE view_key=? ORDER BY player", (key,)
             ):
                 _guard(worker, revision, began)
-                raw = zlib.decompress(part[0])
-                decoded_bytes += len(raw)
-                if decoded_bytes > 64 * 1024 * 1024:
-                    raise ValueError("Prepared Levels exceeds the bounded reducer memory budget")
+                decoder = zlib.decompressobj()
+                raw = decoder.decompress(part[0], PLAYER_SUMMARY_BYTES + 1)
+                if len(raw) > PLAYER_SUMMARY_BYTES or not decoder.eof:
+                    raise ValueError("Prepared Levels exceeds the per-player summary memory budget")
                 value = json.loads(raw)
                 for field in ("progress", "groups", "features"):
                     value[field] = {int(k): v for k, v in value.get(field, {}).items()}
@@ -562,7 +618,10 @@ def _refresh(worker, game_id, revision, row, began):
                 "too_many": stage["too_many"],
             }
         payload = pack(result) if result is not None else row["answer"]
-        if len(payload) > remaining:
+        growth = max(0, len(payload) - len(row["answer"] or b""))
+        if kind == "levels":
+            growth += level_views.publication_growth(connection, key)
+        if growth > remaining:
             raise ValueError("Prepared answers exceed the derived storage budget")
         source_at = stage["source_at"] if stage else source_started
         _guard(worker, revision, began)
@@ -576,9 +635,13 @@ def _refresh(worker, game_id, revision, row, began):
             or not _fenced(connection, worker, row)
         ):
             return False
+        if kind == "levels":
+            level_views.publish(connection, key)
+            _guard(worker, revision, began)
         connection.execute(
             "UPDATE analytics_views SET answer=?,fingerprint=?,watermark=?,contexts=?,"
-            "source_at=?,checked_at=?,stage=NULL,cursor=0,error=NULL,retry_at=0 WHERE key=?",
+            "source_at=?,checked_at=?,stage=NULL,cursor=0,error=NULL,retry_at=0,"
+            "error_version=NULL WHERE key=?",
             (payload, digest, mark, watermarks(connection)[1], source_at, time.time(), key),
         )
         connection.execute("DELETE FROM analytics_queue WHERE view_key=?", (key,))

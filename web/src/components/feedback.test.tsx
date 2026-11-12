@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { DEFINITIONS, DefinedLabel, LoadError } from './feedback';
-import { ApiError } from '@/api/client';
+import type { UseQueryResult } from '@tanstack/react-query';
+import { DEFINITIONS, DefinedLabel, LoadError, QueryRegion } from './feedback';
+import { ApiError, PreparingError } from '@/api/client';
 
 describe('definitions', () => {
   it('every key-number label the pages draw says how it is counted', () => {
@@ -24,4 +25,12 @@ describe('LoadError', () => {
     rerender(<LoadError error={new ApiError('No', 403)} />);
     expect(screen.queryByRole('button')).toBeNull();
   });
+});
+
+it('names background preparation instead of promising a one-minute request timeout', async () => {
+  const query = { data: undefined, isError: false, isFetching: true, fetchStatus: 'fetching', failureReason: new PreparingError('Preparing this view… It will appear here when ready.', 2000) } as unknown as UseQueryResult<unknown>;
+  render(<QueryRegion query={query} path="/v1/games/a/insights/levels">{() => <div>Ready</div>}</QueryRegion>);
+  expect(await screen.findByText('Preparing this view… It will appear here when ready.')).toBeVisible();
+  expect(screen.queryByText(/stops after a minute/)).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
 });

@@ -1,5 +1,24 @@
 import '@testing-library/jest-dom/vitest';
 
+// jsdom does not yet provide the browser's combined cancellation signal.
+if (!AbortSignal.any) {
+  AbortSignal.any = (signals: AbortSignal[]) => {
+    const controller = new AbortController();
+    const listeners = new Map<AbortSignal, () => void>();
+    const abort = (signal: AbortSignal) => {
+      controller.abort(signal.reason);
+      for (const [source, listener] of listeners) source.removeEventListener('abort', listener);
+    };
+    for (const signal of signals) {
+      if (signal.aborted) { abort(signal); break; }
+      const listener = () => abort(signal);
+      listeners.set(signal, listener);
+      signal.addEventListener('abort', listener, { once: true });
+    }
+    return controller.signal;
+  };
+}
+
 // jsdom has no matchMedia; the motion helpers and theme code ask for it.
 if (!window.matchMedia) {
   window.matchMedia = (query: string) => ({ matches: false, media: query, onchange: null, addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false }) as MediaQueryList;

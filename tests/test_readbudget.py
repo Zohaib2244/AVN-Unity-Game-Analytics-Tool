@@ -2,13 +2,16 @@
 
 import asyncio
 import sqlite3
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 from test_backend import AUTH, TOKEN, register
 
-from avn_analytics import insights, readbudget
+from avn_analytics import insights, journeys, readbudget, readcache
 from avn_analytics.api import create_app
 from avn_analytics.config import Settings
 from avn_analytics.readbudget import Budget, ReadBudget
@@ -143,3 +146,59 @@ def test_a_read_over_its_ceiling_ends_with_a_clear_504(tmp_path, monkeypatch):
         assert time.monotonic() - began < 15
         # the same server still answers normally afterwards
         assert admin.get(f"/v1/games/{game['id']}", headers=AUTH).status_code == 200
+
+
+@pytest.mark.parametrize("abandoned", [False, True])
+def test_levels_stop_during_python_reduction(abandoned):
+    budget = Budget(0)
+
+    class Reader:
+        calls = 0
+
+        def level(self, *args):
+            self.calls += 1
+            if self.calls == 1024:
+                if abandoned:
+                    budget.abandoned.set()
+                else:
+                    budget.deadline = 0
+            return {}, None
+
+    reader = Reader()
+    row = {"name": "session_start", "params": "{}", "app_version": None, "selected": True}
+    token = readbudget._current.set(budget)
+    try:
+        with pytest.raises(Exception) as caught:
+            journeys.player_levels("player", [row] * 4000, None, "all", "2026-01-01", reader)
+    finally:
+        readbudget._current.reset(token)
+    assert getattr(caught.value, "status_code", None) == 504
+    assert reader.calls == 1024
+
+
+def test_abandoned_cache_wait_does_not_wait_for_or_cancel_the_owner(tmp_path, monkeypatch):
+    monkeypatch.setattr(readcache, "_fingerprint", lambda *args: "unchanged")
+    cache = readcache.ReadCache(60, 2)
+    storage = SimpleNamespace(game_path=lambda game: tmp_path / game)
+    began, release = threading.Event(), threading.Event()
+
+    def compute():
+        began.set()
+        assert release.wait(5)
+        return 42
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        owner = pool.submit(cache.get, storage, "game", ("levels",), compute)
+        assert began.wait(5)
+        budget = Budget(0)
+        budget.abandoned.set()
+        token = readbudget._current.set(budget)
+        try:
+            with pytest.raises(Exception) as caught:
+                cache.get(storage, "game", ("levels",), lambda: pytest.fail("second scan"))
+        finally:
+            readbudget._current.reset(token)
+            release.set()
+        assert getattr(caught.value, "status_code", None) == 504
+        assert owner.result(timeout=5) == 42
+    assert cache.get(storage, "game", ("levels",), lambda: pytest.fail("lost result")) == 42

@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 from parity import HIDE_TEST, build_fixture, make_storage, ranges
 
-from avn_analytics import insights, journeys, materialize, views
+from avn_analytics import insights, journeys, level_views, materialize, views
 from avn_analytics.models import EventDefinition
 
 
@@ -417,6 +417,340 @@ def test_prepared_read_logs_fallback_and_hit(prepared, caplog):
             db.execute("UPDATE analytics_views SET source_at=0")
         assert views.answer(storage, game, "summary", parts, lambda: "live") == "live"
         assert "fallback=expired" in caplog.text
+
+
+def test_summary_reads_do_not_load_player_details_and_drills_select_one_level(
+    prepared, monkeypatch
+):
+    storage, game, days = prepared
+    expected = journeys.level_progress(storage, game, *days, HIDE_TEST)
+    expected_players = journeys.level_players(storage, game, *days, HIDE_TEST, 1, group="started")
+    finish(storage, game)
+    calls = []
+    original = level_views.read_groups
+
+    def selected(connection, key, level):
+        calls.append(level)
+        return original(connection, key, level)
+
+    monkeypatch.setattr(level_views, "read_groups", selected)
+    assert journeys.level_progress(storage, game, *days, HIDE_TEST) == expected
+    journeys.level_features(storage, game, *days, HIDE_TEST)
+    assert not calls
+    assert (
+        journeys.level_players(storage, game, *days, HIDE_TEST, 1, group="started")
+        == expected_players
+    )
+    assert calls == [1]
+    with storage.connect(storage.game_path(game)) as db:
+        answer = views.unpack(db.execute("SELECT answer FROM analytics_views").fetchone()[0])
+        assert all("groups" not in transition for transition in answer["transitions"].values())
+
+
+def test_compact_groups_keep_one_record_and_distinct_return_details():
+    record = {"player": "p", "tries": 1, "completed": True}
+    returned = {**record, "exit_at": "earlier"}
+    groups = {
+        "started": record,
+        "kept_going": record,
+        "failed": record,
+        "came_back_later": returned,
+    }
+    compact = level_views.compact_groups(groups)
+    assert len(compact) == 2
+    restored = {
+        name: value
+        for mask, value in compact
+        for index, name in enumerate(journeys.LEVEL_GROUPS)
+        if mask & (1 << index)
+    }
+    assert restored == groups
+    assert restored["started"] is restored["kept_going"]
+    typed = level_views.compact_groups(
+        {"started": {"app_version": 1}, "returning": {"app_version": 1.0}}
+    )
+    assert len(typed) == 2
+
+
+def test_prepared_unknown_level_keeps_empty_player_answer_with_return_filter(prepared):
+    storage, game, days = prepared
+    expected = journeys.level_players(
+        storage, game, *days, HIDE_TEST, 99999, exclude_returners=True
+    )
+    finish(storage, game)
+    assert (
+        journeys.level_players(storage, game, *days, HIDE_TEST, 99999, exclude_returners=True)
+        == expected
+    )
+
+
+def test_reducer_contributions_exclude_details_and_account_for_their_storage(prepared):
+    storage, game, days = prepared
+    journeys.level_progress(storage, game, *days, HIDE_TEST)
+    finish(storage, game)
+    summary_bytes = full_bytes = details_bytes = 0
+    with storage.connect(storage.game_path(game)) as db:
+        for row in db.execute(
+            "SELECT p.part,s.token FROM analytics_parts p JOIN "
+            "analytics_level_staging s ON s.view_key=p.view_key AND s.player=p.player"
+        ):
+            summary = views.unpack(row["part"])
+            full = {**summary, "groups": {}}
+            assert all(
+                isinstance(value, list) and len(value) == 6 for value in summary["groups"].values()
+            )
+            for level in db.execute(
+                "SELECT payload FROM analytics_level_groups WHERE token=?", (row["token"],)
+            ):
+                for number, groups in views.unpack(level["payload"]).items():
+                    full["groups"][number] = {
+                        name: record
+                        for mask, record in groups
+                        for index, name in enumerate(journeys.LEVEL_GROUPS)
+                        if mask & (1 << index)
+                    }
+                details_bytes += len(level["payload"]) + 256
+            summary_bytes += len(json.dumps(summary))
+            full_bytes += len(json.dumps(full))
+        assert (
+            db.execute("SELECT sum(bytes) FROM analytics_group_tokens").fetchone()[0]
+            == details_bytes
+        )
+        assert not db.execute("PRAGMA foreign_key_check").fetchall()
+    assert summary_bytes < full_bytes / 2
+    assert views._space(storage) > details_bytes
+
+
+def _stage_new_player_activity(storage, game, worker, days):
+    from avn_analytics.models import Batch
+
+    before = journeys.level_players(storage, game, *days, HIDE_TEST, 1, group="started")
+    player = before["players"][0]["player"]
+    storage.ingest(
+        game,
+        Batch.model_validate(
+            {
+                "events": [
+                    {
+                        "event_id": "00000000-0000-4000-8000-000000000999",
+                        "name": "LEVEL_ANALYSIS",
+                        "params": {"STATE": "Started", "LEVEL_NUMBER": 1},
+                        "device_id": player,
+                        "session_id": "new-late-session",
+                        "app_version": "1.0",
+                        "build": "1",
+                        "platform": "android",
+                        "environment": "production",
+                        "client_ts": "2026-09-29T23:59:00Z",
+                    }
+                ]
+            }
+        ),
+    )
+    with storage.connect(storage.game_path(game)) as db:
+        db.execute("UPDATE analytics_views SET checked_at=0")
+    worker.tick()  # queue the dirty player
+    worker.tick()  # stage their replacement, without publishing it
+    return before
+
+
+def test_staging_does_not_replace_published_player_details(prepared):
+    storage, game, days = prepared
+    journeys.level_progress(storage, game, *days, HIDE_TEST)
+    worker = finish(storage, game)
+    before = _stage_new_player_activity(storage, game, worker, days)
+    assert journeys.level_players(storage, game, *days, HIDE_TEST, 1, group="started") == before
+    with storage.connect(storage.game_path(game)) as db:
+        assert (
+            db.execute(
+                "SELECT count(*) FROM analytics_level_staging s JOIN analytics_level_players p "
+                "ON p.view_key=s.view_key AND p.player=s.player WHERE s.token!=p.token"
+            ).fetchone()[0]
+            == 1
+        )
+    worker.tick()
+    assert journeys.level_players(storage, game, *days, HIDE_TEST, 1, group="started") != before
+    with storage.connect(storage.game_path(game)) as db:
+        assert not db.execute(
+            "SELECT 1 FROM analytics_group_tokens t WHERE NOT EXISTS "
+            "(SELECT 1 FROM analytics_level_staging p WHERE p.token=t.token)"
+        ).fetchone()
+
+
+def test_summary_and_details_share_a_snapshot_during_publication(prepared, monkeypatch):
+    storage, game, days = prepared
+    journeys.level_progress(storage, game, *days, HIDE_TEST)
+    worker = finish(storage, game)
+    before = _stage_new_player_activity(storage, game, worker, days)
+    original = level_views.read_groups
+
+    def publish_during_read(connection, key, level):
+        worker.tick()
+        return original(connection, key, level)
+
+    monkeypatch.setattr(level_views, "read_groups", publish_during_read)
+    assert journeys.level_players(storage, game, *days, HIDE_TEST, 1, group="started") == before
+    monkeypatch.setattr(level_views, "read_groups", original)
+    assert journeys.level_players(storage, game, *days, HIDE_TEST, 1, group="started") != before
+
+
+def test_stop_after_detail_writes_rolls_back_tokens_and_staging(prepared, monkeypatch):
+    storage, game, days = prepared
+    journeys.level_progress(storage, game, *days, HIDE_TEST)
+    worker = materialize.Worker(storage, identity="test")
+    worker.tick()
+    original = level_views.store
+
+    def stop(*args):
+        original(*args)
+        materialize.set_desired(storage, "stopped", "admin")
+
+    monkeypatch.setattr(level_views, "store", stop)
+    worker.tick()
+    with storage.connect(storage.game_path(game)) as db:
+        for table in (
+            "analytics_parts",
+            "analytics_group_tokens",
+            "analytics_level_groups",
+            "analytics_level_players",
+            "analytics_level_staging",
+        ):
+            assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+        assert db.execute("SELECT cursor FROM analytics_views").fetchone()[0] == 0
+
+
+def test_browser_gets_pending_without_a_live_scan_and_then_exact_answers(prepared, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from avn_analytics.api import create_app
+    from avn_analytics.storage import Storage
+
+    storage, game, days = prepared
+    live = Storage(replace(storage.settings, analytics_read_mode="facts"))
+    expected = journeys.level_progress(live, game, *days, HIDE_TEST)
+    worker = materialize.Worker(storage, identity="test")
+    worker.tick()
+    monkeypatch.setattr(
+        journeys, "_scan_levels", lambda *args: pytest.fail("browser started live work")
+    )
+    params = {
+        "start": days[0][:10],
+        "end": "2026-09-29",
+        "not_env": HIDE_TEST["exclude_environments"],
+    }
+    headers = {"Prefer": "respond-async", "Authorization": "Bearer " + storage.settings.admin_token}
+    with TestClient(create_app(storage.settings, admin=True)) as client:
+        for suffix in ("", "/features", "/players"):
+            response = client.get(
+                f"/v1/games/{game}/insights/levels{suffix}",
+                params={**params, "level": 1},
+                headers=headers,
+            )
+            assert response.status_code == 202, response.text
+            assert response.headers["Retry-After"] == "2"
+            assert "Preparing this view" in response.json()["detail"]
+        with storage.connect(storage.game_path(game)) as db:
+            assert db.execute("SELECT count(*) FROM analytics_views").fetchone()[0] == 1
+        finish(storage, game)
+        response = client.get(f"/v1/games/{game}/insights/levels", params=params, headers=headers)
+        assert response.status_code == 200
+        assert response.json() == expected
+
+
+def test_browser_preparation_failure_has_a_recoverable_message(prepared, monkeypatch):
+    import time
+
+    from fastapi import HTTPException
+
+    storage, game, days = prepared
+    worker = materialize.Worker(storage, identity="test")
+    worker.tick()
+
+    def compute():
+        pytest.fail("unexpected live fallback")
+
+    with pytest.raises(HTTPException) as pending:
+        views.answer(storage, game, "levels", (*days, HIDE_TEST, "all"), compute, defer=True)
+    assert pending.value.status_code == 202
+    with storage.connect(storage.game_path(game)) as db:
+        db.execute(
+            "UPDATE analytics_views SET error='private',retry_at=?,error_version=?",
+            (time.time() + 60, views.VERSION),
+        )
+    with pytest.raises(HTTPException) as failed:
+        views.answer(storage, game, "levels", (*days, HIDE_TEST, "all"), compute, defer=True)
+    assert failed.value.status_code == 422 and "fewer days" in failed.value.detail
+    assert "private" not in failed.value.detail
+    materialize.set_desired(storage, "stopped", "admin")
+    assert (
+        views.answer(storage, game, "levels", (*days, HIDE_TEST, "all"), lambda: "live", defer=True)
+        == "live"
+    )
+
+
+def test_unchanged_generation_can_refresh_near_the_storage_budget(prepared, monkeypatch):
+    storage, game, days = prepared
+    expected = journeys.level_progress(storage, game, *days, HIDE_TEST)
+    worker = finish(storage, game)
+    monkeypatch.setattr(views, "_space", lambda _: storage.settings.analytics_storage_bytes - 1)
+    with storage.connect(storage.game_path(game)) as db:
+        db.execute("UPDATE analytics_views SET checked_at=0")
+    worker.tick()
+    assert not worker.failing
+    monkeypatch.setattr(journeys, "_scan_levels", lambda *args: pytest.fail("lost a valid answer"))
+    assert journeys.level_progress(storage, game, *days, HIDE_TEST) == expected
+
+
+def test_prepared_schema_keeps_the_previous_worker_insert_shape(prepared):
+    storage, game, _ = prepared
+    with storage.connect(storage.game_path(game)) as db:
+        assert [row["name"] for row in db.execute("PRAGMA table_info(analytics_parts)")] == [
+            "view_key",
+            "player",
+            "part",
+            "nrows",
+        ]
+
+
+def test_previous_version_failure_does_not_block_new_preparation(prepared):
+    import time
+
+    from fastapi import HTTPException
+
+    storage, game, days = prepared
+    views.answer(storage, game, "levels", (*days, HIDE_TEST, "all"), lambda: None)
+    with storage.connect(storage.game_path(game)) as db:
+        db.execute(
+            "UPDATE analytics_views SET error='obsolete budget',retry_at=?,error_version=?",
+            (time.time() + 3600, views.VERSION - 1),
+        )
+    worker = materialize.Worker(storage, identity="test")
+    worker.tick()
+    with storage.connect(storage.game_path(game)) as db:
+        assert db.execute("SELECT stage FROM analytics_views").fetchone()[0]
+    with pytest.raises(HTTPException) as pending:
+        journeys.level_progress(storage, game, *days, HIDE_TEST, defer=True)
+    assert pending.value.status_code == 202
+    finish(storage, game)
+    assert journeys.level_progress(storage, game, *days, HIDE_TEST, defer=True)["levels"]
+
+
+@pytest.mark.parametrize("budget", ["SUMMARY_MEMORY_BYTES", "PLAYER_SUMMARY_BYTES"])
+def test_summary_memory_guards_refuse_publication_without_partial_answers(
+    prepared, monkeypatch, budget
+):
+    storage, game, days = prepared
+    journeys.level_progress(storage, game, *days, HIDE_TEST)
+    monkeypatch.setattr(views, budget, 1)
+    worker = materialize.Worker(storage, identity="test")
+    for _ in range(100):
+        worker.tick()
+        if worker.failing:
+            break
+    assert "memory budget" in worker.failing[game]["message"]
+    with storage.connect(storage.game_path(game)) as db:
+        assert db.execute("SELECT answer FROM analytics_views").fetchone()[0] is None
+        assert db.execute("SELECT count(*) FROM analytics_level_players").fetchone()[0] == 0
 
 
 def test_default_read_mode_is_facts(monkeypatch, tmp_path):

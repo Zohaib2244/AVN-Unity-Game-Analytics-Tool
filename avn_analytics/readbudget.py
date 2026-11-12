@@ -15,6 +15,8 @@ import contextvars
 import threading
 import time
 
+from fastapi import HTTPException
+
 CHECK_EVERY = 100_000  # SQLite virtual machine steps between two looks at the budget (a few ms)
 
 _current = contextvars.ContextVar("avn_read_budget", default=None)
@@ -38,6 +40,13 @@ class Budget:
         if self.abandoned.is_set():
             return True
         return self.deadline is not None and time.monotonic() > self.deadline
+
+
+def check():
+    """Python reduction and cache waits must stop too, even when SQLite is not executing."""
+    budget = _current.get()
+    if budget is not None and budget.spent():
+        raise HTTPException(504, "This took too long. Try fewer days or retry.")
 
 
 def watch(connection):

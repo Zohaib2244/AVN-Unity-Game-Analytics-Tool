@@ -7,13 +7,13 @@ Built on the same live event queries as insights.py, but everything is named in 
 import json
 import re
 from bisect import bisect_left, bisect_right
-from collections import Counter
+from collections import Counter, namedtuple
 from datetime import datetime
 from statistics import median
 
 from fastapi import HTTPException
 
-from . import level_exits, stories
+from . import level_exits, readbudget, stories
 from .insights import (
     IDENTIFIED,
     MAX_FUNNEL_EVENTS,
@@ -53,6 +53,7 @@ LEVEL_GROUPS = (
     "missing_history",
 )
 LEVEL_PLAYER_SORTS = ("exit_at", "tries", "fails")
+RETURN_FILTER_GROUPS = ("total_drop", "left", "finished_stopped", "unknown_progress", "failed_left")
 # Whose levels to count: everyone active in the range, or new players within their first session.
 LEVEL_SCOPES = ("all", "first_session")
 STUCK_TRIES = 3
@@ -62,6 +63,7 @@ LAST_ACTIONS = 8
 NOT_AN_ACTION = {"session_start", "session_end", "first_open", "APP_ANALYSIS"}
 # The filters that decide whether a player's earlier history counts (the rest pick the cohort).
 HISTORY_FILTERS = ("environments", "exclude_environments", "platforms", "exclude_platforms")
+_PendingText = namedtuple("_PendingText", "kind name params app_version")
 
 
 class _Reader:
@@ -72,13 +74,16 @@ class _Reader:
     The remembered values are shared and must not be changed.
     """
 
-    def __init__(self, labeler):
+    def __init__(self, labeler, *, defer_details=False):
         self.labeler = labeler
-        self._params = {}
-        self._levels = {}
-        self._actions = {}
-        self._texts = {}
-        self._labels = {}
+        self.defer_details = defer_details
+        self._params = stories._Memo()
+        self._levels = stories._Memo()
+        # Captions span thousands of levels but omit changing SDK payload metadata. Give
+        # those small semantic keys more room than decoded payloads and raw event keys.
+        self._actions = stories._Memo(8 * stories.MEMO_LIMIT)
+        self._texts = stories._Memo()
+        self._labels = stories._Memo(16 * stories.MEMO_LIMIT)
 
     def params(self, raw):
         found = self._params.get(raw)
@@ -100,22 +105,22 @@ class _Reader:
 
     def action(self, row):
         """stories.action_text of a row."""
-        key = (row["name"], row["params"], row["app_version"])
+        params = self.params(row["params"])
+        key = self.labeler.display_key(row["name"], params, row["app_version"])
         found = self._actions.get(key)
         if found is None:
             found = self._actions[key] = stories.action_text(
-                self.labeler, row["name"], self.params(row["params"]), row["app_version"]
+                self.labeler, row["name"], params, row["app_version"]
             )
         return found
 
     def label(self, row):
         """The labeler's label of a row."""
-        key = (row["name"], row["params"], row["app_version"])
+        params = self.params(row["params"])
+        key = self.labeler.display_key(row["name"], params, row["app_version"], label=True)
         found = self._labels.get(key)
         if found is None:
-            found = self._labels[key] = self.labeler.label(
-                row["name"], self.params(row["params"]), row["app_version"]
-            )
+            found = self._labels[key] = self.labeler.label(row["name"], params, row["app_version"])
         return found
 
     def text(self, row):
@@ -125,6 +130,32 @@ class _Reader:
         if found is None:
             found = self._texts[key] = stories.event_text(row["name"], self.params(row["params"]))
         return found
+
+    def detail(self, kind, row):
+        """Keep only the event needed to name a player-list detail, not its whole history.
+
+        Live scans defer these captions until pagination. Worker contributions remain plain
+        JSON, with their captions already rendered, so prepared generations keep their format.
+        """
+        if self.defer_details:
+            return _PendingText(kind, row["name"], row["params"], row["app_version"])
+        return getattr(self, kind)(row)
+
+
+def _resolved_player(record, reader):
+    def resolve(value):
+        if not isinstance(value, _PendingText):
+            return value
+        row = {"name": value.name, "params": value.params, "app_version": value.app_version}
+        return getattr(reader, value.kind)(row)
+
+    # Cached records are shared by groups and concurrent readers: never replace their details.
+    last = record["last_event"]
+    return {
+        **record,
+        "next_action": resolve(record["next_action"]),
+        "last_event": {**last, "text": resolve(last["text"]), "after": resolve(last["after"])},
+    }
 
 
 def _definitions(storage, game_id):
@@ -638,7 +669,9 @@ def player_levels(player, rows, latest, scope, start, reader):
     opened, last_level = {}, None
     events = []
     seen = _Features()
-    for row in rows:
+    for index, row in enumerate(rows):
+        if index % 1024 == 0:
+            readbudget.check()
         params, info = reader.level(row["name"], row["params"], row["app_version"])
         events.append((row, info))
         seen.step(len(events) - 1, row, params, info, last_level, scope == "first_session")
@@ -787,9 +820,12 @@ def _player_transitions(player, events, latest, scope, start, reader):
     versions = {}  # app version -> first position (only versions the code counts as set)
     lowest = [None] * (count + 1)  # lowest level number among level events before a position
     for index, (row, info) in enumerate(events):
-        session_lengths.setdefault(row["session_id"], SessionState()).add(
-            row["name"], row["client_ts"], row["server_ts"], row["seq"], row["params"]
-        )
+        if index % 1024 == 0:
+            readbudget.check()
+        session = session_lengths.get(row["session_id"])
+        if session is None:
+            session = session_lengths[row["session_id"]] = SessionState()
+        session.add(row["name"], row["client_ts"], row["server_ts"], row["seq"], row["params"])
         if row["app_version"]:
             versions.setdefault(row["app_version"], index)
         lowest[index + 1] = lowest[index]
@@ -807,6 +843,7 @@ def _player_transitions(player, events, latest, scope, start, reader):
                 completes.setdefault(number, []).append(index)
             elif verb == "failed":
                 fails.setdefault(number, []).append(index)
+    session_seconds = {key: round(value.seconds, 1) for key, value in session_lengths.items()}
     highest = [None] * (count + 1)  # highest level number among level events from a position on
     for index in range(count - 1, -1, -1):
         info = events[index][1]
@@ -815,7 +852,9 @@ def _player_transitions(player, events, latest, scope, start, reader):
             highest[index] = info[1]
     runs = _session_runs(events, reader.labeler)
     groups = {}
-    for number, began in selected_starts.items():
+    for counted, (number, began) in enumerate(selected_starts.items()):
+        if counted % 1024 == 0:
+            readbudget.check()
         initial = events[began][0]
         # Everything from the start's timestamp on: a suffix, ties included.
         since = bisect_left(stamps, initial["client_ts"])
@@ -838,7 +877,7 @@ def _player_transitions(player, events, latest, scope, start, reader):
             **_ending(events, last_index, latest, reader, runs),
             "next_action": _next_action(events, last_index, reader, runs),
             "last_event": _last_event(events, last_index, reader, runs),
-            "session_seconds": round(session_lengths[last["session_id"]].seconds, 1),
+            "session_seconds": session_seconds[last["session_id"]],
             "last_seen": latest["client_ts"],
             # Any later session counts, even the same day.
             "came_back": latest["client_ts"] > last["client_ts"]
@@ -933,7 +972,7 @@ def _session_runs(events, labeler):
     return {"run": run_of, "next_action": next_action, "endings": {}}
 
 
-def _level_scan(storage, game_id, start, end, filters, scope):
+def _level_scan(storage, game_id, start, end, filters, scope, *, level=None, defer=False):
     """The level table's numbers and every level's player groups, from one read of the events.
 
     Shared by the level table and every level's player list (see readcache.py), and must not be
@@ -949,6 +988,8 @@ def _level_scan(storage, game_id, start, end, filters, scope):
             "levels",
             (start, end, filters, scope),
             lambda: _scan_levels(storage, game_id, start, end, filters, scope, definitions),
+            level=level,
+            defer=defer,
         )
     return storage.scans.get(
         storage,
@@ -959,7 +1000,7 @@ def _level_scan(storage, game_id, start, end, filters, scope):
 
 
 def _scan_levels(storage, game_id, start, end, filters, scope, definitions):
-    reader = _Reader(stories.Labeler(definitions))
+    reader = _Reader(stories.Labeler(definitions), defer_details=True)
     totals = _LevelTotals()
     with storage.connect(storage.game_path(game_id)) as connection:
         source = read_source(storage, connection)
@@ -989,6 +1030,7 @@ def _scan_levels(storage, game_id, start, end, filters, scope, definitions):
         else:
             rows = _histories(connection, start, end, filters, source)
         for player, events, latest in rows:
+            readbudget.check()
             totals.add(player_levels(player, events, latest, scope, start, reader))
     return {
         "levels": totals.levels,
@@ -1049,14 +1091,15 @@ class _LevelTotals:
                 item["powerups"].update(mine["powerups"])
             if mine["other"]:
                 item["other"].update(mine["other"])
-        for number, records in part["groups"].items():
-            target = self.groups.setdefault(number, {name: [] for name in LEVEL_GROUPS})
-            for name, record in records.items():
-                target[name].append(record)
+        self.add_groups(part["groups"])
         self.observed.update(part["observed"])
         for number, mine in part.get("features", {}).items():
             records = part["groups"].get(number, {})
-            returned = "came_back_later" in records or records.get("started", {}).get("came_back")
+            returned = (
+                records[5]
+                if isinstance(records, list)
+                else "came_back_later" in records or records.get("started", {}).get("came_back")
+            )
             for features, exclude in (
                 (self.features, False),
                 (self.features_without_returners, True),
@@ -1070,6 +1113,12 @@ class _LevelTotals:
                         total[2] += dropped
                         total[3] += left
                         total[4] += right
+
+    def add_groups(self, groups):
+        for number, records in groups.items():
+            target = self.groups.setdefault(number, {name: [] for name in LEVEL_GROUPS})
+            for name, record in records.items():
+                target[name].append(record)
 
     def transitions(self):
         result = {}
@@ -1105,6 +1154,116 @@ class _LevelTotals:
         return result
 
 
+def group_summary(groups):
+    """One player's memberships and the few facts the table needs, without their details."""
+    started = groups.get("started", {})
+    returned = bool("came_back_later" in groups or started.get("came_back"))
+    mask = sum(1 << index for index, name in enumerate(LEVEL_GROUPS) if name in groups)
+    without = mask
+    if returned:
+        for name in RETURN_FILTER_GROUPS:
+            without &= ~(1 << LEVEL_GROUPS.index(name))
+    return [
+        mask,
+        without,
+        int(bool(started.get("completed"))),
+        int(started.get("entry_context") == "returning"),
+        int(started.get("entry_context") == "missing_history"),
+        int(returned),
+    ]
+
+
+class _LevelSummary(_LevelTotals):
+    """Exact totals which retain counts, not every player's record in every group."""
+
+    def __init__(self, memory_budget=None):
+        super().__init__()
+        self.memory_budget = memory_budget
+        self.memory_used = 0
+
+    def add(self, part):
+        # Conservative retained-state accounting: rows/counters, sample objects and list
+        # slots, feature keys and their two count arrays. Do not charge each discarded
+        # contribution again: repeated players add counts, not another copy of the groups.
+        for number, mine in part["progress"].items():
+            previous = self.levels.get(number)
+            if previous is None:
+                self.memory_used += 1536
+            self.memory_used += 48 * len(mine["seconds"])
+            for field in ("powerups", "other"):
+                existing = previous[field] if previous else {}
+                self.memory_used += sum(
+                    256 + len(str(key).encode())
+                    for key in (mine[field] or {})
+                    if key not in existing
+                )
+        self.memory_used += sum(2048 for number in part["groups"] if number not in self.groups)
+        self.memory_used += sum(64 for number in part["observed"] if number not in self.observed)
+        for number, values in part.get("features", {}).items():
+            existing = self.features.get(number, {})
+            if number not in self.features:
+                self.memory_used += 512
+            self.memory_used += sum(
+                1024 + 2 * len(key.encode()) for key in values if key not in existing
+            )
+        if self.memory_budget is not None and self.memory_used > self.memory_budget:
+            raise ValueError("Prepared Levels exceeds the bounded reducer memory budget")
+        super().add(part)
+
+    def add_groups(self, groups):
+        for number, values in groups.items():
+            if isinstance(values, dict):
+                values = group_summary(values)
+            target = self.groups.setdefault(
+                number, [[0] * len(LEVEL_GROUPS), [0] * len(LEVEL_GROUPS), 0, 0, 0]
+            )
+            for side in (0, 1):
+                mask = values[side]
+                for index in range(len(LEVEL_GROUPS)):
+                    target[side][index] += bool(mask & (1 << index))
+            for index in (2, 3, 4):
+                target[index] += values[index]
+
+    def transitions(self):
+        result = {}
+        started_at = LEVEL_GROUPS.index("started")
+        for number, values in self.groups.items():
+            counts = dict(zip(LEVEL_GROUPS, values[0], strict=True))
+            started = counts["started"]
+            available = number + 1 in self.observed and started > 0
+            common = {
+                "next_level": number + 1,
+                "available": available,
+                "matched_completed": values[2],
+                "entrants": counts["returning"] + counts["missing_history"],
+                "starters_returning": values[3],
+                "starters_missing_history": values[4],
+                "net_change": self.groups.get(number + 1, [[0] * len(LEVEL_GROUPS)])[0][started_at]
+                - started
+                if available
+                else None,
+            }
+            summaries = []
+            for side in (0, 1):
+                chosen = dict(zip(LEVEL_GROUPS, values[side], strict=True))
+                summaries.append(
+                    {
+                        **common,
+                        **chosen,
+                        "drop_percent": round(100 * chosen["total_drop"] / started, 1)
+                        if available
+                        else None,
+                        "fail_drop_percent": round(
+                            100 * chosen["failed_left"] / chosen["failed"], 1
+                        )
+                        if available and chosen["failed"]
+                        else None,
+                    }
+                )
+            result[number] = {"summary": summaries[0], "summary_without_returners": summaries[1]}
+        return result
+
+
 def _without_returners(scan):
     """Select drop numerators without changing the cached scan or its starter cohort.
 
@@ -1113,11 +1272,14 @@ def _without_returners(scan):
     """
     transitions = {}
     for number, transition in scan["transitions"].items():
+        if "groups" not in transition:
+            transitions[number] = {**transition, "summary": transition["summary_without_returners"]}
+            continue
         groups = transition["groups"]
         returned = {item["player"] for item in groups["came_back_later"]}
         returned.update(item["player"] for item in groups["started"] if item["came_back"])
         selected = dict(groups)
-        for name in ("total_drop", "left", "finished_stopped", "unknown_progress", "failed_left"):
+        for name in RETURN_FILTER_GROUPS:
             selected[name] = [item for item in groups[name] if item["player"] not in returned]
         summary = {**transition["summary"], **{key: len(rows) for key, rows in selected.items()}}
         started, failed = summary["started"], summary["failed"]
@@ -1134,7 +1296,7 @@ def _without_returners(scan):
 
 
 def level_progress(
-    storage, game_id, start, end, filters=None, scope="all", exclude_returners=False
+    storage, game_id, start, end, filters=None, scope="all", exclude_returners=False, *, defer=False
 ):
     """Per level: who started, who finished, tries, fails, time, power-ups, where players quit.
 
@@ -1143,7 +1305,7 @@ def level_progress(
     storage.get_game(game_id)
     _check_scope(scope)
     try:
-        scan = _level_scan(storage, game_id, start, end, filters, scope)
+        scan = _level_scan(storage, game_id, start, end, filters, scope, defer=defer)
     except _TooMuch as error:
         message = TOO_MUCH["range" if scope == "first_session" else error.kind]
         raise HTTPException(400, message) from None
@@ -1156,7 +1318,7 @@ def level_progress(
 
 
 def level_features(
-    storage, game_id, start, end, filters=None, scope="all", exclude_returners=False
+    storage, game_id, start, end, filters=None, scope="all", exclude_returners=False, *, defer=False
 ):
     """Per level: how often each ad format or placement, powerup and fail reason happened, and
     what the players who met it did next (drop, left the session, left right after it).
@@ -1166,7 +1328,7 @@ def level_features(
     storage.get_game(game_id)
     _check_scope(scope)
     try:
-        scan = _level_scan(storage, game_id, start, end, filters, scope)
+        scan = _level_scan(storage, game_id, start, end, filters, scope, defer=defer)
     except _TooMuch as error:
         message = TOO_MUCH["range" if scope == "first_session" else error.kind]
         raise HTTPException(400, message) from None
@@ -1349,7 +1511,7 @@ def _moment(row):
 def _next_action(events, index, reader, runs):
     """What the player did first after events[index], in its session; None when nothing followed."""
     position = runs["next_action"][index]
-    return None if position is None else reader.action(events[position][0])
+    return None if position is None else reader.detail("action", events[position][0])
 
 
 def _last_event(events, index, reader, runs):
@@ -1365,7 +1527,7 @@ def _last_event(events, index, reader, runs):
     end = run_event if run_event is not None and run_event > index else index
     row = events[end][0]
     last = {
-        "text": reader.text(row),
+        "text": reader.detail("text", row),
         "gap": None,
         "after": None,
         "after_level": round(max(0.0, _moment(row) - _moment(events[index][0])), 1)
@@ -1379,7 +1541,7 @@ def _last_event(events, index, reader, runs):
     if earlier >= 0 and events[earlier][0]["session_id"] == session:
         before = events[earlier][0]
         last["gap"] = round(max(0.0, _moment(row) - _moment(before)), 1)
-        last["after"] = reader.text(before)
+        last["after"] = reader.detail("text", before)
     return last
 
 
@@ -1399,6 +1561,8 @@ def level_players(
     exclude_returners=False,
     cause=None,
     ending=None,
+    *,
+    defer=False,
 ):
     """The players in one group of one level, plus the size of every group.
 
@@ -1415,14 +1579,25 @@ def level_players(
         raise HTTPException(400, "Unknown sort")
     _check_scope(scope)
     try:
-        scan = _level_scan(storage, game_id, start, end, filters, scope)
+        scan = _level_scan(storage, game_id, start, end, filters, scope, level=level, defer=defer)
     except _TooMuch:
         message = TOO_MUCH["range" if scope == "first_session" else "history"]
         raise HTTPException(400, message) from None
     if exclude_returners:
         scan = _without_returners(scan)
     groups = scan["transitions"].get(level, {}).get("groups", {name: [] for name in LEVEL_GROUPS})
-    return players_in_group(groups, level, group, offset, limit, sort, last_action, cause, ending)
+    return players_in_group(
+        groups,
+        level,
+        group,
+        offset,
+        limit,
+        sort,
+        last_action,
+        cause,
+        ending,
+        reader=_Reader(stories.Labeler(_definitions(storage, game_id))),
+    )
 
 
 def _endings_by_cause(last_actions):
@@ -1456,7 +1631,7 @@ def _endings_by_cause(last_actions):
 
 
 def players_in_group(
-    groups, level, group, offset, limit, sort, last_action, cause=None, ending=None
+    groups, level, group, offset, limit, sort, last_action, cause=None, ending=None, *, reader=None
 ):
     """One page of a level group's players, from that level's groups."""
     members = groups[group]
@@ -1494,5 +1669,5 @@ def players_in_group(
         "no_ending": no_ending,
         "total": len(members),
         "offset": offset,
-        "players": members[offset : offset + limit],
+        "players": [_resolved_player(row, reader) for row in members[offset : offset + limit]],
     }

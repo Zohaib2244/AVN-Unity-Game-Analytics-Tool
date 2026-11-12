@@ -9,6 +9,7 @@ import json
 import re
 from collections import Counter
 from datetime import datetime
+from functools import lru_cache
 from statistics import median
 
 from . import session_state
@@ -45,6 +46,33 @@ NOISE_KEY = re.compile(r"(time|duration|second|score|timestamp|_ts$|^ts$|id$)", 
 HIDDEN_PARAMS = {"seq"}
 BOUNDARY_EVENTS = {"session_start", "session_end"}
 CHAPTER_STATE = ("seconds", "away_seconds", "status", "end_reason", "trips")
+MEMO_LIMIT = 4096
+
+
+class _Memo(dict):
+    """A scan must not retain a decoded payload/caption for every unique SDK event."""
+
+    def __init__(self, limit=None):
+        super().__init__()
+        self.limit = MEMO_LIMIT if limit is None else limit
+
+    def __setitem__(self, key, value):
+        if len(self) >= self.limit:
+            self.clear()
+        super().__setitem__(key, value)
+
+
+def _parameter_key(params, fields):
+    # Event parameters are scalars. Preserve types (1, 1.0 and "1" can render differently),
+    # with the old JSON representation available for historical/non-SDK structured values.
+    values = tuple(params[field] for field in fields)
+    try:
+        hash(values)
+    except TypeError:
+        return json.dumps(values)
+    return tuple(map(type, values)), values
+
+
 FRIENDLY_SDK = {
     "first_open": "First open",
     "session_start": "Session started",
@@ -95,6 +123,7 @@ BIG_GAP_SECONDS = 1800
 MAX_SEGMENT_EVENTS = 400
 
 
+@lru_cache(maxsize=256)
 def humanize(name):
     """MM_ANALYSIS -> "MM", POWERUP_CONSUMED -> "Powerup consumed", levelStart -> "Level start"."""
     if name in FRIENDLY_SDK:
@@ -193,8 +222,70 @@ class Labeler:
 
     def __init__(self, definitions=None):
         self.definitions = definitions or {}
-        self._level_fields = {}
-        self._level_meanings = {}
+        self._level_fields = _Memo()
+        self._level_meanings = _Memo(8 * MEMO_LIMIT)
+        self._level_names = _Memo()
+        self._display_fields = _Memo()
+
+    def display_key(self, name, params, app_version=None, *, label=False):
+        """Caption inputs, excluding metadata the caption ignores.
+
+        Explicit label placeholders/conditions and canonical mapping inputs always count,
+        even when they name otherwise ignored metadata. Keep order for case-insensitive
+        lookups and the first three displayed parameters.
+        """
+        shape = (name, app_version, tuple(params), label)
+        found = self._display_fields.get(shape)
+        if found is None:
+            definition = self.definitions.get(name) or {}
+            needed = {
+                str(rule[field]).lower()
+                for _, rule in active_mappings(definition, app_version)
+                for field in ("param", "number_param")
+                if rule.get(field)
+            }
+            for when, body in parse_rules(definition.get("labels", "")):
+                needed.add(when.lower())
+                needed.update(field.strip().lower() for field in re.findall(r"\{([^{}]+)\}", body))
+            fields = tuple(
+                field
+                for field in params
+                if field not in HIDDEN_PARAMS
+                and (
+                    field.lower() in needed
+                    or not NOISE_KEY.search(field)
+                    or LEVELISH_KEY.search(field)
+                )
+            )
+            required = tuple(
+                field
+                for field in fields
+                if field.lower() in needed
+                or LEVEL_KEY.match(field)
+                or field.lower() in LEVEL_VERBS
+                or (LEVELISH_KEY.search(name) and field.lower() in ("action", "status", "state"))
+            )
+            found = self._display_fields[shape] = (fields, required)
+        fields, required = found
+        order = ()
+        if label:
+            # Generic labels stop after three displayed parts. Later snapshot values cannot
+            # change that caption, but explicit templates/mappings still keep all their inputs.
+            shown = []
+            for field in fields:
+                value = params[field]
+                if (
+                    LEVELISH_KEY.search(field)
+                    or isinstance(value, int | float)
+                    or isinstance(value, str)
+                    and (len(value) <= 32 or _number(value) is not None)
+                ):
+                    shown.append(field)
+                    if len(shown) == 3:
+                        break
+            order = tuple(shown)
+            fields = tuple(dict.fromkeys((*required, *shown)))
+        return name, app_version, order, fields, _parameter_key(params, fields)
 
     def hidden(self, name):
         return bool((self.definitions.get(name) or {}).get("hidden"))
@@ -213,6 +304,16 @@ class Labeler:
 
     def level_info(self, name, params, app_version=None):
         """(verb, level number) when the event is a level start/complete/fail/restart."""
+        kind = (name, app_version)
+        possible = self._level_names.get(kind)
+        if possible is None:
+            possible = self._level_names[kind] = bool(LEVELISH_KEY.search(name)) or any(
+                rule["action"]
+                in {"level_started", "level_completed", "level_failed", "level_restarted"}
+                for _, rule in active_mappings(self.definitions.get(name), app_version)
+            )
+        if not possible:
+            return None
         # SDK sequence numbers, ad IDs and other changing metadata do not usually change
         # a level's meaning. Share this work with labels and actions as well as the scan.
         shape = (name, app_version, tuple(params))
@@ -234,7 +335,7 @@ class Labeler:
                 or (level_name and field.lower() in ("action", "status", "state"))
             )
         # Preserve parameter order and all explicit mapping inputs (even seq) exactly.
-        key = (name, app_version, json.dumps([(field, params[field]) for field in fields]))
+        key = (name, app_version, fields, _parameter_key(params, fields))
         if key not in self._level_meanings:
             self._level_meanings[key] = self._level_info(name, params, app_version)
         return self._level_meanings[key]

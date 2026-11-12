@@ -10,6 +10,18 @@ export class ApiError extends Error {
   }
 }
 
+export class PreparingError extends ApiError {
+  retryAfter: number;
+  constructor(message: string, retryAfter: number) {
+    super(message, 202);
+    this.name = 'PreparingError';
+    this.retryAfter = retryAfter;
+  }
+}
+export const isPreparing = (error: unknown): error is PreparingError => error instanceof PreparingError;
+
+export const preparedRead = (path: string): boolean => /^\/v1\/games\/[^/]+\/insights\/levels(?:\/(?:features|players))?$/.test(path.split('?')[0] ?? '');
+
 export type RequestOptions = Omit<RequestInit, 'body' | 'headers'> & { body?: BodyInit | null; headers?: Record<string, string> };
 
 /** Only these POST endpoints are reads (they answer a question instead of changing anything). */
@@ -56,7 +68,7 @@ export async function request<T = unknown>(path: string, options: RequestOptions
           credentials: 'same-origin',
           ...options,
           signal,
-          headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
+          headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(canRetry && preparedRead(path) ? { Prefer: 'respond-async' } : {}), ...options.headers },
         });
       } catch (error) {
         if (timeout.aborted) throw new ApiError(timeoutMessage, 408);
@@ -68,6 +80,13 @@ export async function request<T = unknown>(path: string, options: RequestOptions
       await new Promise((resolve) => setTimeout(resolve, wait * 1000));
     }
     if (!response) throw new ApiError('Couldn’t connect. Check your connection and try again.', 0);
+    if (response.status === 202 && preparedRead(path)) {
+      let body: { detail?: unknown };
+      try { body = (await response.json()) as { detail?: unknown }; }
+      catch { throw new ApiError('The server returned an unreadable response. Reload or try again.', 502); }
+      const delay = Math.min(5000, Math.max(1000, (Number(response.headers.get('Retry-After')) || 2) * 1000));
+      throw new PreparingError(typeof body.detail === 'string' ? body.detail : 'Preparing this view… It will appear here when ready.', delay);
+    }
     if (!response.ok) {
       const error = (await response.json().catch(() => ({}))) as { detail?: unknown; errors?: Array<{ loc?: string[]; msg: string }> };
       const details = Array.isArray(error.errors) ? error.errors.map((item) => `${(item.loc || []).filter((part) => part !== 'body').join(' · ')}: ${item.msg}`).join('; ') : '';

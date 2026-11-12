@@ -1413,6 +1413,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         scope: Literal["all", "first_session"] = "all",
         exclude_returners: bool = False,
         tz_offset: TimezoneOffset = 0,
+        prefer: Annotated[str | None, Header()] = None,
     ):
         return journeys.level_progress(
             storage,
@@ -1421,6 +1422,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             chosen,
             scope,
             exclude_returners=exclude_returners,
+            defer="respond-async" in {part.strip().lower() for part in (prefer or "").split(",")},
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/levels/features")
@@ -1432,6 +1434,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         scope: Literal["all", "first_session"] = "all",
         exclude_returners: bool = False,
         tz_offset: TimezoneOffset = 0,
+        prefer: Annotated[str | None, Header()] = None,
     ):
         return journeys.level_features(
             storage,
@@ -1440,6 +1443,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             chosen,
             scope,
             exclude_returners=exclude_returners,
+            defer="respond-async" in {part.strip().lower() for part in (prefer or "").split(",")},
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/levels/players")
@@ -1474,6 +1478,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
         limit: Annotated[int, Query(ge=1, le=2000)] = 50,
         tz_offset: TimezoneOffset = 0,
+        prefer: Annotated[str | None, Header()] = None,
     ):
         return journeys.level_players(
             storage,
@@ -1490,6 +1495,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             exclude_returners=exclude_returners,
             cause=cause,
             ending=ending,
+            defer="respond-async" in {part.strip().lower() for part in (prefer or "").split(",")},
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/players")

@@ -116,8 +116,11 @@ touch targets were 44px and the phone page had no horizontal overflow.
 ## 5. Exact prepared answers
 
 `AVN_ANALYTICS_READ_MODE=prepared` registers requested Overview and Levels specifications and uses
-complete, fresh generations. Levels stores its table calculation and every level's player groups
-together. Pagination/sorting happens after the shared work. Equivalent filter lists share a key;
+complete, fresh generations. Levels publishes its compact summary and an immutable map to indexed
+player details atomically. Table and feature reads decode only counts and exact samples; a player
+drill-down decodes the selected level's bucket (64 levels per compressed bucket), not every level's
+groups. Membership masks share each player's record across groups without losing distinct entry
+and exit records. Pagination/sorting happens after selecting a level. Equivalent filter lists share a key;
 dates, scope, filters and Overview time zone remain part of the exact specification.
 
 The worker retains compressed per-player contributions. New facts identify dirty players, including
@@ -134,8 +137,12 @@ old answer ineligible. Before publishing, the worker rechecks interpretation, co
 No read snapshot remains open between ticks. SQL checks controls every approximately 100 ms; a
 single computation has a 30-second snapshot ceiling and reports an error if it cannot finish.
 
-An expired, missing, stopped or unavailable generation uses live facts. Incomplete facts use raw
-events for the whole query. Prepared Overview and Levels bypass the server response cache so it cannot extend
+An expired or missing Levels generation returns HTTP 202 with `Retry-After` to browser reads using
+`Prefer: respond-async` while the worker is healthy. The browser keeps its loading state and polls
+automatically, for at most 300 retries, instead of running a cold scan in a 60-second request. A
+current preparation failure returns an actionable error; failures from an older reducer version do
+not delay a corrected rebuild. Other callers and stopped/unavailable workers retain live fallback.
+Incomplete facts use raw events for the whole query. Prepared Overview and Levels bypass the server response cache so it cannot extend
 the source freshness budget; other dashboard families retain their existing cache. Threshold edits rerender confidence without changing facts. Existing
 browser UI may explicitly show previous results while a fresh request runs, as before this change.
 
@@ -144,9 +151,14 @@ expiry and a global 256 MiB logical budget for prepared rows (compressed answers
 queues and conservative row overhead). This budget excludes raw events, stable facts and their
 change log. SQLite may retain freed pages, so it is not a physical database-file limit. No raw rows,
 database files, WAL or SHM files are removed by eviction. Additional memory guards bound a prepared
-specification to 100k players, a player batch to 25k history rows / 16 MiB of row text, and final
-contribution JSON to 64 MiB. A larger query falls back to the existing live path, with its existing
-limits; the admin sees a recoverable preparation error.
+specification to 100k players and a player batch to 25k history rows / 16 MiB of row text; one heavy
+player is retried alone within its existing 200k-row / 128 MiB allowance. Final reduction bounds
+each decoded summary to 16 MiB and conservatively accounts retained aggregate state and exact
+samples against 64 MiB. It does not charge discarded contributions cumulatively or retain every
+player's detail records. A larger query reports a recoverable preparation error; callers using live
+fallback retain its existing limits. Staging and published detail tokens are separate, so dirty
+player updates cannot leak into an older answer. All detail tables count toward the logical budget
+and cascade with their prepared view; raw data is never removed.
 
 ### Measured prepared reads
 
@@ -294,6 +306,32 @@ Other browsers see configuration changes when their freshness window expires.
 Use `scripts/benchmark.py` with a synthetic scratch directory to compare cold and repeated
 reads and inspect query plans before adding indexes. Never run synthetic generation on a real
 data directory. Longer cache windows improve reuse, not the first computation.
+
+For a slow Levels request, `scripts/profile_levels.py` profiles one cold calculation with the
+same inclusive dates, version, scope and time-zone offset as the browser. Run it through the
+admin container's Python as shown in its module docstring. It opens databases with `mode=ro`,
+does not initialize storage or register prepared views, prints aggregate counts and function
+timings rather than event payloads, and stops after 90 seconds by default. A partial profile is
+still useful. `--timing-only` measures without profiler overhead; distinguish that calculation
+time from HTTP response encoding and browser rendering. This is an owner diagnostic, not part
+of the worker or a command to run automatically against a real data directory.
+
+SDK-heavy workloads need different coverage from the short synthetic player histories above:
+sequence numbers, ad IDs and changing snapshots can make every raw parameter payload unique.
+Levels caches interpretation and caption inputs separately, preserves explicit mapping/template
+inputs and parameter order, and bounds the caches. Scalar interpretation keys avoid a JSON
+serialization per lookup. Live scans retain the events needed to render player-list captions but
+format those captions only for the requested page; the table and all player groups still share
+one history scan. Worker details retain eagerly rendered captions in their compact indexed store.
+Python reduction and cache waits observe the dashboard read budget as well as SQLite statements.
+
+The long-level capacity regression and its reproducible measurements are documented in
+[`levels-performance.md`](levels-performance.md). It covers thousands of levels, changing SDK
+metadata, constrained worker memory/CPU, exact parity, and refresh after new events.
+
+The facts audit compares raw and derived row counts in one SQLite statement. Two separate reads
+can straddle an ingest commit, falsely flag complete facts as incomplete, and trigger unnecessary
+verification and raw-event fallback. This race has a concurrent-ingest regression test.
 
 Workspace startup reads registry metadata through `/v1/overview?totals=false` before fetching
 workspace totals separately. Counting a busy game cannot block the shell or game navigation.

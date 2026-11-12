@@ -2,10 +2,14 @@
 // in the last 10 minutes is shown at once while the new one loads (`placeholderData`), and every write
 // invalidates affected reads after writes.
 import { QueryClient, keepPreviousData, useQuery, type UseQueryOptions, type UseQueryResult } from '@tanstack/react-query';
-import { analyticsRead, request, type RequestOptions } from './client';
+import { analyticsRead, isPreparing, request, type RequestOptions } from './client';
 
 export const CACHE_MS = 30000;
 export const STALE_MS = 10 * 60 * 1000;
+const preparationRetry = {
+  retry: (attempt: number, error: unknown) => attempt < 300 && isPreparing(error),
+  retryDelay: (_attempt: number, error: unknown) => isPreparing(error) ? error.retryAfter : 0,
+};
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -51,6 +55,7 @@ export function useRead<T>(path: string | null, options: ReadOptions = {}): UseQ
     staleTime: path ? freshnessMs(path) : CACHE_MS,
     placeholderData: keepPrevious ? keepPreviousData : undefined,
     queryFn: ({ signal }) => request<T>(path!, body === undefined ? { signal } : { method: 'POST', body: JSON.stringify(body), signal }),
+    ...preparationRetry,
   };
   return useQuery(queryOptions);
 }
@@ -61,11 +66,12 @@ export function read<T>(path: string, body?: unknown): Promise<T> {
     queryKey: readKey(path, body),
     staleTime: freshnessMs(path),
     queryFn: ({ signal }) => request<T>(path, body === undefined ? { signal } : { method: 'POST', body: JSON.stringify(body), signal }),
+    ...preparationRetry,
   });
 }
 
 export function prefetch(path: string): Promise<void> {
-  return queryClient.prefetchQuery({ queryKey: readKey(path), staleTime: freshnessMs(path), queryFn: ({ signal }) => request(path, { signal }) }).catch(() => {});
+  return queryClient.prefetchQuery({ queryKey: readKey(path), staleTime: freshnessMs(path), queryFn: ({ signal }) => request(path, { signal }), ...preparationRetry }).catch(() => {});
 }
 
 /** Reconcile affected reads, including uncertain failures that may have committed. */

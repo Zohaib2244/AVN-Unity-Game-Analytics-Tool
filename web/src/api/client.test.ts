@@ -1,7 +1,7 @@
 // The browser request contract (was tests/test_frontend.py): bounded retries for reads, never for writes,
 // actionable messages per status, unreadable success is an error, and slow loads are remembered.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, analyticsRead, request, readsDays, rememberSlow, slowLoadMessage, usualWait } from './client';
+import { ApiError, PreparingError, analyticsRead, preparedRead, request, readsDays, rememberSlow, slowLoadMessage, usualWait } from './client';
 
 const response = (status: number, body: unknown = {}) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => '5' }, json: async () => body }) as unknown as Response;
 
@@ -49,6 +49,16 @@ describe('request', () => {
     vi.stubGlobal('fetch', async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('HTML'); } }));
     await expect(request('/read')).rejects.toThrow(/unreadable response/);
     expect(new ApiError('x', 418)).toBeInstanceOf(Error);
+  });
+
+  it('requests background preparation only for Levels and treats pending as pending', async () => {
+    replies = [response(202, { detail: 'Preparing this view…' })];
+    await expect(request('/v1/games/a/insights/levels?start=2026-01-01')).rejects.toMatchObject({ status: 202, retryAfter: 5000, message: 'Preparing this view…' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.options.headers).toMatchObject({ Prefer: 'respond-async' });
+    expect(new PreparingError('Preparing', 2000)).toBeInstanceOf(ApiError);
+    for (const suffix of ['', '/features', '/players']) expect(preparedRead(`/v1/games/a/insights/levels${suffix}`)).toBe(true);
+    for (const suffix of ['/insights/summary', '/dictionary', '/insights/levels-not-real']) expect(preparedRead(`/v1/games/a${suffix}`)).toBe(false);
   });
 });
 

@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { Button, ConfirmDelete, Definition, DialogShell, useToast, type ToastKind } from '@avn/ui';
-import { errorMessage, errorStatus, isAbort, read, readsDays, slowLoadMessage, usualWait } from '@/api';
+import { errorMessage, errorStatus, isAbort, isPreparing, read, readsDays, slowLoadMessage, usualWait } from '@/api';
 import { Ico } from './icons';
 import { IsoBlocks } from './flavour';
 
@@ -47,7 +47,7 @@ export function LoadingNote({ path, began }: { path?: string | null; began: numb
 export function LoadError({ error, onRetry }: { error: unknown; onRetry?: () => void }): ReactElement | null {
   if (isAbort(error)) return null;
   const status = errorStatus(error);
-  const message = errorMessage(error, 'Couldn’t load this data. Please try again.');
+  const message = isPreparing(error) ? 'This view is still preparing. Try again shortly, or choose fewer days.' : errorMessage(error, 'Couldn’t load this data. Please try again.');
   const reload = status === 401;
   return (
     <div className="load-error" role="alert">
@@ -73,7 +73,7 @@ export function QueryRegion<T>({ query, path, skeleton, children, note = true }:
   if (query.data === undefined) {
     if (query.isError) return <LoadError error={query.error} onRetry={() => query.refetch()} />;
     if (!slow) return <div aria-busy="true" />;
-    return <div aria-busy="true">{note ? <LoadingNote path={path} began={began.current} /> : null}{skeleton ?? <Skeleton />}</div>;
+    return <div aria-busy="true">{isPreparing(query.failureReason) ? <p className="loading-note"><Spinner label={query.failureReason.message} /></p> : note ? <LoadingNote path={path} began={began.current} /> : null}{skeleton ?? <Skeleton />}</div>;
   }
   return (
     <div aria-busy={query.isFetching || undefined}>

@@ -229,6 +229,24 @@ def test_missing_or_wrong_facts_are_found_and_rewritten(storage):
         assert analytics.audit(connection) is False
 
 
+def test_audit_does_not_disable_complete_facts_during_concurrent_ingest(storage):
+    game_id = _game(storage)
+    _ingest(storage, game_id, events=100)
+    _finish(storage, game_id)
+    committed = []
+
+    def ingest_before_facts_count(statement):
+        if "count(*)" in statement and "analytics_facts" in statement and not committed:
+            committed.append(True)
+            _ingest(storage, game_id, events=100, seed=19)
+
+    with storage.connect(storage.game_path(game_id)) as connection:
+        connection.set_trace_callback(ingest_before_facts_count)
+        assert analytics.audit(connection) is False
+        assert committed and analytics.facts_ready(connection)
+    _check_facts(storage, game_id)
+
+
 def test_a_failed_facts_write_stores_nothing_and_the_retry_stores_everything_once(backend_app):
     client, storage, game = backend_app
     _, batch = next(generate(400, seed=8, batch_size=30))

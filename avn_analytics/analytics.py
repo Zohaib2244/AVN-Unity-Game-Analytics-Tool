@@ -255,8 +255,11 @@ def step(connection, backfill_rows=BACKFILL_ROWS, verify_rows=VERIFY_ROWS):
 
 def audit(connection):
     """Start the checks again if any event lacks facts (cheap: compares two counts)."""
-    events = connection.execute("SELECT count(*) FROM events").fetchone()[0]
-    facts = connection.execute("SELECT count(*) FROM analytics_facts").fetchone()[0]
+    # Both counts must see the same snapshot. Ingest can commit between two SELECTs,
+    # making complete facts look incomplete and unnecessarily disabling the fast read path.
+    events, facts = connection.execute(
+        "SELECT (SELECT count(*) FROM events), (SELECT count(*) FROM analytics_facts)"
+    ).fetchone()
     if events == facts:
         return False
     _begin(connection)

@@ -10,6 +10,8 @@ import json
 import threading
 import time
 
+from . import readbudget
+
 
 class ReadCache:
     def __init__(self, seconds, entries):
@@ -46,13 +48,17 @@ class ReadCache:
             if hit:
                 return hit[1]
             building = self._building.setdefault(key, threading.Lock())
-        with building:
+        while not building.acquire(timeout=0.1):
+            readbudget.check()
+        try:
+            readbudget.check()
             with self._lock:
                 hit = fresh()
             if hit:
                 return hit[1]
             try:
                 value = compute()
+                readbudget.check()
             finally:
                 with self._lock:
                     self._building.pop(key, None)
@@ -62,6 +68,8 @@ class ReadCache:
                 for stale in oldest[: max(0, len(self._items) - self.entries)]:
                     self._items.pop(stale, None)
             return value
+        finally:
+            building.release()
 
 
 def _fingerprint(storage, game_id):
