@@ -998,3 +998,49 @@ th.sortable.num .sort-arrow { order: -1; }
 .ps-fails li { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 2px 10px; padding: 5px 0; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
 .ps-fails time { color: var(--dim); font-family: var(--font-mono); font-size: 11.5px; }
 .ps-fails b { grid-column: 2; font-weight: 500; color: var(--bad); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Players: saved groups down the side, the group's chips above the list. */
+.players-layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 16px; align-items: start; }
+.players-main { display: grid; gap: 12px; min-width: 0; }
+.players-main > .panel { margin: 0; }
+.groups-side { position: sticky; top: 64px; display: grid; }
+.groups-side .panel-header { padding: 10px 14px; }
+.grp-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 10px 14px; border: 0; border-top: var(--bw) solid var(--line); background: none; color: var(--text); font: inherit; font-size: var(--fs-md); text-align: left; cursor: pointer; }
+.grp-item:hover { background: var(--nested); }
+.grp-item.on { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); box-shadow: inset 3px 0 var(--accent); font-weight: 700; }
+.grp-item small { grid-column: 1 / -1; font-size: 11.5px; font-weight: 400; color: var(--dim); line-height: 1.35; }
+.grp-n { font-family: var(--font-mono); color: var(--muted); font-weight: 400; }
+.grp-empty { padding: 10px 14px; margin: 0; border-top: var(--bw) solid var(--line); }
+.groups-side .foot-note { margin: 0; }
+.grp-bar { display: grid; gap: 10px; padding: 12px 14px; overflow: visible; }
+.grp-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.grp-lead { font-weight: 700; }
+.grp-title { width: 180px; min-height: 32px; font-weight: 700; }
+.gchip { display: inline-flex; align-items: center; border-radius: 99px; border: var(--bw) solid var(--line-strong); background: var(--nested); font-size: var(--fs-sm); }
+.gchip.on { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.gchip.empty { border-style: dashed; }
+.gchip-open { padding: 5px 4px 5px 12px; border: 0; background: none; color: var(--text); font: inherit; cursor: pointer; }
+.gchip-open b { color: var(--dim); font-weight: 500; }
+.gchip-x { display: inline-grid; place-items: center; width: 26px; height: 26px; border: 0; background: none; color: var(--dim); cursor: pointer; border-radius: 50%; }
+.gchip-x:hover { color: var(--text); }
+.gchip-open:focus-visible, .gchip-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 99px; }
+.grp-count { margin-left: auto; font-size: var(--fs-sm); color: var(--muted); }
+.grp-count b { font: 700 1.05rem var(--font-mono); color: var(--text); }
+.grp-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.danger-text { color: var(--bad); }
+.chip-menu { display: grid; gap: 10px; padding: 12px; }
+.chip-menu-group > div { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.chip-menu-group button { padding: 4px 10px; border: var(--bw) solid var(--line); border-radius: 8px; background: none; color: var(--text); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.chip-menu-group button:hover, .chip-menu-group button:focus-visible { border-color: var(--accent); }
+.chip-editor { display: grid; gap: 10px; padding: 12px; }
+.chip-editor h3 { margin: 0; font-size: var(--fs-md); }
+.chip-range, .chip-dates { display: flex; flex-wrap: wrap; gap: 10px; }
+.chip-num, .chip-dates label, .chip-event label { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: var(--fs-sm); color: var(--muted); }
+.chip-num input { width: 110px; min-height: 32px; }
+.chip-event { display: grid; gap: 8px; }
+.chip-event label { display: grid; gap: 4px; }
+.good-text { color: var(--ok); font-weight: 700; }
+@media (max-width: 900px) { .players-layout { grid-template-columns: 1fr; } .groups-side { position: static; } }
+/* With the groups panel beside it the list is narrower: it scrolls sideways inside its own box. */
+.players-main .players-panel .players-table { overflow-x: auto; }
+.players-main .players-panel .players-table thead th { top: 0; }

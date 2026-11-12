@@ -15,13 +15,21 @@ def _item(row):
     return {"id": row["id"], **json.loads(row["definition"]), "updated_at": row["updated_at"]}
 
 
-def list_items(storage, game_id):
+# Levels' comparisons ("groups", "check") and the Players page's chip groups ("players") share the
+# table; a reader asks for the kinds it understands.
+COMPARISON_KINDS = ("groups", "check")
+
+
+def list_items(storage, game_id, kinds=COMPARISON_KINDS):
     storage.get_game(game_id)
+    marks = ",".join("?" * len(kinds))
     with storage.connect(storage.game_path(game_id)) as connection:
         return [
             _item(row)
             for row in connection.execute(
-                "SELECT * FROM player_group_library WHERE deleted_at IS NULL ORDER BY name, id"
+                f"""SELECT * FROM player_group_library
+                    WHERE deleted_at IS NULL AND kind IN ({marks}) ORDER BY name, id""",
+                tuple(kinds),
             )
         ]
 

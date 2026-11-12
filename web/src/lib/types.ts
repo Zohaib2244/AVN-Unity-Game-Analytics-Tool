@@ -195,6 +195,8 @@ export type PlayerRow = {
   has_user_id: number | boolean; metrics: Array<number | string | null>;
   /** The highest LEVEL_NUMBER their events name, and the last event they sent (the AVN events standard's STATE and LEVEL_NUMBER). */
   highest_level?: number | null; last_event?: { name: string; state: string | null; level: number | null } | null;
+  /** Campaign, install day, ad revenue so far and, when the cost service knows it, cost and paid-back share. */
+  value?: { campaign: string | null; install_day: string | null; earned: number; cost: number | null; paid_back: number | null } | null;
 };
 export type PlayersResult = { total: number; players: PlayerRow[]; context?: { anonymous_events?: number } };
 

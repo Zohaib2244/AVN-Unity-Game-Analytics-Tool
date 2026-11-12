@@ -43,6 +43,7 @@ from . import (
     journeys,
     materialize,
     nutbot_commands,
+    player_chips,
     player_groups,
     player_summary,
     sdk_package,
@@ -959,6 +960,8 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         campaign: Values = None,
         no_install_record: bool = False,
         paid_installs: bool = False,
+        player_group: Annotated[str, Query(max_length=8000)] = "",
+        request: Request = None,
     ):
         chosen = Filters(
             environments=env or [],
@@ -986,6 +989,16 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
                 chosen["segments"] = segments.parse(wanted)
             except ToolError as error:
                 raise HTTPException(400, str(error)) from None
+        if player_group:
+            # A Players-page group (player_chips.py): every condition must hold.
+            game_id = request.path_params.get("game_id") if request else None
+            try:
+                found = player_chips.conditions(json.loads(player_group))
+                if game_id:
+                    found = player_chips.resolve_costs(storage, str(game_id), found)
+            except (ValueError, TypeError) as error:
+                raise HTTPException(400, f"Group: {error}") from None
+            chosen["segments"] = [*chosen.get("segments", []), *found]
         return chosen
 
     Filtered = Annotated[dict, Depends(filters)]
@@ -1501,18 +1514,36 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             game_id,
             "players",
             (days, chosen, search, offset, sort, order, conditions, metrics),
-            lambda: insights.players(
-                storage,
-                str(game_id),
-                *days,
-                chosen,
-                search=search,
-                offset=offset,
-                sort=sort,
-                order=order,
-                conditions=conditions,
-                metrics=metrics,
+            lambda: _with_values(
+                game_id,
+                insights.players(
+                    storage,
+                    str(game_id),
+                    *days,
+                    chosen,
+                    search=search,
+                    offset=offset,
+                    sort=sort,
+                    order=order,
+                    conditions=conditions,
+                    metrics=metrics,
+                ),
             ),
+        )
+
+    def _with_values(game_id, result):
+        """Each listed player's campaign, ad revenue, cost and paid-back share (player_chips.py)."""
+        found = player_chips.player_values(
+            storage, str(game_id), [row["player"] for row in result["players"]]
+        )
+        for row in result["players"]:
+            row["value"] = found.get(row["player"])
+        return result
+
+    @admin_api.get("/v1/games/{game_id}/insights/player-chip-options")
+    def insights_player_chip_options(game_id: UUID):
+        return cached(
+            game_id, "player-chip-options", (), lambda: player_chips.options(storage, str(game_id))
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/journey")
@@ -1535,8 +1566,11 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/group-library")
-    def list_player_group_library(game_id: UUID):
-        return group_library.list_items(storage, str(game_id))
+    def list_player_group_library(
+        game_id: UUID, kind: Literal["comparisons", "players"] = "comparisons"
+    ):
+        kinds = ("players",) if kind == "players" else group_library.COMPARISON_KINDS
+        return group_library.list_items(storage, str(game_id), kinds)
 
     @admin_api.post("/v1/games/{game_id}/insights/group-library", status_code=201)
     def create_player_group_item(game_id: UUID, saved: SavedPlayerGroup):

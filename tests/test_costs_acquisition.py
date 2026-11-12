@@ -2,6 +2,7 @@
 behind the Ads page, checked against a small game by hand. The cost endpoint is replaced by a stub.
 """
 
+import json
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -321,3 +322,81 @@ def test_a_players_ad_failures_are_listed_newest_first_with_level_and_reason(tmp
     assert ads_part["load_failed"] == 1 and ads_part["failed"] == 1
     assert ads_part["networks"] == {"AppLovin": {"shown": 1, "revenue": 0.04}}
     assert ads_part["formats"]["Rewarded"]["revenue"] == 0.04
+
+
+def listed(admin, game, chips, **extra):
+    answer = admin.get(
+        f"/v1/games/{game['id']}/insights/players",
+        headers=AUTH,
+        params={
+            "start": "2026-10-01",
+            "end": "2026-10-10",
+            "player_group": json.dumps(chips),
+            **extra,
+        },
+    )
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def test_a_chip_group_keeps_players_who_meet_every_condition(game):
+    admin, game, _, _ = game
+    names = lambda data: {row["player"] for row in data["players"]}  # noqa: E731
+    assert names(listed(admin, game, [{"kind": "campaign", "values": ["C1"]}])) == {
+        "u1",
+        "u2",
+        "u6",
+    }
+    assert names(listed(admin, game, [{"kind": "earned", "min": 0.03}])) == {"u1", "u2", "u6"}
+    both = [{"kind": "campaign", "values": ["C1"]}, {"kind": "earned", "max": 0.032}]
+    assert names(listed(admin, game, both)) == {"u2"}
+    # "at most" keeps players who never earned anything
+    assert "u4" in names(listed(admin, game, [{"kind": "earned", "max": 0.01}]))
+    assert names(listed(admin, game, [{"kind": "install_type", "value": "none"}])) == {
+        "u4",
+        "dummy",
+    }
+    # paid back: u1 earned 0.035 of 2.5 (1.4%), u2 0.03 (1.2%); u6 updated, so has no cost
+    assert names(listed(admin, game, [{"kind": "paid_back", "min": 1.3}])) == {"u1"}
+    bad = admin.get(
+        f"/v1/games/{game['id']}/insights/players",
+        headers=AUTH,
+        params={"start": "2026-10-01", "end": "2026-10-10", "player_group": '[{"kind": "earned"}]'},
+    )
+    assert bad.status_code == 400 and "lowest or a highest" in bad.json()["detail"]
+
+
+def test_listed_players_carry_their_campaign_revenue_and_cost(game):
+    admin, game, _, _ = game
+    rows = {row["player"]: row for row in listed(admin, game, [])["players"]}
+    assert rows["u1"]["value"] == {
+        "campaign": "C1",
+        "install_day": "2026-10-01",
+        "earned": 0.035,
+        "cost": 2.5,
+        "paid_back": 0.014,
+    }
+    assert rows["u3"]["value"]["campaign"] == "organic" and rows["u3"]["value"]["cost"] is None
+
+
+def test_chip_groups_are_saved_apart_from_levels_comparisons(game):
+    admin, game, _, _ = game
+    path = f"/v1/games/{game['id']}/insights/group-library"
+    saved = admin.post(
+        path,
+        headers=AUTH,
+        json={"name": "C1 earners", "kind": "players",
+              "definition": {"chips": [{"kind": "campaign", "values": ["C1"]}]}},
+    )  # fmt: skip
+    assert saved.status_code == 201, saved.text
+    assert [
+        item["name"] for item in admin.get(path, headers=AUTH, params={"kind": "players"}).json()
+    ] == ["C1 earners"]
+    assert admin.get(path, headers=AUTH).json() == []  # Levels and NutBot don't see it
+    broken = admin.post(
+        path, headers=AUTH,
+        json={"name": "Bad", "kind": "players", "definition": {"chips": [{"kind": "colour"}]}},
+    )  # fmt: skip
+    assert broken.status_code == 400
+    options = admin.get(f"/v1/games/{game['id']}/insights/player-chip-options", headers=AUTH).json()
+    assert {item["value"] for item in options["campaign"]} == {"C1", "C2"}

@@ -101,8 +101,69 @@ def parse(argument):
     return found
 
 
+def _aggregate_clause(condition, source):
+    """Players whose events (all of them, or only these names and parameter values) give a
+    per-player measure between min and max (player_chips.py builds these)."""
+    args, filters = [], [f"{source.player} IS NOT NULL"]
+    if condition.get("events"):
+        filters.append(f"name IN ({','.join('?' * len(condition['events']))})")
+        args += condition["events"]
+    for param, values in condition.get("tests") or []:
+        filters.append(f"CAST({source.param(param)} AS TEXT) IN ({','.join('?' * len(values))})")
+        args += values
+    measure = condition["aggregate"]
+    params = condition.get("params") or []
+    if measure == "count":
+        expression = "count(*)"
+    elif measure == "sum":
+        expression = (
+            "sum("
+            + " + ".join(f"coalesce(CAST({source.param(param)} AS REAL), 0)" for param in params)
+            + ")"
+        )
+    elif measure == "max":
+        expression = f"max(CAST({source.param(params[0])} AS REAL))"
+    elif measure == "days":
+        expression = "count(DISTINCT substr(client_ts, 1, 10))"
+    elif measure == "sessions":
+        expression = f"count(DISTINCT {source.session})"
+    elif measure == "first_seen":
+        expression = "min(client_ts)"
+    elif measure == "last_seen":
+        expression = "max(client_ts)"
+    else:
+        raise ValueError("Unknown measure.")
+    having, having_args = [], []
+    if condition.get("min") is not None:
+        having.append(f"{expression} >= ?")
+        having_args.append(condition["min"])
+    if condition.get("max") is not None:
+        # first and last seen give a day after the range, so the upper end is exclusive
+        having.append(f"{expression} {'<' if measure in ('first_seen', 'last_seen') else '<='} ?")
+        having_args.append(condition["max"])
+    inner = (
+        f"SELECT {source.player} FROM {source.table} WHERE {' AND '.join(filters)} "
+        f"GROUP BY {source.player}" + (f" HAVING {' AND '.join(having)}" if having else "")
+    )
+    operator = "NOT IN" if condition.get("missing") else "IN"
+    if condition.get("zero_when_missing") and not condition.get("min"):
+        # "earned at most $X" keeps players who never earned anything too: everyone except those
+        # who earned more.
+        over = (
+            f"SELECT {source.player} FROM {source.table} WHERE {' AND '.join(filters)} "
+            f"GROUP BY {source.player} HAVING {expression} > ?"
+        )
+        return f"{source.player} NOT IN ({over})", [*args, condition["max"]]
+    return f"{source.player} {operator} ({inner})", [*args, *having_args]
+
+
 def clause(condition, source):
     """SQL and arguments keeping events of the players this condition describes."""
+    if "aggregate" in condition:
+        return _aggregate_clause(condition, source)
+    if "players" in condition:
+        players = condition["players"] or [""]
+        return f"{source.player} IN ({','.join('?' * len(players))})", list(players)
     args = [condition["event"]]
     match = ""
     if condition.get("param"):

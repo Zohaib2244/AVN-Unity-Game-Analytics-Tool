@@ -563,16 +563,34 @@ class SavedGroupDefinition(PlayerGroupsPopulation):
         return self
 
 
+class PlayerChip(BaseModel):
+    """One condition of a Players-page group; player_chips.py checks the fields per kind."""
+
+    model_config = ConfigDict(extra="allow")
+    kind: Annotated[str, Field(max_length=40)]
+
+
+class ChipGroupDefinition(StrictModel):
+    chips: Annotated[list[PlayerChip], Field(min_length=1, max_length=8)]
+
+
 class SavedPlayerGroup(StrictModel):
     name: Annotated[str, Field(min_length=1, max_length=80)]
-    kind: Literal["groups", "check"]
-    definition: SavedGroupDefinition
+    kind: Literal["groups", "check", "players"]
+    definition: SavedGroupDefinition | ChipGroupDefinition
 
     @model_validator(mode="after")
     def complete_saved_item(self):
         self.name = self.name.strip()
         if not self.name:
             raise ValueError("Give this item a name")
+        if (self.kind == "players") != isinstance(self.definition, ChipGroupDefinition):
+            raise ValueError("A Players group is a list of conditions")
+        if self.kind == "players":
+            from .player_chips import conditions
+
+            conditions([chip.model_dump() for chip in self.definition.chips])
+            return self
         if (self.kind == "check") != (self.definition.outcome is not None):
             raise ValueError("Checks require an outcome; saved groups have no outcome")
         return self

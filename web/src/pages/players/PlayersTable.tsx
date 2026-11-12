@@ -31,6 +31,7 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSor
   const open = useRef(onOpen);
   open.current = onOpen;
   const varies = useMemo(() => ({ id: new Set(rows.map((row) => !!row.has_user_id)).size > 1, platform: new Set(rows.map((row) => row.platform || '')).size > 1, version: new Set(rows.map((row) => row.app_version || '')).size > 1 }), [rows]);
+  const shows = useMemo(() => ({ campaign: rows.some((row) => row.value?.campaign), earned: rows.some((row) => (row.value?.earned ?? 0) > 0), paidBack: rows.some((row) => row.value?.paid_back != null) }), [rows]);
   const columns = useMemo(() => [
     column.accessor('player', { id: 'player', header: () => <span title="A player is their user_id when the game sends one, otherwise the device’s install ID">Player</span>, enableSorting: false, cell: ({ row }) => (
       <>
@@ -43,7 +44,10 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSor
         })()}
       </>
     ) }),
+    ...(shows.campaign ? [column.display({ id: 'campaign', header: 'Campaign', enableSorting: false, meta: { className: 'small' }, cell: ({ row }) => row.original.value?.campaign ?? <span className="muted">—</span> })] : []),
     column.display({ id: 'level', header: () => <span title="The highest level they reached">Level</span>, enableSorting: false, meta: { className: 'num' }, cell: ({ row }) => (row.original.highest_level != null ? number(row.original.highest_level) : '—') }),
+    ...(shows.earned ? [column.display({ id: 'earned', header: () => <span title="Ad revenue from this player so far, banners included">Earned</span>, enableSorting: false, meta: { className: 'num' }, cell: ({ row }) => (row.original.value ? `$${row.original.value.earned.toFixed(3)}` : '—') })] : []),
+    ...(shows.paidBack ? [column.display({ id: 'paid_back', header: () => <span title="Earned ÷ what their campaign paid per install on their install day">Paid back</span>, enableSorting: false, meta: { className: 'num' }, cell: ({ row }) => { const share = row.original.value?.paid_back; return share == null ? <span className="muted">—</span> : <span className={share >= 1 ? 'good-text' : undefined}>{Math.round(share * 100)}%</span>; } })] : []),
     column.accessor('total_play_seconds', { id: 'playtime', header: 'Playtime', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => duration(getValue()) }),
     column.accessor('sessions', { id: 'sessions', header: 'Sessions', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => number(getValue()) }),
     column.accessor('events', { id: 'events', header: 'Events', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => number(getValue()) }),
@@ -55,7 +59,7 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSor
     } }),
     ...metrics.map((metric, position) => column.display({ id: `metric${position}`, header: metricLabel(metric), meta: { className: 'num metric', sortable: true }, cell: ({ row }) => metricValue(metric, row.original.metrics[position], timezone) })),
     column.accessor('country', { id: 'country', header: 'Country', enableSorting: false, meta: { className: 'small' }, cell: ({ getValue }) => (getValue() ? <abbr className="cc" title={countryName(getValue())}>{getValue()}</abbr> : '—') }),
-  ], [game, metrics, timezone, varies]);
+  ], [game, metrics, timezone, varies, shows]);
   const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel(), manualSorting: true, state: { sorting: [{ id: sort, desc: order === 'desc' }] } });
   const onRowKey = (event: KeyboardEvent<HTMLTableRowElement>, player: string, index: number) => { if (event.key === 'Enter' && event.target === event.currentTarget) { event.preventDefault(); onOpen(player, index); } };
   return (

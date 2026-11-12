@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type R
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { Drawer } from '@avn/ui';
 import { freshness, markFresh, refreshAll, useRead } from '@/api';
-import { Empty, Heading, QueryRegion, Skeleton, useNotify } from '@/components/feedback';
+import { Empty, Heading, QueryRegion, Skeleton } from '@/components/feedback';
 import { FilterBar, useFilters } from '@/components/Filters';
 import { Ico } from '@/components/icons';
 import { filterQuery } from '@/lib/filters';
@@ -15,7 +15,8 @@ import { storeGet, storeSet, useStorePushed } from '@/lib/store';
 import type { Catalog, EventRule, Game, PlayerRow, PlayersResult } from '@/lib/types';
 import { PlayerPage, type PlayerBrowse } from './player/PlayerView';
 import { RuleList, paramKeys, ruleOptions } from '@/components/EventRule';
-import { PlayerRuleBar } from './players/PlayerRuleBar';
+import { GroupBar, GroupsPanel, libraryPath, type SavedChipGroup } from './players/Groups';
+import { chipsFromSearch, groupParam, type Chip } from './players/chips';
 import { PlayersTable } from './players/PlayersTable';
 import { AGG_LABELS, PAGE_SIZE, metricLabel, orderLabel, rulesBody, sortOptions, validSort } from './players/rules';
 
@@ -23,7 +24,6 @@ type PlayersView = { sort: string; order: 'asc' | 'desc'; conditions: EventRule[
 const EMPTY_CATALOG: Catalog = { events: [] };
 const viewKey = (game: Pick<Game, 'id'>) => `avn-players-view-${game.id}`;
 const loadView = (game: Pick<Game, 'id'>): PlayersView => ({ sort: 'last_seen', order: 'desc', conditions: [], metrics: [], fold: {}, ...(storeGet<Partial<PlayersView>>(viewKey(game)) || {}) });
-const blankCondition = (catalog: Catalog): EventRule => ({ event: catalog.events[0]?.name || '', param: '', op: 'eq', value: '', does: 'did', min_times: 1 });
 const blankMetric = (catalog: Catalog): EventRule => ({ event: catalog.events[0]?.name || '', param: '', op: 'eq', value: '', agg: 'count', of: '' });
 const SUMMING = ['max', 'min', 'sum'];
 
@@ -45,7 +45,6 @@ function FreshStamp(): ReactElement {
 }
 
 export function PlayersPage({ game }: { game: Game }): ReactElement {
-  const { toast } = useNotify();
   const navigate = useNavigate();
   const query = useSearch({ strict: false }) as Record<string, string | undefined>;
   const player = query.player || null;
@@ -60,40 +59,35 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
   const [browse, setBrowse] = useState<PlayerBrowse | undefined>();
   useEffect(() => { const timer = setTimeout(() => setSearch(typed.trim()), 250); return () => clearTimeout(timer); }, [typed]);
 
+  // The group being shown: a saved group (id) or unsaved chips; "See these players" links arrive as chips.
+  const groupKey = `avn-players-group-${game.id}`;
+  const [group, setGroupState] = useState<{ id: string | null; chips: Chip[] }>(() => {
+    const linked = chipsFromSearch(query);
+    if (linked.length) return { id: null, chips: linked };
+    const saved = storeGet<{ id: string | null; chips: Chip[] }>(groupKey) ?? { id: null, chips: [] };
+    const old = loadView(game).conditions.filter((rule) => rule.event);
+    if (!old.length) return saved;
+    return { id: null, chips: [...saved.chips, ...old.map((rule): Chip => ({ kind: 'event', event: rule.event, param: rule.param || undefined, values: rule.param && rule.value !== '' && rule.value != null ? [String(rule.value)] : [], never: rule.does === 'didnt' }))] };
+  });
+  const setGroup = (next: { id: string | null; chips: Chip[] }) => { setGroupState(next); storeSet(groupKey, next); };
+  useEffect(() => { if (view.conditions.length) setView((v) => ({ ...v, conditions: [] })); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const library = useRead<SavedChipGroup[]>(`${libraryPath(game)}?kind=players`);
+  const savedGroup = group.id ? library.data?.find((item) => item.id === group.id) ?? null : null;
+  const playerGroup = groupParam(group.chips);
   const catalogQuery = useRead<Catalog>(`${gameURL(game)}/insights/catalog?${filterQuery(filters)}`);
   const catalog = catalogQuery.data ?? EMPTY_CATALOG;
   const body = useMemo(() => rulesBody(view), [view]);
   const rulesJSON = body.conditions.length || body.metrics.length ? JSON.stringify(body) : '';
   const sort = validSort(view.sort, body.metrics);
-  // Opened from Ads or Acquisition ("See these players"): keep only that install source, shown as a chip.
-  const fromSource: Array<[string, string]> = query.campaign ? [['campaign', query.campaign]] : query.source ? [['source', query.source]] : query.install === 'paid' ? [['paid_installs', 'true']] : query.install === 'none' ? [['no_install_record', 'true']] : [];
-  const sourceText = query.campaign ?? query.source ?? (query.install === 'paid' ? 'Paid installs' : query.install === 'none' ? 'No install record' : '');
-  const clearSource = () => { const { campaign: _c, source: _s, install: _i, ...rest } = query; void navigate({ to: gamePath(game, 'players'), search: rest, replace: true }); };
-  useEffect(() => { setOffset(0); }, [filters, search, sort, view.order, rulesJSON, sourceText]);
-  const playersPath = `${gameURL(game)}/insights/players?${filterQuery(filters)}&${new URLSearchParams([['search', search], ['offset', String(offset)], ['sort', sort], ['order', view.order], ...(rulesJSON ? [['rules', rulesJSON]] : []), ...fromSource])}`;
+  useEffect(() => { setOffset(0); }, [filters, search, sort, view.order, rulesJSON, playerGroup]);
+  const playersPath = `${gameURL(game)}/insights/players?${filterQuery(filters)}&${new URLSearchParams([['search', search], ['offset', String(offset)], ['sort', sort], ['order', view.order], ...(rulesJSON ? [['rules', rulesJSON]] : []), ...(playerGroup ? [['player_group', playerGroup]] : [])])}`;
   const players = useRead<PlayersResult>(playersPath);
   useEffect(() => { if (players.data) markFresh(); }, [players.data]);
   const total = players.data?.total ?? null;
 
   const reload = () => setOffset(0);
   const setSort = (key: string) => setView((v) => (v.sort === key ? { ...v, order: v.order === 'desc' ? 'asc' : 'desc' } : { ...v, sort: key, order: 'desc' }));
-  const setConditions = (conditions: EventRule[]) => setView((v) => ({ ...v, conditions }));
   const setMetrics = (metrics: EventRule[]) => setView((v) => ({ ...v, metrics: metrics.map((rule) => (SUMMING.includes(rule.agg || '') && !rule.of ? { ...rule, of: paramKeys(catalog.events.find((item) => item.name === rule.event))[0] || '' } : rule)) }));
-  const removeRule = (index: number) => {
-    const removed = view.conditions[index]!;
-    setConditions(view.conditions.filter((_, position) => position !== index)); reload();
-    toast('Rule removed', { label: 'Undo', run: () => { setView((v) => ({ ...v, conditions: [...v.conditions.slice(0, index), removed, ...v.conditions.slice(index)] })); reload(); } }, 'info');
-  };
-  const removeMetric = (index: number) => {
-    const removed = view.metrics[index]!;
-    setMetrics(view.metrics.filter((_, position) => position !== index)); reload();
-    toast('Column removed', { label: 'Undo', run: () => { setView((v) => ({ ...v, metrics: [...v.metrics.slice(0, index), removed, ...v.metrics.slice(index)] })); reload(); } }, 'info');
-  };
-  const clearRules = () => {
-    const before = view.conditions;
-    setConditions([]); reload();
-    toast('Rules cleared', { label: 'Undo', run: () => { setView((v) => ({ ...v, conditions: [...v.conditions, ...before] })); reload(); } }, 'info');
-  };
   const fold = (name: string) => setView((v) => ({ ...v, fold: { ...v.fold, [name]: !v.fold[name] } }));
 
   // Previous / Next on a player walk this page of players; Back returns to the list as it was.
@@ -109,9 +103,12 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
     <>
       <Heading title="Players" subtitle="Open a player to read their events." />
       <FilterBar game={game} state={filters} onChange={setFilters} context={players.data?.context || {}} />
-      {sourceText ? <div className="filter-chips source-chip"><span className="filter-chip"><span className="filter-chip-open"><Ico name="users" size={13} /><span className="filter-chip-label">Install source</span><em>is</em><span>{sourceText}</span></span><button type="button" className="filter-chip-x" aria-label="Show players from every install source" onClick={clearSource}><Ico name="close" size={11} /></button></span></div> : null}
-      <PlayerRuleBar conditions={view.conditions} metrics={view.metrics} total={total} onEdit={() => setRulesOpen(true)} onRemoveRule={removeRule} onRemoveMetric={removeMetric} onClear={clearRules} />
-      <section className="panel section-spacing players-panel">
+      <div className="players-layout">
+        <GroupsPanel items={library.data} selected={group.id} unsaved={group.id ? [] : group.chips} total={total} onSelect={(item) => setGroup(item ? { id: item.id, chips: item.definition.chips } : { id: null, chips: [] })} onNew={() => setGroup({ id: null, chips: [] })} />
+        <div className="players-main">
+          <GroupBar key={group.id ?? 'new'} game={game} chips={group.chips} onChips={(chips) => setGroup({ ...group, chips })} saved={savedGroup} catalog={catalog} total={total}
+            onSaved={(item) => setGroup({ id: item.id, chips: item.definition.chips })} onDeleted={() => setGroup({ id: null, chips: [] })} />
+      <section className="panel players-panel">
         {/* One line: find a player, then how the list is ordered and what extra columns it has. The rule bar above carries the count. */}
         <div className="panel-header players-head">
           <h2 className="sr-only">Players</h2>
@@ -133,19 +130,15 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
               </div>
             </>
           ) : (
-            <Empty title={search || body.conditions.length ? 'No matching players' : 'No players'}>{search || body.conditions.length ? 'Try another ID, or loosen the event rules.' : 'Pick other days or filters, or check that your game is sending events.'}</Empty>
+            <Empty title={search || playerGroup ? 'No matching players' : 'No players'}>{search || playerGroup ? 'Try another ID, or loosen a condition of the group.' : 'Pick other days or filters, or check that your game is sending events.'}</Empty>
           ))}
         </QueryRegion>
       </section>
+        </div>
+      </div>
 
-      <Drawer open={rulesOpen} onClose={() => setRulesOpen(false)} title="Player rules" subtitle="Who to show, and extra columns">
+      <Drawer open={rulesOpen} onClose={() => setRulesOpen(false)} title="Extra columns" subtitle="Work out a number for each player from an event, and sort by it">
         <div className="player-rules">
-          <RuleSection title="Only show players who…" count={body.conditions.length} note={body.conditions.map((rule) => `${rule.does === 'didnt' ? 'never' : 'did'} ${rule.event}${rule.param ? ` (${rule.param})` : ''}`).join(' · ')} folded={!!view.fold.conditions} onToggle={() => fold('conditions')}>
-            <p className="help">Every rule here must be true. For example: <em>Did</em> <code>POWERUP_CONSUMED</code> at least 3 times, or <em>Never did</em> <code>SETTINGS_OPENED</code>.</p>
-            <RuleList rules={view.conditions} catalog={catalog} blank={blankCondition} addLabel="Add a condition" empty="No conditions yet." onChange={(rules) => { setConditions(rules); reload(); }}
-              before={(rule, _index, set) => <select className="rule-verb" aria-label="Did or never did" value={rule.does === 'didnt' ? 'didnt' : 'did'} onChange={(e) => set({ does: e.target.value as 'did' | 'didnt' })}><option value="did">Did</option><option value="didnt">Never did</option></select>}
-              after={(rule, _index, set) => (rule.does === 'didnt' ? null : <span className="rule-times">at least <input type="number" min={1} max={100000} aria-label="At least this many times" value={rule.min_times || 1} onChange={(e) => set({ min_times: Number(e.target.value) || 1 })} /> time{(rule.min_times || 1) === 1 ? '' : 's'}</span>)} />
-          </RuleSection>
           <RuleSection title="Add a column (and sort by it)" count={body.metrics.length} note={body.metrics.map(metricLabel).join(' · ')} folded={!!view.fold.metrics} onToggle={() => fold('metrics')}>
             <p className="help">Pick what to work out for each player, from an event: how many times, the highest, lowest or total of one of its parameters, or when it first or last happened.</p>
             <RuleList rules={view.metrics} catalog={catalog} blank={blankMetric} addLabel="Add a column" empty="No extra columns yet." onChange={(rules) => { setMetrics(rules); reload(); }}
