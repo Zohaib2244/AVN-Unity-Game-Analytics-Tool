@@ -43,6 +43,14 @@ export async function installPlayerFixture(page: Page, options: { levelCount?: n
     ], kinds: { ads: ['Interstitial', 'Rewarded'], powerups: ['shuffle'], fails: ['OutOfMoves'] }, context: { minimum_players: 1 } };
     else if (path.endsWith('/levels')) json = { levels: Array.from({ length: options.levelCount ?? 1 }, (_, index) => ({ level: options.levelCount ? index + 1 : 12, started: 2, completed: 0, completion: 0, tries_per_player: 1, fails: 2, restarts: 0, median_seconds: 30, low_sample: false, transition: { available: true, next_level: options.levelCount ? index + 2 : 13, drop_percent: 100, total_drop: 2, left: 2, finished_stopped: 0, kept_going: 0, unknown_progress: 0, net_change: -2 } })), context: { anonymous_events: 0, minimum_players: 1 } };
     else if (path.endsWith('/levels/players')) json = { level: 12, group: 'left', total: 2, offset: 0, counts: { left: 2, finished_stopped: 0, kept_going: 0 }, last_actions: [], players: players.map((p) => ({ player: p.player, tries: 1, fails: 1, completed: false, exit_at: at, exit_event: 'level_fail', last_action: 'Level failed', next_action: 'Menu', last_event: null, session_seconds: 780, last_seen: at, came_back: false, app_version: '1.4.2' })) };
+    else if (path.endsWith('/player-summary')) json = {
+      player: url.searchParams.get('player'), events_counted: 40, partial: false, first_seen: at, last_seen: at,
+      sessions: { count: 3, active_days: 1, per_day: [['2026-10-24', 3]] },
+      ads: { formats: {}, shown: 0, failed: 0, average_seconds_on_screen: null },
+      levels: { cleared: 4, highest: 12, clears: 4, fails: 2, left: 1, first_try_clears: 3, average_seconds: 30, median_seconds: 30, fastest_seconds: 15, slowest_seconds: 60, average_moves: null, restarts: 0, revives: 0, pace: [[1, 30]], hardest: [] },
+      economy: { balances: {}, balance_history: [], earned: {}, spent: {}, inventory: {}, flags: {}, save_level: null },
+      powerups: { used: {}, obtained: [] }, screens: {}, background: {}, tutorials: { shown: 0, completed: 0 }, shop_taps: 0, levels_ended_by_kill: 0,
+    };
     else if (path.endsWith('/story')) json = { sessions: 1, events: 40, first_seen: at, last_seen: at, total_play_seconds: 780, average_session_seconds: 780, highest_level: 12, info: { device_id: url.searchParams.get('player'), platform: 'android', app_version: '1.4.2', properties: { device_model: 'Pixel 8' } } };
     else if (path.endsWith('/journey') && options.rich) json = { snapshot: 40, truncated: false, events: richJourney(at) };
     else if (path.endsWith('/journey')) json = { snapshot: 40, truncated: false, events: Array.from({ length: 40 }, (_, index) => ({ event_id: `event-${index}`, name: index % 2 ? 'level_fail' : 'level_start', client_ts: new Date(Date.parse(at) + index * 20000).toISOString(), session_id: 'session-one', level: 12, params: { level: 12, reason: 'out_of_moves', score: 1200 } })) };

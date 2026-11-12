@@ -28,7 +28,7 @@ const mayChange = (lastDay: string): boolean => lastDay >= addDays(new Date().to
 const TABS = DIMENSIONS.map((key) => ({ value: key, label: DIMENSION_LABELS[key].replace('Device platform', 'Platform').replace('App version', 'Version') }));
 
 export function GameOverviewPage({ game }: { game: Game }): ReactElement {
-  const [state, onChange] = useFilters(game);
+  const [state, onChange] = useFilters(game, true);
   const [measure, setMeasure] = useState<OverviewMeasure>('players');
   const [dimension, setDimension] = useState<Dimension>('environment');
   const path = `${gameURL(game)}/insights/summary?${filterQuery(state)}`;
@@ -53,7 +53,7 @@ export function GameOverviewPage({ game }: { game: Game }): ReactElement {
       <Heading title={game.name} subtitle={`${platformLabel(game.platform)} · ${game.bundle_id}`} actions={<Link className="button primary" to={gamePath(game, 'exports')}><Ico name="export" size={15} /> Export data</Link>} />
       {game.archived_at ? <div className="archived-banner"><Ico name="lock" size={18} /><div><strong>Archived.</strong> Collection is paused for this platform.</div><Link className="button" to={gamePath(game, 'settings')}>Game settings</Link></div> : null}
       <StandardNotice game={game} />
-      <FilterBar game={game} state={state} onChange={onChange} context={data ? { ...data.context, players: data.players } : undefined} />
+      <FilterBar playerGroups game={game} state={state} onChange={onChange} context={data ? { ...data.context, players: data.players } : undefined} />
       {data ? <SetupChecklist game={game} data={data} facts={facts} /> : null}
       {data?.anomalies.length ? (
         <>

@@ -40,7 +40,7 @@ export const drillPagePath = (game: GameRef, state: ActiveFilters, scope: LevelS
 
 /** The filters the page opens with, the way the page works them out, so a request can start before it opens. */
 export function resolvedFilters(game: GameRef): ActiveFilters {
-  const state = filterState(game);
+  const state = filterState(game, true);
   return { ...state, range: resolveRange(state.range?.preset || '30', state.range) };
 }
 /** The Levels page's first request: the page opens on Level Flow. */

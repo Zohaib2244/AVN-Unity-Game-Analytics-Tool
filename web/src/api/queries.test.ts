@@ -36,3 +36,10 @@ it('keeps configuration longer while counts remain live and analytics stay short
   expect(freshnessMs('/v1/games/a/insights/summary')).toBe(30000);
   expect(freshnessMs('/v1/games/a/health')).toBe(0);
 });
+
+it('refreshes player group counts after save, deletion and Undo', () => {
+  for (const suffix of ['', '/one', '/one/restore']) {
+    expect(affectedRead(`/v1/games/a/insights/group-library${suffix}`, '/v1/games/a/insights/player-group-counts?start=2026-10-01')).toBe(true);
+    expect(affectedRead(`/v1/games/a/insights/group-library${suffix}`, '/v1/games/b/insights/player-group-counts')).toBe(false);
+  }
+});

@@ -993,9 +993,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             # A Players-page group (player_chips.py): every condition must hold.
             game_id = request.path_params.get("game_id") if request else None
             try:
-                found = player_chips.conditions(json.loads(player_group))
-                if game_id:
-                    found = player_chips.resolve_costs(storage, str(game_id), found)
+                found = player_chips.resolved(storage, str(game_id), json.loads(player_group))
             except (ValueError, TypeError) as error:
                 raise HTTPException(400, f"Group: {error}") from None
             chosen["segments"] = [*chosen.get("segments", []), *found]
@@ -1259,6 +1257,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             raise HTTPException(400, str(error)) from None
         accounts.audit(principal, "game.cost_settings", str(game_id), "app ID or return goals")
         storage.reads.clear()
+        storage.scans.clear()
         return {**result, "configured": bool(settings.cost_api_url)}
 
     @admin_api.get("/v1/games/{game_id}/insights/catalog")
@@ -1281,6 +1280,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     def insights_funnel(game_id: UUID, query: FunnelQuery):
         days = day_range(query.start, query.end, query.timezone_offset_minutes)
         body = query.model_dump()
+        body["filters"] = player_chips.apply_filters(storage, str(game_id), body["filters"])
         return cached(
             game_id,
             "funnel",
@@ -1292,6 +1292,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     def insights_journeys(game_id: UUID, query: JourneyQuery):
         days = day_range(query.start, query.end, query.timezone_offset_minutes)
         body = query.model_dump()
+        body["filters"] = player_chips.apply_filters(storage, str(game_id), body["filters"])
         return cached(
             game_id,
             "journeys",
@@ -1303,6 +1304,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     def insights_journey_players(game_id: UUID, query: JourneyPlayersQuery):
         days = day_range(query.start, query.end, query.timezone_offset_minutes)
         body = query.model_dump()
+        body["filters"] = player_chips.apply_filters(storage, str(game_id), body["filters"])
         return cached(
             game_id,
             "journey_players",
@@ -1369,7 +1371,7 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             str(game_id),
             query.name,
             *day_range(query.start, query.end, query.timezone_offset_minutes),
-            query.filters.model_dump(),
+            player_chips.apply_filters(storage, str(game_id), query.filters.model_dump()),
             query.conditions.model_dump() if query.conditions else None,
             query.timezone_offset_minutes,
         )
@@ -1544,6 +1546,23 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     def insights_player_chip_options(game_id: UUID):
         return cached(
             game_id, "player-chip-options", (), lambda: player_chips.options(storage, str(game_id))
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/player-group-counts")
+    def insights_player_group_counts(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        days = day_range(start, end, tz_offset)
+        items = group_library.list_items(storage, str(game_id), ("players",))
+        return cached(
+            game_id,
+            "player-group-counts",
+            (days, chosen, items),
+            lambda: player_chips.counts(storage, str(game_id), *days, chosen, items),
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/journey")

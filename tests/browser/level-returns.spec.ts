@@ -26,7 +26,7 @@ for (const theme of ['dark', 'light']) {
       const label = toggle.locator('..');
       expect((await label.boundingBox())!.height).toBeLessThanOrEqual(48);
       expect((await label.locator('span').boundingBox())!.width).toBeGreaterThan(150);
-      await expect(page.getByRole('columnheader', { name: 'Stopped · no return observed' })).toBeVisible();
+      await expect(page.getByRole('columnheader', { name: 'Drop to next level · no return' })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: info.outputPath(`returns-${theme}-${palette}.png`), fullPage: true });
 
@@ -36,7 +36,7 @@ for (const theme of ['dark', 'light']) {
         const url = new URL(request.url());
         return url.pathname.endsWith('/levels/players') && url.searchParams.get('exclude_returners') === 'true';
       });
-      await page.locator('.level-toggle').first().click();
+      await page.locator('.level-open').first().click();
       await drill;
       await expect(toggle).toBeChecked();
       await expect(page.getByRole('button', { name: /Came back later/ })).toBeVisible();

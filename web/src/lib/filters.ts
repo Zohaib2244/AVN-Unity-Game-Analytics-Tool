@@ -1,4 +1,5 @@
 // The dashboard filters: days + environment, version, build, country, platform. Remembered per game.
+import { groupParam, type ChipSelection } from '@/pages/players/chips';
 import { RULE_OPS } from './conditions';
 import { localTimezoneOffset, type Timezone } from './format';
 import { storeGet, storeSet } from './store';
@@ -21,6 +22,7 @@ export type FilterState = {
   environment: string[]; app_version: string[]; build: string[]; country: string[]; platform: string[];
   /** "Everything except": values kept out, per category (environments have their own "hide editor data"). */
   exclude?: Partial<Record<Dimension, string[]>>;
+  playerGroup?: ChipSelection;
 };
 /** A filter state whose range has been chosen. */
 export type ActiveFilters = FilterState & { range: DayRange };
@@ -45,9 +47,10 @@ const key = (game: { id: string }) => `avn-filters-${game.id}`;
 
 const cleanList = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []);
 
-export function filterState(game: { id: string }): FilterState {
+export function filterState(game: { id: string }, playerGroups = false): FilterState {
   const saved = (storeGet<Partial<FilterState>>(key(game)) || {}) as Partial<FilterState>;
   return {
+    ...(playerGroups ? { playerGroup: saved.playerGroup } : {}),
     range: saved.range || null,
     // Always local time: there is no switch for UTC any more, so a saved choice must not apply unseen.
     timezone: 'local',
@@ -59,7 +62,7 @@ export function filterState(game: { id: string }): FilterState {
     versionMode: (['latest', 'previous', 'custom', 'all'] as const).includes(saved.versionMode as VersionMode) ? (saved.versionMode as VersionMode) : saved.app_version?.length ? 'custom' : 'latest',
   };
 }
-export function saveFilters(game: { id: string }, state: FilterState): void { storeSet(key(game), state); }
+export function saveFilters(game: { id: string }, state: FilterState): void { storeSet(key(game), { ...state, ...(!Object.hasOwn(state, 'playerGroup') ? { playerGroup: storeGet<FilterState>(key(game))?.playerGroup } : {}) }); }
 
 export const timezoneOffset = (state: Pick<FilterState, 'timezone'>): number => (state.timezone === 'utc' ? 0 : localTimezoneOffset());
 
@@ -68,12 +71,15 @@ export function filterQuery(state: ActiveFilters): URLSearchParams {
   if (state.hideTest && !state.environment.length) TEST_ENVIRONMENTS.forEach((value) => query.append('not_env', value));
   for (const dimension of DIMENSIONS) state[dimension].forEach((value) => query.append(FILTER_KEYS[dimension], value));
   for (const dimension of DIMENSIONS) if (dimension !== 'environment') excludedValues(state, dimension).forEach((value) => query.append(`not_${FILTER_KEYS[dimension]}`, value));
+  const group = groupParam(state.playerGroup?.chips ?? []);
+  if (group) query.set('player_group', group);
   return query;
 }
 export function filterBody(state: ActiveFilters) {
   return {
     start: state.range.from, end: state.range.to, timezone_offset_minutes: timezoneOffset(state),
     filters: {
+      ...(state.playerGroup ? { player_group: state.playerGroup.chips } : {}),
       environments: state.environment, exclude_environments: state.hideTest && !state.environment.length ? TEST_ENVIRONMENTS : [],
       app_versions: state.app_version, builds: state.build, countries: state.country, platforms: state.platform,
       exclude_app_versions: excludedValues(state, 'app_version'), exclude_builds: excludedValues(state, 'build'),

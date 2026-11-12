@@ -253,14 +253,14 @@ export type SessionBar = { label: string; sessions: number };
 export type SessionDay = { day: string; sessions: number; average_seconds: number | null; median_seconds: number | null };
 export type SessionQuality = {
   platform: string; app_version: string; sessions: number; closed: number; client: number; inferred: number; client_percent: number | null; inferred_percent: number | null;
-  median_end_delay: number | null; events: number; duplicate_percent: number | null; rejected: number;
+  median_end_delay: number | null; events: number | null; duplicate_percent: number | null; rejected: number | null;
 };
 export type SessionReport = {
   sessions: number; players: number; closed: number; in_progress: number; waiting: number; average_seconds: number | null; median_seconds: number | null;
   play_seconds: number; away_seconds: number; ad_away_seconds: number; old_way: number; ends: Record<string, number>; days: SessionDay[]; changing_from: string;
   measure_change: { version: string; day: string } | null; lengths: SessionBar[]; trips: SessionBar[]; aways: SessionBar[]; leaves: Array<{ cause: string; trips: number }>;
   previous_runs: { total: number; formats: string[]; rows: Array<{ reason: string; importance: string | null; launches: number; ads: Record<string, number> }> };
-  quality: SessionQuality[]; delivery: Array<{ delivery: string; events: number; median_end_delay: number | null }>;
+  ingest_counts_available: boolean; quality: SessionQuality[]; delivery: Array<{ delivery: string; events: number; median_end_delay: number | null }>;
 };
 export type DeviceSpecs = { requested_model: string; matched_device?: string | null; note?: string | null; source_url: string; specs?: Record<string, string> | null };
 export type SavedHighlight = { id: string; name: string; color: string; conditions: ConditionGroup };

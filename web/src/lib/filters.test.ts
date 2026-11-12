@@ -84,3 +84,14 @@ describe('"everything except"', () => {
     expect(choiceOf(filterState(game), 'country')).toEqual({ mode: 'in', values: ['DE'] });
   });
 });
+
+it('sends the same player group for GET and POST and only restores it on supported pages', () => {
+  store.clear();
+  const playerGroup = { name: 'Paid', chips: [{ kind: 'install_type' as const, value: 'paid' as const }] };
+  const state: ActiveFilters = { ...filterState(game), range: { from: '2026-10-01', to: '2026-10-07' }, playerGroup };
+  expect(JSON.parse(filterQuery(state).get('player_group')!)).toEqual(playerGroup.chips);
+  expect(filterBody(state).filters.player_group).toEqual(playerGroup.chips);
+  save(state);
+  expect(filterState(game).playerGroup).toBeUndefined();
+  expect(filterState(game, true).playerGroup).toEqual(playerGroup);
+});

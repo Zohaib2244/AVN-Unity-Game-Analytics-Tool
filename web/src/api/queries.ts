@@ -30,6 +30,7 @@ export function affectedRead(mutation: string, readPath: string): boolean {
   if (!match) return true;
   const [, game, suffix = ''] = match;
   if (!game || suffix === '/move' || suffix.startsWith('/access')) return true;
+  if (suffix.startsWith('/insights/group-library') && target === `${game}/insights/player-group-counts`) return true;
   const isolated = suffix.match(/^\/(keys|insights\/(?:funnels|group-library)|nutbot\/chats)(?:\/|$)/);
   if (isolated) return target === '/v1/audit' || target === game + '/' + isolated[1] || target.startsWith(game + '/' + isolated[1] + '/');
   return target === game || target.startsWith(game + '/') || target === '/v1/games' || target === '/v1/audit';

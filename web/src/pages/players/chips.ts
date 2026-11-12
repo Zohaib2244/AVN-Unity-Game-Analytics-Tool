@@ -2,6 +2,13 @@
 // sentence a chip reads as, and which ones the "Add" menu offers under which heading. Every chip in a
 // group must hold; a chip with several values means "any of them".
 
+import { OP_WORDS, valuelessOp } from '@/lib/conditions';
+import type { EventRule } from '@/lib/types';
+
+export type SavedChipGroup = { id: string; name: string; kind: 'players'; definition: { chips: Chip[] }; updated_at: string };
+export type ChipSelection = { name: string; chips: Chip[] };
+export type GroupCounts = { all: number; counts: Record<string, number> };
+
 export type ChipKind =
   | 'campaign' | 'media_source' | 'install_type' | 'installed'
   | 'ad_format' | 'ad_network' | 'ad_creative' | 'ad_failed' | 'earned'
@@ -18,7 +25,7 @@ export type Chip = {
   from?: string; to?: string;
   level?: number;
   within_days?: number | null; more_than_days?: number | null;
-  event?: string; param?: string; never?: boolean;
+  event?: string; param?: string; never?: boolean; op?: string; rule_value?: string;
 };
 
 /** Kinds whose editor is a list of values to tick, with where the values come from. */
@@ -95,8 +102,9 @@ export function chipWords(chip: Chip): [string, string] {
     case 'last_seen': return chip.more_than_days != null ? ['not seen for', `${plainNumber(chip.more_than_days)}+ days`] : ['seen in the last', `${plainNumber(chip.within_days ?? 0)} days`];
     case 'event': {
       const name = chip.event || '…';
-      const test = chip.param && chip.values?.length ? ` with ${chip.param} ${orList(chip.values)}` : '';
-      return [chip.never ? 'never did' : 'did', `${name}${test}`];
+      const test = chip.param ? chip.op ? ` with ${chip.param} ${OP_WORDS[chip.op] ?? chip.op}${valuelessOp(chip.op) ? '' : ` ${chip.rule_value ?? ''}`}` : ` with ${chip.param} ${orList(chip.values)}` : '';
+      const times = !chip.never && (chip.min ?? 1) > 1 ? ` at least ${plainNumber(chip.min!)} times` : '';
+      return [chip.never ? 'never did' : 'did', `${name}${test}${times}`];
     }
     default: return ['', ''];
   }
@@ -109,7 +117,7 @@ export function chipReady(chip: Chip): boolean {
   if (chip.kind === 'installed') return !!(chip.from || chip.to);
   if (chip.kind === 'stopped_on') return chip.level != null;
   if (chip.kind === 'last_seen') return chip.within_days != null || chip.more_than_days != null;
-  if (chip.kind === 'event') return !!chip.event && (!chip.param || !!chip.values?.length);
+  if (chip.kind === 'event') return !!chip.event && (!chip.param || (chip.op ? valuelessOp(chip.op) || chip.rule_value !== undefined : !!chip.values?.length));
   return true;
 }
 
@@ -128,4 +136,22 @@ export function chipsFromSearch(search: Record<string, string | undefined>): Chi
   if (search.source) return [{ kind: 'media_source', values: [search.source] }];
   if (search.install === 'paid' || search.install === 'organic' || search.install === 'none') return [{ kind: 'install_type', value: search.install }];
   return [];
+}
+
+/** Preserve the shared rule vocabulary, occurrence threshold, and negative rules during migration. */
+export function legacyChips(rules: EventRule[]): Chip[] {
+  return rules.filter((rule) => rule.event).map((rule) => ({
+    kind: 'event', event: rule.event, param: rule.param || undefined, op: rule.op || 'eq',
+    rule_value: rule.value ?? '', never: rule.does === 'didnt', min: rule.min_times || 1,
+  }));
+}
+
+/** Adapt legacy multi-value equality chips without changing membership when an editor opens. */
+export function chipRule(chip: Chip): EventRule {
+  return { event: chip.event ?? '', param: chip.param ?? '', op: chip.op ?? 'eq', value: chip.rule_value ?? chip.values?.[0] ?? '' };
+}
+export function withChipRule(chip: Chip, patch: Partial<EventRule>): Chip {
+  const rule = { ...chipRule(chip), ...patch };
+  // An untouched multi-value condition keeps every value. An explicit edit replaces its test.
+  return { ...chip, event: rule.event, param: rule.param, op: rule.op, rule_value: rule.value, values: undefined };
 }

@@ -1,9 +1,10 @@
 import { filterBody, type ActiveFilters } from '@/lib/filters';
+import type { ChipSelection } from '../players/chips';
 import type { EventRule } from '@/lib/types';
 
 export type GroupDraft = {
   entryLevel: string; exclusions: EventRule[]; excludePlayers: string;
-  kind: 'level_duration' | 'event_count' | 'parameter'; level: string; event: EventRule;
+  kind: 'level_duration' | 'event_count' | 'parameter' | 'saved_groups'; groupA?: ChipSelection; groupB?: ChipSelection; level: string; event: EventRule;
   parameter: string; minutes: string; comparison: 'number' | 'equals'; split: string; value: string;
   outcomeKind: 'level' | 'event'; outcomeLevel: string; outcomeEvent: EventRule; hours: string;
 };
@@ -24,6 +25,10 @@ export function groupStepError(draft: GroupDraft, step: number): string {
     if (draft.exclusions.length > 20) return 'Use at most 20 exclusion rules.';
     return draft.exclusions.map(ruleError).find(Boolean) || '';
   }
+  if ((step === 1 || step === 2) && draft.kind === 'saved_groups') {
+    if (!draft.groupA?.chips.length || !draft.groupB?.chips.length) return 'Choose two saved player groups.';
+    return JSON.stringify(draft.groupA.chips) === JSON.stringify(draft.groupB.chips) ? 'Choose different player groups.' : '';
+  }
   if (step === 1) {
     if (draft.kind === 'level_duration') return levelOK(draft.level) ? '' : 'Enter a valid behavior level.';
     if (ruleError(draft.event)) return ruleError(draft.event);
@@ -32,7 +37,7 @@ export function groupStepError(draft: GroupDraft, step: number): string {
     return '';
   }
   if (step === 2) {
-    if (draft.kind !== 'level_duration' && Number(draft.minutes) >= Number(draft.hours) * 60) return 'The behavior window must end before the observation window.';
+    if (!['level_duration', 'saved_groups'].includes(draft.kind) && Number(draft.minutes) >= Number(draft.hours) * 60) return 'The behavior window must end before the observation window.';
     if (draft.kind === 'parameter' && draft.comparison === 'equals') return draft.value ? '' : 'Enter the value for group A.';
     return finite(draft.split) && (draft.kind === 'parameter' || Number(draft.split) >= 0) ? '' : 'Enter a finite numeric split.';
   }
@@ -41,7 +46,7 @@ export function groupStepError(draft: GroupDraft, step: number): string {
     if (!levelOK(draft.outcomeLevel)) return 'Enter a valid outcome level.';
     if (draft.kind === 'level_duration' && Number(draft.outcomeLevel) <= Number(draft.level)) return 'Choose an outcome level after the behavior level.';
   } else if (ruleError(draft.outcomeEvent)) return ruleError(draft.outcomeEvent);
-  if (draft.kind !== 'level_duration' && Number(draft.minutes) >= Number(draft.hours) * 60) return 'The behavior window must end before the observation window.';
+  if (!['level_duration', 'saved_groups'].includes(draft.kind) && Number(draft.minutes) >= Number(draft.hours) * 60) return 'The behavior window must end before the observation window.';
   return '';
 }
 
@@ -52,8 +57,9 @@ export function groupRequest(draft: GroupDraft, filters: ActiveFilters) {
     exclude_players: draft.excludePlayers.split(/[\n,]/).map((id) => id.trim()).filter(Boolean),
     exclude_events: draft.exclusions.map(cleanGroupRule),
     behavior: {
-      kind: draft.kind, level: Number(draft.level), event: draft.kind === 'level_duration' ? null : cleanGroupRule(draft.event), parameter: draft.parameter,
-      window_minutes: Number(draft.minutes), comparison: draft.comparison, split: draft.kind === 'parameter' && draft.comparison === 'equals' ? null : Number(draft.split), value: draft.value,
+      ...(draft.kind === 'saved_groups' ? { group_a: draft.groupA, group_b: draft.groupB } : {}),
+      kind: draft.kind, level: Number(draft.level), event: ['level_duration', 'saved_groups'].includes(draft.kind) ? null : cleanGroupRule(draft.event), parameter: draft.parameter,
+      window_minutes: Number(draft.minutes), comparison: draft.comparison, split: draft.kind === 'saved_groups' || draft.kind === 'parameter' && draft.comparison === 'equals' ? null : Number(draft.split), value: draft.value,
     },
     outcome: { kind: draft.outcomeKind, level: Number(draft.outcomeLevel), event: draft.outcomeKind === 'event' ? cleanGroupRule(draft.outcomeEvent) : null, window_hours: Number(draft.hours) },
   };
@@ -76,6 +82,7 @@ export function savedGroupDraft(raw: unknown): GroupDraft | null {
   for (const [key, value] of Object.entries(defaults)) if (typeof value === 'string' && typeof draft[key as keyof GroupDraft] !== 'string') return null;
   const validRule = (rule: unknown): rule is EventRule => !!rule && typeof rule === 'object' && ['event', 'param', 'op', 'value'].every((key) => typeof (rule as Record<string, unknown>)[key] === 'string');
   if (!Array.isArray(draft.exclusions) || !draft.exclusions.every(validRule) || !validRule(draft.event) || !validRule(draft.outcomeEvent)) return null;
-  if (!['level_duration', 'event_count', 'parameter'].includes(draft.kind) || !['number', 'equals'].includes(draft.comparison) || !['level', 'event'].includes(draft.outcomeKind)) return null;
+  if (!['level_duration', 'event_count', 'parameter', 'saved_groups'].includes(draft.kind) || !['number', 'equals'].includes(draft.comparison) || !['level', 'event'].includes(draft.outcomeKind)) return null;
+  if (draft.kind === 'saved_groups' && (!draft.groupA?.chips?.length || !draft.groupB?.chips?.length)) return null;
   return draft;
 }

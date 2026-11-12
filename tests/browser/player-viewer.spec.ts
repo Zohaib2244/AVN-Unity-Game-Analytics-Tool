@@ -53,8 +53,10 @@ for (const theme of ['dark', 'light']) {
         await expect.poll(() => body.evaluate((el) => el.scrollTop)).toBe(0);
         expect(new URL(page.url()).searchParams.get('player')).toBe('player-two');
         if (section.startsWith('levels')) expect(new URL(page.url()).searchParams.get('level')).toBe('"12"');
-        await dialog.getByRole('button', { name: 'Player info', exact: true }).click();
+        await dialog.getByRole('button', { name: 'Summary', exact: true }).click();
         await expect(dialog.getByRole('heading', { name: 'Player information' })).toBeVisible();
+        const tileRows = await dialog.locator('.ps-tile').evaluateAll((tiles) => { const rows = new Map<number, number>(); for (const tile of tiles) { const top = Math.round(tile.getBoundingClientRect().top); rows.set(top, (rows.get(top) ?? 0) + 1); } return [...rows.values()]; });
+        expect(new Set(tileRows).size).toBe(1);
         expect((await dialog.boundingBox())!.height).toBe(bounds!.height);
         expect((await dialog.boundingBox())!.y).toBe(bounds!.y);
         await dialog.getByRole('button', { name: 'Raw events', exact: true }).click();
@@ -108,13 +110,13 @@ test('a player opened from Players is a page with a way back, not a popup', asyn
   // Ready-made highlights: levels as started / completed / failed, ads by kind; only started events light up.
   await expect(view.locator('.journey-events li').first()).toBeAttached();
   const group = view.getByRole('group', { name: 'Highlights', exact: true });
-  await expect(group.getByRole('button', { name: /Level started/ })).toBeVisible();
-  await expect(group.getByRole('button', { name: /Rewarded ads/ })).toBeVisible();
+  await expect(group.getByRole('button', { name: /^Level started/ })).toBeVisible();
+  await expect(group.getByRole('button', { name: /^Rewarded ads/ })).toBeVisible();
   await expect(group.getByRole('button', { name: /App open ads/ })).toHaveCount(0);
-  await group.getByRole('button', { name: /Level started/ }).click();
-  await expect(group.getByRole('button', { name: /Level started/ })).toHaveAttribute('aria-pressed', 'true');
+  await group.getByRole('button', { name: /^Level started/ }).click();
+  await expect(group.getByRole('button', { name: /^Level started/ })).toHaveAttribute('aria-pressed', 'true');
   expect(await view.locator('.journey-events li.timeline-match').count()).toBe(12);
-  await group.getByRole('button', { name: /Level started/ }).click();
+  await group.getByRole('button', { name: /^Level started/ }).click();
   expect(await view.locator('.journey-events li.timeline-match').count()).toBe(0);
 
   // Sessions are listed beside the timeline.
@@ -126,7 +128,7 @@ test('a player opened from Players is a page with a way back, not a popup', asyn
   }
 
   // Event Analysis keeps the picked event beside the list.
-  await view.getByRole('button', { name: 'Event Analysis', exact: true }).click();
+  await view.getByRole('button', { name: 'Event analysis', exact: true }).click();
   await view.getByRole('button', { name: 'LEVEL_ANALYSIS', exact: true }).click();
   const detail = view.getByLabel('Selected event');
   await expect(detail.getByRole('button', { name: 'STATE', exact: true })).toBeVisible();
@@ -155,13 +157,13 @@ test('Levels: Occurrence & drop shows ads, powerups and fail reasons and what pl
   // Drop by: the chosen ad against players who didn't see it, for both ways of leaving at once.
   await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: 'Drop by' }).click();
   const drop = page.getByRole('region', { name: 'Drop by level' });
-  await expect(drop.getByRole('columnheader', { name: 'Never started next' })).toBeVisible();
-  await expect(drop.getByRole('columnheader', { name: 'Left the session' })).toBeVisible();
+  await expect(drop.getByRole('columnheader', { name: /Of them, stopped playing/ })).toBeVisible();
+  await expect(drop.getByRole('columnheader', { name: /Of the rest, stopped playing/ })).toBeVisible();
   await expect(drop.getByRole('row', { name: /^11 / })).toContainText('+');
   // One basis at a time.
-  await page.getByRole('group', { name: 'Left means' }).getByRole('button', { name: 'Left the session' }).click();
-  await expect(drop.getByRole('columnheader', { name: 'Never started next' })).toHaveCount(0);
-  await expect(drop.getByRole('columnheader', { name: 'Left right after' })).toHaveCount(0);
+  await page.getByRole('group', { name: 'Gone means' }).getByRole('button', { name: 'Ended that session' }).click();
+  await expect(drop.getByRole('columnheader', { name: /stopped playing/ })).toHaveCount(0);
+  await expect(drop.getByRole('columnheader', { name: /Of them, ended/ })).toBeVisible();
   // Other subjects and the choice is remembered.
   await page.getByRole('group', { name: 'Of' }).getByRole('button', { name: 'Fail reasons' }).click();
   await expect(drop.getByRole('row', { name: /^11 / })).toBeVisible();

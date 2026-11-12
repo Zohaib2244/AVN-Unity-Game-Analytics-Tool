@@ -12,6 +12,7 @@ from itertools import groupby
 
 from fastapi import HTTPException
 
+from . import player_chips
 from .conditions import numeric_value
 from .insights import MAX_FUNNEL_EVENTS, matches, read_source, where
 from .journeys import _Reader
@@ -106,6 +107,8 @@ def _outcome(row, outcome):
 
 
 def _labels(behavior):
+    if behavior["kind"] == "saved_groups":
+        return f"A · {behavior['group_a']['name']} only", f"B · {behavior['group_b']['name']} only"
     if behavior["kind"] == "parameter" and behavior["comparison"] == "equals":
         return f"A · equals {behavior['value']}", "B · other recorded values"
     unit = (
@@ -133,6 +136,21 @@ def compare(storage, game_id, start, end, query, now=None):
         key: {"id": key, "label": label, "players": 0, "reached": 0, "examples": []}
         for key, label in (("a", a_label), ("b", b_label), ("missing", "No recorded behavior"))
     }
+    saved = query["behavior"]["kind"] == "saved_groups"
+    memberships = None
+    if saved:
+        memberships = [
+            player_chips.members(storage, game_id, query["behavior"][key]["chips"])
+            for key in ("group_a", "group_b")
+        ]
+        groups["missing"]["label"] = "Neither saved group"
+        groups["overlap"] = {
+            "id": "overlap",
+            "label": "In both saved groups · outside A/B",
+            "players": 0,
+            "reached": 0,
+            "examples": [],
+        }
     exclusions, missing = Counter(), Counter()
     counts = {
         "candidates": 0,
@@ -141,7 +159,7 @@ def compare(storage, game_id, start, end, query, now=None):
         "excluded": 0,
         "outcome_before_group": 0,
     }
-    filters = query["filters"]
+    filters = player_chips.apply_filters(storage, game_id, query["filters"])
     history_filters = {key: filters[key] for key in ("environments", "exclude_environments")}
     with storage.connect(storage.game_path(game_id)) as connection:
         connection.execute("BEGIN")
@@ -196,7 +214,17 @@ def compare(storage, game_id, start, end, query, now=None):
                 parameters, info = reader.level(row["name"], row["params"], row["app_version"])
                 row.update(parameters=parameters, level_info=info)
                 events.append(row)
-            _add_player(player, events, query, now.timestamp(), groups, counts, exclusions, missing)
+            _add_player(
+                player,
+                events,
+                query,
+                now.timestamp(),
+                groups,
+                counts,
+                exclusions,
+                missing,
+                memberships,
+            )
     counts["excluded"] = sum(exclusions.values())
     for group in groups.values():
         n, k = group["players"], group["reached"]
@@ -223,7 +251,9 @@ def compare(storage, game_id, start, end, query, now=None):
     }
 
 
-def _add_player(player, events, query, now_ts, groups, counts, exclusions, missing):
+def _add_player(
+    player, events, query, now_ts, groups, counts, exclusions, missing, memberships=None
+):
     first = events[0]
     if not first["selected"]:
         exclusions["baseline_filters"] += 1
@@ -260,6 +290,18 @@ def _add_player(player, events, query, now_ts, groups, counts, exclusions, missi
             exclusions["no_entry"] += 1
             return
     counts["eligible"] += 1
+    if memberships is not None:
+        a, b = (player in members for members in memberships)
+        key = "overlap" if a and b else "a" if a else "b" if b else "missing"
+        group = groups[key]
+        reached = any(_outcome(row, query["outcome"]) for row in events)
+        group["players"] += 1
+        group["reached"] += int(reached)
+        if len(group["examples"]) < 50:
+            group["examples"].append(
+                {"player": player, "reached": reached, "value": group["label"]}
+            )
+        return
     value, grouped_at, reason = _measure(events, query["behavior"], first["ts"], deadline)
     outcomes = [row["ts"] for row in events if _outcome(row, query["outcome"])]
     if reason:

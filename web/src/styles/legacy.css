@@ -879,7 +879,7 @@ tr.level-hard td{background:color-mix(in srgb,var(--status-down) 8%,transparent)
 .nb-input{flex:1;min-height:44px;max-height:140px;resize:none}
 .nb-send{margin:0;min-height:44px}
 .nb-foot{padding:0 14px 10px;margin:0}
-@media (max-width:560px){#nutbot-root{width:100vw}.nb-launcher span:last-child{display:none}}
+@media (max-width:560px){#nutbot-root{width:100vw}.nb-launcher span:last-child:not(.nb-waiting){display:none}}
 
 /* ─── Shared analytics context and confidence ─── */
 .analysis-context{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:-4px 0 18px;color:var(--text-muted-dim);font-size:var(--fs-label)}

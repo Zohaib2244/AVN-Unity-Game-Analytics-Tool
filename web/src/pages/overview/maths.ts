@@ -19,8 +19,8 @@ export const dailySeries = (days: OverviewDay[], range: Pick<DayRange, 'from' | 
 export const CHART = { width: 800, height: 170, left: 40, bottom: 22, top: 8 } as const;
 
 /** Where the bars, grid lines and labels of the daily chart go, in viewBox units. */
-export function chartGeometry(series: DayPoint[]) {
-  const { width, height, left, bottom, top } = CHART;
+export function chartGeometry(series: DayPoint[], left: number = CHART.left) {
+  const { width, height, bottom, top } = CHART;
   const peak = Math.max(1, ...series.map((item) => item.value));
   const plot = width - left - 4;
   const step = plot / Math.max(1, series.length);

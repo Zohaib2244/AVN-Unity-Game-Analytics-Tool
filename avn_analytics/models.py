@@ -358,6 +358,28 @@ class ImportPrepare(StrictModel):
 FilterValues = Annotated[list[Annotated[str, Field(max_length=128)]], Field(max_length=100)]
 
 
+class PlayerChip(BaseModel):
+    """One group condition, validated by player_chips.conditions."""
+
+    model_config = ConfigDict(extra="allow")
+    kind: Annotated[str, Field(max_length=40)]
+
+
+class ChipGroupDefinition(StrictModel):
+    chips: Annotated[list[PlayerChip], Field(min_length=1, max_length=8)]
+
+    @model_validator(mode="after")
+    def valid_chips(self):
+        from .player_chips import conditions
+
+        conditions([chip.model_dump() for chip in self.chips])
+        return self
+
+
+class ChipGroupSelection(ChipGroupDefinition):
+    name: Annotated[str, Field(min_length=1, max_length=80)]
+
+
 class Filters(StrictModel):
     """Narrows dashboard queries; an empty list means no restriction."""
 
@@ -371,6 +393,15 @@ class Filters(StrictModel):
     exclude_countries: FilterValues = []
     platforms: FilterValues = []
     exclude_platforms: FilterValues = []
+    player_group: Annotated[list[PlayerChip], Field(max_length=8)] = []
+
+    @field_validator("player_group")
+    @classmethod
+    def valid_group(cls, value):
+        from .player_chips import conditions
+
+        conditions([chip.model_dump() for chip in value])
+        return value
 
 
 Threshold = Annotated[int, Field(ge=1, le=1_000_000)]
@@ -457,7 +488,9 @@ class FunnelQuery(FunnelDefinition):
 
 
 class GroupBehavior(StrictModel):
-    kind: Literal["level_duration", "event_count", "parameter"] = "level_duration"
+    kind: Literal["level_duration", "event_count", "parameter", "saved_groups"] = "level_duration"
+    group_a: ChipGroupSelection | None = None
+    group_b: ChipGroupSelection | None = None
     level: Annotated[int, Field(ge=0, le=1_000_000)] = 1
     event: FunnelStep | None = None
     parameter: Annotated[str, Field(max_length=80)] = ""
@@ -468,6 +501,12 @@ class GroupBehavior(StrictModel):
 
     @model_validator(mode="after")
     def complete_behavior(self):
+        if self.kind == "saved_groups":
+            if self.group_a is None or self.group_b is None:
+                raise ValueError("Choose two saved player groups")
+            if self.group_a.chips == self.group_b.chips:
+                raise ValueError("Choose different player groups")
+            return self
         if self.kind != "parameter" or self.comparison == "number":
             if self.split is None:
                 raise ValueError("Enter the numeric split for the groups")
@@ -514,7 +553,7 @@ class PlayerGroupsQuery(PlayerGroupsPopulation):
     @model_validator(mode="after")
     def ordered_windows(self):
         if (
-            self.behavior.kind != "level_duration"
+            self.behavior.kind not in ("level_duration", "saved_groups")
             and self.behavior.window_minutes >= self.outcome.window_hours * 60
         ):
             raise ValueError("The behavior window must end before the outcome window")
@@ -541,7 +580,7 @@ class SavedGroupDefinition(PlayerGroupsPopulation):
     def valid_setup(self):
         if self.end < self.start or (self.end - self.start).days > 365:
             raise ValueError("Choose a date range of at most 366 days")
-        if self.behavior.kind != "level_duration":
+        if self.behavior.kind not in ("level_duration", "saved_groups"):
             if self.behavior.window_minutes >= self.window_hours * 60:
                 raise ValueError("The behavior window must end before the observation window")
         if self.outcome is not None:
@@ -561,17 +600,6 @@ class SavedGroupDefinition(PlayerGroupsPopulation):
                 }
             )
         return self
-
-
-class PlayerChip(BaseModel):
-    """One condition of a Players-page group; player_chips.py checks the fields per kind."""
-
-    model_config = ConfigDict(extra="allow")
-    kind: Annotated[str, Field(max_length=40)]
-
-
-class ChipGroupDefinition(StrictModel):
-    chips: Annotated[list[PlayerChip], Field(min_length=1, max_length=8)]
 
 
 class SavedPlayerGroup(StrictModel):

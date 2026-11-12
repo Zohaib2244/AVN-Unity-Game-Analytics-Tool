@@ -28,3 +28,17 @@ describe('player group chips', () => {
     expect(chipsFromSearch({})).toEqual([]);
   });
 });
+
+it('migrates every rule operator and occurrence threshold without losing values', async () => {
+  const { legacyChips, chipRule, withChipRule } = await import('./chips');
+  const rules = ['gt', 'gte', 'lt', 'lte', 'ne', 'contains', 'exists', 'eq'].map((op) => ({ event: 'Reward', param: 'Amount', op, value: op === 'exists' ? '' : '5', min_times: 3, does: op === 'ne' ? 'didnt' as const : 'did' as const }));
+  const chips = legacyChips(rules);
+  expect(chips.map((chip) => chip.op)).toEqual(rules.map((rule) => rule.op));
+  expect(chips.every(chipReady)).toBe(true);
+  expect(chips[0]).toMatchObject({ op: 'gt', rule_value: '5', min: 3, never: false });
+  expect(chips[4]?.never).toBe(true);
+  expect(chipWords(chips[0]!)[1]).toContain('Amount > 5 at least 3 times');
+  expect(chipRule(chips[6]!)).toMatchObject({ op: 'exists', value: '' });
+  expect(withChipRule(chips[0]!, { op: 'lte' }).op).toBe('lte');
+  expect(JSON.parse(groupParam(chips))).toHaveLength(8);
+});

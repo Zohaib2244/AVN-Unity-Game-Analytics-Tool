@@ -367,7 +367,7 @@ test('NutBot pins from the top left, shows at the right edge when unpinned and c
   const dock = page.locator('.nb-dock');
   await expect(dock).toBeVisible();
   // The panel names itself, so the launcher steps aside while it is open; the face is drawn in one frame.
-  await expect(page.locator('.nb-launcher')).toHaveCount(0);
+  await expect(page.locator('.nb-launcher')).toBeHidden();
   await expect(dock.locator('.nb-h .nb-face')).toHaveCount(1);
   await expect(dock.locator('.nb-h .nb-face > svg.nb-art')).toHaveCount(1);
   const pin = dock.getByRole('button', { name: /^(Unpin|Pin) NutBot$/ });

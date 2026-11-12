@@ -53,3 +53,11 @@ describe('signed', () => {
     expect(signed(0, String)).toBe('0');
   });
 });
+
+it('can reserve a wider label gutter without clipping duration labels', () => {
+  const series = [{ day: '2026-11-01', value: 600 }];
+  const wide = chartGeometry(series, 68);
+  expect(wide.bars[0]!.hitX).toBe(68);
+  expect(wide.bars[0]!.x).toBeGreaterThan(68);
+  expect(wide.ticks).toEqual([0, 300, 600]);
+});

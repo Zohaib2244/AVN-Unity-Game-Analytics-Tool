@@ -14,6 +14,7 @@ through insights.where honours it. Two kinds of condition come out of here:
 The chip shapes are checked here; anything unexpected is a ValueError with a sentence for people.
 """
 
+import math
 from datetime import UTC, date, datetime, timedelta
 
 ATTRIBUTION = "ATTRIBUTION_ANALYSIS"
@@ -21,7 +22,6 @@ AD = "AD_ANALYSIS"
 LEVEL = "LEVEL_ANALYSIS"
 MAX_CHIPS = 8
 MAX_VALUES = 50
-MAX_LISTED_PLAYERS = 20_000
 NAME_LIMIT = 128
 
 KINDS = (
@@ -60,7 +60,7 @@ def _number(chip, key):
         number = float(value)
     except (TypeError, ValueError):
         raise ValueError(f"{key} must be a number.") from None
-    if number < 0 or number > 1e9:
+    if not math.isfinite(number) or number < 0 or number > 1e9:
         raise ValueError(f"{key} is out of range.")
     return number
 
@@ -229,7 +229,21 @@ def conditions(chips, now=None):
             if not event:
                 raise ValueError("Choose an event.")
             tests = []
-            if chip.get("param"):
+            rule = None
+            if chip.get("param") and ("op" in chip or "rule_value" in chip):
+                from .models import FunnelStep
+                from .rules import condition_sql
+
+                rule = FunnelStep.model_validate(
+                    {
+                        "event": event,
+                        "param": chip["param"],
+                        "op": chip.get("op", "eq"),
+                        "value": str(chip.get("rule_value", "")),
+                    }
+                ).model_dump()
+                condition_sql(rule)  # Reject invalid numeric comparisons before saving.
+            elif chip.get("param"):
                 tests.append([str(chip["param"])[:80], _values(chip)])
             if chip.get("never"):
                 found.append(
@@ -240,12 +254,18 @@ def conditions(chips, now=None):
                         "events": [event],
                         "tests": tests,
                         "missing": True,
+                        "rule": rule,
                     }
                 )
             else:
                 found.append(
                     _aggregate(
-                        "count", _number(chip, "min") or 1, None, events=[event], tests=tests
+                        "count",
+                        _number(chip, "min") or 1,
+                        None,
+                        events=[event],
+                        tests=tests,
+                        rule=rule,
                     )
                 )
     return found
@@ -257,6 +277,26 @@ def resolve_costs(storage, game_id, found):
     pending = [item for item in found if "cost" in item]
     if not pending:
         return found
+    value = storage.scans.get(
+        storage, game_id, ("player-cost-values",), lambda: _cost_values(storage, game_id)
+    )
+    resolved = []
+    for item in found:
+        if "cost" not in item:
+            resolved.append(item)
+            continue
+        low, high = item["min"], item["max"]
+        keep = [
+            pid
+            for pid, numbers in value.items()
+            if (low is None or numbers[item["cost"]] >= low)
+            and (high is None or numbers[item["cost"]] <= high)
+        ]
+        resolved.append({"players": keep})
+    return resolved
+
+
+def _cost_values(storage, game_id):
     from . import acquisition, acquisition_report, costs
 
     game = storage.get_game(game_id)
@@ -283,20 +323,67 @@ def resolve_costs(storage, game_id, found):
         cpi = spend[key] / bought[key]
         earned = sum(item["days"].values())
         value[item["pid"]] = {"cost": cpi, "paid_back": 100 * earned / cpi}
-    resolved = []
-    for item in found:
-        if "cost" not in item:
-            resolved.append(item)
-            continue
-        low, high = item["min"], item["max"]
-        keep = [
-            pid
-            for pid, numbers in value.items()
-            if (low is None or numbers[item["cost"]] >= low)
-            and (high is None or numbers[item["cost"]] <= high)
-        ]
-        resolved.append({"players": keep[:MAX_LISTED_PLAYERS]})
-    return resolved
+    return value
+
+
+def resolved(storage, game_id, chips):
+    """Validate once, resolving money conditions through the shared short-lived read cache."""
+    found = conditions(chips)
+    return resolve_costs(storage, game_id, found)
+
+
+def apply_filters(storage, game_id, filters):
+    """The POST equivalent of the dashboard's player_group query argument."""
+    filters = dict(filters)
+    chips = filters.pop("player_group", [])
+    if chips:
+        filters["segments"] = [*filters.get("segments", []), *resolved(storage, game_id, chips)]
+    return filters
+
+
+def members(storage, game_id, chips):
+    """Membership is lifetime-wide and independent of the days displayed on a page."""
+    from .insights import read_source, where
+
+    def compute():
+        found = resolved(storage, game_id, chips)
+        with storage.connect(storage.game_path(game_id)) as connection:
+            source = read_source(storage, connection)
+            sql, args = where("0001-01-01", "9999-12-31", {"segments": found}, source=source)
+            return frozenset(
+                row[0]
+                for row in connection.execute(
+                    f"SELECT DISTINCT {source.player} FROM {source.table} "
+                    f"WHERE {sql} AND {source.identified}",
+                    args,
+                )
+            )
+
+    return storage.scans.get(storage, game_id, ("chip-members", chips), compute)
+
+
+def counts(storage, game_id, start, end, filters, items):
+    """Saved-group counts within the current days/build/filters; scan that population once."""
+    from .insights import read_source, where
+
+    with storage.connect(storage.game_path(game_id)) as connection:
+        source = read_source(storage, connection)
+        sql, args = where(start, end, filters, source=source)
+        population = {
+            row[0]
+            for row in connection.execute(
+                f"SELECT DISTINCT {source.player} FROM {source.table} "
+                f"WHERE {sql} AND {source.identified}",
+                args,
+            )
+        }
+    return {
+        "all": len(population),
+        "counts": {
+            item["id"]: len(population & members(storage, game_id, item["definition"]["chips"]))
+            for item in items
+        },
+    }
 
 
 TOP_CREATIVES = 60

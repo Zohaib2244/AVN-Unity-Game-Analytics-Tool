@@ -24,7 +24,7 @@ import { isCompareView, levelsPath, releasesKey, type DrillState } from './level
 export function LevelsPage({ game }: { game: Game }): ReactElement {
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as Record<string, string | undefined>;
-  const [filters, updateFilters] = useFilters(game);
+  const [filters, updateFilters] = useFilters(game, true);
   const [nav, setNavState] = useState<LevelNavigation>(() => cleanNavigation(storeGet<Partial<LevelNavigation>>(navigationKey(game))));
   const setNav = (patch: Partial<LevelNavigation>) => setNavState((previous) => { const next = { ...previous, ...patch }; storeSet(navigationKey(game), next); return next; });
   useStorePushed(navigationKey(game), () => setNavState(cleanNavigation(storeGet<Partial<LevelNavigation>>(navigationKey(game)))));
@@ -69,7 +69,7 @@ export function LevelsPage({ game }: { game: Game }): ReactElement {
   return (
     <>
       <Heading title="Levels" subtitle="Where players stop, level by level." />
-      {view !== 'groups' ? <FilterBar game={game} state={filters} onChange={updateFilters} context={levels.data ? { anonymous_events: levels.data.context.anonymous_events } : {}} /> : null}
+      {view !== 'groups' ? <FilterBar playerGroups game={game} state={filters} onChange={updateFilters} context={levels.data ? { anonymous_events: levels.data.context.anonymous_events } : {}} /> : null}
       <div className="levels-bar">
         <div className="range-modes route-tabs levels-views" role="group" aria-label="Levels view">
           <button type="button" aria-pressed={view === 'table'} onClick={() => chooseView('table')}>Level flow</button>

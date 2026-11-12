@@ -46,3 +46,12 @@ describe('guided group comparison', () => {
     expect(savedGroupDraft(defaultGroupDraft())).toEqual(defaultGroupDraft());
   });
 });
+
+it('compares snapshots of saved player groups without requiring an early-event split', () => {
+  const draft = { ...defaultGroupDraft(), kind: 'saved_groups' as const, groupA: { name: 'A', chips: [{ kind: 'campaign' as const, values: ['A'] }] }, groupB: { name: 'B', chips: [{ kind: 'campaign' as const, values: ['B'] }] }, minutes: '1440' };
+  expect([0, 1, 2, 3].map((step) => groupStepError(draft, step))).toEqual(['', '', '', '']);
+  const request = groupRequest(draft, filters);
+  expect(request.behavior).toMatchObject({ kind: 'saved_groups', event: null, split: null, group_a: draft.groupA, group_b: draft.groupB });
+  expect(savedGroupDraft(draft)).toEqual(draft);
+  expect(groupStepError({ ...draft, groupB: draft.groupA }, 1)).toContain('different');
+});

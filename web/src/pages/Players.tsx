@@ -16,7 +16,7 @@ import type { Catalog, EventRule, Game, PlayerRow, PlayersResult } from '@/lib/t
 import { PlayerPage, type PlayerBrowse } from './player/PlayerView';
 import { RuleList, paramKeys, ruleOptions } from '@/components/EventRule';
 import { GroupBar, GroupsPanel, libraryPath, type SavedChipGroup } from './players/Groups';
-import { chipsFromSearch, groupParam, type Chip } from './players/chips';
+import { chipsFromSearch, groupParam, legacyChips, type Chip, type GroupCounts } from './players/chips';
 import { PlayersTable } from './players/PlayersTable';
 import { AGG_LABELS, PAGE_SIZE, metricLabel, orderLabel, rulesBody, sortOptions, validSort } from './players/rules';
 
@@ -67,16 +67,17 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
     const saved = storeGet<{ id: string | null; chips: Chip[] }>(groupKey) ?? { id: null, chips: [] };
     const old = loadView(game).conditions.filter((rule) => rule.event);
     if (!old.length) return saved;
-    return { id: null, chips: [...saved.chips, ...old.map((rule): Chip => ({ kind: 'event', event: rule.event, param: rule.param || undefined, values: rule.param && rule.value !== '' && rule.value != null ? [String(rule.value)] : [], never: rule.does === 'didnt' }))] };
+    return { id: null, chips: [...saved.chips, ...legacyChips(old)] };
   });
   const setGroup = (next: { id: string | null; chips: Chip[] }) => { setGroupState(next); storeSet(groupKey, next); };
-  useEffect(() => { if (view.conditions.length) setView((v) => ({ ...v, conditions: [] })); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (view.conditions.length && !chipsFromSearch(query).length) { storeSet(groupKey, group); setView((v) => ({ ...v, conditions: [] })); } }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const counts = useRead<GroupCounts>(`${gameURL(game)}/insights/player-group-counts?${filterQuery(filters)}`);
   const library = useRead<SavedChipGroup[]>(`${libraryPath(game)}?kind=players`);
   const savedGroup = group.id ? library.data?.find((item) => item.id === group.id) ?? null : null;
   const playerGroup = groupParam(group.chips);
   const catalogQuery = useRead<Catalog>(`${gameURL(game)}/insights/catalog?${filterQuery(filters)}`);
   const catalog = catalogQuery.data ?? EMPTY_CATALOG;
-  const body = useMemo(() => rulesBody(view), [view]);
+  const body = useMemo(() => rulesBody({ ...view, conditions: [] }), [view]);
   const rulesJSON = body.conditions.length || body.metrics.length ? JSON.stringify(body) : '';
   const sort = validSort(view.sort, body.metrics);
   useEffect(() => { setOffset(0); }, [filters, search, sort, view.order, rulesJSON, playerGroup]);
@@ -104,7 +105,7 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
       <Heading title="Players" subtitle="Open a player to read their events." />
       <FilterBar game={game} state={filters} onChange={setFilters} context={players.data?.context || {}} />
       <div className="players-layout">
-        <GroupsPanel items={library.data} selected={group.id} unsaved={group.id ? [] : group.chips} total={total} onSelect={(item) => setGroup(item ? { id: item.id, chips: item.definition.chips } : { id: null, chips: [] })} onNew={() => setGroup({ id: null, chips: [] })} />
+        <GroupsPanel counts={counts.data} countsError={counts.isError} items={library.data} selected={group.id} unsaved={group.id ? [] : group.chips} total={total} onSelect={(item) => setGroup(item ? { id: item.id, chips: item.definition.chips } : { id: null, chips: [] })} onNew={() => setGroup({ id: null, chips: [] })} />
         <div className="players-main">
           <GroupBar key={group.id ?? 'new'} game={game} chips={group.chips} onChips={(chips) => setGroup({ ...group, chips })} saved={savedGroup} catalog={catalog} total={total}
             onSaved={(item) => setGroup({ id: item.id, chips: item.definition.chips })} onDeleted={() => setGroup({ id: null, chips: [] })} />

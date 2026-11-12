@@ -8,6 +8,8 @@ import { dimensionText, number } from '@/lib/format';
 import { gameURL } from '@/lib/games';
 import { DIMENSION_LABELS, MENU_DIMENSIONS, activeFilters, choiceOf, filterState, saveFilters, timezoneOffset, withChoice, type ActiveFilters, type Dimension, type DimensionChoice, type Facets, type FilterState } from '@/lib/filters';
 import type { Game } from '@/lib/types';
+import { PlayerGroupPicker } from './PlayerGroupPicker';
+import { groupSummary } from '@/pages/players/chips';
 import { DateRange, resolveRange } from './DateRange';
 import { useNotify } from './feedback';
 import { Ico, type IcoName } from './icons';
@@ -44,14 +46,14 @@ function chooseBuild<T extends Draft>(state: T, mode: 'latest' | 'previous' | 'a
 export type FilterContext = { anonymous_events?: number; excluded_events?: number; low_sample?: boolean; players?: number; minimum_players?: number };
 
 /** Owns the filter state for a game page. Returns the active state (range resolved) and a setter. */
-export function useFilters(game: Pick<Game, 'id'>): [ActiveFilters, (update: (state: ActiveFilters) => ActiveFilters) => void] {
-  const [state, setState] = useState<ActiveFilters>(() => { const saved = filterState(game); return { ...saved, range: resolveRange(saved.range?.preset || '30', saved.range) }; });
-  useEffect(() => { const saved = filterState(game); setState({ ...saved, range: resolveRange(saved.range?.preset || '30', saved.range) }); }, [game.id]);
+export function useFilters(game: Pick<Game, 'id'>, playerGroups = false): [ActiveFilters, (update: (state: ActiveFilters) => ActiveFilters) => void] {
+  const [state, setState] = useState<ActiveFilters>(() => { const saved = filterState(game, playerGroups); return { ...saved, range: resolveRange(saved.range?.preset || '30', saved.range) }; });
+  useEffect(() => { const saved = filterState(game, playerGroups); setState({ ...saved, range: resolveRange(saved.range?.preset || '30', saved.range) }); }, [game.id, playerGroups]);
   const update = useCallback((fn: (state: ActiveFilters) => ActiveFilters) => setState((previous) => { const next = fn(previous); saveFilters(game, next); return next; }), [game]);
   return [state, update];
 }
 
-export function FilterBar({ game, state, onChange, context, children }: { game: Pick<Game, 'id'>; state: ActiveFilters; onChange: (update: (state: ActiveFilters) => ActiveFilters) => void; context?: FilterContext; children?: ReactNode }): ReactElement {
+export function FilterBar({ game, state, onChange, context, children, playerGroups = false }: { game: Pick<Game, 'id'>; state: ActiveFilters; onChange: (update: (state: ActiveFilters) => ActiveFilters) => void; context?: FilterContext; children?: ReactNode; playerGroups?: boolean }): ReactElement {
   const { toast } = useNotify();
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
@@ -101,10 +103,12 @@ export function FilterBar({ game, state, onChange, context, children }: { game: 
             { value: 'all', label: 'All builds' },
           ]} />
         </div>
+        {playerGroups ? <PlayerGroupPicker game={game} value={state.playerGroup} onChange={(playerGroup) => set({ playerGroup })} /> : null}
         {children}
         <button ref={button} type="button" className="btn filters-open" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}><Ico name="funnel" size={14} /> Filters {counted ? <span className="count">{counted}</span> : null}</button>
       </div>
       <div className="filter-chips">
+        {playerGroups && state.playerGroup ? <span className="filter-chip" title={groupSummary(state.playerGroup.chips)}><span className="filter-chip-open">{state.playerGroup.name}</span><button type="button" className="filter-chip-x" aria-label="Remove player group filter" onClick={() => { const before = state.playerGroup; set({ playerGroup: undefined }); toast('Removed player group filter', { label: 'Undo', run: () => set({ playerGroup: before }) }, 'info'); }}><Ico name="close" size={11} /></button></span> : null}
         <AnimatePresence initial={false} mode="popLayout">
           {shownChips.map((chip) => (
             <motion.span key={chip.dimension} layout className={`filter-chip${chip.mode === 'not' ? ' out' : ''}`} {...POP}>

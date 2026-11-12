@@ -24,11 +24,11 @@ test('Levels view switches reliably and survives refresh and browser history', a
   await page.goto('/games/viewer-game/levels');
   const views = page.getByRole('group', { name: 'Levels view', exact: true });
   for (let index = 0; index < 3; index++) {
-    await views.getByRole('button', { name: 'Level Flow', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Level Flow', exact: true })).toBeVisible();
-    await expect(views.getByRole('button', { name: 'Level Flow', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await views.getByRole('button', { name: 'Level flow', exact: true }).click();
+    await expect(page.locator('.levels-grid')).toBeVisible();
+    await expect(views.getByRole('button', { name: 'Level flow', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Level Flow', exact: true })).toBeVisible();
+    await expect(page.locator('.levels-grid')).toBeVisible();
     await views.getByRole('button', { name: 'Compare releases', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Compare releases', exact: true })).toBeVisible();
   }
@@ -57,7 +57,7 @@ test('Game selector stays beside its trigger on a scrolled page', async ({ page 
   await page.screenshot({ path: info.outputPath('game-selector.png'), animations: 'disabled' });
   if (info.project.name !== 'phone') {
     await page.keyboard.press('Escape');
-    await page.locator('.fresh').evaluate((el) => (el as HTMLElement).focus({ preventScroll: true }));
+    await page.getByRole('button', { name: 'Refresh now', exact: true }).evaluate((el) => (el as HTMLElement).focus({ preventScroll: true }));
     const crumb = page.locator('.crumbs > span:nth-child(2) > .crumb-link');
     // Some browsers do not focus buttons on click. The old fallback used the unrelated focused footer.
     await crumb.dispatchEvent('click');
@@ -68,7 +68,7 @@ test('Game selector stays beside its trigger on a scrolled page', async ({ page 
 
 test('Continue toast offers each browser its own last view while Home and direct links stay predictable', async ({ page, browser }, info) => {
   await page.goto('/games/viewer-game/levels?view=table');
-  await expect(page.getByRole('heading', { name: 'Level Flow', exact: true })).toBeVisible();
+  await expect(page.locator('.levels-grid')).toBeVisible();
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Test games', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
@@ -83,7 +83,7 @@ test('Continue toast offers each browser its own last view while Home and direct
     await expect(other.getByRole('heading', { name: 'Test games', exact: true })).toBeVisible();
     await other.goto('/games/viewer-game/players');
     // Let the page finish opening, so it is the one this browser remembers.
-    await expect(other.getByRole('heading', { name: 'Players', exact: true })).toBeVisible();
+    await expect(other.getByRole('heading', { name: 'Players', exact: true, level: 1 })).toBeVisible();
     await other.goto('/');
     await expect(other.getByRole('heading', { name: 'Test games', exact: true })).toBeVisible();
     await other.getByRole('button', { name: 'Continue', exact: true }).click();
@@ -133,7 +133,7 @@ test('slow or failed workspace totals do not block the game list or navigation',
     release();
     await failure;
     await page.getByRole('button', { name: 'Players', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Players', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Players', exact: true, level: 1 })).toBeVisible();
     await expect(page.getByText('Couldn’t open your workspace.')).toHaveCount(0);
     await page.goto('/');
     await expect(page.locator('.game-card .tag').first()).toHaveText('Unavailable');

@@ -10,6 +10,7 @@ Segments are not part of the dashboard's Filters model: only the tools that say 
 `segment` read it, and `insights.where` applies it as one more condition on the player.
 """
 
+import json
 import re
 
 from .nutbot_base import ToolError
@@ -111,6 +112,12 @@ def _aggregate_clause(condition, source):
     for param, values in condition.get("tests") or []:
         filters.append(f"CAST({source.param(param)} AS TEXT) IN ({','.join('?' * len(values))})")
         args += values
+    if condition.get("rule"):
+        from .rules import condition_sql
+
+        sql, values = condition_sql(condition["rule"], (source.params, "$"))
+        filters.append(sql)
+        args += values
     measure = condition["aggregate"]
     params = condition.get("params") or []
     if measure == "count":
@@ -162,8 +169,9 @@ def clause(condition, source):
     if "aggregate" in condition:
         return _aggregate_clause(condition, source)
     if "players" in condition:
-        players = condition["players"] or [""]
-        return f"{source.player} IN ({','.join('?' * len(players))})", list(players)
+        return f"{source.player} IN (SELECT value FROM json_each(?))", [
+            json.dumps(condition["players"])
+        ]
     args = [condition["event"]]
     match = ""
     if condition.get("param"):

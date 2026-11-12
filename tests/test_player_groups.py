@@ -406,3 +406,41 @@ def test_mapped_level_events_and_completions_without_starts(backend):
     data = ask(backend, game, definition(entry_level=None))
     assert (data["groups"][0]["players"], data["groups"][0]["reached"]) == (1, 1)
     assert data["missing_reasons"] == {"completion_without_start": 1}
+
+
+def test_saved_chip_groups_keep_overlaps_outside_independent_comparisons(backend):
+    game = register(backend)
+    rows = []
+    for pid in ("a", "b", "both", "neither"):
+        rows += sequence(pid, reached=pid != "b")
+    rows += [record(pid, 2000, "flag_a") for pid in ("a", "both")]
+    rows += [record(pid, 2000, "flag_b") for pid in ("b", "both")]
+    seed(backend, game, rows)
+    a = {"name": "Has A", "chips": [{"kind": "event", "event": "flag_a"}]}
+    b = {"name": "Has B", "chips": [{"kind": "event", "event": "flag_b"}]}
+    body = definition(behavior={"kind": "saved_groups", "group_a": a, "group_b": b})
+    data = ask(backend, game, body)
+    groups = {row["id"]: row for row in data["groups"]}
+    assert [
+        (groups[key]["players"], groups[key]["reached"]) for key in ("a", "b", "overlap", "missing")
+    ] == [(1, 1), (1, 0), (1, 1), (1, 1)]
+    assert data["difference"]["percentage_points"] == 100
+    assert data["counts"]["outcome_before_group"] == 0
+    assert data["definition"]["behavior"]["group_a"]["chips"] == a["chips"]
+    # POST population filters use exactly the same chips, without requiring a behavior event.
+    body["filters"]["player_group"] = [{"kind": "event", "event": "flag_a"}]
+    narrowed = ask(backend, game, body)
+    assert narrowed["counts"]["eligible"] == 2
+    assert [row["players"] for row in narrowed["groups"]] == [1, 0, 0, 1]
+    # Checks keep group snapshots, so renamed or deleted library groups cannot change this check.
+    saved = backend.post(
+        f"/v1/games/{game['id']}/insights/group-library",
+        headers=AUTH,
+        json={
+            "name": "A vs B",
+            "kind": "check",
+            "definition": {**body, "window_hours": 24},
+        },
+    )
+    assert saved.status_code == 201, saved.text
+    assert saved.json()["definition"]["behavior"]["group_a"] == a

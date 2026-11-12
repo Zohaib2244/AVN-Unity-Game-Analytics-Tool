@@ -150,6 +150,10 @@ def _keeps(filters, platform, app_version):
 
 
 def _tally(connection, start, end, filters):
+    # This tally has no player, environment or country: it cannot answer those filters.
+    supported = {"app_versions", "exclude_app_versions", "platforms", "exclude_platforms"}
+    if any(value for key, value in (filters or {}).items() if key not in supported):
+        return None
     rows = connection.execute(
         """SELECT platform, app_version, delivery, sum(accepted) AS accepted,
                   sum(duplicates) AS duplicates, sum(rejected) AS rejected
@@ -163,15 +167,19 @@ def _delivery(connection, start, end, filters, tally):
     """Events per delivery path, and how late a session_end arrived on it."""
     condition, args = where(start, end, filters, source=LEGACY)
     delays = defaultdict(list)
+    events = Counter()
+    only_ends = "AND name='session_end'" if tally is not None else ""
     for row in connection.execute(
-        f"""SELECT json_extract(payload, '$.delivery') AS delivery, client_ts, server_ts
-            FROM events WHERE {condition} AND name='session_end'""",
+        f"""SELECT json_extract(payload, '$.delivery') AS delivery, name, client_ts, server_ts
+            FROM events WHERE {condition} {only_ends}""",
         args,
     ):
         if row["delivery"]:
-            delays[row["delivery"]].append(seconds_between(row["client_ts"], row["server_ts"]))
-    events = Counter()
-    for row in tally:
+            if row["name"] == "session_end":
+                delays[row["delivery"]].append(seconds_between(row["client_ts"], row["server_ts"]))
+            if tally is None:
+                events[row["delivery"]] += 1
+    for row in tally or []:
         if row["delivery"]:
             events[row["delivery"]] += row["accepted"]
     return [
@@ -193,7 +201,7 @@ def _quality(chosen, outcomes, tally):
         row["inferred"] += outcome["end_reason"] == "inferred"
         delays[key] += session.end_delays
     counts = defaultdict(Counter)
-    for row in tally:
+    for row in tally or []:
         for field in ("accepted", "duplicates", "rejected"):
             counts[(row["platform"], row["app_version"])][field] += row[field]
     result = []
@@ -209,9 +217,9 @@ def _quality(chosen, outcomes, tally):
                 "client_percent": round(row["client"] * share, 1) if share else None,
                 "inferred_percent": round(row["inferred"] * share, 1) if share else None,
                 "median_end_delay": _middle(delays[key]),
-                "events": sent,
+                "events": sent if tally is not None else None,
                 "duplicate_percent": round(100 * count["duplicates"] / sent, 2) if sent else None,
-                "rejected": count["rejected"],
+                "rejected": count["rejected"] if tally is not None else None,
             }
         )
     return sorted(result, key=lambda row: (version_key(row["app_version"]), row["platform"]))[::-1]
@@ -280,4 +288,5 @@ def report(storage, game_id, start, end, filters, timezone_offset_minutes=0):
         "previous_runs": _previous_runs(launches),
         "quality": _quality(chosen, outcomes, tally),
         "delivery": delivery,
+        "ingest_counts_available": tally is not None,
     }

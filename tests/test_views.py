@@ -425,3 +425,15 @@ def test_default_read_mode_is_facts(monkeypatch, tmp_path):
     monkeypatch.delenv("AVN_ANALYTICS_READ_MODE", raising=False)
     assert Settings(data_dir=tmp_path).analytics_read_mode == "facts"
     assert Settings.from_env().analytics_read_mode == "facts"
+
+
+def test_prepared_group_filters_are_canonical_and_keep_their_semantics(prepared):
+    storage, game, days = prepared
+    filters = {**HIDE_TEST, "segments": [{"event": "level_start"}]}
+    expected = insights.summary(storage, game, *days, filters, 0)
+    assert views.answer(storage, game, "summary", (days, filters, 0), lambda: expected) == expected
+    finish(storage, game)
+    assert views.answer(storage, game, "summary", (days, filters, 0), lambda: "live") == expected
+    # Duplicate membership conditions describe the same answer and must reuse its generation.
+    duplicate = {**filters, "segments": filters["segments"] * 2}
+    assert views.answer(storage, game, "summary", (days, duplicate, 0), lambda: "live") == expected

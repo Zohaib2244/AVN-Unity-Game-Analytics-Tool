@@ -16,14 +16,14 @@ import { fillDays } from './overview/maths';
 import { adLabel, BarTable, ENDINGS, importanceLabel, leaveLabel, reasonLabel, share, type TrendMeasure, TRENDS, trendValues } from './sessions/model';
 
 export function SessionsPage({ game }: { game: Game }): ReactElement {
-  const [state, onChange] = useFilters(game);
+  const [state, onChange] = useFilters(game, true);
   const [trend, setTrend] = useState<TrendMeasure>('median_seconds');
   const path = `${gameURL(game)}/insights/sessions?${filterQuery(state)}`;
   const query = useRead<SessionReport>(path);
   return (
     <>
       <Heading title="Sessions" subtitle="How long players stay, how sessions end and why they left." />
-      <FilterBar game={game} state={state} onChange={onChange} />
+      <FilterBar playerGroups game={game} state={state} onChange={onChange} />
       <QueryRegion query={query} path={path} skeleton={<Skeleton kind="stats" />}>
         {(report) => (report.sessions ? <Report report={report} trend={trend} onTrend={setTrend} range={state.range} /> : <div className="empty-scene"><NightScene /><p>No sessions started with these filters and days.</p></div>)}
       </QueryRegion>
@@ -100,18 +100,18 @@ function Quality({ report }: { report: SessionReport }): ReactElement {
       <div className="table-wrap">
         <table className="compact-table">
           <thead><tr><th>Platform</th><th>Version</th><th className="num">Sessions</th><th className="num">Game reported the end</th><th className="num">Server guessed</th><th className="num">End arrives after</th><th className="num">Duplicates</th><th className="num">Rejected batches</th></tr></thead>
-          <tbody>{report.quality.map((row) => <tr key={`${row.platform}-${row.app_version}`}><td>{platformLabel(row.platform)}</td><td className="mono">{row.app_version}</td><td className="num">{number(row.sessions)}</td><td className="num">{row.client_percent == null ? '—' : percent(row.client_percent)}</td><td className="num">{row.inferred_percent == null ? '—' : percent(row.inferred_percent)}</td><td className="num">{duration(row.median_end_delay)}</td><td className="num">{row.duplicate_percent == null ? '—' : percent(row.duplicate_percent)}</td><td className="num">{number(row.rejected)}</td></tr>)}</tbody>
+          <tbody>{report.quality.map((row) => <tr key={`${row.platform}-${row.app_version}`}><td>{platformLabel(row.platform)}</td><td className="mono">{row.app_version}</td><td className="num">{number(row.sessions)}</td><td className="num">{row.client_percent == null ? '—' : percent(row.client_percent)}</td><td className="num">{row.inferred_percent == null ? '—' : percent(row.inferred_percent)}</td><td className="num">{duration(row.median_end_delay)}</td><td className="num">{row.duplicate_percent == null ? '—' : percent(row.duplicate_percent)}</td><td className="num">{row.rejected == null ? '—' : number(row.rejected)}</td></tr>)}</tbody>
         </table>
       </div>
       {report.delivery.length ? (
         <div className="table-wrap session-delivery">
           <table className="compact-table">
-            <thead><tr><th>Sent by</th><th className="num">Events</th><th className="num">End arrives after</th></tr></thead>
+            <thead><tr><th>Sent by</th><th className="num">{report.ingest_counts_available ? 'Events' : 'Events kept'}</th><th className="num">End arrives after</th></tr></thead>
             <tbody>{report.delivery.map((row) => <tr key={row.delivery}><td className="mono">{row.delivery}</td><td className="num">{number(row.events)}</td><td className="num">{duration(row.median_end_delay)}</td></tr>)}</tbody>
           </table>
         </div>
       ) : null}
-      <p className="help panel-body">{report.old_way ? `${plural(report.old_way, 'session')} in these days came from app versions that measure length the old way. ` : ''}Duplicates, rejected batches and delivery are counted from the day this page was added.</p>
+      <p className="help panel-body">{report.old_way ? `${plural(report.old_way, 'session')} in these days came from app versions that measure length the old way. ` : ''}{report.ingest_counts_available ? 'Duplicates, rejected batches and delivery are counted from the day this page was added.' : 'Duplicate and rejection totals are unavailable for these filters: refused batches have no player or country. Delivery counts show matching events kept.'}</p>
     </section>
   );
 }

@@ -20,7 +20,7 @@ from . import analytics
 
 logger = logging.getLogger(__name__)
 
-VERSION = 4
+VERSION = 5
 EXPIRY = 86400
 BATCH_PLAYERS = 20
 # What one Levels step may read: a batch of players, or a single heavy player on their own.
@@ -122,7 +122,12 @@ def answer(storage, game_id, kind, parts, compute):
     normalized = json.loads(json.dumps(parts))
     filters_at = 2 if kind == "levels" else 1
     normalized[filters_at] = {
-        field: sorted(set(values))
+        field: list(
+            {
+                json.dumps(value, sort_keys=True): value
+                for value in sorted(values, key=lambda value: json.dumps(value, sort_keys=True))
+            }.values()
+        )
         for field, values in (normalized[filters_at] or {}).items()
         if values
     }

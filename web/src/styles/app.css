@@ -305,7 +305,7 @@ body:has(.dlg > .player-view) { overflow: hidden; }
 .option-search:focus-within { border-color: var(--accent); color: var(--text); }
 .option-search input { flex: 1; min-width: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; outline: none; }
 .option-list { height: calc(var(--rows, 6) * var(--row)); overflow-y: auto; scroll-snap-type: y mandatory; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; scrollbar-gutter: stable; }
-.option-list .opt { height: var(--row); min-height: var(--row); scroll-snap-align: start; cursor: pointer; }
+.option-list .opt { margin: 0; height: var(--row); min-height: var(--row); scroll-snap-align: start; cursor: pointer; }
 .option-list .opt .cb-in { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); flex: 0 0 auto; }
 .option-list .opt.out .cb-in { accent-color: var(--bad); }
 .option-list .opt.out .ot { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--bad) 70%, transparent); color: var(--muted); }
@@ -590,9 +590,11 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
 
 /* ── The Player tab: summary, then information ── */
 .player-tab { display: grid; gap: 18px; }
-.ps { display: grid; gap: 12px; }
+.ps { display: grid; gap: 12px; container: player-summary / inline-size; }
 .ps-warn { margin: 0; padding: 6px 10px; border-radius: 8px; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 40%, var(--line)); font-size: var(--fs-sm); }
-.ps-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.ps-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+@container player-summary (max-width: 960px) { .ps-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container player-summary (max-width: 520px) { .ps-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .ps-tile { display: grid; gap: 2px; padding: 10px 12px; border-radius: var(--r-card, 12px); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
 .ps-tile span { font-size: var(--fs-label, 12px); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
 .ps-tile b { font-family: var(--font-px, inherit); font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -1044,3 +1046,30 @@ th.sortable.num .sort-arrow { order: -1; }
 /* With the groups panel beside it the list is narrower: it scrolls sideways inside its own box. */
 .players-main .players-panel .players-table { overflow-x: auto; }
 .players-main .players-panel .players-table thead th { top: 0; }
+
+/* The shared player picker stays on the existing tools line; its choices use the same group chips. */
+.player-group-picker .pop-scroll { padding: 12px; display: grid; gap: 8px; }
+.grp-picker-item { width: 100%; min-height: 40px; padding: 8px 10px; text-align: left; border: 0; border-radius: var(--r-ctl); background: transparent; color: var(--text); font: inherit; cursor: pointer; }
+.grp-picker-item:hover, .grp-picker-item[aria-pressed="true"] { background: var(--nested); }
+.chip-event .rule-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 0; }
+.chip-event .rule-row > select, .chip-event .rule-row > input { width: 100%; min-width: 0; }
+.gchip { max-width: 100%; }
+.gchip-open { min-width: 0; overflow-wrap: anywhere; }
+.gchip-x { flex: 0 0 26px; }
+.grp-item .grp-name { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .grp-picker-item, .gchip-open, .gchip-x, .chip-num input, .chip-menu-group button { min-height: 44px; }
+  .gchip-x { min-width: 44px; }
+  .chip-editor .rule-row > select, .chip-editor .rule-row > input { min-height: 44px; }
+}
+.groups-side-toggle { display: none; }
+@media (max-width: 900px) {
+  .groups-side .panel-header h2 { display: none; }
+  .groups-side-toggle { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+  .groups-side-list { display: none; }
+  .groups-side-list.expanded { display: block; }
+}
+@media (max-width: 600px) {
+  .filter-bar { gap: 6px; }
+  .filter-bar .group-picker-open, .filter-bar .filters-open { padding-inline: 8px; }
+}

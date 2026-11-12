@@ -9,8 +9,10 @@ import { CHART, chartGeometry, dailySeries, type DayPoint } from './maths';
 type DayChartProps = { series: DayPoint[]; label: string; tip: string; format?: (value: number) => string; softFrom?: string; marker?: { day: string; label: string } };
 
 export function DayChart({ series, label, tip: unit, format = number, softFrom, marker }: DayChartProps): ReactElement {
-  const { width, height, left, bottom } = CHART;
-  const { y, ticks, step, bars } = chartGeometry(series);
+  const { width, height, bottom } = CHART;
+  // Reserve enough of the SVG for the formatted labels (durations are wider than counts).
+  const left = Math.max(CHART.left, ...chartGeometry(series).ticks.map((value) => format(value).length * 7 + 12));
+  const { y, ticks, step, bars } = chartGeometry(series, left);
   const box = useRef<HTMLDivElement>(null);
   const tipBox = useRef<HTMLDivElement>(null);
   const [tip, setTip] = useState<{ day: string; value: number; left: number } | null>(null);
