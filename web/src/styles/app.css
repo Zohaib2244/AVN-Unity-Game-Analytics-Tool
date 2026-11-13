@@ -1153,3 +1153,8 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 .panel-header select, .panel-header .btn, .panel-header .button, .panel-header .segmented, .toolbar select, .toolbar .btn, .toolbar .range-modes, .toolbar .segmented { height: 34px; min-height: 34px; box-sizing: border-box; }
 .panel-header select, .toolbar select { padding-block: 0; }
 .filter-bar .range-modes button, .panel-header .segmented button, .toolbar .range-modes button, .toolbar .segmented button { height: 100%; }
+
+/* Players: the start of the ID, then a copy button that is quiet until the row is under the pointer or focused. */
+.player-id { display: inline-flex; align-items: center; gap: 4px; }
+.player-id .btn, .player-id button { opacity: .45; transition: opacity .15s; }
+.player-row:hover .player-id button, .player-row:focus-within .player-id button, .player-id button:focus-visible, .player-id button.copy-done { opacity: 1; }

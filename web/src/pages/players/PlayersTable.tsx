@@ -5,7 +5,8 @@ import { useMemo, useRef, type KeyboardEvent, type MouseEvent, type ReactElement
 import { Link } from '@tanstack/react-router';
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable, type RowData } from '@tanstack/react-table';
 import { TEST_ENVIRONMENTS } from '@/lib/filters';
-import { analysisDate, countryName, duration, number, platformLabel, shortId, type Timezone } from '@/lib/format';
+import { analysisDate, countryName, duration, number, platformLabel, type Timezone } from '@/lib/format';
+import { CopyButton } from '@/components/CopyButton';
 import { gamePath } from '@/lib/games';
 import type { Game, PlayerMetric, PlayerRow } from '@/lib/types';
 import { metricLabel, metricValue, playerComparator } from './rules';
@@ -16,6 +17,8 @@ declare module '@tanstack/react-table' {
 }
 
 const column = createColumnHelper<PlayerRow>();
+/** The first characters are what you recognise a player by; the whole ID is one click away (copy) or in the tooltip. */
+const startOfId = (id: string): string => (id.length > 10 ? `${id.slice(0, 8)}…` : id);
 /** "3 Nov, 5:14 pm" in the reader's own format: the year is in the tooltip, as these are recent. */
 const recent = (value: string, timezone: Timezone): string => new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(timezone === 'utc' ? { timeZone: 'UTC' } : {}) });
 const plainClick = (event: MouseEvent): boolean => event.button === 0 && !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
@@ -34,7 +37,10 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, shown
   const columns = useMemo(() => [
     column.accessor('player', { id: 'player', header: () => <span title="A player is their user_id when the game sends one, otherwise the device’s install ID">Player</span>, enableSorting: false, cell: ({ row }) => (
       <>
-        <Link to={gamePath(game, 'players')} search={{ player: row.original.player }} className="row-title" onClick={(event: MouseEvent) => { if (plainClick(event)) open.current(row.original.player, row.index); }}><span className="mono">{shortId(row.original.player)}</span></Link>
+        <span className="player-id">
+          <Link to={gamePath(game, 'players')} search={{ player: row.original.player }} className="row-title" title={row.original.player} onClick={(event: MouseEvent) => { if (plainClick(event)) open.current(row.original.player, row.index); }}><span className="mono">{startOfId(row.original.player)}</span></Link>
+          <CopyButton text={row.original.player} label="Copy player ID" done="Player ID copied." />
+        </span>
         {(() => {
           // Only what differs between the rows shown is worth a second line; the same words on every row are noise.
           const parts = [varies.id ? (row.original.has_user_id ? 'User ID' : 'Install ID') : '', varies.platform ? platformLabel(row.original.platform || '—') : '', varies.version ? row.original.app_version || '' : ''].filter(Boolean);

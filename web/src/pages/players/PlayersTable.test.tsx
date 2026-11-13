@@ -9,6 +9,8 @@ vi.mock('@tanstack/react-router', () => ({
   Link: ({ children, className, onClick }: { children: unknown; className?: string; onClick?: (event: unknown) => void }) => <a href="#player" className={className} onClick={onClick as never}>{children as never}</a>,
 }));
 
+vi.mock('@/components/CopyButton', () => ({ CopyButton: ({ label }: { label: string }) => <button type="button">{label}</button> }));
+
 const SHOWN = new Set(defaultColumns());
 const game = { id: 'g', name: 'Game', platform: 'android' } as unknown as Game;
 const NO_METRICS: never[] = [];
