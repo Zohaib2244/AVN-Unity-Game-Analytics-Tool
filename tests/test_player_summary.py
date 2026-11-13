@@ -159,6 +159,66 @@ def test_summarize_counts_ads_levels_coins_and_sessions():
     assert summary["levels_ended_by_kill"] == 1
 
 
+def test_settings_show_what_the_player_switched_and_the_config_they_got():
+    def e(name, ts, **params):
+        return {"name": name, "ts": ts, "params": params}
+
+    events = [
+        e("SCREEN_ANALYSIS", "2026-10-04T09:00:00+00:00", SCREEN="settings", STATE="Opened"),
+        e(
+            "SCREEN_ANALYSIS",
+            "2026-10-04T09:00:05+00:00",
+            SCREEN="settings",
+            STATE="Interaction",
+            ACTION="vibration_off",
+            LEVEL_NUMBER=22,
+        ),
+        e(
+            "SCREEN_ANALYSIS",
+            "2026-10-04T09:00:06+00:00",
+            SCREEN="settings",
+            STATE="Interaction",
+            ACTION="music_off",
+            LEVEL_NUMBER=22,
+        ),
+        e(
+            "SCREEN_ANALYSIS",
+            "2026-10-04T09:00:07+00:00",
+            SCREEN="settings",
+            STATE="Interaction",
+            ACTION="music_on",
+            LEVEL_NUMBER=22,
+        ),
+        e(
+            "SCREEN_ANALYSIS",
+            "2026-10-04T09:00:08+00:00",
+            SCREEN="settings",
+            STATE="Interaction",
+            ACTION="home",
+            LEVEL_NUMBER=22,
+        ),
+        e("SCREEN_ANALYSIS", "2026-10-04T09:05:00+00:00", SCREEN="shop", STATE="Opened"),
+        e(
+            "REMOTE_CONFIG_ANALYSIS",
+            "2026-10-04T08:59:00+00:00",
+            STATE="Fetched",
+            RC_INTER_AD_DELAY=30,
+        ),
+    ]
+    settings = player_summary.summarize(events, [])["settings"]
+    assert settings["opened"] == 1
+    assert settings["switches"] == {"vibration": "off", "music": "on"}  # the last word on each
+    assert settings["taps"] == {"home": 1}
+    assert settings["changes_total"] == 4
+    assert settings["changes"][0]["action"] == "home"  # newest first
+    assert settings["changes"][-1] == {
+        "at": "2026-10-04T09:00:05+00:00",
+        "action": "vibration_off",
+        "level": 22,
+    }
+    assert settings["remote_config"] == {"RC_INTER_AD_DELAY": 30}
+
+
 def test_a_game_without_the_standard_events_gets_empty_sections():
     summary = player_summary.summarize(
         [], [("2026-10-04T09:00:00+00:00", "2026-10-04T09:01:00+00:00")]

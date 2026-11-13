@@ -22,6 +22,7 @@ READ_EVENTS = (
     "IAP_ANALYSIS",
     "APP_ANALYSIS",
     "ATTRIBUTION_ANALYSIS",
+    "REMOTE_CONFIG_ANALYSIS",
     "first_open",
 )
 FAILURES_SHOWN = 40
@@ -31,6 +32,7 @@ BALANCE_POINTS = 70
 PACE_LEVELS = 120
 DAYS_SHOWN = 30
 HARDEST = 5
+SETTING_CHANGES_SHOWN = 30
 
 
 def _number(value):
@@ -345,6 +347,46 @@ def _habits(events):
     }
 
 
+def _settings(events):
+    """What the player did in the game's settings screen (SCREEN_ANALYSIS, SCREEN settings, STATE
+    Interaction with an ACTION such as vibration_off) and the remote config the game fetched for
+    them (REMOTE_CONFIG_ANALYSIS carrying RC_ keys). An action ending _on or _off is a switch; any
+    other action (home) is only a tap and is counted, not shown as a switch."""
+    opened, changes, switches, taps = 0, [], {}, Counter()
+    config = {}
+    for event in events:
+        params = event["params"]
+        if event["name"] == "SCREEN_ANALYSIS" and params.get("SCREEN") == "settings":
+            if params.get("STATE") == "Opened":
+                opened += 1
+            elif params.get("STATE") == "Interaction" and params.get("ACTION"):
+                action = str(params["ACTION"])
+                changes.append(
+                    {
+                        "at": event["ts"],
+                        "action": action,
+                        "level": _number(params.get("LEVEL_NUMBER")),
+                    }
+                )
+                name, _, end = action.rpartition("_")
+                if name and end in ("on", "off"):
+                    switches[name] = end
+                else:
+                    taps[action] += 1
+        elif event["name"] == "REMOTE_CONFIG_ANALYSIS":
+            found = {key: value for key, value in params.items() if key.startswith("RC_")}
+            if found:
+                config = found
+    return {
+        "opened": opened,
+        "switches": switches,
+        "taps": dict(taps),
+        "changes": changes[-SETTING_CHANGES_SHOWN:][::-1],  # newest first
+        "changes_total": len(changes),
+        "remote_config": config,
+    }
+
+
 def summarize(events, spans):
     """events: [{name, ts, params}] oldest first; spans: [(first_ts, last_ts)] per session."""
     return {
@@ -355,6 +397,7 @@ def summarize(events, spans):
         "levels": _levels(events),
         "economy": _economy(events),
         "powerups": _powerups(events),
+        "settings": _settings(events),
         **_habits(events),
     }
 

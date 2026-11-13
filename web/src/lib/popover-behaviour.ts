@@ -24,7 +24,10 @@ export function installPopoverBehaviour(): () => void {
       const box = pop.getBoundingClientRect();
       // On a phone the popover is a bottom sheet and stays where it is.
       if (getComputedStyle(pop).bottom === '0px' && window.innerWidth <= 700) return;
-      if (box.top < 48 || box.bottom > window.innerHeight + 1) document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      // The trigger is the button that opened it: when that is under the top bar or off the screen, the popover goes too.
+      const anchor = document.querySelector('[aria-haspopup][aria-expanded="true"]')?.getBoundingClientRect();
+      const away = anchor ? anchor.top < 52 || anchor.top > window.innerHeight - 24 : false;
+      if (away || box.top < 48 || box.bottom > window.innerHeight + 1) document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     });
   };
   document.addEventListener('wheel', onWheel, { passive: false });

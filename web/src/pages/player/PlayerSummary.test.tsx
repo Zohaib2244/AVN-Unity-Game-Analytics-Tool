@@ -15,21 +15,38 @@ const base: PlayerSummaryData = {
 };
 
 describe('PlayerSummaryView', () => {
-  it('shows the headline numbers and the ad split by type', () => {
+  it('shows the headline numbers (the ads are the shared ad widgets, tested with them)', () => {
     render(<PlayerSummaryView data={base} />);
     const tiles = document.querySelector('.ps-tiles') as HTMLElement;
     expect(within(tiles).getByText('Levels cleared').parentElement).toHaveTextContent('622');
     expect(within(tiles).getByText('Ads seen').parentElement).toHaveTextContent('93');
-    const ads = screen.getByRole('heading', { name: /Ads seen/ }).closest('section')!;
-    expect(within(ads).getByText('Interstitial')).toBeInTheDocument();
-    expect(within(ads).getByText(/17 of 22 watched to the reward \(77%\)/)).toBeInTheDocument();
-    expect(within(ads).getByText('Timeout')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Ads' })).not.toBeInTheDocument(); // no ad scope given
   });
 
-  it('says so, in words, when the game sends no ads, levels or economy', () => {
+  it('puts wallet, habits and settings before levels and earnings', () => {
+    const settings = { opened: 1, switches: {}, taps: {}, changes: [], changes_total: 0, remote_config: {} };
+    render(<PlayerSummaryView data={{ ...base, settings, money: { total: 1, per_day: [['2026-10-28', 1]] } }} />);
+    const order = screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent ?? '');
+    const at = (word: string) => order.findIndex((text) => text.startsWith(word));
+    expect(at('Wallet')).toBeLessThan(at('Levels'));
+    expect(at('Sessions and habits')).toBeLessThan(at('Earned and cost'));
+    expect(at('Settings')).toBeLessThan(at('Levels'));
+  });
+
+  it('shows what the player switched in settings and the config they got', () => {
+    const settings = { opened: 3, switches: { vibration: 'off', sfx: 'off', music: 'on' }, taps: { home: 2 }, changes: [{ at: '2026-10-28T10:00:00+00:00', action: 'vibration_off', level: 22 }], changes_total: 1, remote_config: { RC_INTER_AD_DELAY: 30, RC_ENABLE_APP_OPEN_AD: true } };
+    render(<PlayerSummaryView data={{ ...base, settings }} />);
+    const card = screen.getByRole('heading', { name: /^Settings/ }).closest('section')!;
+    expect(within(card).getByText('Vibration').parentElement).toHaveTextContent('Vibrationoff');
+    expect(within(card).getByText('Sound effects').parentElement).toHaveTextContent('Sound effectsoff');
+    expect(within(card).getByText('Turned vibration off')).toBeInTheDocument();
+    expect(within(card).getByText('Inter ad delay').parentElement).toHaveTextContent('30');
+    expect(within(card).getByText('Enable app open ad').parentElement).toHaveTextContent('on');
+  });
+
+  it('says so, in words, when the game sends no levels or economy', () => {
     const empty: PlayerSummaryData = { ...base, ads: { formats: {}, shown: 0, failed: 0, average_seconds_on_screen: null }, levels: { ...base.levels, cleared: 0, highest: null, hardest: [], pace: [] }, economy: { ...base.economy, balances: {}, earned: {}, spent: {}, inventory: {} }, powerups: { used: {}, obtained: [] } };
     render(<PlayerSummaryView data={empty} />);
-    expect(screen.getByText('No ads shown to this player.')).toBeInTheDocument();
     expect(screen.getByText('No level events from this player.')).toBeInTheDocument();
     expect(screen.getByText('No economy or powerup events from this player.')).toBeInTheDocument();
   });

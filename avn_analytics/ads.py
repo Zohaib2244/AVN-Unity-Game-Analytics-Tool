@@ -85,15 +85,19 @@ def _dimensions(source):
     }
 
 
-def _ad_events(connection, source, start, end, filters):
-    """The range's AD_ANALYSIS events as a temporary table of plain columns."""
+def _ad_events(connection, source, start, end, filters, player=None):
+    """The range's AD_ANALYSIS events (one player's, if named) as a temp table of plain columns."""
     condition, args = insights.where(start, end, filters, source=source)
+    if player:
+        condition += f" AND {source.player}=?"
+        args = [*args, player]
     param = source.param
     dimensions = _dimensions(source)
     connection.execute("DROP TABLE IF EXISTS temp.ad_events")
     connection.execute(
         f"""CREATE TEMP TABLE ad_events AS
-            SELECT client_ts, substr(client_ts, 1, 10) AS day, {source.player} AS player,
+            SELECT client_ts, server_ts, substr(client_ts, 1, 10) AS day, {source.player} AS player,
+                   CAST({param("LEVEL_NUMBER")} AS INTEGER) AS level,
                    {source.session} AS session_id,
                    {dimensions["country"]} AS country, {dimensions["platform"]} AS platform,
                    {dimensions["app_version"]} AS app_version,
@@ -118,7 +122,9 @@ def _absent(what, sends):
     }
 
 
-def revenue(storage, game_id, start, end, filters, group_by=None, limit=15, then_by=None):
+def revenue(
+    storage, game_id, start, end, filters, group_by=None, limit=15, then_by=None, player=None
+):
     """Ad money: impressions, revenue, eCPM and revenue per player, in total and by group.
 
     then_by splits each group once more (network, then format): every group gets a `split` of
@@ -131,7 +137,7 @@ def revenue(storage, game_id, start, end, filters, group_by=None, limit=15, then
     storage.get_game(game_id)
     with storage.connect(storage.game_path(game_id)) as connection:
         source = insights.read_source(storage, connection)
-        _ad_events(connection, source, start, end, filters)
+        _ad_events(connection, source, start, end, filters, player)
         counts = dict(
             connection.execute(
                 """SELECT count(DISTINCT CASE WHEN state='Show' THEN ad_id END) AS shown,

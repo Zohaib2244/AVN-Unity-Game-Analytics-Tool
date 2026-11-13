@@ -392,6 +392,7 @@ export type PlayerSummaryData = {
     inventory: Record<string, number>; flags: Record<string, number>; save_level: number | null;
   };
   powerups: { used: Record<string, number>; obtained: Array<{ powerup: string; source: string; count: number }> };
+  settings?: { opened: number; switches: Record<string, string>; taps: Record<string, number>; changes: Array<{ at: string; action: string; level: number | null }>; changes_total: number; remote_config: Record<string, string | number | boolean> };
   screens: Record<string, number>; background: Record<string, number>; tutorials: { shown: number; completed: number }; shop_taps: number; levels_ended_by_kill: number;
 };
 
@@ -411,6 +412,24 @@ export type AdRevenue = {
   total_revenue: number; active_players: number; revenue_per_active_player: number | null; arpdau: number | null;
   ads_shown: number; ads_shown_with_revenue_reported: number; share_of_shows_with_revenue: number | null;
   group_by: string; groups: AdRevenueGroup[]; then_by?: string; then_values?: string[];
+};
+/** ad_report.py: every ad state per format, every failure, and one failure in detail (a game or one player). */
+export type AdStateRow = {
+  format: string; load_sent: number; loaded: number; load_failed: number; asked: number; blocked: number; show_failed: number;
+  displayed: number; creative: number; shown: number; paid: number; revenue: number; players: number;
+};
+export type AdStates = { available: boolean; note?: string; formats: AdStateRow[]; total: { players: number; asked: number; shown: number; revenue: number; shown_share: number | null } };
+export type AdFailureKind = 'load_failed' | 'show_failed' | 'blocked';
+export type AdFailureRow = { format: string; kind: AdFailureKind; reason: string; times: number; players: number; late: number; first_seen: string; last_seen: string };
+export type AdFailures = { available: boolean; rows: AdFailureRow[]; late_baseline: number | null };
+export type AdCount = { value: string | null; times: number; players: number };
+export type AdFailureDetail = {
+  available: boolean; note?: string; format: string; kind: AdFailureKind; reason: string; times: number; players: number; late: number; late_share: number | null;
+  late_baseline: number | null; late_after_seconds: number; first_seen: string; last_seen: string; load_seconds: number | null;
+  level_low: number | null; level_high: number | null; level_median: number | null;
+  when: { unit: 'hour' | 'day'; points: Array<{ at: string; times: number }> };
+  ad_units: AdCount[]; countries: AdCount[]; versions: AdCount[]; placements: AdCount[]; top_players: AdCount[];
+  latest: Array<{ client_ts: string; player: string; country: string | null; level: number | null; app_version: string | null; ad_unit: string | null; sent_after_seconds: number | null }>;
 };
 export type AdServingGroup = {
   value: string | null; wanted: number; shown: number; shown_share: number | null; blocked: number; blocked_by: Record<string, number>;

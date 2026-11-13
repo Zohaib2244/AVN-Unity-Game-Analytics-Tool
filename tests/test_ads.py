@@ -351,3 +351,109 @@ def test_load_success_rate_stays_a_share_when_loads_were_not_all_requested():
     }
     shown = ads._health_row(row)
     assert shown["load_success_rate"] == 0.75 and shown["load_failure_rate"] == 0.25
+
+
+@pytest.fixture
+def failing_game(tmp_path):
+    """The small game plus load failures: two phones with no internet (events sent minutes late)."""
+    settings = Settings(data_dir=tmp_path / "data", admin_token=TOKEN)
+    extra = []
+    for device, second in (("a", 10), ("a", 20), ("b", 30)):
+        sent = ad(
+            device,
+            9,
+            second,
+            AD_ID=f"load-{device}-{second}",
+            FORMAT="Interstitial",
+            AD_UNIT="unit-1",
+            STATE="LoadFailed",
+            LOAD_MS=2000,
+            LEVEL_NUMBER=7,
+            ERROR="NetworkError: Unable to resolve host",
+        )
+        sent["client_ts"] = f"2026-10-04T09:{second:02d}:00Z"  # made long before it arrived
+        extra.append(sent)
+    with TestClient(create_app(settings, admin=True)) as admin:
+        game = register(admin)
+        with TestClient(create_app(settings)) as ingest:
+            assert send(ingest, game, [*events_of_the_game(), *extra]).status_code == 200
+        yield admin, game, admin.app.state.storage
+
+
+def test_ad_states_count_every_state_per_format(game):
+    _, game, storage = game
+    from avn_analytics import ad_report
+
+    data = ad_report.states(storage, game["id"], START, END, Filters().model_dump())
+    rows = {row["format"]: row for row in data["formats"]}
+    assert rows["Interstitial"]["asked"] == 3 and rows["Interstitial"]["shown"] == 3
+    assert rows["Interstitial"]["blocked"] == 1 and rows["Interstitial"]["revenue"] == 0.006
+    assert rows["Rewarded"]["asked"] == 2 and rows["Rewarded"]["show_failed"] == 1
+    assert rows["Rewarded"]["revenue"] == 0.016
+    assert data["total"]["asked"] == 5 and data["total"]["shown_share"] == 1.0
+
+
+def test_ad_states_for_one_player_leave_the_others_out(game):
+    _, game, storage = game
+    from avn_analytics import ad_report
+
+    data = ad_report.states(storage, game["id"], START, END, Filters().model_dump(), "b")
+    rows = {row["format"]: row for row in data["formats"]}
+    assert rows["Interstitial"]["asked"] == 1 and rows["Interstitial"]["blocked"] == 0
+    assert rows["Rewarded"]["show_failed"] == 1 and rows["Rewarded"]["revenue"] == 0.006
+    assert ads.revenue(storage, game["id"], START, END, Filters().model_dump(), player="b")[
+        "groups"
+    ]
+
+
+def test_every_failure_is_listed_with_its_kind_and_players(failing_game):
+    _, game, storage = failing_game
+    from avn_analytics import ad_report
+
+    data = ad_report.failures(storage, game["id"], START, END, Filters().model_dump())
+    listed = {(row["format"], row["kind"], row["reason"]): row for row in data["rows"]}
+    network = listed[("Interstitial", "load_failed", "NetworkError: Unable to resolve host")]
+    assert network["times"] == 3 and network["players"] == 2 and network["late"] == 3
+    assert listed[("Interstitial", "blocked", "Cooldown")]["times"] == 1
+    assert listed[("Rewarded", "show_failed", "NotReady")]["players"] == 1
+    assert [row["times"] for row in data["rows"]] == sorted(
+        (row["times"] for row in data["rows"]), reverse=True
+    )
+    mine = ad_report.failures(storage, game["id"], START, END, Filters().model_dump(), "b")
+    assert {row["kind"] for row in mine["rows"]} == {"load_failed", "show_failed"}
+
+
+def test_one_failure_in_detail_says_when_where_and_whether_it_arrived_late(failing_game):
+    _, game, storage = failing_game
+    from avn_analytics import ad_report
+
+    reason = "NetworkError: Unable to resolve host"
+    detail = ad_report.failure(
+        storage,
+        game["id"],
+        START,
+        END,
+        Filters().model_dump(),
+        "Interstitial",
+        "load_failed",
+        reason,
+    )
+    assert detail["times"] == 3 and detail["players"] == 2
+    assert detail["late_share"] == 1.0 and detail["load_seconds"] == 2.0
+    # the test events were all made days before they were sent, so everything is "late" here
+    assert detail["late_baseline"] == 1.0
+    assert detail["level_low"] == 7 == detail["level_high"] == detail["level_median"]
+    assert detail["ad_units"][0]["value"] == "unit-1" and detail["ad_units"][0]["times"] == 3
+    assert (
+        detail["when"]["unit"] == "hour" and sum(p["times"] for p in detail["when"]["points"]) == 3
+    )
+    assert [row["value"] for row in detail["top_players"]][0] == "a"
+    assert len(detail["latest"]) == 3 and detail["latest"][0]["sent_after_seconds"] > 3600
+    gone = ad_report.failure(
+        storage, game["id"], START, END, Filters().model_dump(), "Banner", "blocked", "Nope"
+    )
+    assert gone["available"] is False
+    with pytest.raises(ValueError):
+        ad_report.failure(
+            storage, game["id"], START, END, Filters().model_dump(), "x", "weird", "y"
+        )

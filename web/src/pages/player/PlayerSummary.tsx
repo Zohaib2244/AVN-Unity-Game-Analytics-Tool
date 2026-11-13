@@ -2,16 +2,14 @@
 // fast, coins and powerups, sessions and habits, counted by the server from the AVN events standard over everything
 // the player ever sent (not the date range above). A section the game sends no events for says so.
 import { Share } from '@/components/Share';
-import type { ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
+import { AdWidgets, type AdScope } from '@/components/AdWidgets';
 import { useRead } from '@/api';
 import { QueryRegion, Skeleton } from '@/components/feedback';
-import { duration, number, plural } from '@/lib/format';
+import { addDays, duration, localTimezoneOffset, number, plural, today } from '@/lib/format';
 import { gameURL } from '@/lib/games';
-import type { Game, PlayerSummaryData, SummaryAdFormat } from '@/lib/types';
+import type { Game, PlayerSummaryData } from '@/lib/types';
 
-const AD_COLORS: Record<string, string> = { Interstitial: 'var(--accent)', Rewarded: 'var(--ok)', AppOpen: 'var(--warn)' };
-const adColor = (format: string): string => AD_COLORS[format] ?? 'var(--info)';
-const adName = (format: string): string => (format === 'AppOpen' ? 'App open' : format);
 /** "free_coins" → "Free coins". */
 export const plain = (text: string): string => { const spaced = text.replace(/_/g, ' '); return spaced.charAt(0).toUpperCase() + spaced.slice(1); };
 const dayText = (value: string): string => new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
@@ -100,46 +98,6 @@ function Stats({ items }: { items: Array<[string, string]> }): ReactElement {
   return <div className="ps-stats">{items.map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div>;
 }
 
-function AdsCard({ data }: { data: PlayerSummaryData }): ReactElement {
-  const { ads } = data;
-  const formats = Object.entries(ads.formats).sort((a, b) => b[1].shown - a[1].shown);
-  const placements: Record<string, number> = {};
-  const reasons: Record<string, number> = {};
-  formats.forEach(([, entry]) => {
-    Object.entries(entry.placements).forEach(([name, count]) => { placements[name] = (placements[name] ?? 0) + count; });
-    Object.entries(entry.reasons).forEach(([name, count]) => { reasons[name] = (reasons[name] ?? 0) + count; });
-  });
-  const rewarded: SummaryAdFormat | undefined = ads.formats.Rewarded;
-  return (
-    <section className="ps-card">
-      <h3>Ads seen <small>{number(ads.shown)} shown · {number(ads.failed)} failed to show</small></h3>
-      {formats.length ? (
-        <>
-          <div className="ps-seg" aria-hidden="true">{formats.map(([format, entry]) => <i key={format} style={{ flex: Math.max(1, entry.shown), background: adColor(format) }} />)}</div>
-          <table className="ps-table"><thead><tr><th>Type</th><th>Shown</th><th>Closed</th><th>Failed</th><th>Earned</th></tr></thead><tbody>
-            {formats.map(([format, entry]) => <tr key={format}><td><span className="ps-dot" style={{ background: adColor(format) }} />{adName(format)}</td><td>{number(entry.shown)}</td><td>{number(entry.closed)}</td><td>{number(entry.failed + (entry.load_failed ?? 0))}</td><td>{usd(entry.revenue ?? 0)}</td></tr>)}
-          </tbody></table>
-          <p className="ps-note">
-            {rewarded?.shown ? `Rewarded: ${number(rewarded.rewarded)} of ${number(rewarded.shown)} watched to the reward (${Math.round((100 * rewarded.rewarded) / rewarded.shown)}%). ` : ''}
-            {ads.average_seconds_on_screen != null ? `Ads stay on screen ${duration(ads.average_seconds_on_screen)} on average.` : ''}
-          </p>
-          {Object.keys(placements).length ? <><h4>Where they appear</h4><Bars rows={Object.entries(placements).sort((a, b) => b[1] - a[1]).slice(0, 5)} /></> : null}
-          {Object.keys(reasons).length ? <><h4>Why ads failed</h4><Bars rows={Object.entries(reasons).sort((a, b) => b[1] - a[1])} tone="var(--bad)" /></> : null}
-          {ads.networks && Object.keys(ads.networks).length ? (
-            <><h4>Who paid</h4><table className="ps-table"><thead><tr><th>Network</th><th>Ads</th><th>Earned</th></tr></thead><tbody>{Object.entries(ads.networks).slice(0, 5).map(([name, item]) => <tr key={name}><td>{name}</td><td>{number(item.shown)}</td><td>{usd(item.revenue)}</td></tr>)}</tbody></table></>
-          ) : null}
-          {ads.failures?.length ? (
-            <>
-              <h4>Failed ads <small>{(ads.failures_total ?? 0) > ads.failures.length ? `newest ${ads.failures.length} of ${number(ads.failures_total ?? 0)}` : 'newest first'}</small></h4>
-              <ul className="ps-fails">{ads.failures.map((item, index) => <li key={`${item.at}-${index}`}><time dateTime={item.at}>{whenText(item.at)}</time><span>{adName(item.format)} {item.kind === 'load' ? 'didn’t load' : 'not shown'}{item.level != null ? ` · level ${item.level}` : ''}{item.placement ? ` · ${plain(String(item.placement))}` : ''}</span><b title={item.reason}>{item.reason}</b></li>)}</ul>
-            </>
-          ) : null}
-        </>
-      ) : <p className="ps-empty">No ads shown to this player.</p>}
-    </section>
-  );
-}
-
 function LevelsCard({ data }: { data: PlayerSummaryData }): ReactElement {
   const { levels } = data;
   return (
@@ -205,6 +163,55 @@ function WalletCard({ data }: { data: PlayerSummaryData }): ReactElement {
   );
 }
 
+const SWITCH_WORDS: Record<string, string> = { sfx: 'Sound effects', music: 'Music', vibration: 'Vibration' };
+const switchName = (name: string): string => SWITCH_WORDS[name] ?? plain(name);
+/** "vibration_off" → "Turned vibration off"; anything else is a tap on a button: "Pressed home". */
+const actionText = (action: string): string => {
+  const name = action.replace(/_(on|off)$/, '');
+  const end = /_(on|off)$/.exec(action)?.[1];
+  return end ? `Turned ${switchName(name).toLowerCase()} ${end}` : `Pressed ${plain(action).toLowerCase()}`;
+};
+const configValue = (value: string | number | boolean): string => (value === true || value === 'true' ? 'on' : value === false || value === 'false' ? 'off' : String(value));
+const CONFIG_SHOWN = 6;
+const CHANGES_SHOWN = 6;
+
+/** What the player did in the settings screen, and the remote config the game gave them. */
+function SettingsCard({ data }: { data: PlayerSummaryData }): ReactElement | null {
+  const [allChanges, setAllChanges] = useState(false);
+  const [allConfig, setAllConfig] = useState(false);
+  const settings = data.settings;
+  if (!settings) return null;
+  const switches = Object.entries(settings.switches);
+  const config = Object.entries(settings.remote_config);
+  const changes = allChanges ? settings.changes : settings.changes.slice(0, CHANGES_SHOWN);
+  const taps = Object.entries(settings.taps);
+  const quiet = !settings.opened && !settings.changes_total && !config.length;
+  return (
+    <section className="ps-card">
+      <h3>Settings <small>{settings.opened ? `opened ${plural(settings.opened, 'time')}` : ''}</small></h3>
+      {quiet ? <p className="ps-empty">No settings activity from this player.</p> : (
+        <>
+          {switches.length ? <div className="ps-pills">{switches.map(([name, state]) => <span key={name} className="ps-pill">{switchName(name)}<b>{state}</b></span>)}</div> : <p className="ps-note">{settings.opened ? 'Opened the settings screen without changing a switch.' : ''}</p>}
+          {changes.length ? (
+            <ul className="ps-hard">
+              {changes.map((item, index) => <li key={`${item.at}-${index}`}><span>{actionText(item.action)}</span><span><time dateTime={item.at}>{whenText(item.at)}</time>{item.level != null ? ` · level ${item.level}` : ''}</span></li>)}
+            </ul>
+          ) : null}
+          {settings.changes.length > CHANGES_SHOWN ? <button type="button" className="btn sm ghost" onClick={() => setAllChanges((open) => !open)}>{allChanges ? 'Show fewer' : `All ${number(settings.changes_total)} actions`}</button> : null}
+          {taps.length ? <p className="ps-note">{taps.map(([name, count]) => `${plain(name)} pressed ${plural(count, 'time')}`).join(' · ')}</p> : null}
+          {config.length ? (
+            <>
+              <h4>Remote config this player got</h4>
+              <dl className="ps-config">{(allConfig ? config : config.slice(0, CONFIG_SHOWN)).map(([key, value]) => <div key={key}><dt>{plain(key.replace(/^RC_/, '').toLowerCase())}</dt><dd>{configValue(value)}</dd></div>)}</dl>
+              {config.length > CONFIG_SHOWN ? <button type="button" className="btn sm ghost" onClick={() => setAllConfig((open) => !open)}>{allConfig ? 'Show fewer' : `All ${config.length} values`}</button> : null}
+            </>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
 function HabitsCard({ data }: { data: PlayerSummaryData }): ReactElement {
   const { sessions } = data;
   const days = sessions.per_day; const most = Math.max(1, ...days.map(([, count]) => count));
@@ -230,7 +237,7 @@ function HabitsCard({ data }: { data: PlayerSummaryData }): ReactElement {
 }
 
 /** The summary itself; the fetching is in `PlayerSummary`. */
-export function PlayerSummaryView({ data }: { data: PlayerSummaryData }): ReactElement {
+export function PlayerSummaryView({ data, ads: adScope }: { data: PlayerSummaryData; ads?: AdScope }): ReactElement {
   const { levels, ads, economy, sessions } = data;
   const coins = Object.values(economy.balances)[0];
   const tiles: Array<[string, string, string]> = [
@@ -247,15 +254,29 @@ export function PlayerSummaryView({ data }: { data: PlayerSummaryData }): ReactE
       <p className="ps-scope">All time<small> · not limited to the days chosen above</small></p>
       <div className="ps-tiles">{tiles.map(([label, value, note]) => <div className="ps-tile" key={label}><span>{label}</span><b>{value}</b>{note ? <small>{note}</small> : null}</div>)}</div>
       <div className="ps-grid">
-        <div className="ps-col"><ValueCard data={data} /><LevelsCard data={data} /><HabitsCard data={data} /></div>
-        <div className="ps-col"><AdsCard data={data} /><WalletCard data={data} /></div>
+        <div className="ps-col"><WalletCard data={data} /></div>
+        <div className="ps-col"><HabitsCard data={data} /><SettingsCard data={data} /></div>
       </div>
+      <div className="ps-grid">
+        <div className="ps-col"><ValueCard data={data} /></div>
+        <div className="ps-col"><LevelsCard data={data} /></div>
+      </div>
+      {adScope ? <><h2 className="ps-section">Ads</h2><AdWidgets scope={adScope} /></> : null}
     </div>
   );
+}
+
+/** The ad widgets read the days this player was seen (the server takes at most 366 days at a time: the latest). */
+export function adScopeFor(game: Game, player: string, data: PlayerSummaryData): AdScope {
+  const latest = addDays(today(), 1);
+  const floor = addDays(today(), -364);
+  const first = data.first_seen ? data.first_seen.slice(0, 10) : floor;
+  const last = data.last_seen ? addDays(data.last_seen.slice(0, 10), 1) : latest;
+  return { game, player, query: new URLSearchParams({ start: first < floor ? floor : first, end: last > latest ? latest : last, tz_offset: String(localTimezoneOffset()) }) };
 }
 
 export function PlayerSummary({ game, player }: { game: Game; player: string }): ReactElement {
   const path = `${gameURL(game)}/insights/player-summary?${new URLSearchParams({ player })}`;
   const query = useRead<PlayerSummaryData>(path);
-  return <QueryRegion query={query} path={path} skeleton={<Skeleton kind="stats" />}>{(data) => <PlayerSummaryView data={data} />}</QueryRegion>;
+  return <QueryRegion query={query} path={path} skeleton={<Skeleton kind="stats" />}>{(data) => <PlayerSummaryView data={data} ads={adScopeFor(game, player, data)} />}</QueryRegion>;
 }

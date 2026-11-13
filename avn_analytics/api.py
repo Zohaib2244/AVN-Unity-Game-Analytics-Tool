@@ -29,6 +29,7 @@ from starlette.background import BackgroundTask
 
 from . import (
     acquisition_report,
+    ad_report,
     ads,
     avn_events_standard,
     cleanup,
@@ -1138,15 +1139,81 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         tz_offset: TimezoneOffset = 0,
         group_by: Annotated[str, Query(max_length=20)] = "format",
         then_by: Annotated[str, Query(max_length=20)] = "",
+        player: Annotated[str, Query(max_length=128)] = "",
     ):
         days = day_range(start, end, tz_offset)
         return cached(
             game_id,
             "ad-revenue",
-            (days, chosen, group_by, then_by),
+            (days, chosen, group_by, then_by, player),
             lambda: _readable(
                 lambda: ads.revenue(
-                    storage, str(game_id), *days, chosen, group_by, 40, then_by or None
+                    storage,
+                    str(game_id),
+                    *days,
+                    chosen,
+                    group_by,
+                    40,
+                    then_by or None,
+                    player or None,
+                )
+            ),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/ads/states")
+    def insights_ad_states(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+        player: Annotated[str, Query(max_length=128)] = "",
+    ):
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "ad-states",
+            (days, chosen, player),
+            lambda: ad_report.states(storage, str(game_id), *days, chosen, player or None),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/ads/failures")
+    def insights_ad_failures(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+        player: Annotated[str, Query(max_length=128)] = "",
+    ):
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "ad-failures",
+            (days, chosen, player),
+            lambda: ad_report.failures(storage, str(game_id), *days, chosen, player or None),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/ads/failure")
+    def insights_ad_failure(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        format: Annotated[str, Query(max_length=40)],
+        kind: Annotated[str, Query(max_length=20)],
+        reason: Annotated[str, Query(max_length=200)],
+        tz_offset: TimezoneOffset = 0,
+        player: Annotated[str, Query(max_length=128)] = "",
+    ):
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "ad-failure",
+            (days, chosen, format, kind, reason, player),
+            lambda: _readable(
+                lambda: ad_report.failure(
+                    storage, str(game_id), *days, chosen, format, kind, reason, player or None
                 )
             ),
         )
