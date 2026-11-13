@@ -50,7 +50,7 @@ function Report({ report, trend, onTrend, range }: { report: SessionReport; tren
       <div className="split">
         <section className="panel">
           <div className="panel-header">
-            <div><h2>{chosen.title}</h2><p>{chosen.note}</p></div>
+            <div><h2 title={chosen.note}>{chosen.title}</h2></div>
             <div className="quiet-actions"><Segmented label="Measure" value={trend} onChange={onTrend} options={TRENDS.map(({ value, label }) => ({ value, label }))} /></div>
           </div>
           <div className="panel-body chart-wrap">
@@ -112,7 +112,7 @@ function Quality({ report }: { report: SessionReport }): ReactElement {
           </table>
         </div>
       ) : null}
-      <p className="help panel-body">{report.old_way ? `${plural(report.old_way, 'session')} in these days came from app versions that measure length the old way. ` : ''}{report.ingest_counts_available ? 'Duplicates, rejected batches and delivery are counted from the day this page was added.' : 'Duplicate and rejection totals are unavailable for these filters: refused batches have no player or country. Delivery counts show matching events kept.'}</p>
+      <p className="help panel-body">{report.old_way ? `${plural(report.old_way, 'session')} in these days came from app versions that measure length the old way. ` : ''}{report.ingest_counts_available ? 'Duplicates, rejected batches and delivery are counted from the day this page was added.' : 'Duplicates and rejections can’t be split by these filters.'}</p>
     </section>
   );
 }

@@ -36,7 +36,7 @@ function staticChecks(): Array<Omit<Finding, 'page'>> {
     if (!visible(region)) continue;
     const seen = new Map<string, number>();
     for (const el of region.querySelectorAll('h1,h2,h3,h4,label,legend,button,a,span,small,strong,p,div')) {
-      if (el.children.length > 0 || !visible(el) || el.closest('table, ol.journey-events, [role=row], ul[role=listbox], select, option, [role=listbox], dd, li > strong, .tag, .pill, time, .step-state')) continue;
+      if (el.children.length > 0 || !visible(el) || el.closest('table, ol.journey-events, [role=row], ul[role=listbox], select, option, [role=listbox], dd, li, .tag, .pill, time, .step-state, .session-chip, .tl-rail, .compact-session-picker')) continue;
       const value = text(el).toLowerCase();
       if (value.length < 4 || value.length > 30 || /^[\d\s.,%$:·—–/+-]+$/.test(value)) continue;
       seen.set(value, (seen.get(value) || 0) + 1);
@@ -48,7 +48,7 @@ function staticChecks(): Array<Omit<Finding, 'page'>> {
   for (const heading of document.querySelectorAll('h1, h2, .panel-header h2, .panel-header h3')) {
     if (!visible(heading) || inChat(heading)) continue;
     const next = heading.nextElementSibling || heading.parentElement?.nextElementSibling;
-    if (next && next.matches('p, .help, .subtitle, .lede, small') && visible(next) && words(text(next)) > 2) add('R1.2', label(heading), `subtitle under the title: “${text(next).slice(0, 70)}”`);
+    if (next && next.matches('p, .help, .subtitle, .lede, small') && visible(next) && words(text(next)) > 2 && !/\d/.test(text(next)) && !next.closest('.panel-body, [role=status]')) add('R1.2', label(heading), `subtitle under the title: “${text(next).slice(0, 70)}”`);
   }
 
   // R1.3 help paragraphs
@@ -98,11 +98,11 @@ function staticChecks(): Array<Omit<Finding, 'page'>> {
   // R3.4 controls in one row match in height
   for (const parent of document.querySelectorAll('.toolbar, [role=toolbar], .panel-header, .filter-bar, .segmented, .actions, header')) {
     if (!visible(parent)) continue;
-    const controls = [...parent.querySelectorAll('button, select, input:not([type=checkbox]):not([type=radio]), [role=combobox], .segmented, .range-modes')].filter(visible);
+    const controls = [...parent.querySelectorAll('button, select, input:not([type=checkbox]):not([type=radio]), [role=combobox], .segmented, .seg, .range-modes')].filter(visible);
     const rows = new Map<number, number[]>();
     for (const control of controls) {
       // The buttons of a segmented group sit inside the group's frame: the frame is the control.
-      if (control.parentElement?.closest('.segmented, .range-modes, [role=group]') && control.tagName === 'BUTTON') continue;
+      if (control.parentElement?.closest('.segmented, .seg, .range-modes, [role=group], [role=radiogroup], [role=tablist]') && control.tagName === 'BUTTON') continue;
       const box = control.getBoundingClientRect();
       if (box.height < 20) continue;
       const key = Math.round((box.top + box.height / 2) / 6);

@@ -470,7 +470,7 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
 /* The timeline: sessions listed down the left, the controls and events beside them. */
 .tl-layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 20px; align-items: start; padding: 14px 24px 24px; }
 .tl-layout:has(> .tl-rail[hidden]) { grid-template-columns: minmax(0, 1fr); }
-.tl-rail { position: sticky; top: var(--tl-top, 0px); display: grid; gap: 8px; max-height: calc(100dvh - var(--tl-top, 0px) - 24px); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 2px 10px 2px 2px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; scrollbar-gutter: stable; }
+.tl-rail { display: grid; gap: 8px; align-content: start; padding: 2px 10px 2px 2px; }
 .tl-rail[hidden] { display: none; }
 .tl-rail .session-picker-label { font-size: var(--fs-micro); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
 .tl-rail .session-chips { flex-direction: column; flex-wrap: nowrap; max-height: none; overflow: visible; gap: 6px; padding: 0; }
@@ -1167,3 +1167,5 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 .share { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .share-n { color: var(--dim); font-size: .9em; min-width: 3ch; text-align: right; }
 .share-p { min-width: 5.5ch; text-align: right; }
+.filter-bar .seg, .panel-header .seg, .toolbar .seg, .panel-header .rubber { height: 34px; min-height: 34px; box-sizing: border-box; }
+.panel-header .fresh, .panel-header .quiet-actions > * { min-height: 34px; box-sizing: border-box; }

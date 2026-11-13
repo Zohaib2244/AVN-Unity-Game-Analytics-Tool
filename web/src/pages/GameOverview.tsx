@@ -82,7 +82,7 @@ export function GameOverviewPage({ game }: { game: Game }): ReactElement {
       <div className="split">
         <section className="panel">
           <div className="panel-header">
-            <div><h2>Activity per day</h2>{mayChange(state.range.to) ? <p>Recent data may still change</p> : null}</div>
+            <div><h2 title={mayChange(state.range.to) ? 'Recent data may still change' : undefined}>Activity per day</h2></div>
             <div className="quiet-actions"><Freshness updatedAt={updated} refreshing={query.isFetching} onRefresh={() => void refreshAll()} /><Segmented label="Measure" value={measure} onChange={setMeasure} options={MEASURES} /></div>
           </div>
           <div className="panel-body chart-wrap">

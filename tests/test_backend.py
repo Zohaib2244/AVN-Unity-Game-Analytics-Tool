@@ -2733,6 +2733,52 @@ def test_players_sort_by_app_version_in_number_order(backend):
     assert [p["player"] for p in first_page] == ["pc", "pf"]
 
 
+def test_players_sort_by_campaign_earned_and_player(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+
+    def installed(player, campaign):
+        return event(
+            device_id=player,
+            name="ATTRIBUTION_ANALYSIS",
+            params={"STATE": "Install", "CAMPAIGN": campaign},
+        )
+
+    def revenue(player, amount):
+        return event(
+            device_id=player,
+            name="AD_ANALYSIS",
+            params={"STATE": "Revenue", "REVENUE": amount},
+        )
+
+    sent = [
+        installed("pa", "beta"),
+        revenue("pa", 0.5),
+        revenue("pa", 0.25),
+        installed("pb", "alpha"),
+        revenue("pb", 2.0),
+        installed("pc", "gamma"),
+        event(device_id="pd", name="first_open", params={}),
+    ]
+    assert send(ingest, game, sent).status_code == 200
+    earned = _players(admin, game, sort="earned", order="desc")
+    assert [p["player"] for p in earned["players"]] == ["pb", "pa", "pc", "pd"]
+    asc = _players(admin, game, sort="earned", order="asc")["players"]
+    assert [p["player"] for p in asc] == ["pc", "pd", "pa", "pb"]
+    by_campaign = _players(admin, game, sort="campaign", order="asc")
+    # a player with no campaign goes last, whichever way it is ordered
+    assert [p["player"] for p in by_campaign["players"]] == ["pb", "pa", "pc", "pd"]
+    assert by_campaign["total"] == 4
+    second_page = _players(admin, game, sort="earned", order="desc", offset=2)
+    assert [p["player"] for p in second_page["players"]] == ["pc", "pd"]
+    assert [p["player"] for p in _players(admin, game, sort="player", order="asc")["players"]] == [
+        "pa",
+        "pb",
+        "pc",
+        "pd",
+    ]
+
+
 def test_players_sort_by_highest_level_and_country(backend):
     admin, ingest, _ = backend
     game = register(admin)

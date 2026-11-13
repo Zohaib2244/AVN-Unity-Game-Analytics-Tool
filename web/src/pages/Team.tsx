@@ -83,7 +83,7 @@ export function TeamPage(): ReactElement {
         return (
           <>
             <section className="panel">
-              <div className="panel-header"><h2>{workspaceName} <span className="count">{members.length}</span></h2><p className="small muted">Lead: its games and who sees them · Member: given games</p></div>
+              <div className="panel-header"><h2 title="Lead: its games and who sees them · Member: the games they are given">{workspaceName} <span className="count">{members.length}</span></h2></div>
               {members.length ? (
                 <div className="table-wrap"><table><thead><tr><th>Person</th><th>Role</th><th>Games</th><th>Last seen</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>
                   {members.map((person) => {
@@ -103,7 +103,7 @@ export function TeamPage(): ReactElement {
               ) : <p className="help panel-body">Nobody yet. Add the people who work on these games.</p>}
             </section>
             <section className="panel section-spacing">
-              <div className="panel-header"><div><h2>Admins <span className="count">{admins.length}</span></h2><p>See and manage every workspace, plus workspaces and people</p></div></div>
+              <div className="panel-header"><div><h2 title="See and manage every workspace, plus workspaces and people">Admins <span className="count">{admins.length}</span></h2></div></div>
               <div className="table-wrap"><table><tbody>
                 {admins.map((person) => <tr key={person.email} data-admin={person.email}><td>{personName(person)}<p className="small muted">{person.email}</p></td><td className="small muted">{seen(person.last_seen_at)}</td><td>{person.email === me.email ? <span className="muted small">You</span> : <button type="button" className="button danger table-action" onClick={() => void demote(person.email)}>Remove admin</button>}</td></tr>)}
               </tbody></table></div>

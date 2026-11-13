@@ -888,6 +888,10 @@ def funnel(storage, game_id, start, end, query):
     }
 
 
+# Sorts on what a player is worth (player_chips.player_values): worked out for the players that
+# match, ordered here, and only the page asked for is read in full.
+VALUE_SORTS = ("campaign", "earned", "paid_back")
+
 PLAYER_SORTS = {
     "last_seen": "last_seen",
     "first_seen": "first_seen",
@@ -1031,7 +1035,7 @@ def players(
         order_by = PLAYER_SORTS[sort]
     elif sort.startswith("metric") and sort[6:].isdigit() and int(sort[6:]) < len(metrics):
         order_by = f"m{int(sort[6:])}"
-    elif sort in ("level", "country"):
+    elif sort in ("level", "country", "player") or sort in VALUE_SORTS:
         order_by = sort  # the aggregate itself, chosen below once the source is known
     else:
         raise HTTPException(400, "Unknown sort")
@@ -1075,8 +1079,44 @@ def players(
                 clauses.append(f"coalesce({expr}, 0) >= ?")
                 expr_args = [*expr_args, rule.get("min_times") or 1]
             having_args += expr_args
-        having = f"HAVING {' AND '.join(clauses)}" if clauses else ""
         table, player, session = source.table, source.player, source.session
+        page_ids = None
+        total_having = f"HAVING {' AND '.join(clauses)}" if clauses else ""
+        total_args = list(having_args)
+        if sort in VALUE_SORTS:
+            from . import player_chips
+
+            where_ids = f"HAVING {' AND '.join(clauses)}" if clauses else ""
+            ids = [
+                row[0]
+                for row in connection.execute(
+                    f"SELECT {player} FROM {table} WHERE {condition} AND {source.identified} "
+                    f"GROUP BY {player} {where_ids}",
+                    (*args, *having_args),
+                )
+            ]
+            values = {}
+            for start_at in range(0, len(ids), 5000):
+                values.update(
+                    player_chips.player_values(storage, game_id, ids[start_at : start_at + 5000])
+                )
+            field = {"campaign": "campaign", "earned": "earned", "paid_back": "paid_back"}[sort]
+
+            def worth(pid):
+                return (values.get(pid) or {}).get(field)
+
+            # equal values keep id order whichever way the list is read (a stable sort)
+            have = sorted(
+                sorted(pid for pid in ids if worth(pid) is not None),
+                key=worth,
+                reverse=order != "asc",
+            )
+            ordered = have + sorted(pid for pid in ids if worth(pid) is None)
+            page_ids = ordered[offset : offset + limit]
+            clauses.append(f"player IN ({','.join('?' for _ in page_ids)})" if page_ids else "0")
+            having_args += page_ids
+            order_by = "last_seen"
+        having = f"HAVING {' AND '.join(clauses)}" if clauses else ""
         connection.create_function("version_key", 1, version_key, deterministic=True)
         connection.create_aggregate("newest_version", 1, _NewestVersion)
         connection.create_aggregate("average_session_length", 6, _AverageSessionLength)
@@ -1087,8 +1127,8 @@ def players(
         total = connection.execute(
             f"SELECT count(*) FROM (SELECT {player} AS player FROM {table} "
             f"WHERE {condition} AND {source.identified} "
-            f"GROUP BY player {having})",
-            (*args, *having_args),
+            f"GROUP BY player {total_having})",
+            (*args, *total_args),
         ).fetchone()[0]
         session_values = (
             f"{session}, name, client_ts, server_ts, {source.param('seq')}, "
@@ -1109,9 +1149,12 @@ def players(
                 FROM {table} WHERE {condition} AND {source.identified} GROUP BY player {having}
                 ORDER BY {order_by} IS NULL, {order_by} {direction}, last_seen DESC, player
                 LIMIT ? OFFSET ?""",
-            (*column_args, *args, *having_args, limit, offset),
+            (*column_args, *args, *having_args, limit, 0 if page_ids is not None else offset),
         )
         rows = rows.fetchall()
+        if page_ids is not None:
+            position = {pid: at for at, pid in enumerate(page_ids)}
+            rows.sort(key=lambda row: position[row["player"]])
         highest, last_events = _player_progress(
             connection, source, condition, args, [row["player"] for row in rows]
         )

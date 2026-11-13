@@ -14,6 +14,7 @@ import type { AdCreatives, AdDelivery, AdPlacements, AdRevenue, Game } from '@/l
 import { FilterBar, useFilters } from '@/components/Filters';
 import { Heading, Metric, QueryRegion, Skeleton } from '@/components/feedback';
 import { InstallSourcePicker, installParams, useInstallSource } from '@/components/InstallSource';
+import { Ico } from '@/components/icons';
 import { DoraScene } from '@/components/flavour';
 import { GROUPS, THEN_BY, deliveryRows, looks, money, revenueSentence, share, words, type AdGroup } from './ads/model';
 
@@ -117,7 +118,7 @@ function Looks({ items, onOpen }: { items: ReturnType<typeof looks>; onOpen: (id
         <div key={`${item.tag}-${item.title}`} className="look">
           <Tag kind={item.kind}>{item.tag}</Tag>
           <div><b>{item.title}</b><span className="s">{item.note}</span></div>
-          <button type="button" className="btn sm ghost" onClick={() => onOpen(`ads-${item.target}`)}>Show</button>
+          <button type="button" className="btn sm ghost" aria-label={`Go to the table for: ${item.title}`} title="Go to the table" onClick={() => onOpen(`ads-${item.target}`)}><Ico name="arrow" size={14} /></button>
         </div>
       ))}
     </>

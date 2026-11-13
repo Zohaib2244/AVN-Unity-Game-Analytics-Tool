@@ -388,8 +388,8 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
             <li key={row.key} ref={place.ref} data-index={slot.index} style={place.style} className="vrow-head">
               <button type="button" className="journey-session-head" aria-expanded={row.open} onClick={() => disclosures.set(row.name, !row.open)}>
                 <strong>Session {index + 1}</strong>
-                <span>{analysisDate(start, timezone)} · Play time {duration(sessionLength(session, state))}{state?.away_seconds ? ` · Away ${duration(state.away_seconds)}` : ''} · {number(row.count)} events</span>
-                {gap == null ? null : <span className="session-gap">{duration(gap)} after previous session</span>}
+                {sessions.length < 2 ? <span>{analysisDate(start, timezone)} · Play time {duration(sessionLength(session, state))}{state?.away_seconds ? ` · Away ${duration(state.away_seconds)}` : ''} · {number(row.count)} events</span> : <span>{number(row.count)} events</span>}
+                {gap == null || sessions.length > 1 ? null : <span className="session-gap">{duration(gap)} after previous session</span>}
                 {state?.measured_old_way ? <span title="This app version only reported its end at the next launch, so this length is less exact.">Measured the old way</span> : null}
               </button>
             </li>

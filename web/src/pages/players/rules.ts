@@ -6,7 +6,7 @@ import { analysisDate, number, type Timezone } from '@/lib/format';
 import type { EventRule, PlayerMetric, PlayerRow, PlayerRulesBody } from '@/lib/types';
 
 export const AGG_LABELS: Record<NonNullable<EventRule['agg']>, string> = { count: 'How many times', max: 'Highest value', min: 'Lowest value', sum: 'Total of', first: 'First time', last: 'Last time' };
-export const BASE_SORTS: Array<[string, string]> = [['last_seen', 'Last active'], ['first_seen', 'First seen'], ['events', 'Events'], ['sessions', 'Sessions'], ['playtime', 'Total playtime'], ['version', 'App version'], ['session_length', 'Average session'], ['level', 'Level'], ['country', 'Country']];
+export const BASE_SORTS: Array<[string, string]> = [['last_seen', 'Last active'], ['first_seen', 'First seen'], ['events', 'Events'], ['sessions', 'Sessions'], ['playtime', 'Total playtime'], ['version', 'App version'], ['session_length', 'Average session'], ['level', 'Level'], ['country', 'Country'], ['player', 'Player'], ['campaign', 'Campaign'], ['earned', 'Earned'], ['paid_back', 'Paid back']];
 
 /** The columns the table can show: which ones are on until the person changes it. Campaign, Earned and Paid back appear only when the game has such values. */
 export const COLUMN_CHOICES: Array<{ key: string; label: string; on: boolean; note?: string }> = [
@@ -72,6 +72,10 @@ const sortValue = (row: PlayerRow, sort: string): number | string | null => {
     case 'version': return row.app_version;
     case 'level': return row.highest_level ?? null;
     case 'country': return row.country;
+    case 'player': return row.player;
+    case 'campaign': return row.value?.campaign ?? null;
+    case 'earned': return row.value ? row.value.earned : null;
+    case 'paid_back': return row.value?.paid_back ?? null;
     default: return sort.startsWith('metric') ? row.metrics?.[metricIndex(sort)] ?? null : row.last_seen;
   }
 };

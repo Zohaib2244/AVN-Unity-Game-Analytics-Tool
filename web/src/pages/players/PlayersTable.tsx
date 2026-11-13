@@ -35,7 +35,7 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, shown
   const varies = useMemo(() => ({ id: new Set(rows.map((row) => !!row.has_user_id)).size > 1, platform: new Set(rows.map((row) => row.platform || '')).size > 1, version: new Set(rows.map((row) => row.app_version || '')).size > 1 }), [rows]);
   const shows = useMemo(() => ({ campaign: rows.some((row) => row.value?.campaign), earned: rows.some((row) => (row.value?.earned ?? 0) > 0), paidBack: rows.some((row) => row.value?.paid_back != null) }), [rows]);
   const columns = useMemo(() => [
-    column.accessor('player', { id: 'player', header: () => <span title="A player is their user_id when the game sends one, otherwise the device’s install ID">Player</span>, enableSorting: false, cell: ({ row }) => (
+    column.accessor('player', { id: 'player', header: () => <span title="A player is their user_id when the game sends one, otherwise the device’s install ID">Player</span>, meta: { sortable: true }, cell: ({ row }) => (
       <>
         <span className="player-id">
           <Link to={gamePath(game, 'players')} search={{ player: row.original.player }} className="row-title" title={row.original.player} onClick={(event: MouseEvent) => { if (plainClick(event)) open.current(row.original.player, row.index); }}><span className="mono">{startOfId(row.original.player)}</span></Link>
@@ -49,10 +49,10 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, shown
         })()}
       </>
     ) }),
-    ...(shows.campaign ? [column.display({ id: 'campaign', header: 'Campaign', enableSorting: false, meta: { className: 'small' }, cell: ({ row }) => row.original.value?.campaign ?? <span className="muted">—</span> })] : []),
+    ...(shows.campaign ? [column.display({ id: 'campaign', header: 'Campaign', meta: { className: 'small', sortable: true }, cell: ({ row }) => row.original.value?.campaign ?? <span className="muted">—</span> })] : []),
     column.display({ id: 'level', header: () => <span title="The highest level they reached">Level</span>, meta: { className: 'num', sortable: true }, cell: ({ row }) => (row.original.highest_level != null ? number(row.original.highest_level) : '—') }),
-    ...(shows.earned ? [column.display({ id: 'earned', header: () => <span title="Ad revenue from this player so far, banners included">Earned</span>, enableSorting: false, meta: { className: 'num' }, cell: ({ row }) => (row.original.value ? `$${row.original.value.earned.toFixed(3)}` : '—') })] : []),
-    ...(shows.paidBack ? [column.display({ id: 'paid_back', header: () => <span title="Earned ÷ what their campaign paid per install on their install day">Paid back</span>, enableSorting: false, meta: { className: 'num' }, cell: ({ row }) => { const share = row.original.value?.paid_back; return share == null ? <span className="muted">—</span> : <span className={share >= 1 ? 'good-text' : undefined}>{Math.round(share * 100)}%</span>; } })] : []),
+    ...(shows.earned ? [column.display({ id: 'earned', header: () => <span title="Ad revenue from this player so far, banners included">Earned</span>, meta: { className: 'num', sortable: true }, cell: ({ row }) => (row.original.value ? `$${row.original.value.earned.toFixed(3)}` : '—') })] : []),
+    ...(shows.paidBack ? [column.display({ id: 'paid_back', header: () => <span title="Earned ÷ what their campaign paid per install on their install day">Paid back</span>, meta: { className: 'num', sortable: true }, cell: ({ row }) => { const share = row.original.value?.paid_back; return share == null ? <span className="muted">—</span> : <span className={share >= 1 ? 'good-text' : undefined}>{Math.round(share * 100)}%</span>; } })] : []),
     column.accessor('total_play_seconds', { id: 'playtime', header: 'Playtime', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => duration(getValue()) }),
     column.accessor('sessions', { id: 'sessions', header: 'Sessions', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => number(getValue()) }),
     column.accessor('events', { id: 'events', header: 'Events', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => number(getValue()) }),
