@@ -7,16 +7,18 @@ import { useMemo, useRef, useState, type ReactElement } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Popover, Segmented } from '@avn/ui';
 import { useRead, write } from '@/api';
-import { number, shortDay } from '@/lib/format';
-import { filterQuery } from '@/lib/filters';
+import { addDays, number, shortDay, today } from '@/lib/format';
+import { filterQuery, type ActiveFilters } from '@/lib/filters';
 import { gamePath, gameURL } from '@/lib/games';
 import { useStored } from '@/lib/store';
 import type { AcquisitionCohorts, AcquisitionReport, AcquisitionRow, CohortDay, CostSettings, Game, ReturnGoal, ReturnGoals } from '@/lib/types';
 import { FilterBar, useFilters } from '@/components/Filters';
-import { Heading, QueryRegion, Skeleton, useNotify } from '@/components/feedback';
+import { Heading, Metric, QueryRegion, Skeleton, useNotify } from '@/components/feedback';
+import { rangeText, resolveRange } from '@/components/DateRange';
+import { Share } from '@/components/Share';
 import { DoraScene } from '@/components/flavour';
 import { Ico } from '@/components/icons';
-import { ALL_PAID, FEW, RETENTION_DAYS, TABLE_DAYS, VALUE_DAYS, answer, cleanGoals, costWords, goalOn, judgedGoal, money, pct, pct1, tone } from './acquisition/model';
+import { ALL_PAID, FEW, RETENTION_DAYS, TABLE_DAYS, VALUE_DAYS, answer, cleanGoals, costWords, goalOn, judgedGoal, money, pct, tone } from './acquisition/model';
 
 const GROUPS = [{ value: 'campaign', label: 'Campaign' }, { value: 'media_source', label: 'Media source' }, { value: 'channel', label: 'Channel' }] as const;
 type Group = (typeof GROUPS)[number]['value'];
@@ -29,6 +31,8 @@ export function AcquisitionPage({ game }: { game: Game }): ReactElement {
   const reportPath = `${gameURL(game)}/insights/acquisition?${query}&group_by=${group}`;
   const report = useRead<AcquisitionReport>(reportPath);
   const settings = useRead<CostSettings>(`${gameURL(game)}/cost-settings`);
+  // The date range is the install days: pick one day, or shift-click to extend it to a run of days.
+  const pickDays = (from: string, to: string) => setFilters((state) => ({ ...state, range: { preset: 'custom', from: from <= to ? from : to, to: from <= to ? to : from } }));
   const goalsFor = (name: string): ReturnGoal[] => { const goals = report.data?.goals; return goals ? (goals.campaigns[name]?.length ? goals.campaigns[name]! : goals.game) : []; };
   return (
     <>
@@ -38,7 +42,10 @@ export function AcquisitionPage({ game }: { game: Game }): ReactElement {
         {(data) => (!data.available ? <div className="empty-scene"><DoraScene /><p>{data.note}</p></div> : (
           <>
             <CostNotice game={game} data={data} settings={settings.data} />
-            <p className="answer-line">{answer(data, goalsFor)}</p>
+            <p className="answer-line">{filters.range.preset === 'custom' ? <b>Installed {rangeText(filters.range)}: </b> : null}{answer(data, goalsFor)}</p>
+            <KeyNumbers data={data} />
+            <InstallDayPicker game={game} filters={filters} onPick={pickDays} onAll={() => setFilters((state) => ({ ...state, range: resolveRange('30') }))} />
+
             <section className="panel">
               <div className="panel-header">
                 <div><h2 title="Earned is ad revenue per install, added up from the install day. Return is that against the cost of an install.">Sources</h2></div>
@@ -49,7 +56,7 @@ export function AcquisitionPage({ game }: { game: Game }): ReactElement {
           </>
         ))}
       </QueryRegion>
-      {report.data?.available ? <CohortPanel game={game} filters={query} cohort={cohort} onCohort={setCohort} settings={settings.data} /> : null}
+      {report.data?.available ? <CohortPanel game={game} filters={query} cohort={cohort} onCohort={setCohort} settings={settings.data} onDay={(day) => pickDays(day, day)} /> : null}
     </>
   );
 }
@@ -127,7 +134,7 @@ function SourceRow({ row, comeBack, earnedDays, hasCost, goals, total, selected,
     <tr className={`${onPick ? 'click' : ''}${selected ? ' picked' : ''}${total ? ' total-row' : ''}`} onClick={onPick} tabIndex={onPick ? 0 : undefined} onKeyDown={(event) => { if (onPick && event.key === 'Enter') onPick(); }} aria-selected={onPick ? selected : undefined}>
       <td><b>{row.value}</b></td>
       <td className="num">{number(row.installs)}{(row.sdk_installs ?? row.service_installs) ? <span className="muted" title={row.sdk_installs != null ? 'Installs on a build that sends AVN events' : 'Every install the cost service counted'}> / {number(row.sdk_installs ?? row.service_installs ?? 0)}</span> : null}</td>
-      {comeBack.map((day) => { const item = row.retention[`day_${day}`]; return <td key={`r${day}`} className={`num${faint(item?.players)}`}>{item?.players ? pct1(item.rate) : <span className="muted">—</span>}</td>; })}
+      {comeBack.map((day) => { const item = row.retention[`day_${day}`]; return <td key={`r${day}`} className={`num${faint(item?.players)}`}>{item?.players && item.rate != null ? <Share part={Math.round(item.rate * item.players)} whole={item.players} percent={item.rate * 100} unit="installs" /> : <span className="muted">—</span>}</td>; })}
       {earnedDays.map((day) => { const item = row.value_per_install[`day_${day}`]; return <td key={`v${day}`} className={`num${faint(item?.players)}`}>{item?.players ? money(item.per_player, 3) : <span className="muted">—</span>}</td>; })}
       {hasCost ? (
         <>
@@ -141,7 +148,7 @@ function SourceRow({ row, comeBack, earnedDays, hasCost, goals, total, selected,
 
 /* ─── Cohorts of one campaign ─── */
 
-function CohortPanel({ game, filters, cohort, onCohort, settings }: { game: Game; filters: URLSearchParams; cohort: string; onCohort: (name: string) => void; settings: CostSettings | undefined }): ReactElement {
+function CohortPanel({ game, filters, cohort, onCohort, settings, onDay }: { game: Game; filters: URLSearchParams; cohort: string; onCohort: (name: string) => void; settings: CostSettings | undefined; onDay: (day: string) => void }): ReactElement {
   const [mode, setMode] = useStored<'install' | 'calendar'>(`avn-acquisition-mode-${game.id}`, 'install');
   const navigate = useNavigate();
   const path = `${gameURL(game)}/insights/acquisition/cohorts?${filters}${cohort && cohort !== ALL_PAID ? `&cohort=${encodeURIComponent(cohort)}` : ''}`;
@@ -161,13 +168,13 @@ function CohortPanel({ game, filters, cohort, onCohort, settings }: { game: Game
         </div>
       </div>
       <QueryRegion query={data} path={path} skeleton={<Skeleton kind="chart" />}>
-        {(result) => (!result.available ? <p className="help panel-body">{result.note}</p> : mode === 'install' ? <InstallDays data={result} /> : <CalendarDays data={result} />)}
+        {(result) => (!result.available ? <p className="help panel-body">{result.note}</p> : mode === 'install' ? <InstallDays data={result} onDay={onDay} /> : <CalendarDays data={result} />)}
       </QueryRegion>
     </section>
   );
 }
 
-function InstallDays({ data }: { data: AcquisitionCohorts }): ReactElement {
+function InstallDays({ data, onDay }: { data: AcquisitionCohorts; onDay: (day: string) => void }): ReactElement {
   const hasCost = data.cost.state === 'ok' || data.cost.state === 'failed';
   if (!data.days.length) return <p className="help panel-body">No installs from {data.campaign} in these days.</p>;
   return (
@@ -180,7 +187,7 @@ function InstallDays({ data }: { data: AcquisitionCohorts }): ReactElement {
             <tr>{VALUE_DAYS.map((day) => { const goal = goalOn(data.goals, day); return <th key={day} className="num">{day}{goal ? <small className="goal-mark" title={`Goal: ${goal.percent}% by day ${day}`}>goal {goal.percent}%</small> : null}</th>; })}</tr>
           </thead>
           <tbody>
-            {[...data.days].reverse().map((row) => <CohortRow key={row.day} row={row} goals={data.goals} hasCost={hasCost} />)}
+            {[...data.days].reverse().map((row) => <CohortRow key={row.day} row={row} goals={data.goals} hasCost={hasCost} onDay={onDay} />)}
           </tbody>
         </table>
       </div>
@@ -189,9 +196,9 @@ function InstallDays({ data }: { data: AcquisitionCohorts }): ReactElement {
   );
 }
 
-function CohortRow({ row, goals, hasCost }: { row: CohortDay; goals: ReturnGoal[]; hasCost: boolean }): ReactElement {
+function CohortRow({ row, goals, hasCost, onDay }: { row: CohortDay; goals: ReturnGoal[]; hasCost: boolean; onDay: (day: string) => void }): ReactElement {
   return (
-    <tr>
+    <tr className="click" tabIndex={0} title="Show only players who installed on this day" onClick={() => onDay(row.day)} onKeyDown={(event) => { if (event.key === 'Enter') onDay(row.day); }}>
       <td>{shortDay(row.day)}{row.final ? null : <span className="muted" title="The cost service may still add installs for this day"> *</span>}</td>
       {hasCost ? <><td className="num">{money(row.cost)}</td><td className="num">{row.service_installs ? number(row.service_installs) : <span className="muted">—</span>}</td><td className="num">{money(row.cost_per_install)}</td></> : null}
       <td className="num">{number(row.installs)}{row.seen_share != null ? <span className="muted" title={row.sdk_installs != null ? `Players seen here ÷ the ${number(row.sdk_installs)} installs on a build that sends AVN events (${number(row.service_installs ?? 0)} installs in all)` : 'Players seen here ÷ every install the cost service counted'}> · {pct(row.seen_share)}</span> : null}</td>
@@ -302,5 +309,53 @@ function GoalEditor({ game, campaign, goals, current, own }: { game: Game; campa
         </div>
       </Popover>
     </>
+  );
+}
+
+/* ─── Headline numbers and the install-day picker ─── */
+
+function KeyNumbers({ data }: { data: AcquisitionReport }): ReactElement {
+  const paid = data.all_paid;
+  const organic = data.rows.find((row) => row.value === 'Organic')?.installs ?? 0;
+  const back = (day: number): ReactElement | string => { const item = paid?.retention[`day_${day}`]; return item?.players && item.rate != null ? <Share part={Math.round(item.rate * item.players)} whole={item.players} percent={item.rate * 100} unit="installs" /> : '—'; };
+  const earned = paid?.value_per_install.day_7?.players ? paid.value_per_install.day_7 : null;
+  return (
+    <div className="kpis">
+      <Metric label="Installs" value={number(data.installs)} note={`${number(paid?.installs ?? 0)} paid · ${number(organic)} organic`} />
+      <Metric label="Paid came back day 1" value={back(1)} note="of the paid installs that had a day 1" />
+      <Metric label="Paid came back day 7" value={back(7)} note="of the paid installs that had a day 7" />
+      <Metric label="Paid earned by day 7" value={earned ? money(earned.per_player, 3) : '—'} note="ad revenue per paid install" />
+    </div>
+  );
+}
+
+/** Installs per day for the last 30 days: click a day to see only the players who installed on it, shift-click to extend. */
+function InstallDayPicker({ game, filters, onPick, onAll }: { game: Game; filters: ActiveFilters; onPick: (from: string, to: string) => void; onAll: () => void }): ReactElement | null {
+  const anchor = useRef<string | null>(null);
+  const wide: ActiveFilters = { ...filters, range: { preset: 'custom', from: addDays(today(), -29), to: today() } };
+  const path = `${gameURL(game)}/insights/acquisition/cohorts?${filterQuery(wide)}`;
+  const cohorts = useRead<AcquisitionCohorts>(path);
+  const days = cohorts.data?.available ? cohorts.data.days : [];
+  if (days.length < 2) return null;
+  const top = Math.max(...days.map((row) => row.installs), 1);
+  const chosen = (day: string) => day >= filters.range.from && day <= filters.range.to;
+  const narrowed = filters.range.preset === 'custom' || filters.range.from > addDays(today(), -29) || filters.range.to < today();
+  return (
+    <section className="panel install-days">
+      <div className="panel-header">
+        <div><h2 title="The page shows players who first opened the game on the chosen days. Click a day for only that day, shift-click to extend to a run of days.">Install days</h2></div>
+        <span className="quiet-actions"><span className="muted small">Paid installs per day</span>{narrowed ? <button type="button" className="btn sm" onClick={onAll}>All last 30 days</button> : null}</span>
+      </div>
+      <div className="panel-body">
+        <div className="day-bars" role="group" aria-label="Pick install days">
+          {days.map((row) => (
+            <button key={row.day} type="button" className={`day-bar${chosen(row.day) ? ' on' : ''}`} aria-pressed={chosen(row.day)} title={`${shortDay(row.day)} · ${number(row.installs)} paid installs`}
+              onClick={(event) => { if (event.shiftKey && anchor.current) onPick(anchor.current, row.day); else { anchor.current = row.day; onPick(row.day, row.day); } }}>
+              <i style={{ height: `${Math.max(6, (100 * row.installs) / top)}%` }} /><span>{row.day.slice(8)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }

@@ -30,7 +30,22 @@ export function installPopoverBehaviour(): () => void {
       if (away || box.top < 48 || box.bottom > window.innerHeight + 1) document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     });
   };
+  // A popover that would open below the bottom of the window brings its trigger up instead (the shared one has no flip).
+  const keepInView = (pop: Element) => {
+    requestAnimationFrame(() => {
+      const box = pop.getBoundingClientRect();
+      const overflow = box.bottom - (window.innerHeight - 8);
+      if (overflow <= 0 || getComputedStyle(pop).bottom === '0px') return;
+      const anchor = document.querySelector('[aria-haspopup][aria-expanded="true"]')?.getBoundingClientRect();
+      const room = anchor ? Math.max(0, anchor.top - 72) : overflow;
+      window.scrollBy({ top: Math.min(overflow + 8, room), behavior: 'instant' });
+    });
+  };
+  const watcher = new MutationObserver((records) => {
+    for (const record of records) record.addedNodes.forEach((node) => { if (node instanceof Element) { const pop = node.matches('.pop') ? node : node.querySelector('.pop'); if (pop) keepInView(pop); } });
+  });
+  watcher.observe(document.body, { childList: true, subtree: true });
   document.addEventListener('wheel', onWheel, { passive: false });
   document.addEventListener('scroll', onScroll, true);
-  return () => { document.removeEventListener('wheel', onWheel); document.removeEventListener('scroll', onScroll, true); cancelAnimationFrame(frame); };
+  return () => { watcher.disconnect(); document.removeEventListener('wheel', onWheel); document.removeEventListener('scroll', onScroll, true); cancelAnimationFrame(frame); };
 }

@@ -1205,3 +1205,14 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 
 .ad-widgets { display: grid; gap: 16px; margin-top: 16px; }
 .ad-widgets > .panel, .ad-widgets .split > .panel { margin: 0; }
+
+/* Acquisition: the install-day picker (bars you click). */
+.install-days { margin: 12px 0; }
+.day-bars { display: flex; align-items: flex-end; gap: 4px; height: 84px; }
+.day-bar { flex: 1; min-width: 8px; max-width: 34px; height: 100%; padding: 0; border: 0; background: none; display: grid; grid-template-rows: 1fr auto; align-items: end; cursor: pointer; color: var(--dim); font: inherit; font-size: 10px; }
+.day-bar i { display: block; width: 100%; background: var(--info); opacity: .45; border-radius: 3px 3px 0 0; transition: opacity .15s, background-color .15s; }
+.day-bar:hover i { opacity: .8; }
+.day-bar.on i { background: var(--accent); opacity: 1; }
+.day-bar span { padding-top: 3px; text-align: center; }
+.cohort-table tr.click { cursor: pointer; }
+.cohort-table tr.click:hover { background: var(--nested); }
