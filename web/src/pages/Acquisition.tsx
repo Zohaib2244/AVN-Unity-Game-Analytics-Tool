@@ -41,7 +41,7 @@ export function AcquisitionPage({ game }: { game: Game }): ReactElement {
             <p className="answer-line">{answer(data, goalsFor)}</p>
             <section className="panel">
               <div className="panel-header">
-                <div><h2>Sources</h2><p>Earned is ad revenue per install, added up from the install day. Return is that against the cost of an install.</p></div>
+                <div><h2 title="Earned is ad revenue per install, added up from the install day. Return is that against the cost of an install.">Sources</h2></div>
                 <Segmented<Group> label="Group installs by" value={group} onChange={setGroup} options={GROUPS.map((item) => ({ ...item }))} />
               </div>
               <SourcesTable data={data} goalsFor={goalsFor} selected={group === 'campaign' ? cohort : null} onPick={group === 'campaign' ? setCohort : undefined} />
@@ -100,16 +100,19 @@ function SourcesTable({ data, goalsFor, selected, onPick }: { data: AcquisitionR
   const hasCost = data.cost.state === 'ok' || data.cost.state === 'failed';
   const rows = [...(data.rows.some((row) => row.paid) ? [data.all_paid] : []), ...data.rows];
   const label = GROUPS.find((item) => item.value === data.group_by)?.label ?? 'Source';
+  // A day nobody has reached yet (a young game) has no column: it would say “—” on every row.
+  const comeBack = RETENTION_DAYS.filter((day) => rows.some((row) => row.retention[`day_${day}`]?.players));
+  const earnedDays = TABLE_DAYS.filter((day) => rows.some((row) => row.value_per_install[`day_${day}`]?.players));
   return (
     <>
       <div className="table-wrap">
         <table className="compact-table acq-table">
           <thead>
-            <tr><th rowSpan={2}>{label}</th><th rowSpan={2} className="num" title="Players who opened the game for the first time here; after the slash, the installs the cost service counted on a build that sends AVN events (every install until the first build with AVN is set)">Installs</th><th colSpan={3} className="grp">Came back on day</th><th colSpan={4} className="grp">Earned per install by day</th>{hasCost ? <><th rowSpan={2} className="num">Cost per install</th><th rowSpan={2} className="num" title="Earned per install ÷ cost per install, on the latest day with a goal">Return</th></> : null}</tr>
-            <tr>{RETENTION_DAYS.map((day) => <th key={`r${day}`} className="num">{day}</th>)}{TABLE_DAYS.map((day) => <th key={`v${day}`} className="num">{day}</th>)}</tr>
+            <tr><th rowSpan={2}>{label}</th><th rowSpan={2} className="num" title="Players who opened the game for the first time here; after the slash, the installs the cost service counted on a build that sends AVN events (every install until the first build with AVN is set)">Installs</th>{comeBack.length ? <th colSpan={comeBack.length} className="grp">Came back on day</th> : null}{earnedDays.length ? <th colSpan={earnedDays.length} className="grp">Earned per install by day</th> : null}{hasCost ? <><th rowSpan={2} className="num">Cost per install</th><th rowSpan={2} className="num" title="Earned per install ÷ cost per install, on the latest day with a goal">Return</th></> : null}</tr>
+            <tr>{comeBack.map((day) => <th key={`r${day}`} className="num">{day}</th>)}{earnedDays.map((day) => <th key={`v${day}`} className="num">{day}</th>)}</tr>
           </thead>
           <tbody>
-            {rows.map((row) => <SourceRow key={row.value} row={row} hasCost={hasCost} goals={goalsFor(row.value)} total={row === data.all_paid} selected={selected === row.value} onPick={onPick && (row.paid !== false) ? () => onPick(row.value) : undefined} />)}
+            {rows.map((row) => <SourceRow key={row.value} row={row} comeBack={comeBack} earnedDays={earnedDays} hasCost={hasCost} goals={goalsFor(row.value)} total={row === data.all_paid} selected={selected === row.value} onPick={onPick && (row.paid !== false) ? () => onPick(row.value) : undefined} />)}
           </tbody>
         </table>
       </div>
@@ -118,14 +121,14 @@ function SourcesTable({ data, goalsFor, selected, onPick }: { data: AcquisitionR
   );
 }
 
-function SourceRow({ row, hasCost, goals, total, selected, onPick }: { row: AcquisitionRow; hasCost: boolean; goals: ReturnGoal[]; total: boolean; selected: boolean; onPick?: () => void }): ReactElement {
+function SourceRow({ row, comeBack, earnedDays, hasCost, goals, total, selected, onPick }: { row: AcquisitionRow; comeBack: number[]; earnedDays: number[]; hasCost: boolean; goals: ReturnGoal[]; total: boolean; selected: boolean; onPick?: () => void }): ReactElement {
   const judged = judgedGoal(row, goals);
   return (
     <tr className={`${onPick ? 'click' : ''}${selected ? ' picked' : ''}${total ? ' total-row' : ''}`} onClick={onPick} tabIndex={onPick ? 0 : undefined} onKeyDown={(event) => { if (onPick && event.key === 'Enter') onPick(); }} aria-selected={onPick ? selected : undefined}>
       <td><b>{row.value}</b></td>
       <td className="num">{number(row.installs)}{(row.sdk_installs ?? row.service_installs) ? <span className="muted" title={row.sdk_installs != null ? 'Installs on a build that sends AVN events' : 'Every install the cost service counted'}> / {number(row.sdk_installs ?? row.service_installs ?? 0)}</span> : null}</td>
-      {RETENTION_DAYS.map((day) => { const item = row.retention[`day_${day}`]; return <td key={`r${day}`} className={`num${faint(item?.players)}`}>{item?.players ? pct1(item.rate) : <span className="muted">—</span>}</td>; })}
-      {TABLE_DAYS.map((day) => { const item = row.value_per_install[`day_${day}`]; return <td key={`v${day}`} className={`num${faint(item?.players)}`}>{item?.players ? money(item.per_player, 3) : <span className="muted">—</span>}</td>; })}
+      {comeBack.map((day) => { const item = row.retention[`day_${day}`]; return <td key={`r${day}`} className={`num${faint(item?.players)}`}>{item?.players ? pct1(item.rate) : <span className="muted">—</span>}</td>; })}
+      {earnedDays.map((day) => { const item = row.value_per_install[`day_${day}`]; return <td key={`v${day}`} className={`num${faint(item?.players)}`}>{item?.players ? money(item.per_player, 3) : <span className="muted">—</span>}</td>; })}
       {hasCost ? (
         <>
           <td className="num">{row.cost_per_install != null ? money(row.cost_per_install) : <span className="muted">{row.paid === false ? '—' : row.cost === 0 ? 'cost 0' : 'no cost'}</span>}</td>
@@ -148,8 +151,7 @@ function CohortPanel({ game, filters, cohort, onCohort, settings }: { game: Game
     <section className="panel section-spacing" id="acquisition-cohorts">
       <div className="panel-header">
         <div>
-          <h2>Cohorts</h2>
-          <p>{mode === 'install' ? 'Each install day: what it cost and how much of that its players have earned back.' : 'Revenue these players made each day, against what was spent that day.'}</p>
+          <h2 title={mode === 'install' ? 'Each install day: what it cost and how much of that its players have earned back.' : 'Revenue these players made each day, against what was spent that day.'}>Cohorts</h2>
         </div>
         <div className="quiet-actions">
           <label className="inline-field"><span className="sr-only">Campaign</span><select aria-label="Campaign" value={cohort} onChange={(event) => onCohort(event.target.value)}>{[ALL_PAID, ...(data.data?.campaigns ?? [])].map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
