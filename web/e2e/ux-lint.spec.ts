@@ -93,9 +93,11 @@ function staticChecks(): Array<Omit<Finding, 'page'>> {
   // R3.4 controls in one row match in height
   for (const parent of document.querySelectorAll('.toolbar, [role=toolbar], .panel-header, .filter-bar, .segmented, .actions, header')) {
     if (!visible(parent)) continue;
-    const controls = [...parent.querySelectorAll('button, select, input:not([type=checkbox]):not([type=radio]), [role=combobox]')].filter(visible);
+    const controls = [...parent.querySelectorAll('button, select, input:not([type=checkbox]):not([type=radio]), [role=combobox], .segmented, .range-modes')].filter(visible);
     const rows = new Map<number, number[]>();
     for (const control of controls) {
+      // The buttons of a segmented group sit inside the group's frame: the frame is the control.
+      if (control.parentElement?.closest('.segmented, .range-modes, [role=group]') && control.tagName === 'BUTTON') continue;
       const box = control.getBoundingClientRect();
       if (box.height < 20) continue;
       const key = Math.round((box.top + box.height / 2) / 6);

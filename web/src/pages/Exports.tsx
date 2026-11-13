@@ -39,7 +39,7 @@ export function ExportsPage({ game }: { game: Game }): ReactElement {
       <FilterBar game={game} state={state} onChange={update} />
       <div className="form-layout">
         <form id="export-form" className="panel form-panel" onSubmit={onSubmit}>
-          <h2>Create an export</h2><p>Uses the days and filters above, up to 366 days. We’ll package the matching events and their definitions.</p>
+          <h2 title="Uses the days and filters above, up to 366 days. We’ll package the matching events and their definitions.">Create an export</h2>
           <p id="export-count" className="export-count" aria-live="polite">{count ?? <span className="skeleton-line" role="status" aria-label="Counting events" />}</p>
           <Field label="Select events by" htmlFor="basis" help="All dates use UTC and both the first and last day are included. Game time can be affected by device clock settings.">
             <select id="basis" name="basis" value={basis} onChange={(event) => setBasis(event.target.value)}><option value="server_ts">Arrival time — when the server received them</option><option value="client_ts">Game time — when the client says they happened</option></select>

@@ -67,20 +67,20 @@ export function AdsPage({ game }: { game: Game }): ReactElement {
             </section>
           </div>
           <section className="panel section-spacing" id="ads-delivery">
-            <div className="panel-header"><div><h2>From wanted to shown</h2><p>Where each format loses ads on the way to the screen.</p></div></div>
+            <div className="panel-header"><div><h2 title="Where each format loses ads on the way to the screen.">From wanted to shown</h2></div></div>
             <QueryRegion query={delivery} path={deliveryPath} skeleton={<Skeleton rows={4} columns={8} />}>
               {(data) => <Delivery data={data} />}
             </QueryRegion>
           </section>
           <div className="settings-cols ads-pair section-spacing">
             <section className="panel">
-              <div className="panel-header"><div><h2>Rewarded placements</h2><p>Which offers players take, and what each earns.</p></div></div>
+              <div className="panel-header"><div><h2 title="Which offers players take, and what each earns.">Rewarded placements</h2></div></div>
               <QueryRegion query={placements} path={placementsPath} skeleton={<Skeleton rows={4} columns={4} />}>
                 {(data) => <Rewarded data={data} />}
               </QueryRegion>
             </section>
             <section className="panel" id="ads-creatives">
-              <div className="panel-header"><div><h2>Ads players leave on</h2><p>Creatives after which the player played no more levels that session.</p></div></div>
+              <div className="panel-header"><div><h2 title="Creatives after which the player played no more levels that session.">Ads players leave on</h2></div></div>
               <QueryRegion query={creatives} path={creativesPath} skeleton={<Skeleton rows={4} columns={5} />}>
                 {(data) => <Creatives data={data} />}
               </QueryRegion>

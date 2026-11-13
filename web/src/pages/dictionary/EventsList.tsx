@@ -207,7 +207,7 @@ export function EventsList({ game }: { game: Game }): ReactElement {
               </div>
               <section className="panel section-spacing">
                 <div className="panel-header">
-                  <div><h2>All events</h2><p>Counts are for the selected days and filters. Open an event to describe it.</p></div>
+                  <div><h2 title="Counts are for the selected days and filters. Open an event to describe it.">All events</h2></div>
                   <div className="quiet-actions">
                     <label className="inline-field">Sort<select value={view.sort} onChange={(event) => setView({ sort: event.target.value as EventsSort })}>{EVENT_SORTS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
                     <button type="button" className="button" onClick={exportCSV}><Ico name="export" size={14} /> CSV</button>

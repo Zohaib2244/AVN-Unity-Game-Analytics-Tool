@@ -47,7 +47,7 @@ export function NewGamePage(): ReactElement {
       <Heading title="Make room for your next game." subtitle="A few details, and you’re ready to start collecting." />
       <div className="form-layout">
         <form id="register-form" className="panel form-panel" onSubmit={onSubmit}>
-          <h2>Game details</h2><p>Give your project a recognizable name.</p>
+          <h2 title="Give your project a recognizable name.">Game details</h2>
           <Field label="Game name" htmlFor="game-name" help="Use the same name for the Android and iOS versions: they appear as one game with a platform switch."><input id="game-name" name="name" placeholder="e.g. Tiny Adventures" required maxLength={128} autoFocus defaultValue={prefill.name || ''} /></Field>
           <Field label="Bundle ID" htmlFor="bundle-id" help="The application identifier from your game’s project settings."><input id="bundle-id" name="bundle_id" defaultValue={prefill.bundle_id || ''} placeholder="com.yourstudio.yourgame" pattern="[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+" required maxLength={255} /></Field>
           <Field label="Platform" htmlFor="platform" help="Register each platform separately to keep its events isolated. The platform can’t be changed later."><select id="platform" name="platform" defaultValue={prefill.platform === 'ios' ? 'ios' : 'android'}><option value="android">Android</option><option value="ios">iOS</option></select></Field>

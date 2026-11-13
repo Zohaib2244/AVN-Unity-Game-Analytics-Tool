@@ -62,7 +62,7 @@ function AccessPanel({ game }: { game: Game }): ReactElement {
   const [saving, setSaving] = useState(false);
   return (
     <section className="panel section-spacing" id="access-panel">
-      <div className="panel-header"><div><h2>Who can see this game</h2><p>Admins and team leads always see every game. Choose which members can open this one.</p></div></div>
+      <div className="panel-header"><div><h2 title="Admins and team leads always see every game. Choose which members can open this one.">Who can see this game</h2></div></div>
       <div className="panel-body" id="access-list">
         <QueryRegion query={query} path={path} skeleton={<Skeleton rows={3} columns={2} />} note={false}>{(people) => {
           const members = people.filter((person) => person.role === 'member');
@@ -105,7 +105,7 @@ function EnvironmentPanel({ game, manage }: { game: Game; manage: boolean }): Re
   };
   return (
     <section className="panel section-spacing" id="environment-panel">
-      <div className="panel-header"><div><h2>Environment</h2><p>Each build reports whether it is production, development or editor. A published build that was left in development mode is hidden by “Hide editor &amp; development data”. Re-count it here: the stored events are never changed, and you can undo it.</p></div></div>
+      <div className="panel-header"><div><h2 title="Each build reports whether it is production, development or editor. A published build that was left in development mode is hidden by “Hide editor &amp; development data”. Re-count it here: the stored events are never changed, and you can undo it.">Environment</h2></div></div>
       <div className="panel-body" id="environment-list">
         <QueryRegion query={query} path={path} skeleton={<Skeleton rows={3} columns={3} />} note={false}>{(data) => {
           if (!data.seen.length) return <p className="help">No events yet. Builds appear here once they send data.</p>;
@@ -281,7 +281,7 @@ export function GameSettingsPage({ game }: { game: Game }): ReactElement {
           {manage ? <Fold name="versions" title="Data by version" disclosures={folds} summary="Delete what old builds sent"><VersionDataPanel game={game} bundleId={detail.bundle_id} /></Fold> : null}
           {manage ? (
             <section className="panel section-spacing danger-zone">
-              <div className="panel-header"><div><h2>Danger zone</h2><p>Changes here affect live data collection.</p></div></div>
+              <div className="panel-header"><div><h2 title="Changes here affect live data collection.">Danger zone</h2></div></div>
               <div className="panel-body">
                 <div className="danger-row"><div><strong>{archived ? 'Restore this game' : 'Archive this game'}</strong><p>{archived ? 'Start accepting events again. Queued events on devices will be delivered.' : 'Pause collection without deleting anything. You can restore it at any time.'}</p></div><button type="button" className="button" onClick={() => void (archived ? restore() : archive())}>{archived ? 'Restore game' : 'Archive game'}</button></div>
                 <div className="danger-row"><div><strong>Delete this game</strong><p>Removes the game and all of its API keys. Its event database is moved to the server’s <code>data/deleted</code> folder, not erased.</p></div><button type="button" className="button danger" onClick={() => setDeleting(true)}>Delete game</button></div>
@@ -316,7 +316,7 @@ function ThresholdsPanel({ game, thresholds, manage }: { game: Game; thresholds:
   });
   return (
     <section className="panel section-spacing">
-      <div className="panel-header"><div><h2>Analysis confidence</h2><p>Small samples stay visible with a warning. Leave a field blank to inherit the workspace default.</p></div></div>
+      <div className="panel-header"><div><h2 title="Small samples stay visible with a warning. Leave a field blank to inherit the workspace default.">Analysis confidence</h2></div></div>
       <form className="panel-body" id="game-threshold-form" onSubmit={onSubmit}>
         <div className="threshold-grid">
           <Field label="Level minimum players" htmlFor="game-levels-min" help={`Effective: ${number(thresholds.levels_min_players)}`}><input id="game-levels-min" name="levels_min_players" type="number" min={1} max={1000000} defaultValue={thresholds.levels_override ?? ''} placeholder={String(thresholds.levels_min_players)} disabled={!manage} /></Field>

@@ -106,7 +106,7 @@ export function HomePage(): ReactElement {
       </div>
       {!totalsReady || overview.events ? null : (
         <section className="panel section-spacing">
-          <div className="panel-header"><div><h2>A simple start</h2><p>From your first event to your next idea.</p></div><Ico name="pulse" size={17} /></div>
+          <div className="panel-header"><div><h2 title="From your first event to your next idea.">A simple start</h2></div><Ico name="pulse" size={17} /></div>
           <ol className="steps">
             <li><span className={`step-number ${all.length ? 'done' : ''}`}>{all.length ? <Ico name="check" size={12} /> : '01'}</span><div><strong>Register your game</strong><p>A name, a platform, and a place for your events. Add the other platform later.</p></div></li>
             <li><span className="step-number">02</span><div><strong>Send your first event</strong><p>Use your game’s API key to start collecting.</p></div></li>

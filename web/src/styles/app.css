@@ -1147,3 +1147,9 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
   .app.rail .menu { left: 0; right: auto; width: 200px; }
 }
 @media (prefers-reduced-motion: reduce) { .app { transition: none; } }
+
+/* One control height (34px) in a row of tools: selects, buttons, the date range and segmented groups. */
+.filter-bar .select, .filter-bar .range-nav, .filter-bar .range-input, .filter-bar .btn, .filter-bar .range-modes,
+.panel-header select, .panel-header .btn, .panel-header .button, .panel-header .segmented, .toolbar select, .toolbar .btn, .toolbar .range-modes, .toolbar .segmented { height: 34px; min-height: 34px; box-sizing: border-box; }
+.panel-header select, .toolbar select { padding-block: 0; }
+.filter-bar .range-modes button, .panel-header .segmented button, .toolbar .range-modes button, .toolbar .segmented button { height: 100%; }

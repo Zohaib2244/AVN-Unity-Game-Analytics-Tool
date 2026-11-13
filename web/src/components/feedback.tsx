@@ -90,7 +90,7 @@ export function Empty({ title, children, action }: { title: string; children?: R
 }
 
 export function Heading({ title, subtitle, actions }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode }): ReactElement {
-  return <div className="page-heading"><div><h1>{title}</h1>{subtitle ? <p>{subtitle}</p> : null}</div>{actions}</div>;
+  return <div className="page-heading"><div><h1 title={typeof subtitle === 'string' ? subtitle : undefined}>{title}</h1></div>{actions}</div>;
 }
 
 /* ─── Toasts: the old call shape on top of @avn/ui's ToastProvider ─── */

@@ -80,7 +80,7 @@ function PreviousRuns({ report }: { report: SessionReport }): ReactElement {
   const { total, rows, formats } = report.previous_runs;
   return (
     <section className="panel session-detail">
-      <div className="panel-header"><div><h2>Why the previous run ended</h2><p>Launches after the app stopped in the background · which ad was open · Android 11 and up</p></div></div>
+      <div className="panel-header"><div><h2 title="Launches after the app stopped in the background · which ad was open · Android 11 and up">Why the previous run ended</h2></div></div>
       {rows.length ? (
         <div className="table-wrap">
           <table className="compact-table">
@@ -96,7 +96,7 @@ function PreviousRuns({ report }: { report: SessionReport }): ReactElement {
 function Quality({ report }: { report: SessionReport }): ReactElement {
   return (
     <section className="panel session-detail">
-      <div className="panel-header"><div><h2>Data quality</h2><p>Are sessions ending properly on each app version? The app should close more, the server guess less and ends should arrive in seconds.</p></div></div>
+      <div className="panel-header"><div><h2 title="Are sessions ending properly on each app version? The app should close more, the server guess less and ends should arrive in seconds.">Data quality</h2></div></div>
       <div className="table-wrap">
         <table className="compact-table">
           <thead><tr><th>Platform</th><th>Version</th><th className="num">Sessions</th><th className="num">Game reported the end</th><th className="num">Server guessed</th><th className="num">End arrives after</th><th className="num">Duplicates</th><th className="num">Rejected batches</th></tr></thead>

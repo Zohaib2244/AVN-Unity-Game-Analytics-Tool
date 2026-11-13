@@ -41,7 +41,7 @@ export function ProcessingPanel(): ReactElement {
         const running = status.desired === 'running';
         return (
           <>
-            <div className="panel-header"><div><h2>Analytics processing</h2><p>Prepares the dashboards’ answers in the background, for every game.</p></div><span className={`pill ${kind}`}>{label}</span></div>
+            <div className="panel-header"><div><h2 title="Prepares the dashboards’ answers in the background, for every game.">Analytics processing</h2></div><span className={`pill ${kind}`}>{label}</span></div>
             <div className="panel-body">
               <p className="help">{explain}</p>
               <ul className="status-list">

@@ -46,7 +46,7 @@ function ThresholdsForm({ thresholds, canManage, workspace }: { thresholds: Anal
   const { onSubmit, busy, error } = useSubmit(submit);
   return (
     <section className="panel section-spacing">
-      <div className="panel-header"><div><h2>Analysis confidence defaults</h2><p>Used for every game unless that game has an override.</p></div></div>
+      <div className="panel-header"><div><h2 title="Used for every game unless that game has an override.">Analysis confidence defaults</h2></div></div>
       <form className="panel-body" id="workspace-threshold-form" onSubmit={onSubmit}>
         <div className="threshold-grid">
           <div className="field"><label htmlFor="workspace-levels-min">Level minimum players</label><input id="workspace-levels-min" name="levels_min_players" type="number" min={1} max={1000000} defaultValue={thresholds.levels_min_players} disabled={!canManage} /></div>

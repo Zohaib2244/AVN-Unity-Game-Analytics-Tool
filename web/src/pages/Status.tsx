@@ -42,7 +42,7 @@ export function StatusPage(): ReactElement {
         <Metric label="Players today" value={totalsReady ? number(overview.dau_today) : '—'} note="Unique player IDs · local time" />
       </div>
       <section className="panel">
-        <div className="panel-header"><div><h2>Event arrivals</h2><p>Received by the server · choose any days · UTC</p></div></div>
+        <div className="panel-header"><div><h2 title="Received by the server · choose any days · UTC">Event arrivals</h2></div></div>
         <div className="panel-body">
           {game ? (
             <>

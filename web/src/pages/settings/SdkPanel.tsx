@@ -15,7 +15,7 @@ export function SdkPanel(): ReactElement {
     <section className="panel" id="sdk-panel">
       <QueryRegion query={query} path={SDK_URL} skeleton={<Skeleton rows={3} columns={2} />} note={false}>{(sdk) => (
         <>
-          <div className="panel-header"><div><h2>Unity SDK</h2><p>The package every game imports, shared by all games on this server.</p></div><Ico name="export" size={17} /></div>
+          <div className="panel-header"><div><h2 title="The package every game imports, shared by all games on this server.">Unity SDK</h2></div><Ico name="export" size={17} /></div>
           <div className="panel-body">
             <ul className="status-list">
               <li><span>File</span><strong><code>{sdk.filename}</code></strong></li>
