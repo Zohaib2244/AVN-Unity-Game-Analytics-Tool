@@ -37,7 +37,7 @@ export function DateRange({ value, onChange, compact = false, label = 'Date rang
   const daysButton = useRef<HTMLButtonElement>(null);
   const closeMenu = useCallback(() => setMenu(false), []);
   const closeCalendar = useCallback(() => setCalendar(false), []);
-  useEffect(() => { if (!calendar) return; const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') e.stopPropagation(); }; document.addEventListener('keydown', onKey, true); return () => document.removeEventListener('keydown', onKey, true); }, [calendar]);
+  useEffect(() => { if (!calendar) return; const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setCalendar(false); } }; document.addEventListener('keydown', onKey, true); return () => document.removeEventListener('keydown', onKey, true); }, [calendar]);
 
   const choose = (key: string) => {
     if (key === 'custom') { setCalendar(true); return; }

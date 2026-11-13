@@ -32,7 +32,7 @@ export function LevelDisplayMenu({ display, onChange }: { display: LevelDisplay;
         <div className="pop-scroll display-menu">
           <div className="pop-grp"><span className="eyebrow">Columns</span></div>
           <div className="opt locked"><input type="checkbox" className="cb-in" checked disabled aria-label="Level is always shown" /><span className="ot">Level</span><span className="oc">always</span></div>
-          <OptionList rows={LEVEL_COLUMNS.length} options={LEVEL_COLUMNS.map(({ key, label, note }) => ({ value: key, label, count: note }))} selected={chosen}
+          <OptionList rows={8} searchLabel="Search columns" options={LEVEL_COLUMNS.map(({ key, label, note }) => ({ value: key, label, count: note }))} selected={chosen}
             onChange={(values) => onChange({ ...display, columns: Object.fromEntries(LEVEL_COLUMNS.map(({ key }) => [key, values.includes(key)])) as Record<LevelColumn, boolean> })} />
           <div className="pop-grp"><span className="eyebrow">Drop and quit as</span></div>
           <Segmented<DropStyle> label="Drop and quit style" value={display.style} onChange={(style) => onChange({ ...display, style })} options={[{ value: 'cell', label: 'Heat cell' }, { value: 'bar', label: 'Bar' }]} />

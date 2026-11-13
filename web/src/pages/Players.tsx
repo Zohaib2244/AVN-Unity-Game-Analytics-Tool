@@ -15,12 +15,13 @@ import { storeGet, storeSet, useStorePushed } from '@/lib/store';
 import type { Catalog, EventRule, Game, PlayerRow, PlayersResult } from '@/lib/types';
 import { PlayerPage, type PlayerBrowse } from './player/PlayerView';
 import { RuleList, paramKeys, ruleOptions } from '@/components/EventRule';
-import { GroupBar, GroupsPanel, libraryPath, type SavedChipGroup } from './players/Groups';
+import { GroupBar, GroupsMenu, libraryPath, type SavedChipGroup } from './players/Groups';
 import { chipsFromSearch, groupParam, legacyChips, type Chip, type GroupCounts } from './players/chips';
+import { ColumnsMenu, DEFAULT_COLUMNS } from './players/ColumnsMenu';
 import { PlayersTable } from './players/PlayersTable';
-import { AGG_LABELS, PAGE_SIZE, metricLabel, orderLabel, rulesBody, sortOptions, validSort } from './players/rules';
+import { AGG_LABELS, PAGE_SIZE, metricLabel, rulesBody, validSort } from './players/rules';
 
-type PlayersView = { sort: string; order: 'asc' | 'desc'; conditions: EventRule[]; metrics: EventRule[]; fold: Record<string, boolean> };
+type PlayersView = { sort: string; order: 'asc' | 'desc'; conditions: EventRule[]; metrics: EventRule[]; fold: Record<string, boolean>; columns?: string[] };
 const EMPTY_CATALOG: Catalog = { events: [] };
 const viewKey = (game: Pick<Game, 'id'>) => `avn-players-view-${game.id}`;
 const loadView = (game: Pick<Game, 'id'>): PlayersView => ({ sort: 'last_seen', order: 'desc', conditions: [], metrics: [], fold: {}, ...(storeGet<Partial<PlayersView>>(viewKey(game)) || {}) });
@@ -98,16 +99,16 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
   }, [game, navigate, query]);
   const close = () => { setBrowse(undefined); const { player: _player, ...rest } = query; void navigate({ to: gamePath(game, 'players'), search: rest, resetScroll: false }); };
 
-  const options = sortOptions(body.metrics);
+  const shownColumns = view.columns ?? DEFAULT_COLUMNS;
+  const shownSet = useMemo(() => new Set(shownColumns), [shownColumns]);
   if (player) return <PlayerPage game={game} player={player} filters={filters} browse={browse} onBack={close} />;
   return (
     <>
       <Heading title="Players" subtitle="Open a player to read their events." />
       <FilterBar game={game} state={filters} onChange={setFilters} context={players.data?.context || {}} />
       <div className="players-layout">
-        <GroupsPanel counts={counts.data} countsError={counts.isError} items={library.data} selected={group.id} unsaved={group.id ? [] : group.chips} total={total} onSelect={(item) => setGroup(item ? { id: item.id, chips: item.definition.chips } : { id: null, chips: [] })} onNew={() => setGroup({ id: null, chips: [] })} />
         <div className="players-main">
-          <GroupBar key={group.id ?? 'new'} game={game} chips={group.chips} onChips={(chips) => setGroup({ ...group, chips })} saved={savedGroup} catalog={catalog} total={total}
+          <GroupBar key={group.id ?? 'new'} lead={<GroupsMenu counts={counts.data} countsError={counts.isError} items={library.data} selected={group.id} unsaved={group.id ? [] : group.chips} total={total} onSelect={(item) => setGroup(item ? { id: item.id, chips: item.definition.chips } : { id: null, chips: [] })} />} game={game} chips={group.chips} onChips={(chips) => setGroup({ ...group, chips })} saved={savedGroup} catalog={catalog} total={total}
             onSaved={(item) => setGroup({ id: item.id, chips: item.definition.chips })} onDeleted={() => setGroup({ id: null, chips: [] })} />
       <section className="panel players-panel">
         {/* One line: find a player, then how the list is ordered and what extra columns it has. The rule bar above carries the count. */}
@@ -116,15 +117,13 @@ export function PlayersPage({ game }: { game: Game }): ReactElement {
           <div className="search"><Ico name="search" size={16} /><input type="search" aria-label="Search players" placeholder="Search by player ID…" value={typed} onChange={(e) => setTyped(e.target.value)} /></div>
           <div className="quiet-actions">
             <FreshStamp />
-            <label className="inline-field icon-field"><Ico name="sort" size={14} /><span className="sr-only">Sort by</span><select aria-label="Sort by" value={sort} onChange={(e) => { setView((v) => ({ ...v, sort: e.target.value })); reload(); }}>{options.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-            <button type="button" className="btn" title="Switch the order" onClick={() => { setView((v) => ({ ...v, order: v.order === 'desc' ? 'asc' : 'desc' })); reload(); }}>{view.order === 'desc' ? '↓' : '↑'} {orderLabel(sort, view.order, body.metrics)}</button>
-            <button type="button" className="btn rules-toggle" aria-haspopup="dialog" onClick={() => setRulesOpen(true)}><Ico name="plus" size={14} /> Add column {body.metrics.length ? <span className="count">{body.metrics.length}</span> : null}</button>
+            <ColumnsMenu shown={shownColumns} onChange={(columns) => setView((v) => ({ ...v, columns }))} custom={body.metrics.length} onAddCustom={() => setRulesOpen(true)} />
           </div>
         </div>
         <QueryRegion query={players} path={`${gameURL(game)}/insights/players`} skeleton={<Skeleton kind="table" rows={8} columns={7} />}>
           {(data) => (data.players.length ? (
             <>
-              <PlayersTable game={game} rows={data.players} metrics={body.metrics} sort={sort} order={view.order} timezone={filters.timezone} onSort={(key) => { setSort(key); reload(); }} onOpen={(id, index) => open(id, index, data.players)} />
+              <PlayersTable game={game} rows={data.players} metrics={body.metrics} shown={shownSet} sort={sort} order={view.order} timezone={filters.timezone} onSort={(key) => { setSort(key); reload(); }} onOpen={(id, index) => open(id, index, data.players)} />
               <div className="pager">
                 <span className="small muted">{number(offset + 1)}–{number(offset + data.players.length)} of {number(data.total)}</span>
                 <span><button type="button" className="button" disabled={!offset} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>Previous</button> <button type="button" className="button" disabled={offset + data.players.length >= data.total} onClick={() => setOffset(offset + PAGE_SIZE)}>Next</button></span>

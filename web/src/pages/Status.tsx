@@ -4,7 +4,9 @@ import type { ReactElement } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { refreshAll } from '@/api';
 import { useSession } from '@/app/session';
-import { displayDate, number, platformLabel } from '@/lib/format';
+import { STATE_WORD, ago } from '@/app/IngestMeter';
+import { freshest, useLive } from '@/app/live';
+import { number, platformLabel } from '@/lib/format';
 import { Activity } from '@/components/Activity';
 import { Empty, Heading, LoadError, Metric } from '@/components/feedback';
 import { MiniPC } from '@/components/flavour';
@@ -17,19 +19,19 @@ export function StatusPage(): ReactElement {
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as Record<string, string | undefined>;
   const game = overview.games.find((item) => item.id === search.game) || overview.games[0];
-  const last = overview.games.map((item) => item.last_event || '').sort().pop() || null;
-  const live = !!last && Date.now() - new Date(last).getTime() < 600000;
+  // The same words and the same read as the sidebar chip and the game cards, asked again every 30 seconds.
+  const top = freshest([...useLive(overview.games).values()]);
+  const live = top?.state === 'live';
   return (
     <>
-      <Heading title="Server status" subtitle="Is data arriving, and how much of it." actions={<button type="button" className="button" onClick={() => void refreshAll()}><Ico name="refresh" size={14} /> Refresh</button>} />
+      <Heading title="Server status" actions={<button type="button" className="button" onClick={() => void refreshAll()}><Ico name="refresh" size={14} /> Refresh</button>} />
       {overviewError ? <LoadError error={overviewError} onRetry={retryOverview} /> : null}
       <section className="panel">
         <div className="srv-top">
           <MiniPC />
           <div className="srv-state">
-            <span className="row-wrap"><Heartbeat live={live} tick={last ?? undefined} count={overview.today ?? 0} label={!totalsReady ? (overviewError ? 'Activity unavailable' : 'Loading activity…') : live ? 'Receiving events' : 'Quiet'} /><span className="big">{!totalsReady ? (overviewError ? 'Activity unavailable' : 'Loading activity…') : live ? 'Online, receiving events' : 'Online, quiet'}</span></span>
-            <span className="muted">{totalsReady ? `Last event ${last ? displayDate(last) : 'none yet'} · ${number(overview.today)} events today` : overviewError ? 'Totals unavailable' : 'Loading workspace totals…'}</span>
-            <span className={`tag ${live ? 'ok' : 'plain'}`}>{!totalsReady ? (overviewError ? 'Unavailable' : 'Loading') : live ? 'Live' : 'Quiet'}</span>
+            <span className="row-wrap"><Heartbeat live={live} tick={top?.data?.last_event_at ?? undefined} count={overview.today ?? 0} label={top ? STATE_WORD[top.state] : 'Loading…'} /></span>
+            <span className="muted">{top?.age != null ? `Last event ${ago(top.age)}` : top ? 'No events yet' : 'Checking…'}</span>
           </div>
         </div>
       </section>

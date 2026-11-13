@@ -50,7 +50,6 @@ function ThresholdsForm({ thresholds, canManage, workspace }: { thresholds: Anal
       <form className="panel-body" id="workspace-threshold-form" onSubmit={onSubmit}>
         <div className="threshold-grid">
           <div className="field"><label htmlFor="workspace-levels-min">Level minimum players</label><input id="workspace-levels-min" name="levels_min_players" type="number" min={1} max={1000000} defaultValue={thresholds.levels_min_players} disabled={!canManage} /></div>
-          <div className="field"><label htmlFor="workspace-funnels-min">Funnel minimum players</label><input id="workspace-funnels-min" name="funnels_min_players" type="number" min={1} max={1000000} defaultValue={thresholds.funnels_min_players} disabled={!canManage} /></div>
         </div>
         <FormError error={error} />
         {canManage ? <button className="button primary" type="submit" disabled={busy} aria-busy={busy || undefined}>{busy ? 'Working…' : 'Save workspace defaults'}</button> : <p className="help">Only the workspace admin can change these defaults.</p>}
@@ -70,7 +69,7 @@ export function SettingsPage(): ReactElement {
       <div className="settings-cols">
         <div>
           <Appearance />
-          <ThresholdsForm key={`${thresholds.levels_min_players}-${thresholds.funnels_min_players}`} thresholds={thresholds} canManage={me.can_manage_team} workspace={workspace} />
+          <ThresholdsForm key={String(thresholds.levels_min_players)} thresholds={thresholds} canManage={me.can_manage_team} workspace={workspace} />
           {me.can_manage_team ? <ProcessingPanel /> : null}
         </div>
         <div>

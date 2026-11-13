@@ -17,6 +17,8 @@ export type Game = {
   dau_today?: number;
   dau_yesterday?: number;
   anonymous_today?: number;
+  /** What the game's files take on disk. */
+  storage_bytes?: number;
 };
 
 export type WorkspaceMembership = { id: string; name: string; role: 'admin' | 'lead' | 'member' | string; /** Whether this person may use NutBot here (admins always; leads and members by the workspace's access setting). */ nutbot?: boolean; nutbot_access?: 'admins' | 'leads' | 'everyone' | string };
@@ -39,6 +41,7 @@ export type Overview = {
   today: number | null;
   dau_today: number | null;
   anonymous_today: number | null;
+  storage_bytes?: number;
   timezone_offset_minutes: number;
   active_keys: number;
   ingest_url: string;

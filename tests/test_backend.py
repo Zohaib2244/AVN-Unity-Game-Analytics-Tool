@@ -2733,6 +2733,49 @@ def test_players_sort_by_app_version_in_number_order(backend):
     assert [p["player"] for p in first_page] == ["pc", "pf"]
 
 
+def test_players_sort_by_highest_level_and_country(backend):
+    admin, ingest, _ = backend
+    game = register(admin)
+    key = {"X-API-Key": game["key"]["api_key"]}
+
+    def started(player, level):
+        return event(
+            device_id=player,
+            name="LEVEL_ANALYSIS",
+            params={"STATE": "Started", "LEVEL_NUMBER": level},
+        )
+
+    sent = [
+        ("US", [started("pa", 3), started("pa", 12)]),
+        ("DE", [started("pb", 40)]),
+        ("FR", [started("pc", 7)]),
+        (None, [event(device_id="pd", name="first_open", params={})]),
+    ]
+    for country, events in sent:
+        headers = {**key, **({"CF-IPCountry": country} if country else {})}
+        assert (
+            ingest.post("/v1/events", headers=headers, json={"events": events}).status_code == 200
+        )
+    by_level = _players(admin, game, sort="level", order="desc")["players"]
+    # the highest level a player sent, not the last one; a player with no level goes last
+    assert [(p["player"], p["highest_level"]) for p in by_level] == [
+        ("pb", 40),
+        ("pa", 12),
+        ("pc", 7),
+        ("pd", None),
+    ]
+    assert [p["player"] for p in _players(admin, game, sort="level", order="asc")["players"]][
+        :3
+    ] == ["pc", "pa", "pb"]
+    by_country = _players(admin, game, sort="country", order="asc")["players"]
+    assert [p["player"] for p in by_country] == ["pb", "pc", "pa", "pd"]
+    bad = admin.get(
+        f"/v1/games/{game['id']}/insights/players",
+        params={"start": "2026-10-04", "end": "2026-10-04", "sort": "nope"},
+    )
+    assert bad.status_code == 400
+
+
 def test_players_sort_by_average_session_length_using_last_event_as_end(backend, monkeypatch):
     admin, ingest, _ = backend
     later = session_state.clock() + timedelta(hours=1)  # the sessions with no end are over
@@ -4015,6 +4058,9 @@ def test_workspace_bootstrap_never_opens_game_databases(backend, monkeypatch):
     assert result["totals_ready"] is False
     assert result["events"] is None and result["dau_today"] is None
     assert "events" not in result["games"][0]
+    # the size on disk needs no event scan, so the Games page has it before the totals
+    assert result["games"][0]["storage_bytes"] > 0
+    assert result["storage_bytes"] == result["games"][0]["storage_bytes"]
     assert result["analytics_thresholds"]["levels_min_players"] >= 1
 
 

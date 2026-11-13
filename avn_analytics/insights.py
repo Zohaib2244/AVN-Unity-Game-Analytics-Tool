@@ -1021,7 +1021,8 @@ def players(
     sort: last_seen, first_seen, events, sessions, session_length (average length of finished
     sessions, see session_state.py), playtime (total session length),
     version (the newest app version a
-    player has used, ordered by number), or metric0..metric2 (one of `metrics`).
+    player has used, ordered by number), level (the highest LEVEL_NUMBER they sent), country,
+    or metric0..metric2 (one of `metrics`).
     conditions keep only players who did (or never did) an event; metrics add a column per player.
     See rules.py for what a condition and a metric are.
     """
@@ -1030,6 +1031,8 @@ def players(
         order_by = PLAYER_SORTS[sort]
     elif sort.startswith("metric") and sort[6:].isdigit() and int(sort[6:]) < len(metrics):
         order_by = f"m{int(sort[6:])}"
+    elif sort in ("level", "country"):
+        order_by = sort  # the aggregate itself, chosen below once the source is known
     else:
         raise HTTPException(400, "Unknown sort")
     direction = "ASC" if order == "asc" else "DESC"
@@ -1040,6 +1043,14 @@ def players(
             # The facts have an app_version column, which an ORDER BY expression would read
             # instead of the result's app_version: sort by the aggregate itself.
             order_by = "version_key(newest_version(app_version))"
+        if sort == "country":
+            order_by = f"max({source.envelope('country')})"
+        elif sort == "level":
+            level = f"json_type({source.params}, '$.LEVEL_NUMBER')"
+            order_by = (
+                f"max(CASE WHEN {level} IN ('integer', 'real') "
+                f"THEN json_extract({source.params}, '$.LEVEL_NUMBER') END)"
+            )
         condition, args = where(start, end, filters, source=source)
         columns, column_args = [], []
         for position, metric in enumerate(metrics):

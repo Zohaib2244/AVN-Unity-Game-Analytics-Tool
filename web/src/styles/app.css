@@ -399,7 +399,7 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
 .levels-grid .level-drop-button { display: inline-flex; padding: 0; }
 .levels-grid .level-drop-button:hover { transform: none; }
 .levels-grid .level-drop-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
-.display-pop { max-height: min(700px, calc(100vh - 24px)) !important; }
+.display-pop { max-height: min(60vh, calc(100vh - var(--y, 0px) - 12px)) !important; }
 .display-menu .option-list-wrap { --row: 32px; }
 @media (max-width: 620px) { .display-menu .option-list-wrap { --row: 44px; } }
 #levels-jump { width: 150px; max-width: 150px; }
@@ -1002,7 +1002,7 @@ th.sortable.num .sort-arrow { order: -1; }
 .ps-fails b { grid-column: 2; font-weight: 500; color: var(--bad); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Players: saved groups down the side, the group's chips above the list. */
-.players-layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 16px; align-items: start; }
+.players-layout { display: block; }
 .players-main { display: grid; gap: 12px; min-width: 0; }
 .players-main > .panel { margin: 0; }
 .groups-side { position: sticky; top: 64px; display: grid; }
@@ -1073,3 +1073,77 @@ th.sortable.num .sort-arrow { order: -1; }
   .filter-bar { gap: 6px; }
   .filter-bar .group-picker-open, .filter-bar .filters-open { padding-inline: 8px; }
 }
+
+/* Raw events: only the rows on screen exist (virtual list), session headings are rows of the same list. */
+.journey-events.journey-virtual { position: relative; }
+.journey-events.journey-virtual > li { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; animation: none; }
+.journey-events.journey-virtual > li.vrow-head { display: block; padding: 8px 0 0; border-bottom: 0; }
+.journey-events.journey-virtual > li.vrow-end { display: block; padding: 4px 0 10px; border-bottom: 0; }
+.vrow-head .journey-session-head { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; width: 100%; text-align: left; cursor: pointer; font: inherit; color: var(--text); padding: 10px 12px; border: 1.5px solid var(--border); border-left: 3px solid var(--accent-cyan); border-radius: 8px; background: var(--bg-nested); }
+.vrow-head .journey-session-head span { color: var(--text-muted); font-size: var(--fs-label); }
+.vrow-head .journey-session-head .session-gap { border-left: 1px solid var(--border); padding-left: 14px; color: var(--accent-cyan); }
+.vrow-head .journey-session-head::before { content: ''; width: 6px; height: 6px; border-right: 2px solid var(--text-muted); border-bottom: 2px solid var(--text-muted); transform: rotate(-45deg); align-self: center; flex: none; }
+.vrow-head .journey-session-head[aria-expanded='true']::before { transform: rotate(45deg); }
+
+/* The Display popover: one bounded box with a search on top; it scrolls inside itself and never the page behind it. */
+.display-pop-body { display: flex; flex-direction: column; max-height: min(60vh, 520px); min-height: 0; }
+.display-pop-search { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.display-pop-search input { flex: 1; min-width: 0; font: inherit; color: var(--text); background: transparent; border: 0; outline: 0; }
+.display-pop-scroll { overflow-y: auto; overscroll-behavior: contain; padding: 8px 12px; min-height: 0; }
+.display-pop .param-group h4 { margin: 8px 0 2px; font-size: var(--fs-label); color: var(--text-muted); }
+.display-pop .types-foot { display: flex; gap: 8px; justify-content: space-between; padding: 8px 12px; border-top: 1px solid var(--border); }
+.pop-scroll { overscroll-behavior: contain; }
+
+/* Every popover: never taller than 60% of the window or the room under its trigger, and it scrolls inside itself. */
+body .pop { max-height: min(60vh, calc(100vh - var(--y, 0px) - 12px)); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
+@media (max-width: 700px) { body .pop { max-height: 78%; } }
+
+/* Players: the saved groups are a menu in the group bar, not a column beside the list. */
+.grp-menu-button { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.groups-menu { padding: 0; }
+.groups-menu .grp-item:first-child { border-top: 0; }
+
+/* Games: the sort sits on the toolbar's line, label beside its select. */
+.games-toolbar { align-items: center; }
+.games-toolbar .game-select { display: flex; align-items: center; gap: 8px; }
+.games-toolbar .game-select label { margin: 0; }
+
+/* Raw events: one toolbar line (Highlights, Display, navigation); the rule editor opens on its own line below it. */
+.param-bar { align-items: center; }
+.param-bar .hl-rules { flex: 1 0 100%; padding: 0; }
+.hl-pop .hl-picker { padding: 10px 12px; }
+.hl-pop .hl-picker-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+
+.tl-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.tl-toolbar > .param-bar { order: -1; padding: 0; }
+.tl-toolbar > .tl-nav { padding: 0; }
+.tl-toolbar > .toolbar { flex: 1 0 100%; }
+
+/* The sidebar folds to an icon rail on a wide screen too (the rules mirror the tablet ones in @avn/ui). */
+.app { transition: grid-template-columns .28s cubic-bezier(.3, .7, .2, 1); }
+.side-head { display: flex; align-items: center; gap: 6px; }
+.side-head .brand { flex: 1; min-width: 0; }
+.side-toggle { width: 26px; height: 26px; flex: none; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--dim); cursor: pointer; }
+.side-toggle:hover { color: var(--text); border-color: var(--line-strong); }
+.side-toggle svg { transform: rotate(90deg); transition: transform .2s; }
+.app.rail .side-toggle svg { transform: rotate(-90deg); }
+@container app (max-width: 900px) { .side-toggle { display: none; } }
+@container app (min-width: 901px) {
+  .app.rail { grid-template-columns: 62px minmax(0, 1fr); }
+  .app.rail .side { padding-inline: 9px; align-items: stretch; }
+  .app.rail .brand-t, .app.rail .game b, .app.rail .game small, .app.rail .game .ic, .app.rail .game svg:last-child, .app.rail .platforms, .app.rail .ni .lbl, .app.rail .cnt, .app.rail .acct-btn > div, .app.rail .grp-label .eyebrow, .app.rail .grp-label .ic,
+  .app.rail .ws-switch, .app.rail .ingest-chip b, .app.rail .ingest-rate, .app.rail .ingest-ago { display: none; }
+  .app.rail .side-head { flex-direction: column; gap: 8px; }
+  .app.rail .brand { justify-content: center; padding: 0; flex: none; }
+  .app.rail .game { justify-content: center; padding: 6px; }
+  .app.rail .ni { justify-content: center; padding: 0; }
+  .app.rail .grp-label { height: 1px; margin: 8px 6px; padding: 0; background: var(--line); pointer-events: none; }
+  .app.rail .grp.closed .grp-body { grid-template-rows: 1fr; }
+  .app.rail .live { position: absolute; top: 8px; right: 8px; margin: 0; }
+  .app.rail .ni .cnt-dot { display: block; }
+  .app.rail .acct-btn { justify-content: center; padding: 6px; }
+  .app.rail .ingest-chip { justify-content: center; padding: 6px; }
+  .app.rail .menu { left: 0; right: auto; width: 200px; }
+}
+@media (prefers-reduced-motion: reduce) { .app { transition: none; } }

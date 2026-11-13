@@ -10,7 +10,6 @@ import type { Game } from '@/lib/types';
 import { Skeleton } from '@/components/feedback';
 import { NotFoundPage } from '@/pages/NotFound';
 import { GameOverviewPage } from '@/pages/GameOverview';
-import { FunnelsPage } from '@/pages/Funnels';
 import { LevelsPage } from '@/pages/Levels';
 import { PlayersPage } from '@/pages/Players';
 import { SessionsPage } from '@/pages/Sessions';
@@ -23,7 +22,7 @@ import { KeysPage } from '@/pages/Keys';
 import { GameSettingsPage } from '@/pages/GameSettings';
 
 const PAGES: Record<Section, (props: { game: Game }) => ReactElement> = {
-  overview: GameOverviewPage, funnels: FunnelsPage, levels: LevelsPage, players: PlayersPage, sessions: SessionsPage, ads: AdsPage, acquisition: AcquisitionPage, exports: ExportsPage,
+  overview: GameOverviewPage, levels: LevelsPage, players: PlayersPage, sessions: SessionsPage, ads: AdsPage, acquisition: AcquisitionPage, exports: ExportsPage,
   dictionary: DictionaryPage, 'event-setup': EventSetupPage, keys: KeysPage, settings: GameSettingsPage,
 };
 

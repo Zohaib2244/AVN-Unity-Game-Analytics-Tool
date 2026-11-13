@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "playwright test",
+    "e2e": "playwright test --grep-invert \"UX lint\"",
+    "ux-lint": "playwright test web/e2e/ux-lint --project=wide --reporter=line",
     "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {

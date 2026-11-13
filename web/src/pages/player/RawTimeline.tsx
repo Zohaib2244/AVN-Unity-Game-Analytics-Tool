@@ -1,7 +1,8 @@
 // One player's raw timeline (the old renderRawEvents): every event of the range, grouped by session, with
 // highlights and their rules, parameter folds, the filter, and the Event Analysis tab over the same events.
 // Events arrive page by page (insights/journey, one snapshot) until the whole range is in.
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react';
+import { elementScroll, observeElementOffset, observeElementRect, observeWindowOffset, observeWindowRect, useVirtualizer, windowScroll, type Virtualizer } from '@tanstack/react-virtual';
 import { errorMessage, isAbort, read } from '@/api';
 import { Popover, Tag } from '@avn/ui';
 import { motion } from 'motion/react';
@@ -15,7 +16,7 @@ import { gameURL } from '@/lib/games';
 import { storeGet, storeSet } from '@/lib/store';
 import type { TimelineHighlight } from '@/lib/player-events';
 import type { Game, JourneyEvent, JourneyPage, SessionSummary } from '@/lib/types';
-import { Disclosure, useDisclosures } from './Disclosure';
+import { useDisclosures } from './Disclosure';
 import { EventAnalysis } from './EventAnalysis';
 import { eventLabel, levelChange, shapeEvent, SNAPSHOT_EVENTS } from './eventLayout';
 import { HighlightSetup } from './HighlightSetup';
@@ -38,10 +39,11 @@ function useJourney(base: string, player: string, range: DayRange, tzOffset: num
   const [state, setState] = useState<Journey>({ events: [], complete: false, failure: '', states: {} });
   useEffect(() => {
     let cancelled = false;
-    let events: JourneyEvent[] = [];
+    const events: JourneyEvent[] = [];
     let states: Record<string, SessionSummary> = {};
     let snapshot: number | string | null = null;
     let more = true;
+    let shownAt = 0;
     setState({ events: [], complete: false, failure: '', states: {} });
     void (async () => {
       try {
@@ -51,13 +53,14 @@ function useJourney(base: string, player: string, range: DayRange, tzOffset: num
           const page = await read<JourneyPage>(`${base}/insights/journey?${params}`);
           if (cancelled) return;
           snapshot = page.snapshot;
-          events = [...events, ...page.events];
+          for (const event of page.events) events.push(event);
           states = page.sessions ?? states;
           more = page.truncated && page.events.length > 0;
-          setState({ events, complete: !more, failure: '', states });
+          // A long timeline is shown a few times a second, not on every page: each show rebuilds the sessions.
+          if (!more || Date.now() - shownAt > 600) { shownAt = Date.now(); setState({ events: events.slice(), complete: !more, failure: '', states }); }
         }
       } catch (error) {
-        if (!cancelled && !isAbort(error)) setState((previous) => ({ ...previous, failure: `${errorMessage(error, 'The timeline could not load.')} · ${number(events.length)} events loaded; counts are incomplete. Reopen Raw events to retry.` }));
+        if (!cancelled && !isAbort(error)) setState((previous) => ({ ...previous, events: events.slice(), failure: `${errorMessage(error, 'The timeline could not load.')} · ${number(events.length)} events loaded; counts are incomplete. Reopen Raw events to retry.` }));
       }
     })();
     return () => { cancelled = true; };
@@ -143,17 +146,23 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
     items.forEach((item) => total.set(item.name, (total.get(item.name) ?? 0) + 1));
     return [...total].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([name]) => name);
   }, [items]);
-  const colorOf = (name: string): string => LANE_COLORS[Math.min(typeOrder.indexOf(name), LANE_COLORS.length - 1)]!;
-  const shownType = (index: number): boolean => !offSet.has(items[index]!.name);
-  const scoped = items.filter((_, index) => visible(index) && shownType(index));
-  const typeCounts = new Map<string, number>();
-  items.forEach((item, index) => { if (visible(index)) typeCounts.set(item.name, (typeCounts.get(item.name) ?? 0) + 1); });
-  const focusIndex = focus ? items.findIndex((item) => item.event_id === focus.event) : -1;
-  const lanes = typeOrder.filter((name) => typeCounts.has(name) && !offSet.has(name)).slice(0, 10);
+  const typeRank = useMemo(() => new Map(typeOrder.map((name, index) => [name, index])), [typeOrder]);
+  const colorOf = (name: string): string => LANE_COLORS[Math.min(typeRank.get(name) ?? LANE_COLORS.length, LANE_COLORS.length - 1)]!;
   const selection = navSelection === 'all' || Number(navSelection) < rules.length ? navSelection : 'all';
   const validRules = rules.filter((rule) => rule.enabled !== false && !conditionError(rule.conditions));
-  const matchIndices = highlightMatchIndices(items, rules, selection).filter((index) => visible(index) && shownType(index));
-  const counts = rules.map((rule) => (conditionError(rule.conditions) ? 0 : items.filter((item, index) => visible(index) && shownType(index) && eventMatchesCondition(item, rule.conditions)).length));
+  // Counted once per change of what is chosen, not on every render of a long timeline.
+  const { scoped, typeCounts, matchIndices, counts } = useMemo(() => {
+    const inScope = (index: number): boolean => shownSession === 'all' || items[index]?.session === Number(shownSession);
+    const typeCounts = new Map<string, number>();
+    items.forEach((item, index) => { if (inScope(index)) typeCounts.set(item.name, (typeCounts.get(item.name) ?? 0) + 1); });
+    const shown = (index: number): boolean => inScope(index) && !offSet.has(items[index]!.name);
+    const scoped = items.filter((_, index) => shown(index));
+    const matchIndices = highlightMatchIndices(items, rules, selection).filter(shown);
+    const counts = rules.map((rule) => (conditionError(rule.conditions) ? 0 : items.filter((item, index) => shown(index) && eventMatchesCondition(item, rule.conditions)).length));
+    return { scoped, typeCounts, matchIndices, counts };
+  }, [items, rules, selection, shownSession, offSet]);
+  const focusIndex = focus ? items.findIndex((item) => item.event_id === focus.event) : -1;
+  const lanes = typeOrder.filter((name) => typeCounts.has(name) && !offSet.has(name)).slice(0, 10);
 
   const commit = (next: TimelineHighlight[], fresh?: number) => {
     writeStore({ rules: next, mode });
@@ -171,16 +180,22 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
     setPulse({ index });
   };
 
-  // After a jump lands in the DOM: focus it, centre it and pulse it once.
+  // After a jump: bring the row in (it may not exist yet, the list only draws what is on screen), focus it and pulse it once.
   useEffect(() => {
     if (!pulse) return;
-    const target = listRef.current?.querySelector<HTMLElement>(`[data-timeline-index="${pulse.index}"]`);
-    if (!target) return;
-    target.focus({ preventScroll: true });
-    target.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-    target.classList.add('jump-pulse');
-    const timer = window.setTimeout(() => target.classList.remove('jump-pulse'), 800);
-    return () => window.clearTimeout(timer);
+    const at = flat.findIndex((row) => row.kind === 'event' && (row.item.index === pulse.index || row.run?.some((item) => item.index === pulse.index)));
+    if (at < 0) return;
+    virtual.scrollToIndex(at, { align: 'center' });
+    let target: HTMLElement | null | undefined;
+    const timer = window.setTimeout(() => {
+      target = listRef.current?.querySelector<HTMLElement>(`[data-timeline-index="${pulse.index}"]`);
+      if (!target) return;
+      target.focus({ preventScroll: true });
+      target.classList.add('jump-pulse');
+    }, 120);
+    const clear = window.setTimeout(() => target?.classList.remove('jump-pulse'), 950);
+    return () => { window.clearTimeout(timer); window.clearTimeout(clear); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pulse]);
 
   // An event picked from Event Analysis (or a level) waits for the whole timeline, then is brought into view.
@@ -246,7 +261,7 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
   const toggleParam = (name: string, shown: boolean) => updateParams((state) => ({ ...state, hidden: shown ? state.hidden.filter((item) => item !== name) : [...state.hidden.filter((item) => item !== name), name] }));
   const resetParams = () => updateParams((state) => ({ ...state, hidden: [...DEFAULT_HIDDEN_PARAMS], showAll: false }));
 
-  const renderRow = (item: TimelineItem, run: TimelineItem[] | null): ReactElement => {
+  const renderRow = (item: TimelineItem, run: TimelineItem[] | null, slot: { ref: (el: HTMLElement | null) => void; index: number; style: CSSProperties }): ReactElement => {
     const owner = sessions[item.session]!;
     const note = eventNote(item, owner, states[owner.id]);
     const hits = mode === 'highlight' ? rules.flatMap((rule, index) => (highlightMatches(item, rule) ? [{ rule, index }] : [])) : [];
@@ -278,10 +293,10 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
     const last = run?.[run.length - 1];
     const focused = item.index === focusIndex;
     return (
-      <li key={item.index} data-timeline-index={item.index} tabIndex={-1} style={{ '--c': colorOf(item.name) } as React.CSSProperties} className={joinClass(run && 'timeline-run', hits.length > 0 && `timeline-match highlight-${hits[0]!.rule.color}`, focused && 'timeline-focus', current === item.index && mode === 'highlight' && 'timeline-current')}>
+      <li key={item.index} ref={slot.ref} data-index={slot.index} data-timeline-index={item.index} tabIndex={-1} style={{ '--c': colorOf(item.name), ...slot.style } as CSSProperties} className={joinClass(run && 'timeline-run', hits.length > 0 && `timeline-match highlight-${hits[0]!.rule.color}`, focused && 'timeline-focus', current === item.index && mode === 'highlight' && 'timeline-current')}>
         <time dateTime={item.client_ts}>{clock(item.client_ts, timezone)}</time>
         <span className={joinClass('journey-gap', item.gap != null && item.gap > 60 && 'long')}>{item.gap == null ? '' : `+${duration(item.gap)}`}</span>
-        <span className="journey-lanes" aria-hidden="true">{lanes.map((name) => <i key={name} className={name === item.name ? 'dot' : undefined} style={{ '--lane': colorOf(name) } as React.CSSProperties} />)}</span>
+        <span className="journey-lanes" aria-hidden="true">{lanes.map((name) => <i key={name} className={name === item.name ? 'dot' : undefined} style={{ '--lane': colorOf(name) } as CSSProperties} />)}</span>
         <span className="journey-name">
           <span title={item.name}>{eventLabel(item.name)}</span>
           {shape.state ? <button type="button" className={joinClass('state-badge', rules.some((rule) => rule.label === quickLabel(item, 'STATE', shape.state)) && 'on')} onClick={(event) => quickHighlight(event.currentTarget, item, 'STATE', shape.state)} title={`Highlight every ${eventLabel(item.name)} ${shape.state}`}>{shape.state}</button> : null}
@@ -299,34 +314,88 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
     );
   };
 
-  const renderSessions = (): ReactElement => {
+  // The list is flat so only the rows on screen exist: a session heading, its events, and its closing line.
+  type Row =
+    | { kind: 'head'; key: string; name: string; index: number; session: (typeof sessions)[number]; open: boolean; count: number }
+    | { kind: 'event'; key: string; item: TimelineItem; run: TimelineItem[] | null }
+    | { kind: 'end'; key: string; session: (typeof sessions)[number] };
+  const flat = useMemo(() => {
     const query = mode === 'filter' ? filterText : '';
-    const sections = sessions.flatMap((session, index) => {
-      if (shownSession !== 'all' && index !== Number(shownSession)) return [];
+    const out: Row[] = [];
+    sessions.forEach((session, index) => {
+      if (shownSession !== 'all' && index !== Number(shownSession)) return;
       const shown = session.items.filter((item) => !offSet.has(item.name) && matchesFilter(item, query));
-      return shown.length ? [{ session, index, shown }] : [];
+      if (!shown.length) return;
+      const name = `session-${session.id}-${index}`;
+      const open = disclosures.isOpen(name, true);
+      out.push({ kind: 'head', key: name, name, index, session, open, count: session.items.length });
+      if (!open) return;
+      for (const row of foldRuns(shown, (item) => (paramState.group && item.index !== focusIndex && !rules.some((rule) => highlightMatches(item, rule)) ? repeatKey(item, hidden, paramState.showAll) : null))) {
+        out.push({ kind: 'event', key: `e${row.items[0]!.index}`, item: row.items[0]!, run: row.run ? row.items : null });
+      }
+      if (sessionEnding(states[session.id])) out.push({ kind: 'end', key: `${name}-end`, session });
     });
-    if (!sections.length) return <p className="help">{events.length ? 'No events match the filter.' : complete ? 'No events from this player in these days.' : 'Loading events…'}</p>;
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions, shownSession, offSet, mode, filterText, paramState, rules, focusIndex, disclosures.isOpen, states]);
+
+  // Rows scroll with the page, or with the dialog the player is open in.
+  const [scroller, setScroller] = useState<HTMLElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+  useLayoutEffect(() => {
+    const box = listRef.current;
+    if (!box) return;
+    let parent = box.parentElement;
+    while (parent && parent !== document.body && !/(auto|scroll)/.test(getComputedStyle(parent).overflowY)) parent = parent.parentElement;
+    const found = parent && parent !== document.body && parent !== document.documentElement ? parent : null;
+    if (found !== scroller) setScroller(found);
+    const top = found ? box.getBoundingClientRect().top - found.getBoundingClientRect().top + found.scrollTop : box.getBoundingClientRect().top + window.scrollY;
+    if (Math.abs(top - scrollMargin) > 1) setScrollMargin(top);
+  });
+  const virtual = useVirtualizer({
+    count: flat.length,
+    getScrollElement: () => (scroller ?? window) as unknown as HTMLElement,
+    observeElementRect: ((instance: Virtualizer<HTMLElement, Element>, callback: (rect: { width: number; height: number }) => void) => (scroller ? observeElementRect(instance, callback) : observeWindowRect(instance as never, callback))) as typeof observeElementRect,
+    observeElementOffset: ((instance: Virtualizer<HTMLElement, Element>, callback: (offset: number, scrolling: boolean) => void) => (scroller ? observeElementOffset(instance, callback) : observeWindowOffset(instance as never, callback))) as typeof observeElementOffset,
+    scrollToFn: ((offset: number, options: { adjustments?: number; behavior?: ScrollBehavior }, instance: Virtualizer<HTMLElement, Element>) => (scroller ? elementScroll(offset, options, instance) : windowScroll(offset, options, instance as never))) as typeof elementScroll,
+    estimateSize: (index) => (flat[index]?.kind === 'head' ? 56 : flat[index]?.kind === 'end' ? 40 : 40),
+    overscan: 14,
+    scrollMargin,
+    getItemKey: (index) => flat[index]?.key ?? index,
+  });
+
+  const renderSessions = (): ReactElement => {
+    if (!flat.length) return <p className="help">{events.length ? 'No events match the filter.' : complete ? 'No events from this player in these days.' : 'Loading events…'}</p>;
     return (
-      <>
-        {sections.map(({ session, index, shown }, position) => {
+      <ol className="journey-events journey-virtual" style={{ height: virtual.getTotalSize(), '--lanes-w': `${lanes.length * 9 + 4}px` } as CSSProperties}>
+        {virtual.getVirtualItems().map((slot) => {
+          const row = flat[slot.index]!;
+          const place = { ref: virtual.measureElement as (el: HTMLElement | null) => void, index: slot.index, style: { transform: `translateY(${slot.start - scrollMargin}px)` } as CSSProperties };
+          if (row.kind === 'event') return renderRow(row.item, row.run, place);
+          if (row.kind === 'end') {
+            const state = states[row.session.id];
+            return (
+              <li key={row.key} ref={place.ref} data-index={slot.index} style={place.style} className="vrow-end">
+                <p className="session-end-marker"><Tag kind={state?.end_reason === 'inferred' ? 'warn' : 'plain'}>{sessionEnding(state)}</Tag>{state?.status === 'closed' ? <time dateTime={state.last_event_at}>{clock(state.last_event_at, timezone)}</time> : null}</p>
+              </li>
+            );
+          }
+          const { session, index } = row;
           const start = session.items[0]!.client_ts;
           const gap = session.items[0]!.gap;
           const state = states[session.id];
-          const ending = sessionEnding(state);
-          const name = `session-${session.id}-${index}`;
-          const rows = foldRuns(shown, (item) => (paramState.group && item.index !== focusIndex && !rules.some((rule) => highlightMatches(item, rule)) ? repeatKey(item, hidden, paramState.showAll) : null));
           return (
-            <Fragment key={name}>
-              {position > 0 ? <div className="session-break" role="separator" aria-label={`Session break before session ${index + 1}`}><span aria-hidden="true">Session break</span></div> : null}
-              <Disclosure name={name} disclosures={disclosures} defaultOpen className="journey-session" summaryClassName="journey-session-head" summary={<><strong>Session {index + 1}</strong><span>{analysisDate(start, timezone)} · Play time {duration(sessionLength(session, state))}{state?.away_seconds ? ` · Away ${duration(state.away_seconds)}` : ''} · {number(session.items.length)} events</span>{gap == null ? null : <span className="session-gap">{duration(gap)} after previous session</span>}{state?.measured_old_way ? <span title="This app version only reported its end at the next launch, so this length is less exact.">Measured the old way</span> : null}</>}>
-                <ol className="journey-events" style={{ '--lanes-w': `${lanes.length * 9 + 4}px` } as React.CSSProperties}>{rows.map((row) => renderRow(row.items[0]!, row.run ? row.items : null))}</ol>
-                {ending ? <p className="session-end-marker"><Tag kind={state?.end_reason === 'inferred' ? 'warn' : 'plain'}>{ending}</Tag>{state?.status === 'closed' ? <time dateTime={state.last_event_at}>{clock(state.last_event_at, timezone)}</time> : null}</p> : null}
-              </Disclosure>
-            </Fragment>
+            <li key={row.key} ref={place.ref} data-index={slot.index} style={place.style} className="vrow-head">
+              <button type="button" className="journey-session-head" aria-expanded={row.open} onClick={() => disclosures.set(row.name, !row.open)}>
+                <strong>Session {index + 1}</strong>
+                <span>{analysisDate(start, timezone)} · Play time {duration(sessionLength(session, state))}{state?.away_seconds ? ` · Away ${duration(state.away_seconds)}` : ''} · {number(row.count)} events</span>
+                {gap == null ? null : <span className="session-gap">{duration(gap)} after previous session</span>}
+                {state?.measured_old_way ? <span title="This app version only reported its end at the next launch, so this length is less exact.">Measured the old way</span> : null}
+              </button>
+            </li>
           );
         })}
-      </>
+      </ol>
     );
   };
 
@@ -362,22 +431,52 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
   };
 
   // How much of the timeline each highlight covers, and where along it the matches fall.
-  const activeRules = rules.map((rule, index) => ({ rule, index })).filter(({ rule }) => rule.enabled !== false && !conditionError(rule.conditions));
+  const activeRules = useMemo(() => rules.map((rule, index) => ({ rule, index })).filter(({ rule }) => rule.enabled !== false && !conditionError(rule.conditions)), [rules]);
   const summaryHidden = analysis || mode !== 'highlight' || !activeRules.length || !scoped.length;
-  const sessionCount = new Set(scoped.map((item) => item.session_id)).size;
-  const ticks = scoped.flatMap((item, position) => {
-    const hit = activeRules.find(({ rule }) => highlightMatches(item, rule));
-    return hit ? [{ item, position, rule: hit.rule }] : [];
-  }).slice(0, 3000);
+  const { sessionCount, summaries, ticks } = useMemo(() => {
+    if (summaryHidden) return { sessionCount: 0, summaries: [] as Array<ReturnType<typeof highlightSummary>>, ticks: [] as Array<{ item: TimelineItem; position: number; rule: TimelineHighlight }> };
+    const all = scoped.flatMap((item, position) => {
+      const hit = activeRules.find(({ rule }) => highlightMatches(item, rule));
+      return hit ? [{ item, position, rule: hit.rule }] : [];
+    });
+    // The strip holds at most 600 marks, spread along the whole timeline.
+    const step = Math.max(1, Math.ceil(all.length / 600));
+    return { sessionCount: new Set(scoped.map((item) => item.session_id)).size, summaries: activeRules.map(({ rule }) => highlightSummary(scoped, rule)), ticks: all.filter((_, at) => at % step === 0) };
+  }, [summaryHidden, scoped, activeRules]);
   const position = matchIndices.indexOf(current);
   const navHidden = analysis || mode !== 'highlight' || !validRules.length;
+  const [displayQuery, setDisplayQuery] = useState('');
+  // The popover fits the room under its button: if there is little, the button is first brought near the top.
+  const [displayHeight, setDisplayHeight] = useState(480);
+  const openDisplay = () => {
+    if (typesOpen) { setTypesOpen(false); return; }
+    const button = typesButton.current;
+    if (button) {
+      let room = window.innerHeight - button.getBoundingClientRect().bottom - 16;
+      if (room < 260) { window.scrollBy({ top: button.getBoundingClientRect().top - 120, behavior: 'instant' }); room = window.innerHeight - button.getBoundingClientRect().bottom - 16; }
+      setDisplayHeight(Math.max(200, Math.min(room, Math.round(window.innerHeight * 0.6), 520)));
+    }
+    setTypesOpen(true);
+  };
+  useEffect(() => { if (!typesOpen) setDisplayQuery(''); }, [typesOpen]);
+  const hiddenCount = offTypes.filter((name) => typeCounts.has(name)).length + hidden.size;
+  const typeRows = useMemo(() => [...typeCounts].filter(([name]) => `${name} ${eventLabel(name)}`.toLowerCase().includes(displayQuery.trim().toLowerCase())).sort((a, b) => b[1] - a[1]), [typeCounts, displayQuery]);
+  // The parameter list is only built while the popover is open: a long timeline has hundreds of them.
+  const paramGroups = useMemo(() => {
+    if (!typesOpen) return [];
+    const needle = displayQuery.trim().toLowerCase();
+    return parameterGroups(events, hidden)
+      .map((group) => ({ ...group, params: group.params.filter((param) => !needle || `${group.event ?? ''} ${param.key}`.toLowerCase().includes(needle)) }))
+      .filter((group) => group.params.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typesOpen, events, paramState.hidden, displayQuery]);
 
   return (
     <section className="panel raw-timeline">
       <div className="panel-header">
         <div>
           <h2>{analysis ? 'Event analysis' : 'Timeline'}</h2>
-          <p role="status">{analysis ? 'What this player called, and how often · counts follow the session selected below' : `${number(events.length)} events${complete ? '' : ' so far · loading the rest…'} · times in ${timezone === 'utc' ? 'UTC' : 'your local time'}`}</p>
+          <p role="status">{analysis ? 'What this player called, and how often · counts follow the session selected below' : `${number(events.length)} events${complete ? '' : ' so far · loading the rest…'}`}</p>
         </div>
         <div className="segmented" role="group" aria-label="Timeline mode" hidden={analysis}>
           <button type="button" aria-pressed={mode === 'highlight'} onClick={() => setMode('highlight')}>Highlight</button>
@@ -387,11 +486,10 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
       <p className="timeline-focus-note panel-body" role="status" hidden={analysis || !focus}>
         {focus ? (focusIndex >= 0 ? <><span>{focus.label} is marked in the timeline.</span><button type="button" className="button small-button" onClick={() => jumpTo(focusIndex)}>Go to it</button></> : <span>{complete ? `${focus.label} is not in these dates.` : `Finding ${focus.label.toLowerCase()}…`}</span>) : null}
       </p>
-      <HighlightSetup game={game} rules={rules} catalog={catalog} events={events} counts={counts} complete={complete} freshRule={freshRule} disclosures={disclosures} hidden={analysis || mode !== 'highlight'} commit={commit} />
       <div className="highlight-summary panel-body" hidden={summaryHidden}>
         <div className="highlight-cards">
-          {activeRules.map(({ rule, index }) => {
-            const summary = highlightSummary(scoped, rule);
+          {(summaryHidden ? [] : activeRules).map(({ rule, index }, at) => {
+            const summary = summaries[at]!;
             return (
               <div key={index} className={`highlight-card highlight-${rule.color}`}>
                 <div className="highlight-card-head"><span className="highlight-dot" aria-hidden="true" /><span className="highlight-card-name">{highlightName(rule, index)}</span><strong>{number(summary.hits)}</strong></div>
@@ -429,37 +527,31 @@ export function RawTimeline({ game, player, range, timezone, view, onView }: Raw
             
           </div>
           <div className="param-bar" hidden={analysis}>
-            <div className="segmented" role="group" aria-label="Parameters shown">
-              <button type="button" aria-pressed={!paramState.showAll} onClick={() => setShowAll(false)}>Hide noise</button>
-              <button type="button" aria-pressed={paramState.showAll} onClick={() => setShowAll(true)}>Show all</button>
-            </div>
-            <Disclosure name="param-chooser" disclosures={disclosures} className="param-chooser" summary={<>Choose parameters <span className="small muted">{number(hidden.size)} hidden</span></>}>
-              <div className="param-list">
-                <p className="help">Untick parameters you never read. Clicking a parameter name in the timeline hides it too. Remembered for this game in this browser; a parameter used by a highlight stays visible.</p>
-                {parameterGroups(events, hidden).map((group) => (
-                  <section key={group.event ?? 'other'} className="param-group">
-                    <h4>{group.event ?? 'Hidden, not on any event here'}</h4>
-                    <div className="param-grid">
+            <HighlightSetup game={game} rules={rules} catalog={catalog} events={events} counts={counts} complete={complete} freshRule={freshRule} disclosures={disclosures} hidden={analysis || mode !== 'highlight'} commit={commit} />
+            <button type="button" ref={typesButton} className="button small-button types-button" aria-haspopup="dialog" aria-expanded={typesOpen} onClick={openDisplay}>Display{hiddenCount ? <span className="small muted"> · {number(hiddenCount)} hidden</span> : null}</button>
+            <Popover position="fixed" open={typesOpen} onClose={() => setTypesOpen(false)} anchor={typesButton} width={340} className="types-pop display-pop">
+              <div className="display-pop-body" role="group" aria-label="What the timeline shows" style={{ maxHeight: displayHeight }}>
+                <div className="display-pop-search"><Ico name="search" size={16} /><input type="search" autoFocus aria-label="Search event types and parameters" placeholder="Search events and parameters…" value={displayQuery} onChange={(event) => setDisplayQuery(event.target.value)} /></div>
+                <div className="pop-scroll display-pop-scroll">
+                  <label className="check-row"><input type="checkbox" checked={paramState.showAll} onChange={(event) => setShowAll(event.target.checked)} /> Show every parameter</label>
+                  <label className="check-row" htmlFor={groupId}><input id={groupId} type="checkbox" checked={paramState.group} onChange={(event) => updateParams((state) => ({ ...state, group: event.target.checked }))} /> Group repeated events</label>
+                  <div className="pop-grp"><span className="eyebrow">Event types</span></div>
+                  {typeRows.length ? typeRows.map(([name, count]) => (
+                    <label key={name} className="check-row types-row"><input type="checkbox" checked={!offSet.has(name)} onChange={(event) => setTypes(event.target.checked ? offTypes.filter((item) => item !== name) : [...offTypes, name])} /> <span title={name}>{eventLabel(name)}</span> <span className="small muted">{number(count)}</span></label>
+                  )) : <p className="help">No event type matches.</p>}
+                  <div className="pop-grp"><span className="eyebrow">Parameters</span></div>
+                  {paramGroups.length ? paramGroups.map((group) => (
+                    <section key={group.event ?? 'other'} className="param-group">
+                      <h4>{group.event ? eventLabel(group.event) : 'Hidden, not on any event here'}</h4>
                       {group.params.map(({ name, key, count }) => (
                         <label key={name} className="check-row"><input type="checkbox" checked={!hidden.has(name)} onChange={(event) => toggleParam(name, event.target.checked)} /> <code>{key}</code> {group.event ? <span className="small muted">{number(count)}</span> : null}</label>
                       ))}
-                    </div>
-                  </section>
-                ))}
-                <button type="button" className="button small-button" onClick={resetParams}>Reset to default</button>
-              </div>
-            </Disclosure>
-            <button type="button" ref={typesButton} className="button small-button types-button" aria-haspopup="dialog" aria-expanded={typesOpen} onClick={() => setTypesOpen((open) => !open)}>Event types{offTypes.length ? <span className="small muted"> · {number(offTypes.filter((name) => typeCounts.has(name)).length)} hidden</span> : null}</button>
-            <Popover position="fixed" open={typesOpen} onClose={() => setTypesOpen(false)} anchor={typesButton} width={300} className="types-pop">
-              <div className="pop-scroll" role="group" aria-label="Event types shown">
-                <div className="pop-grp"><span className="eyebrow">Event types</span></div>
-                {[...typeCounts].sort((a, b) => b[1] - a[1]).map(([name, count]) => (
-                  <label key={name} className="check-row types-row"><input type="checkbox" checked={!offSet.has(name)} onChange={(event) => setTypes(event.target.checked ? offTypes.filter((item) => item !== name) : [...offTypes, name])} /> <span title={name}>{eventLabel(name)}</span> <span className="small muted">{number(count)}</span></label>
-                ))}
-                <div className="pop-grp types-foot"><button type="button" className="button small-button" onClick={() => setTypes([])}>Show all</button><button type="button" className="button small-button" onClick={() => setTypes(SNAPSHOT_EVENTS)}>Reset</button></div>
+                    </section>
+                  )) : <p className="help">No parameter matches.</p>}
+                </div>
+                <div className="pop-grp types-foot"><button type="button" className="button small-button" onClick={() => { setTypes(SNAPSHOT_EVENTS); resetParams(); }}>Reset</button><button type="button" className="button small-button" onClick={() => setTypes([])}>Show all types</button></div>
               </div>
             </Popover>
-            <label className="check-row" htmlFor={groupId}><input id={groupId} type="checkbox" checked={paramState.group} onChange={(event) => updateParams((state) => ({ ...state, group: event.target.checked }))} /> Group repeated events</label>
           </div>
             <div className="toolbar" hidden={analysis || mode !== 'filter'}>
               <div className="search"><Ico name="search" size={16} /><input ref={searchRef} id={searchId} type="search" aria-label="Filter events" placeholder="Filter by event or parameter…" value={filterText} onChange={(event) => setFilterText(event.target.value)} /></div>

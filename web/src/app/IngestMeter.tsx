@@ -32,7 +32,7 @@ export function size(bytes: number): string {
   if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
   return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
 }
-const STATE_WORD: Record<MeterState, string> = { live: 'Live', quiet: 'Quiet', stale: 'Nothing arriving', empty: 'No events yet' };
+export const STATE_WORD: Record<MeterState, string> = { live: 'Live', quiet: 'Quiet', stale: 'Nothing arriving', empty: 'No events yet' };
 const number = (value: number): string => value.toLocaleString();
 
 /** Seconds since the last event, counted from the server's clock at the time of the answer plus the time since. */

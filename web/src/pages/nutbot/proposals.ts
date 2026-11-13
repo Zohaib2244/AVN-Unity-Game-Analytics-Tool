@@ -77,14 +77,7 @@ export async function applyProposal(game: Game, proposal: NutBotProposal, chatId
       storePush(key, { fold: {}, ...(before || {}), sort: payload.sort || 'last_seen', order: payload.order || 'desc', conditions: payload.conditions || [], metrics: payload.metrics || [] });
       return { path, undo: async () => { restore(key, before); undoDates(); } };
     }
-    case 'funnel': {
-      const key = `avn-funnel-draft-${game.id}`;
-      const before = storeGet<Record<string, unknown>>(key);
-      const undoDates = setDates(game, payload);
-      if (payload.show_journeys) storePush(`avn-pending-journeys-${game.id}`, 1);
-      storePush(key, { id: null, name: proposal.title, steps: (payload.steps || []).map((step: Record<string, string>) => ({ event: step.event, param: step.param || '', op: step.op || 'eq', value: step.value || '', label: step.label || '' })), scope: payload.scope || 'player', window_hours: payload.window_hours || null });
-      return { path, undo: async () => { restore(key, before); undoDates(); } };
-    }
+    case 'funnel': return { path: gamePath(game, 'overview'), undo: async () => {} }; // the website has no Funnels page any more
     case 'highlight': {
       const base = `/v1/games/${encodeURIComponent(game.id)}/insights/highlights`;
       const saved = await write<{ id: string }>(base, { method: 'POST', body: JSON.stringify({ name: payload.name, color: payload.color, conditions: payload.conditions }) });

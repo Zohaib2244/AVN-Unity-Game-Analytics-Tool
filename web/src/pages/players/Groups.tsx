@@ -17,37 +17,40 @@ type ChipOptions = Record<'campaign' | 'media_source' | 'ad_format' | 'ad_networ
 
 export const libraryPath = (game: Pick<Game, 'id'>): string => `${gameURL(game)}/insights/group-library`;
 
-/** The side list: everyone, then each saved group with what it means. */
-export function GroupsPanel({ items, selected, unsaved, onSelect, total, onNew, counts, countsError }: { items: SavedChipGroup[] | undefined; selected: string | null; unsaved: Chip[]; onSelect: (item: SavedChipGroup | null) => void; total: number | null; onNew: () => void; counts?: GroupCounts; countsError?: boolean }): ReactElement {
+/** The saved groups as one menu in the group bar: everyone, then each saved group with what it means. */
+export function GroupsMenu({ items, selected, unsaved, onSelect, total, counts, countsError }: { items: SavedChipGroup[] | undefined; selected: string | null; unsaved: Chip[]; onSelect: (item: SavedChipGroup | null) => void; total: number | null; counts?: GroupCounts; countsError?: boolean }): ReactElement {
   const everyone = selected == null && !unsaved.length;
-  const [expanded, setExpanded] = useState(false);
+  const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
   const currentName = items?.find((item) => item.id === selected)?.name ?? (unsaved.length ? 'Unsaved group' : 'All players');
+  const pick = (item: SavedChipGroup | null) => { onSelect(item); setOpen(false); };
+  const countOf = (value: number | undefined | null) => (value != null ? number(value) : countsError ? '—' : '…');
   return (
-    <aside className="panel groups-side" aria-label="Player groups">
-      <div className="panel-header"><h2>Groups</h2><button type="button" className="groups-side-toggle" aria-label="Show player groups" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>Groups · {currentName}<Ico name="chevron" size={13} /></button><button type="button" className="btn sm" onClick={onNew}><Ico name="plus" size={13} /> New</button></div>
-      <div className={`groups-side-list${expanded ? ' expanded' : ''}`}>
-      <button type="button" className={`grp-item${everyone ? ' on' : ''}`} aria-pressed={everyone} onClick={() => onSelect(null)}>
-        <span className="grp-name">All players</span><span className="grp-n" aria-label={counts ? undefined : countsError ? "Count unavailable" : "Counting players"}>{counts ? number(counts.all) : everyone && total != null ? number(total) : countsError ? "—" : "…"}</span>
-      </button>
-      {selected == null && unsaved.length ? (
-        <div className="grp-item on" aria-current="true"><span className="grp-name">Unsaved group</span>{total != null ? <span className="grp-n">{number(total)}</span> : null}<small>{groupSummary(unsaved)}</small></div>
-      ) : null}
-      {(items ?? []).map((item) => (
-        <button key={item.id} type="button" className={`grp-item${selected === item.id ? ' on' : ''}`} aria-pressed={selected === item.id} onClick={() => onSelect(item)}>
-          <span className="grp-name">{item.name}</span><span className="grp-n" aria-label={counts ? undefined : countsError ? "Count unavailable" : "Counting players"}>{counts?.counts[item.id] != null ? number(counts.counts[item.id]) : countsError ? "—" : "…"}</span>
-          <small>{groupSummary(item.definition.chips)}</small>
-        </button>
-      ))}
-      {items && !items.length ? <p className="small muted grp-empty">No saved groups yet. Add conditions above the list, then Save group.</p> : null}
-      <p className="foot-note">Saved groups are shared with everyone who can open this game. Counts use the current days and filters.</p>
-      </div>
-    </aside>
+    <>
+      <button ref={button} type="button" className="btn sm grp-menu-button" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{currentName}<Ico name="chevron" size={12} /></button>
+      <Popover position="fixed" open={open} onClose={() => setOpen(false)} anchor={button} width={320} className="groups-pop">
+        <div className="pop-scroll groups-menu" role="group" aria-label="Player groups">
+          <button type="button" className={`grp-item${everyone ? ' on' : ''}`} aria-pressed={everyone} onClick={() => pick(null)}>
+            <span className="grp-name">All players</span><span className="grp-n">{countOf(counts?.all ?? (everyone ? total : null))}</span>
+          </button>
+          {selected == null && unsaved.length ? (
+            <div className="grp-item on" aria-current="true"><span className="grp-name">Unsaved group</span>{total != null ? <span className="grp-n">{number(total)}</span> : null}<small>{groupSummary(unsaved)}</small></div>
+          ) : null}
+          {(items ?? []).map((item) => (
+            <button key={item.id} type="button" className={`grp-item${selected === item.id ? ' on' : ''}`} aria-pressed={selected === item.id} onClick={() => pick(item)}>
+              <span className="grp-name">{item.name}</span><span className="grp-n">{countOf(counts?.counts[item.id] ?? (selected === item.id ? total : null))}</span>
+              <small>{groupSummary(item.definition.chips)}</small>
+            </button>
+          ))}
+        </div>
+      </Popover>
+    </>
   );
 }
 
 /** The bar above the list: the group's name (once saved), its chips, Add, the count and Save. */
-export function GroupBar({ game, chips, onChips, saved, catalog, total, onSaved, onDeleted }: {
-  game: Game; chips: Chip[]; onChips: (next: Chip[]) => void; saved: SavedChipGroup | null; catalog: Catalog;
+export function GroupBar({ lead, game, chips, onChips, saved, catalog, total, onSaved, onDeleted }: {
+  lead?: ReactElement; game: Game; chips: Chip[]; onChips: (next: Chip[]) => void; saved: SavedChipGroup | null; catalog: Catalog;
   total: number | null; onSaved: (item: SavedChipGroup) => void; onDeleted: () => void;
 }): ReactElement {
   const { toast, toastError } = useNotify();
@@ -97,6 +100,7 @@ export function GroupBar({ game, chips, onChips, saved, catalog, total, onSaved,
   return (
     <div className="panel grp-bar">
       <div className="grp-line">
+        {lead}
         {saved || chips.length ? <input className="grp-title" aria-label="Group name" placeholder="Name this group" value={name} onChange={(event) => setName(event.target.value)} /> : <span className="grp-lead">Players who</span>}
         {chips.map((chip, index) => {
           const [verb, value] = chipWords(chip);

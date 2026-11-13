@@ -21,16 +21,6 @@ describe('NutBot proposals', () => {
     window.removeEventListener('avn-store-pushed', listener);
   });
 
-  it('puts a funnel in the draft, asks for the journeys and sets the dates', async () => {
-    const done = await applyProposal(game, proposal('funnel', { steps: [{ event: 'a' }, { event: 'b', label: 'B' }], show_journeys: true, start: '2026-10-01', end: '2026-10-03' }));
-    const draft = JSON.parse(localStorage.getItem('avn-funnel-draft-g1')!);
-    expect(draft.steps.map((step: { event: string }) => step.event)).toEqual(['a', 'b']);
-    expect(localStorage.getItem('avn-pending-journeys-g1')).toBe('1');
-    expect(JSON.stringify(JSON.parse(localStorage.getItem('avn-filters-g1') || localStorage.getItem(Object.keys(localStorage).find((key) => key.includes('filters')) || '') || '{}'))).toContain('2026-10-03');
-    await done.undo();
-    expect(JSON.parse(localStorage.getItem('avn-funnel-draft-g1')!)).toBeNull();
-  });
-
   it('sets the level table and names a stable key and page per kind', async () => {
     await applyProposal(game, proposal('levels', { sort: 'drop', scope: 'first_session' }));
     expect(JSON.parse(localStorage.getItem('avn-level-nav-g1')!)).toMatchObject({ sort: 'drop', scope: 'first_session', pageSize: '50' });

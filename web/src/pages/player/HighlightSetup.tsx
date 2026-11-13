@@ -2,9 +2,9 @@
 // (levels, ads, other), then the old "Highlight rules" disclosure with one editor per rule and the game's saved
 // rules (insights/highlights, shared with the team). Active selections stay in this browser; saving a rule is
 // the only thing that reaches the server.
-import { useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { errorMessage, useRead, write } from '@/api';
-import { DialogShell } from '@avn/ui';
+import { DialogShell, Popover } from '@avn/ui';
 import { HighlightEditor } from '@/components/ConditionEditor';
 import { useNotify } from '@/components/feedback';
 import { conditionError, describeHighlight, HIGHLIGHT_COLORS } from '@/lib/conditions';
@@ -13,6 +13,7 @@ import { gameURL } from '@/lib/games';
 import type { TimelineHighlight } from '@/lib/player-events';
 import type { Game, JourneyEvent, SavedHighlight } from '@/lib/types';
 import { Disclosure, type Disclosures } from './Disclosure';
+import { Ico } from '@/components/icons';
 import { type Catalog, highlightName, HIGHLIGHT_PRESETS, MAX_HIGHLIGHTS, narrowedHighlight, newHighlight, pickableParams, picksSummary, presetHighlight } from './timeline';
 
 const GROUPS = ['Levels', 'Ads', 'Other'];
@@ -111,6 +112,9 @@ export function HighlightSetup({ game, rules, catalog, events, counts, complete,
   }, [complete, catalog]);
 
   const [narrowing, setNarrowing] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const rulesOpen = disclosures.isOpen('highlight-setup', false);
   const narrow = (at: number, base: TimelineHighlight, picks: Record<string, string[]>) => {
     const { conditions, picks: kept } = narrowedHighlight(base, picks);
     commit(rules.map((item, position) => (position === at ? { ...item, conditions, picks: kept } : item)));
@@ -154,50 +158,58 @@ export function HighlightSetup({ game, rules, catalog, events, counts, complete,
   };
 
   const status = message || (saved.isError ? errorMessage(saved.error) : '');
+  if (hidden) return <></>;
+  const active = rules.filter((rule) => rule.enabled !== false).length;
   return (
     <>
-      <div className="hl-picker panel-body" hidden={hidden} role="group" aria-label="Highlights">
-        <div className="hl-picker-head">
-          <strong>Highlights</strong>
-          {complete ? null : <span className="small muted">Loading the timeline…</span>}
-          <button type="button" className="button small-button" id="highlight-add" disabled={rules.length >= MAX_HIGHLIGHTS} onClick={add}>+ Custom rule</button>
-        </div>
-        {offered.length ? GROUPS.map((group) => {
-          const items = offered.filter(({ preset }) => preset.group === group);
-          return items.length ? (
-            <div className="hl-group" key={group}>
-              <span className="hl-group-name">{group}</span>
-              <div className="hl-chips">
-                {items.map(({ preset, rule }) => {
-                  const at = rules.findIndex((item) => item.label === preset.label);
-                  const on = at >= 0;
-                  const picked = on ? picksSummary(rules[at]!.picks) : '';
-                  return (
-                    <span key={preset.key} className="hl-chip-pair">
-                      <button type="button" className={`hl-chip highlight-${preset.color}${on ? ' on' : ''}`} aria-pressed={on} onClick={() => togglePreset(preset, rule)}>
-                        <span className="highlight-dot" aria-hidden="true" />{preset.label}
-                        {picked ? <span className="hl-picked">{picked}</span> : null}
-                        {on ? <span className="hl-count">{number(counts[at] ?? 0)}</span> : null}
-                      </button>
-                      {on ? <button type="button" className={`hl-values-toggle${pickedCount(rules[at]!.picks) ? ' set' : ''}`} aria-haspopup="dialog" aria-label={`Choose values for ${preset.label}${pickedCount(rules[at]!.picks) ? `, ${pickedCount(rules[at]!.picks)} chosen` : ''}`} onClick={() => setNarrowing(preset.key)}>Values{pickedCount(rules[at]!.picks) ? <span className="hl-count">{number(pickedCount(rules[at]!.picks))}</span> : null}</button> : null}
-                    </span>
-                  );
-                })}
+      <button ref={menuButton} type="button" className="button small-button hl-open" aria-haspopup="dialog" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>
+        <Ico name="sliders" size={14} /> Highlights{active ? <span className="small muted"> · {number(active)} on</span> : null}
+      </button>
+      <Popover position="fixed" open={menuOpen} onClose={() => setMenuOpen(false)} anchor={menuButton} width={420} className="hl-pop">
+        <div className="pop-scroll hl-picker" role="group" aria-label="Highlights">
+          <div className="hl-picker-head">
+            {complete ? null : <span className="small muted">Loading the timeline…</span>}
+            <button type="button" className="button small-button" id="highlight-add" disabled={rules.length >= MAX_HIGHLIGHTS} onClick={() => { add(); setMenuOpen(false); }}>+ Custom rule</button>
+            <button type="button" className="button small-button" aria-pressed={rulesOpen} onClick={() => { disclosures.set('highlight-setup', !rulesOpen); setMenuOpen(false); }}>{rulesOpen ? 'Hide rules' : `Edit rules · ${number(rules.length)}`}</button>
+          </div>
+          {offered.length ? GROUPS.map((group) => {
+            const items = offered.filter(({ preset }) => preset.group === group);
+            return items.length ? (
+              <div className="hl-group" key={group}>
+                <span className="hl-group-name">{group}</span>
+                <div className="hl-chips">
+                  {items.map(({ preset, rule }) => {
+                    const at = rules.findIndex((item) => item.label === preset.label);
+                    const on = at >= 0;
+                    const picked = on ? picksSummary(rules[at]!.picks) : '';
+                    return (
+                      <span key={preset.key} className="hl-chip-pair">
+                        <button type="button" className={`hl-chip highlight-${preset.color}${on ? ' on' : ''}`} aria-pressed={on} onClick={() => togglePreset(preset, rule)}>
+                          <span className="highlight-dot" aria-hidden="true" />{preset.label}
+                          {picked ? <span className="hl-picked">{picked}</span> : null}
+                          {on ? <span className="hl-count">{number(counts[at] ?? 0)}</span> : null}
+                        </button>
+                        {on ? <button type="button" className={`hl-values-toggle${pickedCount(rules[at]!.picks) ? ' set' : ''}`} aria-haspopup="dialog" aria-label={`Choose values for ${preset.label}${pickedCount(rules[at]!.picks) ? `, ${pickedCount(rules[at]!.picks)} chosen` : ''}`} onClick={() => { setNarrowing(preset.key); setMenuOpen(false); }}>…</button> : null}
+                      </span>
+                    );
+                  })}
+                </div>
               </div>
-              {items.map(({ preset, rule }) => {
-                const at = rules.findIndex((item) => item.label === preset.label);
-                return narrowing === preset.key && at >= 0 ? (
-                  <DialogShell key={preset.key} open onOpenChange={(next) => { if (!next) setNarrowing(''); }} title={`${preset.label}: values`} className="hl-values-dialog">
-                    <ValuePicker events={events} base={rule} rule={rules[at]!} onChange={(picks) => narrow(at, rule, picks)} />
-                  </DialogShell>
-                ) : null;
-              })}
-            </div>
-          ) : null;
-        }) : <p className="help">{complete ? 'This player has no events a ready-made highlight fits. Add a custom rule.' : 'Loading the timeline…'}</p>}
-      </div>
-      <Disclosure name="highlight-setup" disclosures={disclosures} className="panel-body highlight-setup" hidden={hidden} summary={<>Highlight rules <span className="small muted">{number(rules.length)} highlights</span></>}>
-        <div className="highlight-setup-body">
+            ) : null;
+          }) : <p className="help">{complete ? 'No ready-made highlight fits this player.' : 'Loading the timeline…'}</p>}
+        </div>
+      </Popover>
+      {offered.map(({ preset, rule }) => {
+        const at = rules.findIndex((item) => item.label === preset.label);
+        return narrowing === preset.key && at >= 0 ? (
+          <DialogShell key={preset.key} open onOpenChange={(next) => { if (!next) setNarrowing(''); }} title={`${preset.label}: values`} className="hl-values-dialog">
+            <ValuePicker events={events} base={rule} rule={rules[at]!} onChange={(picks) => narrow(at, rule, picks)} />
+          </DialogShell>
+        ) : null;
+      })}
+      {rulesOpen ? (
+        <div className="highlight-setup panel-body hl-rules">
+          <div className="highlight-setup-body">
           <p className="help">1. Choose an event. 2. Add parameters if you want a specific type or action. 3. Save the rule to reuse it. For example: AD_ANALYSIS with FORMAT = Interstitial and STATE = Show. Use the parameter names and values your game actually sends.</p>
           <div className="highlight-library">
             <div className="highlight-library-head"><strong>Saved rules</strong><button type="button" className="button small-button" disabled={busy} onClick={browse}>{busy ? 'Working…' : loaded ? 'Refresh saved rules' : 'Browse saved rules'}</button></div>
@@ -236,7 +248,8 @@ export function HighlightSetup({ game, rules, catalog, events, counts, complete,
             })}
           </div>
         </div>
-      </Disclosure>
+        </div>
+      ) : null}
     </>
   );
 }

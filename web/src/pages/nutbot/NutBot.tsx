@@ -377,10 +377,6 @@ export function NutBotHost(): ReactElement | null {
   const openAction = useCallback((action: NutBotAction) => {
     if (!game || action.game_id !== game.id) { toast('That belongs to another game.'); return; }
     if (action.start && action.end) saveFilters(game, { ...filterState(game), range: { preset: 'custom', from: action.start, to: action.end } });
-    if (action.page === 'funnels' && action.funnel?.steps?.length) {
-      storeSet(`avn-funnel-draft-${game.id}`, { id: null, name: '', steps: action.funnel.steps.map((step) => ({ event: step.event, param: step.param || '', op: step.op || 'eq', value: step.value || '', label: step.label || '' })), scope: action.funnel.scope || 'player', window_hours: action.funnel.window_hours || null });
-      if (action.show_journeys) storeSet(`avn-pending-journeys-${game.id}`, 1);
-    }
     void navigate({ to: gamePath(game, action.page), search: action.page === 'players' && action.player ? { player: action.player } : {} });
   }, [game, navigate, toast]);
   const undoProposal = useCallback(async (proposal: NutBotProposal) => {

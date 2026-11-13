@@ -1,5 +1,5 @@
 // The setup checklist (each step Verified only by a check against real data, never by hand) and the
-// "Sections at a glance" tiles. Both read the same facts: saved funnels, the dictionary and the team.
+// "Sections at a glance" tiles. Both read the same facts: the dictionary and the team.
 import { useState, type ReactElement } from 'react';
 import { Link } from '@tanstack/react-router';
 import { StatusMark, Tag, type StatusKind } from '@avn/ui';
@@ -13,18 +13,17 @@ import { useNotify } from '@/components/feedback';
 import { Ico, type IcoName } from '@/components/icons';
 
 type DictionaryEntry = { description?: string | null };
-export type Facts = { funnels: unknown[] | null; dictionary: Record<string, DictionaryEntry> | null; team: unknown[] | null };
+export type Facts = { dictionary: Record<string, DictionaryEntry> | null; team: unknown[] | null };
 
 const settled = (query: { isSuccess: boolean; isError: boolean }) => query.isSuccess || query.isError;
 
 /** The three reads behind the checklist and tiles; `null` until all have answered (a failed one stays null). */
 export function useFacts(game: Pick<Game, 'id'>): Facts | null {
   const { me } = useSession();
-  const funnels = useRead<unknown[]>(`${gameURL(game)}/insights/funnels`);
   const dictionary = useRead<Record<string, DictionaryEntry>>(`${gameURL(game)}/dictionary`);
   const team = useRead<unknown[]>(me.can_manage_team ? '/v1/team' : null);
-  if (!settled(funnels) || !settled(dictionary) || (me.can_manage_team && !settled(team))) return null;
-  return { funnels: funnels.data ?? null, dictionary: dictionary.data ?? null, team: team.data ?? null };
+  if (!settled(dictionary) || (me.can_manage_team && !settled(team))) return null;
+  return { dictionary: dictionary.data ?? null, team: team.data ?? null };
 }
 
 export const describedCount = (dictionary: Facts['dictionary']): number => (dictionary ? Object.values(dictionary).filter((item) => (item?.description || '').trim()).length : 0);
@@ -41,7 +40,6 @@ export function setupSteps(game: Game, data: OverviewSummary, facts: Facts | nul
     { id: 'sdk', title: 'Add the SDK to your game', note: events ? `${number(game.events || data.events)} events received` : 'Waiting for the first event', state: events ? 'ok' : 'wait', href: gamePath(game, 'event-setup'), action: 'Event setup' },
     { id: 'key', title: 'Use an API key', note: game.events ? 'Events are arriving with a key' : 'Create one and put it in the game', state: game.events ? 'ok' : 'todo', href: gamePath(game, 'keys'), action: 'API keys' },
     { id: 'dictionary', title: 'Describe your events', note: facts?.dictionary ? `${number(described)} described${shown.length ? ` · ${undescribed ? `${undescribed} of the top ${shown.length} still without` : 'every top event has one'}` : ''}` : 'Checking…', state: !facts?.dictionary ? 'wait' : shown.length && !undescribed ? 'ok' : described ? 'done' : 'todo', href: gamePath(game, 'dictionary'), action: 'Dictionary' },
-    { id: 'funnel', title: 'Save your first funnel', note: facts?.funnels ? (facts.funnels.length ? `${facts.funnels.length} saved` : 'Funnels show where players stop') : 'Checking…', state: !facts?.funnels ? 'wait' : facts.funnels.length ? 'ok' : 'todo', href: gamePath(game, 'funnels'), action: 'Funnels' },
     { id: 'release', title: 'See a new release', note: versions > 1 ? `${versions} versions seen` : 'Compare releases once a second version sends events', state: versions > 1 ? 'ok' : 'todo', href: gamePath(game, 'levels'), action: 'Levels' },
     ...(canManageTeam ? [{ id: 'team', title: 'Invite your team', note: facts?.team ? (facts.team.length > 1 ? `${facts.team.length} people` : 'Only you so far') : 'Checking…', state: (!facts?.team ? 'wait' : facts.team.length > 1 ? 'ok' : 'todo') as SetupStep['state'], href: '/team', action: 'Team' }] : []),
   ];
@@ -108,7 +106,6 @@ export function SectionTiles({ game, data, facts }: { game: Game; data: Overview
     <>
       <div className="strip-h"><span className="eyebrow">Sections at a glance</span></div>
       <div className="tiles">
-        {tile('funnels', 'funnel', 'Funnels', facts?.funnels ? number(facts.funnels.length) : '—', facts?.funnels?.length ? `saved funnel${facts.funnels.length === 1 ? '' : 's'}` : 'Where players stop, step by step')}
         {tile('levels', 'game', 'Levels', '→', 'Where players stop, level by level')}
         {tile('players', 'users', 'Players', number(data.players), `${number(data.new_players)} new in this range`)}
         {tile('dictionary', 'book', 'Event dictionary', top ? top.name : '—', top ? `most sent · ${number(top.events)} events${described != null ? ` · ${number(described)} described` : ''}` : 'Describe what your events mean')}

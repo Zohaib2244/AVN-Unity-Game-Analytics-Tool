@@ -24,6 +24,11 @@ def overview(storage, allowed=None, timezone_offset_minutes=0, *, totals=True):
         active_keys = registry.execute(
             "SELECT count(*) FROM api_keys WHERE revoked_at IS NULL"
         ).fetchone()[0]
+    for game in games:
+        # What the game's files take on disk: cheap (a stat), so it is there before the totals are.
+        game["storage_bytes"] = sum(
+            path.stat().st_size for path in storage.game_files(game["id"]) if path.exists()
+        )
     for game in games if totals else []:
         with storage.connect(storage.game_path(game["id"])) as connection:
             game["events"] = connection.execute("SELECT count(*) FROM events").fetchone()[0]
@@ -55,6 +60,7 @@ def overview(storage, allowed=None, timezone_offset_minutes=0, *, totals=True):
         "today": sum(game["today"] for game in games) if totals else None,
         "dau_today": sum(game["dau_today"] for game in games) if totals else None,
         "anonymous_today": sum(game["anonymous_today"] for game in games) if totals else None,
+        "storage_bytes": sum(game["storage_bytes"] for game in games),
         "timezone_offset_minutes": timezone_offset_minutes,
         "active_keys": active_keys,
         "ingest_url": (storage.settings.public_ingest_url or "http://127.0.0.1:8100")

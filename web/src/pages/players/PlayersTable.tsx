@@ -7,7 +7,6 @@ import { createColumnHelper, flexRender, getCoreRowModel, useReactTable, type Ro
 import { TEST_ENVIRONMENTS } from '@/lib/filters';
 import { analysisDate, countryName, duration, number, platformLabel, shortId, type Timezone } from '@/lib/format';
 import { gamePath } from '@/lib/games';
-import { eventLabel } from '@/pages/player/eventLayout';
 import type { Game, PlayerMetric, PlayerRow } from '@/lib/types';
 import { metricLabel, metricValue, playerComparator } from './rules';
 
@@ -21,8 +20,8 @@ const column = createColumnHelper<PlayerRow>();
 const recent = (value: string, timezone: Timezone): string => new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(timezone === 'utc' ? { timeZone: 'UTC' } : {}) });
 const plainClick = (event: MouseEvent): boolean => event.button === 0 && !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
 
-export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSort, onOpen }: {
-  game: Game; rows: PlayerRow[]; metrics: PlayerMetric[]; sort: string; order: 'asc' | 'desc'; timezone: Timezone;
+export function PlayersTable({ game, rows, metrics, sort, order, timezone, shown, onSort, onOpen }: {
+  game: Game; rows: PlayerRow[]; metrics: PlayerMetric[]; sort: string; order: 'asc' | 'desc'; timezone: Timezone; shown: ReadonlySet<string>;
   onSort: (key: string) => void; onOpen: (player: string, index: number) => void;
 }): ReactElement {
   const data = useMemo(() => [...rows].sort(playerComparator(sort, order)), [rows, sort, order]);
@@ -45,21 +44,19 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSor
       </>
     ) }),
     ...(shows.campaign ? [column.display({ id: 'campaign', header: 'Campaign', enableSorting: false, meta: { className: 'small' }, cell: ({ row }) => row.original.value?.campaign ?? <span className="muted">—</span> })] : []),
-    column.display({ id: 'level', header: () => <span title="The highest level they reached">Level</span>, enableSorting: false, meta: { className: 'num' }, cell: ({ row }) => (row.original.highest_level != null ? number(row.original.highest_level) : '—') }),
+    column.display({ id: 'level', header: () => <span title="The highest level they reached">Level</span>, meta: { className: 'num', sortable: true }, cell: ({ row }) => (row.original.highest_level != null ? number(row.original.highest_level) : '—') }),
     ...(shows.earned ? [column.display({ id: 'earned', header: () => <span title="Ad revenue from this player so far, banners included">Earned</span>, enableSorting: false, meta: { className: 'num' }, cell: ({ row }) => (row.original.value ? `$${row.original.value.earned.toFixed(3)}` : '—') })] : []),
     ...(shows.paidBack ? [column.display({ id: 'paid_back', header: () => <span title="Earned ÷ what their campaign paid per install on their install day">Paid back</span>, enableSorting: false, meta: { className: 'num' }, cell: ({ row }) => { const share = row.original.value?.paid_back; return share == null ? <span className="muted">—</span> : <span className={share >= 1 ? 'good-text' : undefined}>{Math.round(share * 100)}%</span>; } })] : []),
     column.accessor('total_play_seconds', { id: 'playtime', header: 'Playtime', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => duration(getValue()) }),
     column.accessor('sessions', { id: 'sessions', header: 'Sessions', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => number(getValue()) }),
     column.accessor('events', { id: 'events', header: 'Events', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => number(getValue()) }),
     column.accessor('last_seen', { id: 'last_seen', header: 'Last active', meta: { className: 'small muted after-num', sortable: true }, cell: ({ getValue }) => <span title={analysisDate(getValue(), timezone)}>{recent(getValue(), timezone)}</span> }),
-    column.display({ id: 'last_event', header: 'Last event', enableSorting: false, meta: { className: 'last-event' }, cell: ({ row }) => {
-      const last = row.original.last_event;
-      if (!last) return '—';
-      return <span className="mono" title={last.name}><b>{eventLabel(last.name)}</b>{last.state ? ` · ${last.state}` : ''}{last.level != null ? ` · L${last.level}` : ''}</span>;
-    } }),
-    ...metrics.map((metric, position) => column.display({ id: `metric${position}`, header: metricLabel(metric), meta: { className: 'num metric', sortable: true }, cell: ({ row }) => metricValue(metric, row.original.metrics[position], timezone) })),
-    column.accessor('country', { id: 'country', header: 'Country', enableSorting: false, meta: { className: 'small' }, cell: ({ getValue }) => (getValue() ? <abbr className="cc" title={countryName(getValue())}>{getValue()}</abbr> : '—') }),
-  ], [game, metrics, timezone, varies, shows]);
+    column.accessor('first_seen', { id: 'first_seen', header: 'First seen', meta: { className: 'small muted after-num', sortable: true }, cell: ({ getValue }) => <span title={analysisDate(getValue(), timezone)}>{recent(getValue(), timezone)}</span> }),
+    column.accessor('app_version', { id: 'version', header: 'App version', meta: { className: 'small', sortable: true }, cell: ({ getValue }) => getValue() || '—' }),
+    column.accessor('avg_session_seconds', { id: 'session_length', header: 'Avg session', meta: { className: 'num', sortable: true }, cell: ({ getValue }) => (getValue() != null ? duration(getValue()) : '—') }),
+    ...metrics.map((metric, position) => column.display({ id: `metric${position}`, header: metricLabel(metric), meta: { className: 'num custom-col', sortable: true }, cell: ({ row }) => metricValue(metric, row.original.metrics[position], timezone) })),
+    column.accessor('country', { id: 'country', header: 'Country', meta: { className: 'small', sortable: true }, cell: ({ getValue }) => (getValue() ? <abbr className="cc" title={countryName(getValue())}>{getValue()}</abbr> : '—') }),
+  ].filter((item) => item.id === 'player' || String(item.id).startsWith('metric') || shown.has(String(item.id))), [game, metrics, timezone, varies, shows, shown]);
   const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel(), manualSorting: true, state: { sorting: [{ id: sort, desc: order === 'desc' }] } });
   const onRowKey = (event: KeyboardEvent<HTMLTableRowElement>, player: string, index: number) => { if (event.key === 'Enter' && event.target === event.currentTarget) { event.preventDefault(); onOpen(player, index); } };
   return (
@@ -71,7 +68,7 @@ export function PlayersTable({ game, rows, metrics, sort, order, timezone, onSor
               {group.headers.map((header) => {
                 const meta = header.column.columnDef.meta || {};
                 const sorted = header.column.getIsSorted();
-                const headClass = (meta.className || '').split(' ').filter((name) => name === 'num' || name === 'metric' || name === 'after-num').join(' ');
+                const headClass = (meta.className || '').split(' ').filter((name) => name === 'num' || name === 'custom-col' || name === 'after-num').join(' ');
                 if (!meta.sortable) return <th key={header.id} className={headClass}>{flexRender(header.column.columnDef.header, header.getContext())}</th>;
                 return (
                   <th key={header.id} className={`${headClass} sortable ${sorted ? 'sorted' : ''}`} aria-sort={sorted ? (sorted === 'asc' ? 'ascending' : 'descending') : 'none'}>

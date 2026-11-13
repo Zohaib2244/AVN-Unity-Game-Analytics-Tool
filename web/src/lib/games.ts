@@ -47,7 +47,7 @@ export const workspaceName = (workspaces: WorkspaceMembership[], workspace: stri
 
 /** Sidebar sections of a game, in order; the icon names are from @avn/ui. */
 export const GAME_SECTIONS = [
-  ['overview', 'grid', 'Overview'], ['funnels', 'funnel', 'Funnels'], ['levels', 'pad', 'Levels'], ['players', 'users', 'Players'], ['sessions', 'pulse', 'Sessions'],
+  ['overview', 'grid', 'Overview'], ['levels', 'pad', 'Levels'], ['players', 'users', 'Players'], ['sessions', 'pulse', 'Sessions'],
   ['ads', 'flame', 'Ads'], ['acquisition', 'up', 'Acquisition'],
   ['exports', 'down', 'Exports'], ['dictionary', 'book', 'Event dictionary'], ['event-setup', 'link', 'Event setup'],
   ['keys', 'key', 'API keys'], ['settings', 'sliders', 'Game settings'],
@@ -57,9 +57,9 @@ export const SECTION_TITLES: Record<string, string> = Object.fromEntries(GAME_SE
 export const isSection = (value: string): value is Section => GAME_SECTIONS.some(([key]) => key === value);
 
 /** Old addresses: Retention moved into Levels, Mappings into Event setup. */
-export const MOVED_SECTIONS: Record<string, Section> = { retention: 'levels', mappings: 'event-setup' };
+export const MOVED_SECTIONS: Record<string, Section> = { retention: 'levels', mappings: 'event-setup', funnels: 'overview' };
 /** Old workspace-level pages that now live inside a game (?game=…). */
-export const LEGACY_PAGES = ['/keys', '/exports', '/dictionary', '/funnels', '/players'];
+export const LEGACY_PAGES = ['/keys', '/exports', '/dictionary', '/players'];
 
 /** Turns any picked image into a 256×256 PNG (centre-cropped square) before upload. */
 export async function iconFromFile(file: File | null | undefined): Promise<Blob> {

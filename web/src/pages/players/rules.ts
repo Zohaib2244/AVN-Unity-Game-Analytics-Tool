@@ -6,7 +6,15 @@ import { analysisDate, number, type Timezone } from '@/lib/format';
 import type { EventRule, PlayerMetric, PlayerRow, PlayerRulesBody } from '@/lib/types';
 
 export const AGG_LABELS: Record<NonNullable<EventRule['agg']>, string> = { count: 'How many times', max: 'Highest value', min: 'Lowest value', sum: 'Total of', first: 'First time', last: 'Last time' };
-export const BASE_SORTS: Array<[string, string]> = [['last_seen', 'Last active'], ['first_seen', 'First seen'], ['events', 'Events'], ['sessions', 'Sessions'], ['playtime', 'Total playtime'], ['version', 'App version']];
+export const BASE_SORTS: Array<[string, string]> = [['last_seen', 'Last active'], ['first_seen', 'First seen'], ['events', 'Events'], ['sessions', 'Sessions'], ['playtime', 'Total playtime'], ['version', 'App version'], ['session_length', 'Average session'], ['level', 'Level'], ['country', 'Country']];
+
+/** The columns the table can show: which ones are on until the person changes it. Campaign, Earned and Paid back appear only when the game has such values. */
+export const COLUMN_CHOICES: Array<{ key: string; label: string; on: boolean; note?: string }> = [
+  { key: 'campaign', label: 'Campaign', on: true }, { key: 'level', label: 'Level', on: true, note: 'highest reached' }, { key: 'earned', label: 'Earned', on: true, note: 'ad revenue' },
+  { key: 'paid_back', label: 'Paid back', on: true }, { key: 'playtime', label: 'Playtime', on: true }, { key: 'sessions', label: 'Sessions', on: true }, { key: 'events', label: 'Events', on: true },
+  { key: 'last_seen', label: 'Last active', on: true }, { key: 'first_seen', label: 'First seen', on: false }, { key: 'version', label: 'App version', on: false }, { key: 'session_length', label: 'Avg session', on: false },
+  { key: 'country', label: 'Country', on: true },
+];
 export const PAGE_SIZE = 50;
 
 /** "level_start · level ≥ 12" or just the event. */
@@ -62,6 +70,8 @@ const sortValue = (row: PlayerRow, sort: string): number | string | null => {
     case 'session_length': return row.avg_session_seconds;
     case 'playtime': return row.total_play_seconds;
     case 'version': return row.app_version;
+    case 'level': return row.highest_level ?? null;
+    case 'country': return row.country;
     default: return sort.startsWith('metric') ? row.metrics?.[metricIndex(sort)] ?? null : row.last_seen;
   }
 };

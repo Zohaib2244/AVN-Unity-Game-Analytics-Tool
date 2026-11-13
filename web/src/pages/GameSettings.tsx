@@ -266,7 +266,7 @@ export function GameSettingsPage({ game }: { game: Game }): ReactElement {
           {manage ? <AccessPanel game={game} /> : null}
           <h2 className="settings-group">Data collection</h2>
           <Fold name="activity" title="Event activity" disclosures={folds} summary={`${number(detail.today)} received today · ${number(detail.events)} in total`}><div id="activity"><Activity game={game} /></div></Fold>
-          <Fold name="confidence" title="Analysis confidence" disclosures={folds} summary={`Levels need ${number(thresholds.levels_min_players)} players, funnels ${number(thresholds.funnels_min_players)}${thresholds.levels_override != null || thresholds.funnels_override != null ? ' · customised' : ' · workspace defaults'}`}><ThresholdsPanel game={game} thresholds={thresholds} manage={manage} /></Fold>
+          <Fold name="confidence" title="Analysis confidence" disclosures={folds} summary={`Levels need ${number(thresholds.levels_min_players)} players${thresholds.levels_override != null ? ' · customised' : ' · workspace defaults'}`}><ThresholdsPanel game={game} thresholds={thresholds} manage={manage} /></Fold>
           <Fold name="environment" title="Environment" disclosures={folds} summary="Re-count a build that reported the wrong environment"><EnvironmentPanel game={game} manage={manage} /></Fold>
           {(me.is_admin && me.workspaces.length > 1) || manage ? <h2 className="settings-group">Housekeeping</h2> : null}
           {me.is_admin && me.workspaces.length > 1 ? (
@@ -290,7 +290,7 @@ export function GameSettingsPage({ game }: { game: Game }): ReactElement {
           ) : null}
           <EditGameDialog game={detail} open={editing} onClose={() => setEditing(false)} onSave={(values) => update(values, 'Game updated.')} />
           <ConfirmDialog open={moving} onClose={() => setMoving(false)} title={`Move ${detail.name} to ${targetName}?`} label="Move game"
-            message={`${variants.length > 1 ? 'Both platform versions move. ' : ''}Events, keys, funnels and the dictionary go with it, and collection keeps working. Members of ${workspaceName} lose their access to it, and you can grant it again in ${targetName}.`}
+            message={`${variants.length > 1 ? 'Both platform versions move. ' : ''}Events, keys and the dictionary go with it, and collection keeps working. Members of ${workspaceName} lose their access to it, and you can grant it again in ${targetName}.`}
             onConfirm={async () => {
               await write(`${path}/move`, { method: 'POST', body: JSON.stringify({ workspace_id: target }) });
               chooseWorkspace(target); toast('Game moved.');
@@ -320,7 +320,6 @@ function ThresholdsPanel({ game, thresholds, manage }: { game: Game; thresholds:
       <form className="panel-body" id="game-threshold-form" onSubmit={onSubmit}>
         <div className="threshold-grid">
           <Field label="Level minimum players" htmlFor="game-levels-min" help={`Effective: ${number(thresholds.levels_min_players)}`}><input id="game-levels-min" name="levels_min_players" type="number" min={1} max={1000000} defaultValue={thresholds.levels_override ?? ''} placeholder={String(thresholds.levels_min_players)} disabled={!manage} /></Field>
-          <Field label="Funnel minimum players" htmlFor="game-funnels-min" help={`Effective: ${number(thresholds.funnels_min_players)}`}><input id="game-funnels-min" name="funnels_min_players" type="number" min={1} max={1000000} defaultValue={thresholds.funnels_override ?? ''} placeholder={String(thresholds.funnels_min_players)} disabled={!manage} /></Field>
         </div>
         {error ? <FormError error={error} /> : null}
         {manage ? <button className="button primary" type="submit" disabled={busy} aria-busy={busy || undefined}>{busy ? 'Working…' : 'Save game overrides'}</button> : <p className="help">Only an admin or team lead can change these values.</p>}

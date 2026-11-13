@@ -8,7 +8,7 @@ import { AccountMenu, AppShell, BellButton, CommandPalette, IconButton, MoreShee
 import { freshness, refreshAll, requestActivity } from '@/api';
 import { GAME_SECTIONS, PLATFORM_ORDER, ROLE_LABELS, gameGroups, gamePath, iconURL, initials, sameGame, withIcon } from '@/lib/games';
 import { platformLabel, relativeTime } from '@/lib/format';
-import { copyText } from '@/lib/store';
+import { copyText, useStored } from '@/lib/store';
 import { useNotify } from '@/components/feedback';
 import { BrandMark } from '@/components/BrandMark';
 import { Ico } from '@/components/icons';
@@ -21,11 +21,11 @@ import { GameSwitcher, variantFor } from './GameSwitcher';
 import { useBrowserPage } from './browserPage';
 
 const NAV_GROUPS: NavGroup[] = [
-  { label: 'Analyze', items: GAME_SECTIONS.slice(0, 7).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
-  { label: 'Data', items: GAME_SECTIONS.slice(7, 10).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
-  { label: 'Manage', collapsible: true, defaultClosed: true, items: GAME_SECTIONS.slice(10).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
+  { label: 'Analyze', items: GAME_SECTIONS.slice(0, 6).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
+  { label: 'Data', items: GAME_SECTIONS.slice(6, 9).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
+  { label: 'Manage', collapsible: true, defaultClosed: true, items: GAME_SECTIONS.slice(9).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
 ];
-const PHONE_TABS = ['overview', 'funnels', 'levels', 'players'];
+const PHONE_TABS = ['overview', 'levels', 'players', 'sessions'];
 const AUTO_KEY = 'avn-auto-refresh';
 
 function useActivity(): boolean {
@@ -115,7 +115,7 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
   const variants = game ? variantsOf(game) : [];
   const missing = game && canManageGames ? PLATFORM_ORDER.filter((platform) => !variants.some((item) => item.platform === platform)) : [];
   const mark = game ? withIcon(variants) : null;
-  const workspaceNav: NavGroup[] = [{ label: 'Workspace', items: [{ id: '/', label: 'Games', icon: 'grid' }] }];
+  const workspaceNav: NavGroup[] = [{ label: '', items: [{ id: '/', label: 'Games', icon: 'grid' }] }];
   const navActive = game ? section : ['/', '/games', '/games/new'].includes(pathname) ? '/' : null;
   const onNav = (id: string) => navigate({ to: game ? gamePath(game, id) : id });
   const navInNewTab = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -133,9 +133,30 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
     { label: 'Account', items: accountItems },
   ];
 
+  // The sidebar folds to an icon rail (your choice is kept in this browser); [ does it from the keyboard.
+  const [rail, setRail] = useStored<boolean>('avn-sidebar-rail', false);
+  const toggleRail = useCallback(() => setRail((previous) => !previous), [setRail]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.key !== '[' || event.ctrlKey || event.metaKey || event.altKey || (target && (/^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) || target.isContentEditable)) || document.querySelector('dialog[open]')) return;
+      toggleRail();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [toggleRail]);
+  // In the rail the labels are hidden: give each icon its name as a tooltip.
+  const nameInRail = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const item = (event.target as HTMLElement).closest('.ni');
+    if (item && !item.getAttribute('title')) item.setAttribute('title', item.querySelector('.lbl')?.textContent || '');
+  };
+
   const sidebar = (
     <Sidebar>
-      <Link to="/" className="brand" title="All games"><span className="mark px-mark" aria-hidden="true"><BrandMark size={28} /></span><span className="brand-t">AVN Analytics</span></Link>
+      <div className="side-head">
+        <Link to="/" className="brand" title="All games"><span className="mark px-mark" aria-hidden="true"><BrandMark size={28} /></span><span className="brand-t">AVN Analytics</span></Link>
+        <button type="button" className="side-toggle" aria-label={rail ? 'Expand the sidebar' : 'Collapse the sidebar'} aria-pressed={rail} title={`${rail ? 'Expand' : 'Collapse'} the sidebar  [`} onClick={toggleRail}><Ico name="chevron" size={14} /></button>
+      </div>
       {me.workspaces.length > 1 || me.is_admin ? (
         <div className="ws-switch"><label className="eyebrow" htmlFor="ws-select">Workspace</label>
           <select id="ws-select" value={workspace ?? ''} onChange={(event) => { chooseWorkspace(event.target.value); void navigate({ to: '/' }); }}>{me.workspaces.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
@@ -150,7 +171,7 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
         </>
       ) : null}
       {/* The shared nav draws buttons, not links: give them what a link does with Ctrl/Cmd-click and middle-click. */}
-      <div className="nav-links" onClickCapture={navInNewTab} onAuxClick={navInNewTab}>
+      <div className="nav-links" onClickCapture={navInNewTab} onAuxClick={navInNewTab} onMouseOver={nameInRail}>
         <SidebarNav groups={game ? NAV_GROUPS : workspaceNav} active={navActive} onSelect={onNav} label={game ? 'Game' : 'Workspace'} />
       </div>
       {game ? <IngestMeter game={game} /> : null}
@@ -165,7 +186,7 @@ export function Shell({ children }: { children: ReactNode }): ReactElement {
     <>
       {busy ? <div id="request-activity" role="status" aria-label="Loading data"><span /><span className="sr-only">Loading data…</span></div> : null}
       {!online ? <div id="conn-banner" className="conn-banner" role="alert"><Ico name="shield" size={15} /><span><b>You’re offline.</b> Showing data from {new Date(updated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. It refreshes by itself when you’re back.</span></div> : null}
-      <AppShell sidebar={sidebar} density={density === 'compact' ? 'compact' : 'comfort'} tabbar={<TabBar items={tabs} active={navActive} onSelect={onNav} moreItems onMore={() => setSheet(true)} />}>
+      <AppShell className={rail ? 'rail' : undefined} sidebar={sidebar} density={density === 'compact' ? 'compact' : 'comfort'} tabbar={<TabBar items={tabs} active={navActive} onSelect={onNav} moreItems onMore={() => setSheet(true)} />}>
         <Workspace>
           <TopBar crumbs={crumbs} mobileTitle={game ? (
               <button type="button" className="m-switch" aria-haspopup="listbox" aria-expanded={switcher} aria-label={`${title} · ${game.name}. Switch game`} onClick={(event) => openSwitcher(event.currentTarget)}><span className="mark" aria-hidden="true">{mark ? <img src={iconURL(mark)} alt="" width={24} height={24} /> : <BrandMark size={24} />}</span><span className="m-switch-t"><b>{title}</b><small>{game.name} · {platformLabel(game.platform)}</small></span><Ico name="chevron" size={13} /></button>

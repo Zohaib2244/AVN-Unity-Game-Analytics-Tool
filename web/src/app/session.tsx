@@ -57,6 +57,8 @@ export function SessionProvider({ children, loading, failed }: { children: React
     queryFn: ({ signal }) => request<Overview>(overviewURL(chosen), { signal }),
     enabled: !!me.data && !!bootstrap.data,
     staleTime: CACHE_MS,
+    // The totals are heavy to count: every 5 minutes while the tab is open. What is arriving now has its own light 30 s read (app/live.ts).
+    refetchInterval: 5 * 60 * 1000,
   });
   const data = overview.data ?? bootstrap.data;
 

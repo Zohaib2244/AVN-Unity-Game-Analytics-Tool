@@ -4,8 +4,7 @@ import type { ContextChip } from '@avn/ui';
 import { PRESETS, resolveRange } from '@/components/DateRange';
 import { DIMENSIONS, filterState, type DayRange, type Facets, type FilterState } from '@/lib/filters';
 import { dimensionText, platformLabel, prettyDay, shortId } from '@/lib/format';
-import { storeGet } from '@/lib/store';
-import type { Game, NutBotContext, NutBotFunnel } from '@/lib/types';
+import type { Game, NutBotContext } from '@/lib/types';
 
 /** What the page itself works with: the saved choices, with a preset like "Last 30 days" counted from today (the saved dates may be days old). */
 export const currentFilters = (game: Pick<Game, 'id'>): FilterState => { const saved = filterState(game); return { ...saved, range: resolveRange(saved.range?.preset || '30', saved.range) }; };
@@ -15,11 +14,10 @@ let drill: { level: number; group: string; last_action?: string } | null = null;
 export const showDrill = (value: { level: number; group: string; last_action?: string } | null): void => { drill = value; };
 const drillShown = (level: number): { group?: string; last_action?: string } => (drill && drill.level === level ? { group: drill.group, ...(drill.last_action ? { last_action: drill.last_action } : {}) } : {});
 
-export const NB_PAGES: Record<string, string> = { overview: 'Overview', funnels: 'Funnels', levels: 'Levels', players: 'Players', sessions: 'Sessions', exports: 'Exports', dictionary: 'Event dictionary', 'event-setup': 'Event setup', keys: 'API keys', settings: 'Game settings' };
+export const NB_PAGES: Record<string, string> = { overview: 'Overview', levels: 'Levels', players: 'Players', sessions: 'Sessions', exports: 'Exports', dictionary: 'Event dictionary', 'event-setup': 'Event setup', keys: 'API keys', settings: 'Game settings' };
 
 export const NB_SUGGESTIONS: Record<string, string[]> = {
   levels: ['Which level loses the most players, and what changed in the latest version?', 'Is level 12 hard or just slow?', 'Compare the last two releases on the early levels.', 'Where should I add a hint or a reward?'],
-  funnels: ['Build a funnel from first open to level 10.', 'Where do players stop in my saved funnel?', 'What do players do between these two steps?', 'Which step lost the most players this week?'],
   players: ['Show me what a typical first session looks like.', 'Find players who reached level 10 but never purchased.', 'What did the players who left in session one do last?', 'Tell me about the open player.'],
   overview: ['How is the game doing this week compared with last week?', 'What changed since the last release?', 'Check that my events are arriving and described.', 'Where are players dropping off in the first 10 levels?'],
 };
@@ -55,12 +53,9 @@ export function scopeLine(chips: Chip[], off: ReadonlySet<string>): string {
   return player ? `${line} · ${player.label}` : line;
 }
 
-/** The context sent with a message: page, range, filters, the open player and the funnel being drafted. */
-export function buildContext({ game, section, filters, player, level }: PageContext, off: ReadonlySet<string>): NutBotContext {
+/** The context sent with a message: page, range, filters, and the open player. */
+export function buildContext({ section, filters, player, level }: PageContext, off: ReadonlySet<string>): NutBotContext {
   const empty = { environments: [], app_versions: [], builds: [], countries: [], platforms: [] };
-  let funnel: NutBotFunnel | null = game ? storeGet<NutBotFunnel & { steps?: NutBotFunnel['steps'] }>(`avn-funnel-draft-${game.id}`) : null;
-  if (funnel?.steps?.length) funnel = { steps: funnel.steps.map(({ event, param, op, value, label }) => ({ event, param, op, value, label })).slice(0, 30), scope: funnel.scope, window_hours: funnel.window_hours };
-  else funnel = null;
   return {
     page: off.has('page') ? undefined : section,
     range: filters?.range && !off.has('range') ? { from: filters.range.from, to: filters.range.to } : undefined,
@@ -68,7 +63,6 @@ export function buildContext({ game, section, filters, player, level }: PageCont
     filters: off.has('filters') || !filters ? empty : { environments: filters.environment, app_versions: filters.app_version, builds: filters.build, countries: filters.country, platforms: filters.platform },
     player: off.has('player') ? undefined : player || undefined,
     level: off.has('level') || level == null || section !== 'levels' ? undefined : { level, ...drillShown(level) },
-    funnel: funnel || undefined,
   };
 }
 
