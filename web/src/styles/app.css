@@ -1121,7 +1121,6 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 .tl-toolbar > .toolbar { flex: 1 0 100%; }
 
 /* The sidebar folds to an icon rail on a wide screen too (the rules mirror the tablet ones in @avn/ui). */
-.app { transition: grid-template-columns .28s cubic-bezier(.3, .7, .2, 1); }
 .side-head { display: flex; align-items: center; gap: 6px; }
 .side-head .brand { flex: 1; min-width: 0; }
 .side-toggle { width: 26px; height: 26px; flex: none; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--dim); cursor: pointer; }
@@ -1216,3 +1215,35 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 .day-bar span { padding-top: 3px; text-align: center; }
 .cohort-table tr.click { cursor: pointer; }
 .cohort-table tr.click:hover { background: var(--nested); }
+
+/* Acquisition: the retention heatmap. */
+.retention-heat { display: grid; grid-template-columns: minmax(120px, 170px) repeat(var(--cols), minmax(88px, 150px)); justify-content: start; gap: 4px; align-items: stretch; }
+.rh-head { font-size: var(--fs-micro); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); padding: 2px 4px; text-align: center; }
+.rh-head:first-child { text-align: left; }
+.rh-day { text-align: left; background: none; border: 0; padding: 6px 4px; color: var(--text); font: inherit; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+.rh-day:hover { color: var(--accent); }
+.rh-cell { display: inline-flex; gap: 8px; align-items: baseline; justify-content: center; padding: 6px 4px; border: 0; border-radius: 6px; font: inherit; color: var(--text); font-variant-numeric: tabular-nums; background: color-mix(in srgb, var(--accent) calc(var(--h, 0) * 62%), var(--nested)); cursor: pointer; }
+.rh-cell:hover { outline: 1px solid var(--accent); }
+.rh-cell.none { background: transparent; color: var(--dim); cursor: default; }
+.rh-cell.few { opacity: .6; }
+.rh-n { color: color-mix(in srgb, var(--text) 55%, transparent); font-size: .85em; }
+
+/* Motion: one small set, opacity and transform only, played once when something appears, never with reduced motion. */
+@keyframes appear { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes appear-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes grow-y { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+:is(.kpis > *, .ps-card, .ps-tile, .ad-widgets > *, .ad-widgets .split > *, .install-days, .retention-heat, .answer-line) { animation: appear .3s var(--motion-ease, ease-out) backwards; }
+:is(.kpis, .ps-tiles) > :nth-child(2) { animation-delay: 40ms; } :is(.kpis, .ps-tiles) > :nth-child(3) { animation-delay: 80ms; } :is(.kpis, .ps-tiles) > :nth-child(n+4) { animation-delay: 120ms; }
+.ad-widgets > :nth-child(2), .ad-widgets .split > :first-child { animation-delay: 60ms; } .ad-widgets > :nth-child(3), .ad-widgets .split > :nth-child(2) { animation-delay: 110ms; }
+.failures-table tbody tr, .ads-table tbody tr { animation: appear .26s var(--motion-ease, ease-out) backwards; }
+.failures-table tbody tr:nth-child(2), .ads-table tbody tr:nth-child(2) { animation-delay: 20ms; } .failures-table tbody tr:nth-child(3), .ads-table tbody tr:nth-child(3) { animation-delay: 40ms; } .failures-table tbody tr:nth-child(4), .ads-table tbody tr:nth-child(4) { animation-delay: 60ms; } .failures-table tbody tr:nth-child(n+5), .ads-table tbody tr:nth-child(n+5) { animation-delay: 80ms; }
+.rank-track i { transform-origin: left center; animation: grow-x .5s var(--motion-ease, ease-out) backwards; }
+.mini-bar i, .day-bar i { transform-origin: bottom center; animation: grow-y .45s var(--motion-ease, ease-out) backwards; }
+.rh-cell:not(.none) { animation: appear-fade .35s ease-out backwards; }
+/* The rail: the page does not slide (that reflows everything); the labels fade in when it opens. */
+.app:not(.rail) .side .ni .lbl, .app:not(.rail) .side .brand-t { animation: appear-fade .22s ease-out backwards; }
+@media (prefers-reduced-motion: reduce) {
+  :is(.kpis > *, .ps-card, .ps-tile, .ad-widgets > *, .ad-widgets .split > *, .install-days, .retention-heat, .answer-line),
+  .failures-table tbody tr, .ads-table tbody tr, .rank-track i, .mini-bar i, .day-bar i, .rh-cell, .app .side .ni .lbl, .app .side .brand-t { animation: none !important; }
+}

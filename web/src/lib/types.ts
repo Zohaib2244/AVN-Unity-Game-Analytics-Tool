@@ -465,7 +465,7 @@ export type AcquisitionReport = {
   available: boolean; note?: string; group_by: string; installs: number; updated_players_left_out: number; last_day: string;
   cost: CostState; goals: ReturnGoals; first_sdk_version: string; all_paid: AcquisitionRow; rows: AcquisitionRow[];
 };
-export type CohortDay = { day: string; installs: number; value_per_install: ValueByDay; cost: number | null; service_installs: number | null; sdk_installs: number | null; cost_per_install: number | null; seen_share: number | null; seen_share_all: number | null; return: Record<string, number | null>; final: boolean };
+export type CohortDay = { day: string; installs: number; retention?: Record<string, { players: number; rate: number | null }>; value_per_install: ValueByDay; cost: number | null; service_installs: number | null; sdk_installs: number | null; cost_per_install: number | null; seen_share: number | null; seen_share_all: number | null; return: Record<string, number | null>; final: boolean };
 export type AcquisitionCohorts = {
   available: boolean; note?: string; campaign: string; campaigns: string[]; last_day: string; cost: CostState;
   goals: ReturnGoal[]; first_sdk_version: string; game_goals: ReturnGoal[]; has_own_goals: boolean;

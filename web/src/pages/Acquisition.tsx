@@ -3,7 +3,7 @@
 // install, return against the goal), then the cohorts of one campaign: by install day (table + return
 // curves with the goals) or by calendar day (revenue against cost). Goals are set here, for the game
 // and per campaign. The date range picks install days.
-import { useMemo, useRef, useState, type ReactElement } from 'react';
+import { Fragment, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Popover, Segmented } from '@avn/ui';
 import { useRead, write } from '@/api';
@@ -18,7 +18,7 @@ import { rangeText, resolveRange } from '@/components/DateRange';
 import { Share } from '@/components/Share';
 import { DoraScene } from '@/components/flavour';
 import { Ico } from '@/components/icons';
-import { ALL_PAID, FEW, RETENTION_DAYS, TABLE_DAYS, VALUE_DAYS, answer, cleanGoals, costWords, goalOn, judgedGoal, money, pct, tone } from './acquisition/model';
+import { ALL_PAID, FEW, RETENTION_DAYS, TABLE_DAYS, VALUE_DAYS, answer, cleanGoals, costWords, goalOn, judgedGoal, money, pct, pct1, tone } from './acquisition/model';
 
 const GROUPS = [{ value: 'campaign', label: 'Campaign' }, { value: 'media_source', label: 'Media source' }, { value: 'channel', label: 'Channel' }] as const;
 type Group = (typeof GROUPS)[number]['value'];
@@ -179,6 +179,7 @@ function InstallDays({ data, onDay }: { data: AcquisitionCohorts; onDay: (day: s
   if (!data.days.length) return <p className="help panel-body">No installs from {data.campaign} in these days.</p>;
   return (
     <>
+      <RetentionHeat days={data.days} onDay={onDay} />
       {hasCost ? <ReturnCurves days={data.days} goals={data.goals} /> : null}
       <div className="table-wrap">
         <table className="compact-table acq-table cohort-table">
@@ -357,5 +358,34 @@ function InstallDayPicker({ game, filters, onPick, onAll }: { game: Game; filter
         </div>
       </div>
     </section>
+  );
+}
+
+/** Who came back, for each install day: one row per day, one cell per day since install (Day 1, 3, 7) shaded by the share
+ *  that returned, with how many. A day nobody has reached yet has no column. Click a day to see only its installs. */
+function RetentionHeat({ days, onDay }: { days: CohortDay[]; onDay: (day: string) => void }): ReactElement | null {
+  const columns = RETENTION_DAYS.filter((day) => days.some((row) => row.retention?.[`day_${day}`]?.players));
+  if (!columns.length) return null;
+  return (
+    <div className="retention-heat panel-body" style={{ '--cols': columns.length } as CSSProperties} role="table" aria-label="Who came back, by install day">
+      <span className="rh-head" role="columnheader">Install day</span>
+      {columns.map((day) => <span key={day} className="rh-head" role="columnheader">Day {day}</span>)}
+      {[...days].reverse().map((row) => (
+        <Fragment key={row.day}>
+          <button type="button" className="rh-day" role="rowheader" title="Show only players who installed on this day" onClick={() => onDay(row.day)}>{shortDay(row.day)} <span className="muted">{number(row.installs)}</span></button>
+          {columns.map((day) => {
+            const item = row.retention?.[`day_${day}`];
+            if (!item?.players || item.rate == null) return <span key={day} className="rh-cell none" role="cell" title={`Day ${day} has not happened yet for this day's installs`}>·</span>;
+            const back = Math.round(item.rate * item.players);
+            return (
+              <button key={day} type="button" role="cell" className={`rh-cell${item.players < FEW ? ' few' : ''}`} style={{ '--h': Math.min(1, item.rate * 2.2) } as CSSProperties}
+                title={`${number(back)} of ${number(item.players)} installs came back on day ${day} · click for this day's players`} onClick={() => onDay(row.day)}>
+                <span className="rh-n">{number(back)}</span><b>{pct1(item.rate)}</b>
+              </button>
+            );
+          })}
+        </Fragment>
+      ))}
+    </div>
   );
 }

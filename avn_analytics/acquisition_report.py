@@ -237,7 +237,12 @@ def cohorts(storage, game_id, start, end, filters, start_day, end_day, campaign=
         day = cursor.isoformat()
         members = by_day.get(day, [])
         value = {f"day_{n}": _value(members, last_day, n) for n in VALUE_DAYS}
-        row = {"day": day, "installs": len(members), "value_per_install": value}
+        row = {
+            "day": day,
+            "installs": len(members),
+            "retention": _retention(members, last_day),
+            "value_per_install": value,
+        }
         has_cost = state["state"] in ("ok", "failed")
         _with_cost(
             row,

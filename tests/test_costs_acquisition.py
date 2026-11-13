@@ -239,6 +239,9 @@ def test_cohorts_give_each_install_day_and_revenue_by_calendar_day(game):
     assert list(days) == ["2026-10-01"]
     first = days["2026-10-01"]
     assert first["installs"] == 2 and first["cost_per_install"] == 2.5 and first["final"]
+    # each install day also says how many came back, for the heatmap
+    assert set(first["retention"]) == {"day_1", "day_3", "day_7"}
+    assert all(item["players"] <= first["installs"] for item in first["retention"].values())
     calendar = {row["day"]: row for row in data["by_calendar_day"]}
     assert calendar["2026-10-01"] == {"day": "2026-10-01", "revenue": 0.045, "cost": 10.0}
     assert calendar["2026-10-02"]["revenue"] == 0.02
