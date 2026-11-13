@@ -847,7 +847,9 @@ class ReturnGoals(StrictModel):
 
 
 class CostSettingsUpdate(StrictModel):
-    """The game's app ID at the cost service (iOS needs its store ID) and its return goals."""
+    """The game's app ID at the cost service (iOS needs its store ID), its return goals and the
+    first app version that sends AVN events."""
 
     app_id: Annotated[str, Field(max_length=200)] | None = None
     goals: ReturnGoals | None = None
+    first_sdk_version: Annotated[str, Field(max_length=40)] | None = None

@@ -1251,11 +1251,17 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         game = storage.get_game(str(game_id))
         try:
             result = costs.save_settings(
-                storage, game, update.app_id, update.goals.model_dump() if update.goals else None
+                storage,
+                game,
+                update.app_id,
+                update.goals.model_dump() if update.goals else None,
+                update.first_sdk_version,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from None
-        accounts.audit(principal, "game.cost_settings", str(game_id), "app ID or return goals")
+        accounts.audit(
+            principal, "game.cost_settings", str(game_id), "app ID, first AVN build or return goals"
+        )
         storage.reads.clear()
         storage.scans.clear()
         return {**result, "configured": bool(settings.cost_api_url)}

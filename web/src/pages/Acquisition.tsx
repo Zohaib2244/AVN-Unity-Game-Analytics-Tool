@@ -62,12 +62,18 @@ function CostNotice({ game, data, settings }: { game: Game; data: AcquisitionRep
     try { await write(`${gameURL(game)}/cost-settings`, { method: 'PUT', body: JSON.stringify({ app_id: typed.trim() }) }); toast('App ID saved. Cost is fetched next.'); }
     catch (error) { toastError(error); }
   };
+  const [build, setBuild] = useState('');
+  const saveBuild = async () => {
+    try { await write(`${gameURL(game)}/cost-settings`, { method: 'PUT', body: JSON.stringify({ first_sdk_version: build.trim() }) }); toast('First build with AVN saved.'); }
+    catch (error) { toastError(error); }
+  };
+  const askBuild = (data.cost.state === 'ok' || data.cost.state === 'failed') && !data.first_sdk_version;
   const notes = [
     words ? <span key="cost" className={words.kind === 'warn' ? 'warn-text' : undefined}>{words.text}</span> : null,
     data.updated_players_left_out ? <span key="upd">{number(data.updated_players_left_out)} players who updated into this build rather than installed it are left out.</span> : null,
     data.cost.not_final_from ? <span key="lag">Cost-service installs from {shortDay(data.cost.not_final_from)} on may still grow.</span> : null,
   ].filter(Boolean);
-  if (!notes.length && data.cost.state !== 'no_app_id') return null;
+  if (!notes.length && data.cost.state !== 'no_app_id' && !askBuild) return null;
   return (
     <div className="analysis-context acquisition-notes">
       <span>{notes.reduce<ReactElement[]>((all, item, index) => (index ? [...all, <span key={`s${index}`}> · </span>, item!] : [item!]), [])}</span>
@@ -75,6 +81,13 @@ function CostNotice({ game, data, settings }: { game: Game; data: AcquisitionRep
         <span className="app-id-field">
           <input aria-label="AppsFlyer app ID" placeholder={settings?.default_app_id || 'id123456789'} value={typed} onChange={(event) => setTyped(event.target.value)} />
           <button type="button" className="btn sm" disabled={!typed.trim()} onClick={() => void save()}>Save app ID</button>
+        </span>
+      ) : null}
+      {askBuild ? (
+        <span className="app-id-field">
+          <span>Installs on older builds can’t appear here. First build with AVN:</span>
+          <input aria-label="First app version with AVN" placeholder="0.0.9" value={build} onChange={(event) => setBuild(event.target.value)} />
+          <button type="button" className="btn sm" disabled={!build.trim()} onClick={() => void saveBuild()}>Save</button>
         </span>
       ) : null}
     </div>
@@ -92,7 +105,7 @@ function SourcesTable({ data, goalsFor, selected, onPick }: { data: AcquisitionR
       <div className="table-wrap">
         <table className="compact-table acq-table">
           <thead>
-            <tr><th rowSpan={2}>{label}</th><th rowSpan={2} className="num" title="Players who opened the game for the first time here (cost-service count after the slash)">Installs</th><th colSpan={3} className="grp">Came back on day</th><th colSpan={4} className="grp">Earned per install by day</th>{hasCost ? <><th rowSpan={2} className="num">Cost per install</th><th rowSpan={2} className="num" title="Earned per install ÷ cost per install, on the latest day with a goal">Return</th></> : null}</tr>
+            <tr><th rowSpan={2}>{label}</th><th rowSpan={2} className="num" title="Players who opened the game for the first time here; after the slash, the installs the cost service counted on a build that sends AVN events (every install until the first build with AVN is set)">Installs</th><th colSpan={3} className="grp">Came back on day</th><th colSpan={4} className="grp">Earned per install by day</th>{hasCost ? <><th rowSpan={2} className="num">Cost per install</th><th rowSpan={2} className="num" title="Earned per install ÷ cost per install, on the latest day with a goal">Return</th></> : null}</tr>
             <tr>{RETENTION_DAYS.map((day) => <th key={`r${day}`} className="num">{day}</th>)}{TABLE_DAYS.map((day) => <th key={`v${day}`} className="num">{day}</th>)}</tr>
           </thead>
           <tbody>
@@ -110,7 +123,7 @@ function SourceRow({ row, hasCost, goals, total, selected, onPick }: { row: Acqu
   return (
     <tr className={`${onPick ? 'click' : ''}${selected ? ' picked' : ''}${total ? ' total-row' : ''}`} onClick={onPick} tabIndex={onPick ? 0 : undefined} onKeyDown={(event) => { if (onPick && event.key === 'Enter') onPick(); }} aria-selected={onPick ? selected : undefined}>
       <td><b>{row.value}</b></td>
-      <td className="num">{number(row.installs)}{row.service_installs ? <span className="muted"> / {number(row.service_installs)}</span> : null}</td>
+      <td className="num">{number(row.installs)}{(row.sdk_installs ?? row.service_installs) ? <span className="muted" title={row.sdk_installs != null ? 'Installs on a build that sends AVN events' : 'Every install the cost service counted'}> / {number(row.sdk_installs ?? row.service_installs ?? 0)}</span> : null}</td>
       {RETENTION_DAYS.map((day) => { const item = row.retention[`day_${day}`]; return <td key={`r${day}`} className={`num${faint(item?.players)}`}>{item?.players ? pct1(item.rate) : <span className="muted">—</span>}</td>; })}
       {TABLE_DAYS.map((day) => { const item = row.value_per_install[`day_${day}`]; return <td key={`v${day}`} className={`num${faint(item?.players)}`}>{item?.players ? money(item.per_player, 3) : <span className="muted">—</span>}</td>; })}
       {hasCost ? (
@@ -179,7 +192,7 @@ function CohortRow({ row, goals, hasCost }: { row: CohortDay; goals: ReturnGoal[
     <tr>
       <td>{shortDay(row.day)}{row.final ? null : <span className="muted" title="The cost service may still add installs for this day"> *</span>}</td>
       {hasCost ? <><td className="num">{money(row.cost)}</td><td className="num">{row.service_installs ? number(row.service_installs) : <span className="muted">—</span>}</td><td className="num">{money(row.cost_per_install)}</td></> : null}
-      <td className="num">{number(row.installs)}{row.seen_share != null ? <span className="muted"> · {pct(row.seen_share)}</span> : null}</td>
+      <td className="num">{number(row.installs)}{row.seen_share != null ? <span className="muted" title={row.sdk_installs != null ? `Players seen here ÷ the ${number(row.sdk_installs)} installs on a build that sends AVN events (${number(row.service_installs ?? 0)} installs in all)` : 'Players seen here ÷ every install the cost service counted'}> · {pct(row.seen_share)}</span> : null}</td>
       {VALUE_DAYS.map((day) => {
         const item = row.value_per_install[`day_${day}`];
         if (!item?.players) return <td key={day} className="num muted">·</td>;

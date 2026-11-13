@@ -12,8 +12,12 @@ of such a build, which includes existing players updating into it. So:
 - return by day N = ad revenue per player we see, by day N / cost per install;
 - players who updated rather than installed (their ad click is older than the game's first AVN
   data, or more than CLICK_WINDOW_DAYS before their first open) are left out of the value numbers;
-- `seen_share` = the players we see / the service's installs, so a reader knows how much the
-  value per player rests on.
+- `seen_share` = the players we see / the service's installs on a build that can send AVN events,
+  so a reader knows how much the value per player rests on. The service splits installs by app
+  version; with the game's first AVN build typed in, installs on older builds (which can never
+  appear here) are not counted against us. Without it, or for a day with no version rows, the
+  share is against every install and `seen_share_all` is the same figure. Cost per install always
+  divides by every install: the money bought them all.
 
 Days count from the first-open day in UTC; the cost service's days may be in another time zone,
 so single days can disagree while weeks add up. Its newest days are marked not final
@@ -86,13 +90,22 @@ def _cost_key(row, group_by):
     return None  # the cost service doesn't split by channel
 
 
-def _with_cost(row, spend, bought, value):
+def _sdk_total(rows):
+    """The installs of cost rows that were on a build sending AVN events; None unless every row
+    says (a day the endpoint sent no versions for would otherwise read as no installs)."""
+    counts = [row.get("sdk_installs") for row in rows]
+    return None if not counts or any(count is None for count in counts) else sum(counts)
+
+
+def _with_cost(row, spend, bought, value, sdk=None):
     """Add cost, cost per install, the share of installs we see and the return by day."""
     row["cost"] = round(spend, 2) if spend is not None else None
     row["service_installs"] = bought
+    row["sdk_installs"] = sdk
     cpi = spend / bought if spend and bought else None
     row["cost_per_install"] = round(cpi, 4) if cpi else None
-    row["seen_share"] = _ratio(row["installs"], bought) if bought else None
+    row["seen_share_all"] = _ratio(row["installs"], bought) if bought else None
+    row["seen_share"] = _ratio(row["installs"], sdk) if sdk else row["seen_share_all"]
     row["return"] = {
         key: (
             round(item["per_player"] / cpi, 4) if cpi and item["per_player"] is not None else None
@@ -125,12 +138,13 @@ def report(storage, game_id, start, end, filters, start_day, end_day, group_by=N
     players = [item for item in data["players"] if not _updated(item, first_day)]
     updated = len(data["players"]) - len(players)
     state, cost_rows = _cost_state(storage, game, start_day, end_day)
-    spend, bought = defaultdict(float), defaultdict(int)
+    spend, bought, parts = defaultdict(float), defaultdict(int), defaultdict(list)
     for row in cost_rows:
         key = _cost_key(row, group_by)
         if key is not None:
             spend[key] += row["cost"]
             bought[key] += row["installs"]
+            parts[key].append(row)
     grouped = defaultdict(list)
     for item in players:
         grouped[_label(item, group_by)].append(item)
@@ -148,7 +162,13 @@ def report(storage, game_id, start, end, filters, start_day, end_day, group_by=N
         }
         has_cost = state["state"] in ("ok", "failed") and group_by != "channel" and row["paid"]
         rows.append(
-            _with_cost(row, spend.get(name, 0.0) if has_cost else None, bought.get(name, 0), value)
+            _with_cost(
+                row,
+                spend.get(name, 0.0),
+                bought.get(name, 0),
+                value,
+                _sdk_total(parts.get(name, [])),
+            )
             if has_cost
             else _with_cost(row, None, None, value)
         )
@@ -163,6 +183,7 @@ def report(storage, game_id, start, end, filters, start_day, end_day, group_by=N
         sum(row["cost"] for row in cost_rows) if has_cost else None,
         sum(row["installs"] for row in cost_rows) if has_cost else None,
         paid_value,
+        _sdk_total(cost_rows) if has_cost else None,
     )
     settings = costs.settings(storage, game)
     return {
@@ -174,6 +195,7 @@ def report(storage, game_id, start, end, filters, start_day, end_day, group_by=N
         "last_day": last_day,
         "cost": state,
         "goals": settings["goals"],
+        "first_sdk_version": settings["first_sdk_version"],
         "all_paid": total_paid,
         "rows": rows[: max(1, min(int(limit), 60))],
     }
@@ -201,10 +223,11 @@ def cohorts(storage, game_id, start, end, filters, start_day, end_day, campaign=
     state, cost_rows = _cost_state(storage, game, start_day, end_day)
     if campaign != ALL_PAID:
         cost_rows = [row for row in cost_rows if row["campaign"] == campaign]
-    spend, bought = defaultdict(float), defaultdict(int)
+    spend, bought, parts = defaultdict(float), defaultdict(int), defaultdict(list)
     for row in cost_rows:
         spend[row["day"]] += row["cost"]
         bought[row["day"]] += row["installs"]
+        parts[row["day"]].append(row)
     by_day = defaultdict(list)
     for item in players:
         by_day[item["cday"]].append(item)
@@ -221,6 +244,7 @@ def cohorts(storage, game_id, start, end, filters, start_day, end_day, campaign=
             spend.get(day, 0.0) if has_cost else None,
             bought.get(day, 0) if has_cost else None,
             value,
+            _sdk_total(parts.get(day, [])) if has_cost else None,
         )
         row["final"] = not (state.get("not_final_from") and day >= state["not_final_from"])
         if members or spend.get(day) or bought.get(day):
@@ -251,6 +275,7 @@ def cohorts(storage, game_id, start, end, filters, start_day, end_day, campaign=
         "last_day": last_day,
         "cost": state,
         "goals": costs.goals_for(settings["goals"], campaign),
+        "first_sdk_version": settings["first_sdk_version"],
         "game_goals": settings["goals"]["game"],
         "has_own_goals": campaign in settings["goals"]["campaigns"],
         "days": days,

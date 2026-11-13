@@ -5,7 +5,7 @@ import { answer, cleanGoals, costWords, judgedGoal, settledDay, tone } from './m
 const row = (value: string, installs: number, perPlayer: Record<number, [number, number]>, cpi: number | null): AcquisitionRow => ({
   value, installs, paid: value !== 'Organic', retention: {},
   value_per_install: Object.fromEntries(Object.entries(perPlayer).map(([day, [players, money]]) => [`day_${day}`, { players, per_player: money }])),
-  cost: null, service_installs: null, cost_per_install: cpi, seen_share: null,
+  cost: null, service_installs: null, sdk_installs: null, cost_per_install: cpi, seen_share: null, seen_share_all: null,
   return: Object.fromEntries(Object.entries(perPlayer).map(([day, [, money]]) => [`day_${day}`, cpi ? money / cpi : null])),
 });
 

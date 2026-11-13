@@ -436,17 +436,17 @@ export type AcquisitionRow = {
   value: string; installs: number; paid?: boolean;
   retention: Record<string, { players: number; rate: number | null }>;
   value_per_install: ValueByDay;
-  cost: number | null; service_installs: number | null; cost_per_install: number | null; seen_share: number | null;
+  cost: number | null; service_installs: number | null; sdk_installs: number | null; cost_per_install: number | null; seen_share: number | null; seen_share_all: number | null;
   return: Record<string, number | null>;
 };
 export type AcquisitionReport = {
   available: boolean; note?: string; group_by: string; installs: number; updated_players_left_out: number; last_day: string;
-  cost: CostState; goals: ReturnGoals; all_paid: AcquisitionRow; rows: AcquisitionRow[];
+  cost: CostState; goals: ReturnGoals; first_sdk_version: string; all_paid: AcquisitionRow; rows: AcquisitionRow[];
 };
-export type CohortDay = { day: string; installs: number; value_per_install: ValueByDay; cost: number | null; service_installs: number | null; cost_per_install: number | null; seen_share: number | null; return: Record<string, number | null>; final: boolean };
+export type CohortDay = { day: string; installs: number; value_per_install: ValueByDay; cost: number | null; service_installs: number | null; sdk_installs: number | null; cost_per_install: number | null; seen_share: number | null; seen_share_all: number | null; return: Record<string, number | null>; final: boolean };
 export type AcquisitionCohorts = {
   available: boolean; note?: string; campaign: string; campaigns: string[]; last_day: string; cost: CostState;
-  goals: ReturnGoal[]; game_goals: ReturnGoal[]; has_own_goals: boolean;
+  goals: ReturnGoal[]; first_sdk_version: string; game_goals: ReturnGoal[]; has_own_goals: boolean;
   days: CohortDay[]; by_calendar_day: Array<{ day: string; revenue: number; cost: number | null }>;
 };
-export type CostSettings = { app_id: string; typed_app_id: string; default_app_id: string; goals: ReturnGoals; configured: boolean };
+export type CostSettings = { app_id: string; typed_app_id: string; default_app_id: string; goals: ReturnGoals; first_sdk_version: string; configured: boolean };

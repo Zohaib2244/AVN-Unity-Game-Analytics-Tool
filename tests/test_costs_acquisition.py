@@ -27,6 +27,16 @@ COST_ROWS = [
     {"date": "2026-10-09", "appId": "com.example.game", "network": "unityads_int",
      "campaign": "C2", "cost": 6.0, "installs": 2},
 ]  # fmt: skip
+VERSION_ROWS = [
+    {"date": "2026-10-01", "appId": "com.example.game", "network": "unityads_int",
+     "campaign": "C1", "appVersion": "0.0.7", "installs": 1},
+    {"date": "2026-10-01", "appId": "com.example.game", "network": "unityads_int",
+     "campaign": "C1", "appVersion": "0.0.9", "installs": 2},
+    {"date": "2026-10-01", "appId": "com.example.game", "network": "unityads_int",
+     "campaign": "C1", "appVersion": "0.0.10", "installs": 1},
+    {"date": "2026-10-09", "appId": "com.example.game", "network": "unityads_int",
+     "campaign": "C2", "appVersion": "0.0.9", "installs": 2},
+]  # fmt: skip
 
 
 def events_of_the_game():
@@ -64,7 +74,10 @@ def game(tmp_path, monkeypatch):
 
     def fetch(url, app_id, first_day, last_day):
         calls.append((app_id, first_day, last_day))
-        return [row for row in COST_ROWS if first_day <= row["date"] <= last_day]
+        return (
+            [row for row in COST_ROWS if first_day <= row["date"] <= last_day],
+            [row for row in VERSION_ROWS if first_day <= row["date"] <= last_day],
+        )
 
     monkeypatch.setattr(costs, "fetch", fetch)
     settings = Settings(
@@ -92,6 +105,77 @@ def test_costs_are_fetched_once_kept_and_only_paid_rows_are_served(game):
     assert len(calls) == 2  # older than REFRESH_SECONDS
     kept = costs.rows(storage, game, FIRST, LAST)
     assert {(row["campaign"], row["cost"]) for row in kept} == {("C1", 10.0), ("C2", 6.0)}
+
+
+def test_versions_are_compared_as_numbers_and_an_unreadable_one_is_not_an_avn_build():
+    assert costs.at_least("0.0.10", "0.0.9") and costs.at_least("0.0.9", "0.0.9")
+    assert costs.at_least("1.0", "0.9.9") and costs.at_least("0.1", "0.1.0")
+    assert not costs.at_least("0.0.7", "0.0.9") and not costs.at_least("0.0.8.9", "0.0.9")
+    assert not costs.at_least("", "0.0.9") and not costs.at_least("beta", "0.0.9")
+    assert costs.version_key("v1.2") == (1, 2) and costs.version_key("1..2") is None
+
+
+def test_installs_on_builds_that_send_avn_events_are_counted_per_cost_row(game):
+    admin, game, storage, _ = game
+    costs.ensure(storage, game, FIRST, LAST, now=NOW)
+    assert {row["sdk_installs"] for row in costs.rows(storage, game, FIRST, LAST)} == {None}
+    saved = admin.put(
+        f"/v1/games/{game['id']}/cost-settings", headers=AUTH, json={"first_sdk_version": "0.0.9"}
+    )
+    assert saved.status_code == 200 and saved.json()["first_sdk_version"] == "0.0.9"
+    kept = {row["campaign"]: row for row in costs.rows(storage, game, FIRST, LAST)}
+    assert kept["C1"]["sdk_installs"] == 3 and kept["C1"]["installs"] == 4  # 0.0.7 can't send
+    assert kept["C2"]["sdk_installs"] == 2
+    bad = admin.put(
+        f"/v1/games/{game['id']}/cost-settings", headers=AUTH, json={"first_sdk_version": "new"}
+    )
+    assert bad.status_code == 400
+    assert costs.settings(storage, game)["first_sdk_version"] == "0.0.9"
+    cleared = admin.put(
+        f"/v1/games/{game['id']}/cost-settings", headers=AUTH, json={"first_sdk_version": ""}
+    )
+    assert cleared.json()["first_sdk_version"] == ""
+
+
+def test_seen_share_is_against_installs_on_avn_builds_but_cost_per_install_is_not(game):
+    admin, game, storage, _ = game
+    admin.put(
+        f"/v1/games/{game['id']}/cost-settings", headers=AUTH, json={"first_sdk_version": "0.0.9"}
+    )
+    data = acquisition_report.report(
+        storage, game["id"], START, END, Filters().model_dump(), FIRST, LAST
+    )
+    c1 = by(data["rows"])["C1"]
+    assert c1["installs"] == 2 and c1["service_installs"] == 4 and c1["sdk_installs"] == 3
+    assert c1["seen_share"] == round(2 / 3, 4) and c1["seen_share_all"] == 0.5
+    assert c1["cost_per_install"] == 2.5  # $10 bought all 4 installs
+    assert data["all_paid"]["sdk_installs"] == 5 and data["all_paid"]["service_installs"] == 6
+    cohort = acquisition_report.cohorts(
+        storage, game["id"], START, END, Filters().model_dump(), FIRST, LAST, "C1"
+    )
+    day = cohort["days"][0]
+    assert day["sdk_installs"] == 3 and day["seen_share"] == round(2 / 3, 4)
+    assert day["cost_per_install"] == 2.5
+
+
+def test_a_day_the_endpoint_sent_no_versions_for_falls_back_to_every_install(game, monkeypatch):
+    admin, game, storage, _ = game
+    admin.put(
+        f"/v1/games/{game['id']}/cost-settings", headers=AUTH, json={"first_sdk_version": "0.0.9"}
+    )
+    monkeypatch.setattr(
+        costs, "fetch", lambda url, app_id, first, last: (list(COST_ROWS), VERSION_ROWS[:3])
+    )
+    data = acquisition_report.report(
+        storage, game["id"], START, END, Filters().model_dump(), FIRST, LAST
+    )
+    rows = by(data["rows"])
+    assert rows["C1"]["sdk_installs"] == 3
+    assert (
+        rows["C2"]["sdk_installs"] is None
+        and rows["C2"]["seen_share"] == (rows["C2"]["seen_share_all"])
+    )
+    assert data["all_paid"]["sdk_installs"] is None  # one day is unknown, so the total is too
 
 
 def test_an_app_the_endpoint_refuses_or_a_failure_says_so_and_keeps_old_rows(game, monkeypatch):
