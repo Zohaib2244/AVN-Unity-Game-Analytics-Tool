@@ -41,7 +41,7 @@ export function ExportsPage({ game }: { game: Game }): ReactElement {
         <form id="export-form" className="panel form-panel" onSubmit={onSubmit}>
           <h2 title="Uses the days and filters above, up to 366 days. We’ll package the matching events and their definitions.">Create an export</h2>
           <p id="export-count" className="export-count" aria-live="polite">{count ?? <span className="skeleton-line" role="status" aria-label="Counting events" />}</p>
-          <Field label="Select events by" htmlFor="basis" help="All dates use UTC and both the first and last day are included. Game time can be affected by device clock settings.">
+          <Field label="Select events by" htmlFor="basis" help="UTC, first and last day included.">
             <select id="basis" name="basis" value={basis} onChange={(event) => setBasis(event.target.value)}><option value="server_ts">Arrival time — when the server received them</option><option value="client_ts">Game time — when the client says they happened</option></select>
           </Field>
           {error ? <FormError error={error} /> : null}
@@ -55,7 +55,7 @@ export function ExportsPage({ game }: { game: Game }): ReactElement {
             <div><Ico name="settings" size={17} /><span>manifest.json<small>Time range, filters and export details</small></span></div>
             <div><Ico name="pulse" size={17} /><span>ANALYSIS.md<small>Guide for AI assistants (Claude, Codex…)</small></span></div>
           </div>
-          <p className="small">Large exports are capped at 256 MiB before compression. Try a shorter range if you hit the limit.</p>
+          <p className="small">Capped at 256 MiB before compression.</p>
         </aside>
       </div>
     </>

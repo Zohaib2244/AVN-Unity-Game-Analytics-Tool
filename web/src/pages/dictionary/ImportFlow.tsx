@@ -100,7 +100,7 @@ function PrepareStep({ game, onUpload }: { game: Game; onUpload: () => void }): 
             <div className="field"><label>When a field already has text</label>{select('mode', o.mode, [['fill_blanks', 'Only fill blanks (keep all existing text)'], ['overwrite_ai_drafts', 'Also replace earlier AI drafts nobody confirmed'], ['overwrite_all', 'Replace existing text']])}</div>
             {check('field-description', o.fields.includes('description'), 'Event descriptions')}
             {check('field-params', o.fields.includes('params'), 'Parameter descriptions')}
-            <p className="help">Story rules, hidden events and mappings are never touched by an import, and an import never deletes anything.</p>
+            <p className="help">An import adds and updates; it never deletes.</p>
           </fieldset>
           <fieldset><legend>Which events</legend>
             <div className="field"><label>Cover</label>{select('events', o.scope.events, [['undocumented', 'Events that still need a description'], ['all', 'All events'], ['listed', 'Only the events I list']])}</div>
@@ -116,8 +116,8 @@ function PrepareStep({ game, onUpload }: { game: Game; onUpload: () => void }): 
             {check('param_values', o.style.param_values, 'List the values a parameter can take')}
           </fieldset>
           <fieldset><legend>Where to look in the code</legend>
-            <div className="field"><label htmlFor="import-include">Only look in <span className="muted">(folders, one per line)</span></label><textarea id="import-include" name="include_paths" rows={2} defaultValue={o.code.include_paths.join('\n')} /></div>
-            <div className="field"><label htmlFor="import-exclude">Skip <span className="muted">(folders, one per line)</span></label><textarea id="import-exclude" name="exclude_paths" rows={2} defaultValue={o.code.exclude_paths.join('\n')} /></div>
+            <div className="field"><label htmlFor="import-include">Only look in</label><textarea id="import-include" name="include_paths" rows={2} placeholder="One folder per line" defaultValue={o.code.include_paths.join('\n')} /></div>
+            <div className="field"><label htmlFor="import-exclude">Skip</label><textarea id="import-exclude" name="exclude_paths" rows={2} placeholder="One folder per line" defaultValue={o.code.exclude_paths.join('\n')} /></div>
             <div className="field"><label htmlFor="import-patterns">Your own wrappers around LogEvent <span className="muted">(one per line, e.g. <code>Analytics.Track(</code>)</span></label><textarea id="import-patterns" name="call_patterns" rows={2} defaultValue={o.code.call_patterns.join('\n')} /></div>
           </fieldset>
           <fieldset><legend>Safety</legend>

@@ -1,10 +1,11 @@
 // How long sessions are, how they ended, why players left and whether the numbers can be trusted.
 // Summary first: key numbers, then length per day beside how sessions ended, then the detail tables.
 // One session is one row on the server (session_state.py), so nothing here counts raw session_end events.
+import { Share } from '@/components/Share';
 import { useState, type ReactElement } from 'react';
 import { Segmented } from '@avn/ui';
 import { useRead } from '@/api';
-import { duration, number, percent, plural, platformLabel, shortDay } from '@/lib/format';
+import { duration, number, plural, platformLabel, shortDay } from '@/lib/format';
 import { filterQuery } from '@/lib/filters';
 import { gameURL } from '@/lib/games';
 import type { Game, SessionReport } from '@/lib/types';
@@ -44,7 +45,7 @@ function Report({ report, trend, onTrend, range }: { report: SessionReport; tren
         <Metric label="Sessions" value={number(report.sessions)} note={`${(report.sessions / Math.max(1, report.players)).toFixed(1)} per player${report.in_progress ? ` · ${number(report.in_progress)} in progress` : ''}`} />
         <Metric label="Median length" value={duration(report.median_seconds)} note={`${number(report.closed)} finished ${report.closed === 1 ? 'session' : 'sessions'}`} />
         <Metric label="Average length" value={duration(report.average_seconds)} note={`${duration(report.play_seconds)} played in total`} />
-        <Metric label="Time away in ads" value={share(report.ad_away_seconds, report.away_seconds)} note={`of ${duration(report.away_seconds)} away`} />
+        <Metric label="Time away in ads" value={report.away_seconds ? <Share part={report.ad_away_seconds} whole={report.away_seconds} label={duration(report.ad_away_seconds)} /> : '—'} note={`of ${duration(report.away_seconds)} away`} />
       </div>
       <div className="split">
         <section className="panel">
@@ -54,7 +55,7 @@ function Report({ report, trend, onTrend, range }: { report: SessionReport; tren
           </div>
           <div className="panel-body chart-wrap">
             <DayChart series={fillDays(trendValues(report, trend), range)} label={chosen.title} format={chosen.format} tip={chosen.tip} softFrom={report.changing_from} marker={change ? { day: change.day, label: `Measured differently from ${change.version}` } : undefined} />
-            {recent ? <p className="help">Recent data may still change: phones can deliver events late, so {shortDay(report.changing_from)} onwards can still move.</p> : null}
+            {recent ? <p className="help">From {shortDay(report.changing_from)} on, late events can still change this.</p> : null}
             {change ? <p className="help">Length changed how it is measured from version {change.version}, on {shortDay(change.day)}. A step there is the measurement, not the players.</p> : null}
           </div>
         </section>
@@ -100,7 +101,7 @@ function Quality({ report }: { report: SessionReport }): ReactElement {
       <div className="table-wrap">
         <table className="compact-table">
           <thead><tr><th>Platform</th><th>Version</th><th className="num">Sessions</th><th className="num">Game reported the end</th><th className="num">Server guessed</th><th className="num">End arrives after</th><th className="num">Duplicates</th><th className="num">Rejected batches</th></tr></thead>
-          <tbody>{report.quality.map((row) => <tr key={`${row.platform}-${row.app_version}`}><td>{platformLabel(row.platform)}</td><td className="mono">{row.app_version}</td><td className="num">{number(row.sessions)}</td><td className="num">{row.client_percent == null ? '—' : percent(row.client_percent)}</td><td className="num">{row.inferred_percent == null ? '—' : percent(row.inferred_percent)}</td><td className="num">{duration(row.median_end_delay)}</td><td className="num">{row.duplicate_percent == null ? '—' : percent(row.duplicate_percent)}</td><td className="num">{row.rejected == null ? '—' : number(row.rejected)}</td></tr>)}</tbody>
+          <tbody>{report.quality.map((row) => <tr key={`${row.platform}-${row.app_version}`}><td>{platformLabel(row.platform)}</td><td className="mono">{row.app_version}</td><td className="num">{number(row.sessions)}</td><td className="num">{row.client_percent == null ? '—' : <Share part={row.client} whole={row.sessions} percent={row.client_percent} unit="sessions" />}</td><td className="num">{row.inferred_percent == null ? '—' : <Share part={row.inferred} whole={row.sessions} percent={row.inferred_percent} unit="sessions" />}</td><td className="num">{duration(row.median_end_delay)}</td><td className="num">{row.duplicate_percent == null || row.events == null ? '—' : <Share part={Math.round((row.events * row.duplicate_percent) / 100)} whole={row.events} percent={row.duplicate_percent} unit="events" />}</td><td className="num">{row.rejected == null ? '—' : number(row.rejected)}</td></tr>)}</tbody>
         </table>
       </div>
       {report.delivery.length ? (

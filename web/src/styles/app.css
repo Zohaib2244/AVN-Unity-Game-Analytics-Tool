@@ -1158,3 +1158,12 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 .player-id { display: inline-flex; align-items: center; gap: 4px; }
 .player-id .btn, .player-id button { opacity: .45; transition: opacity .15s; }
 .player-row:hover .player-id button, .player-row:focus-within .player-id button, .player-id button:focus-visible, .player-id button.copy-done { opacity: 1; }
+.filter-bar .segmented, .panel-header .search, .toolbar .search, .players-head .fresh, .toolbar .game-select select { height: 34px; min-height: 34px; box-sizing: border-box; }
+.panel-header .search input, .toolbar .search input { height: 100%; min-height: 0; padding-block: 0; }
+/* Levels: every heat cell has the same parts in the same places; the count slot keeps its width when empty. */
+.heat-cell .heat-n { min-width: 34px; text-align: right; }
+
+/* A share: the count first (muted, fixed slot), then the percentage; the same in every table and card. */
+.share { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.share-n { color: var(--dim); font-size: .9em; min-width: 3ch; text-align: right; }
+.share-p { min-width: 5.5ch; text-align: right; }

@@ -20,12 +20,12 @@ export const ENDINGS = [
   { key: 'inferred', label: 'Closed by the server, no end received' },
 ];
 
-const LEAVES: Record<string, string> = { Ad: 'For an ad', Player: 'Player left', Purchase: 'For a purchase', Unknown: 'Not sent' };
+const LEAVES: Record<string, string> = { Ad: 'For an ad', Player: 'Player left', Purchase: 'For a purchase', Unknown: 'No reason given' };
 export const leaveLabel = (cause: string): string => LEAVES[cause] ?? cause;
 
 const REASONS: Record<string, string> = {
   UserRequested: 'Swiped away or force-stopped', LowMemory: 'Android closed it for memory', Crash: 'Crash', CrashNative: 'Native crash', Anr: 'App not responding',
-  ExitSelf: 'The app closed itself', Signaled: 'Stopped by a signal', Freezer: 'Frozen by Android', Other: 'Other', Unknown: 'Not sent',
+  ExitSelf: 'The app closed itself', Signaled: 'Stopped by a signal', Freezer: 'Frozen by Android', Other: 'Other', Unknown: 'No reason given',
 };
 export const reasonLabel = (reason: string): string => REASONS[reason] ?? reason;
 

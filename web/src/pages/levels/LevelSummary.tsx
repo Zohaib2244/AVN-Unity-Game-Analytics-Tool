@@ -4,7 +4,7 @@ import type { ReactElement } from 'react';
 import { motion } from 'motion/react';
 import { DialogShell } from '@avn/ui';
 import { Ico, type IcoName } from '@/components/icons';
-import { duration, number, percent } from '@/lib/format';
+import { duration, number, percent, shareText } from '@/lib/format';
 import { rise } from '@/lib/motion';
 import type { LevelRow } from '@/lib/types';
 import { LevelViz } from './LevelViz';
@@ -19,8 +19,8 @@ export function LevelAnswer({ levels, minimum, excludeReturners, onJump }: { lev
   const { largestDrop, failQuit, hardest, slowest } = levelHighlights(levels);
   const drop = largestDrop?.transition;
   const others: Array<{ key: string; label: string; row: LevelRow | undefined; value: string }> = [
-    { key: 'quit', label: 'Most quit after failing', row: failQuit, value: failQuit?.transition?.fail_drop_percent == null ? '' : percent(failQuit.transition.fail_drop_percent) },
-    { key: 'hard', label: 'Fewest finish', row: hardest, value: hardest ? percent(hardest.completion ?? 0) : '' },
+    { key: 'quit', label: 'Most quit after failing', row: failQuit, value: failQuit?.transition?.fail_drop_percent == null ? '' : shareText(failQuit.transition.failed_left, failQuit.transition.fail_drop_percent) },
+    { key: 'hard', label: 'Fewest finish', row: hardest, value: hardest ? shareText(hardest.completed, hardest.completion ?? 0) : '' },
     { key: 'slow', label: 'Slowest', row: slowest, value: slowest ? duration(slowest.median_seconds) : '' },
   ].filter((item) => item.row);
   return (
@@ -46,9 +46,9 @@ export function LevelSummary({ open, onClose, levels, minimum, dropFlag, quitFla
   const { largestDrop, failQuit, hardest, slowest } = levelHighlights(levels);
   const drop = largestDrop?.transition?.drop_percent ?? null; const quit = failQuit?.transition?.fail_drop_percent ?? null;
   const spots: Spot[] = [
-    { key: 'drop', icon: 'trend', label: 'Biggest drop', row: largestDrop, value: drop == null ? '' : percent(drop), hot: heatOf(drop, dropFlag).over },
-    { key: 'quit', icon: 'exit', label: 'Most quit', row: failQuit, value: quit == null ? '' : percent(quit), hot: heatOf(quit, quitFlag).over },
-    { key: 'hard', icon: 'alert', label: 'Hardest', row: hardest, value: hardest ? `${percent(hardest.completion ?? 0)} finish` : '', hot: false },
+    { key: 'drop', icon: 'trend', label: 'Biggest drop', row: largestDrop, value: drop == null ? '' : shareText(largestDrop?.transition?.total_drop ?? 0, drop), hot: heatOf(drop, dropFlag).over },
+    { key: 'quit', icon: 'exit', label: 'Most quit', row: failQuit, value: quit == null ? '' : shareText(failQuit?.transition?.failed_left ?? 0, quit), hot: heatOf(quit, quitFlag).over },
+    { key: 'hard', icon: 'alert', label: 'Hardest', row: hardest, value: hardest ? `${shareText(hardest.completed, hardest.completion ?? 0)} finish` : '', hot: false },
     { key: 'slow', icon: 'clock', label: 'Slowest', row: slowest, value: slowest ? duration(slowest.median_seconds) : '', hot: false },
   ];
   const first = levels[0]; const last = levels[levels.length - 1];

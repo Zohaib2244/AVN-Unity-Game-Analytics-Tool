@@ -54,7 +54,7 @@ export function KeysPage({ game }: { game: Game }): ReactElement {
           </table></div>
         </section>
       )}</QueryRegion>
-      <p className="help section-spacing">These keys identify your game builds. Never use your admin credentials in a game client.</p>
+      <p className="help section-spacing">Never put admin credentials in a game build.</p>
       <CreateKeyDialog game={game} open={creating} onClose={() => setCreating(false)} onCreated={(key) => { setCreating(false); setShown({ key: key.api_key || '', title: 'Your new key is ready.', next: location.pathname + location.search }); }} />
       <ShowKeyDialog shown={shown} onClose={() => setShown(null)} />
       <ConfirmDialog open={!!deleting} onClose={() => setDeleting(null)} title="Delete this key?" message="Game builds using this key will no longer be able to send events. Existing collected data stays safe — events belong to the game, not the key. This can’t be undone." label="Delete key" danger

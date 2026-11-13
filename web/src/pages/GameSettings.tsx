@@ -83,7 +83,7 @@ function AccessPanel({ game }: { game: Game }): ReactElement {
                   ))}</div>
                   <div className="form-actions"><button className="button primary" type="button" id="save-access" disabled={saving} aria-busy={saving || undefined} onClick={() => void save()}>{saving ? 'Working…' : 'Save access'}</button></div>
                 </>
-              ) : <p className="help">There are no members yet. The admin can add people on the Team page.</p>}
+              ) : <p className="help">No members yet. Add people on Team.</p>}
               {everyone.length ? <p className="small muted section-spacing">Always have access: {everyone.map((person) => person.name || person.email).join(', ')}</p> : null}
             </>
           );
@@ -256,7 +256,7 @@ export function GameSettingsPage({ game }: { game: Game }): ReactElement {
             <aside className="aside-card connect-card">
               <Ico name="pulse" size={25} />
               <h3>Connect your game</h3>
-              <p>Send batches to this address with one of the game’s API keys in the <code>X-API-Key</code> header.</p>
+              <p>Send batches here with an API key in <code>X-API-Key</code>.</p>
               <div className="connection"><code>POST {overview.ingest_url}</code><CopyButton text={overview.ingest_url} label="Copy collection address" done="Address copied." /></div>
               <Link className="button" to={gamePath(game, 'keys')}><Ico name="key" size={15} /> Manage API keys <span className="muted">({detail.keys_active} active)</span></Link>
               {/* Only worth saying while the address is still a local one. */}
@@ -284,7 +284,7 @@ export function GameSettingsPage({ game }: { game: Game }): ReactElement {
               <div className="panel-header"><div><h2 title="Changes here affect live data collection.">Danger zone</h2></div></div>
               <div className="panel-body">
                 <div className="danger-row"><div><strong>{archived ? 'Restore this game' : 'Archive this game'}</strong><p>{archived ? 'Start accepting events again. Queued events on devices will be delivered.' : 'Pause collection without deleting anything. You can restore it at any time.'}</p></div><button type="button" className="button" onClick={() => void (archived ? restore() : archive())}>{archived ? 'Restore game' : 'Archive game'}</button></div>
-                <div className="danger-row"><div><strong>Delete this game</strong><p>Removes the game and all of its API keys. Its event database is moved to the server’s <code>data/deleted</code> folder, not erased.</p></div><button type="button" className="button danger" onClick={() => setDeleting(true)}>Delete game</button></div>
+                <div className="danger-row"><div><strong>Delete this game</strong><p>Removes it and its keys; the data moves to <code>data/deleted</code>.</p></div><button type="button" className="button danger" onClick={() => setDeleting(true)}>Delete game</button></div>
               </div>
             </section>
           ) : null}

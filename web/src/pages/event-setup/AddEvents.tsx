@@ -64,7 +64,7 @@ export function AddEvents({ game }: { game: Game }): ReactElement {
             <SdkDownloadButton />
           </div>
           <SetupFlow items={[['export', 'Unzip in your game'], ['sparkle', <>Run <code>AGENT_PROMPT.md</code> in your AI agent</>], ['pulse', 'Send a test build']]} />
-          <p className="help">A game that sends <code>LEVEL_ANALYSIS</code> gets its level mappings by itself; check them under Mappings.</p>
+          <p className="help"><code>LEVEL_ANALYSIS</code> maps its own levels.</p>
           <details className="import-prompt standard-events"><summary>Show the {number(standard.events.length)} events</summary>
             <div className="table-wrap"><table className="import-table">
               <thead><tr><th>Event</th><th>States</th></tr></thead>

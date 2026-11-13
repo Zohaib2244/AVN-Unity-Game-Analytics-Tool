@@ -221,7 +221,7 @@ export function AgentAccessPage(): ReactElement {
                 </tr>
               ))}</tbody>
             </table></div>
-          ) : <p className="help panel-body">No keys yet. Create one to let an agent read a game’s data.</p>}
+          ) : <p className="help panel-body">No keys yet.</p>}
         </section>
       )}</QueryRegion>
 

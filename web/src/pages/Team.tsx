@@ -83,7 +83,7 @@ export function TeamPage(): ReactElement {
         return (
           <>
             <section className="panel">
-              <div className="panel-header"><h2>{workspaceName} <span className="count">{members.length}</span></h2><p className="small muted">Team lead: manages the workspace’s games and who sees them · Member: works with the games they’re given</p></div>
+              <div className="panel-header"><h2>{workspaceName} <span className="count">{members.length}</span></h2><p className="small muted">Lead: its games and who sees them · Member: given games</p></div>
               {members.length ? (
                 <div className="table-wrap"><table><thead><tr><th>Person</th><th>Role</th><th>Games</th><th>Last seen</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>
                   {members.map((person) => {
@@ -186,7 +186,7 @@ export function WorkspacesPage(): ReactElement {
       <Heading title="Workspaces" subtitle="A workspace is a separate set of games and people, such as work and personal projects." actions={<button type="button" className="button primary" id="new-workspace" onClick={() => setDialog({ kind: 'new' })}><Ico name="plus" size={15} /> New workspace</button>} />
       <QueryRegion query={list} path="/v1/workspaces" skeleton={<Skeleton rows={3} columns={5} />}>{(items) => (
         <>
-          <section className="panel"><div className="table-wrap"><table><thead><tr><th>Name</th><th className="num">Games</th><th className="num">People</th><th>NutBot</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>
+          <section className="panel"><div className="table-wrap"><table><thead><tr><th>Name</th><th className="num">Games</th><th className="num">People</th><th title="Who may chat with NutBot in that workspace; others see it locked.">NutBot</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>
             {items.map((item) => (
               <tr key={item.id} data-id={item.id}>
                 <td>{item.name}{item.id === current ? <> <span className="pill good">Current</span></> : null}</td>
@@ -201,7 +201,7 @@ export function WorkspacesPage(): ReactElement {
               </tr>
             ))}
           </tbody></table></div></section>
-          <p className="help section-spacing">Admins see every workspace. Everyone else sees only the workspaces they’ve been added to, and an admin can move a game between workspaces from its settings. The NutBot column sets who may chat with NutBot in that workspace; others see it locked.</p>
+          <p className="help section-spacing">Admins see every workspace; others see only theirs.</p>
 
           {dialog?.kind === 'delete' ? (() => {
             const { item } = dialog;

@@ -4,7 +4,7 @@ import { useRef, useState, type ReactElement } from 'react';
 import { Popover, Segmented } from '@avn/ui';
 import { Ico } from '@/components/icons';
 import { OptionList } from '@/components/OptionList';
-import { DEFAULT_DISPLAY, FLAG_RANGE, LEVEL_COLUMNS, type CountsShown, type DropStyle, type LevelColumn, type LevelDisplay } from './levelDisplay';
+import { DEFAULT_DISPLAY, FLAG_RANGE, LEVEL_COLUMNS, type DropStyle, type LevelColumn, type LevelDisplay } from './levelDisplay';
 
 /** The shared Popover keeps itself on screen by the window's width, which includes the page scrollbar: allow for it. */
 const scrollbarWidth = (): number => (typeof window === 'undefined' ? 0 : Math.max(0, window.innerWidth - document.documentElement.clientWidth));
@@ -36,8 +36,6 @@ export function LevelDisplayMenu({ display, onChange }: { display: LevelDisplay;
             onChange={(values) => onChange({ ...display, columns: Object.fromEntries(LEVEL_COLUMNS.map(({ key }) => [key, values.includes(key)])) as Record<LevelColumn, boolean> })} />
           <div className="pop-grp"><span className="eyebrow">Drop and quit as</span></div>
           <Segmented<DropStyle> label="Drop and quit style" value={display.style} onChange={(style) => onChange({ ...display, style })} options={[{ value: 'cell', label: 'Heat cell' }, { value: 'bar', label: 'Bar' }]} />
-          <div className="pop-grp"><span className="eyebrow">Player counts</span></div>
-          <Segmented<CountsShown> label="When player counts show" value={display.counts} onChange={(counts) => onChange({ ...display, counts })} options={[{ value: 'flag', label: 'Flagged' }, { value: 'hover', label: 'On hover' }, { value: 'always', label: 'Always' }]} />
           <div className="pop-grp"><span className="eyebrow">Flag above</span></div>
           <Flag label="Drop to next level" value={display.dropFlag} min={FLAG_RANGE.drop.min} max={FLAG_RANGE.drop.max} onChange={(dropFlag) => onChange({ ...display, dropFlag })} />
           {display.columns.failquit ? <Flag label="Failed → quit" value={display.quitFlag} min={FLAG_RANGE.quit.min} max={FLAG_RANGE.quit.max} onChange={(quitFlag) => onChange({ ...display, quitFlag })} /> : null}

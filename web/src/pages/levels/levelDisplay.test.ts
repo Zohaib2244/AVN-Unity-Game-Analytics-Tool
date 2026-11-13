@@ -13,7 +13,7 @@ describe('cleanDisplay', () => {
     expect(shown.columns.time).toBe(false);
     expect(shown.columns.started).toBe(true);
     expect(Object.keys(shown.columns)).not.toContain('nope');
-    expect(shown).toMatchObject({ style: 'bar', counts: 'hover', dropFlag: 60, quitFlag: 0 });
+    expect(shown).toMatchObject({ style: 'bar', counts: 'always', dropFlag: 60, quitFlag: 0 });
   });
 });
 

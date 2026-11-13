@@ -43,7 +43,7 @@ export function ProcessingPanel(): ReactElement {
           <>
             <div className="panel-header"><div><h2 title="Prepares the dashboards’ answers in the background, for every game.">Analytics processing</h2></div><span className={`pill ${kind}`}>{label}</span></div>
             <div className="panel-body">
-              <p className="help">{explain}</p>
+              <p className="help" role="status">{explain}</p>
               <ul className="status-list">
                 <li><span>Requested</span><strong>{running ? 'Run' : 'Stop'} · by {status.changed_by} · {displayDate(status.changed_at)}</strong></li>
                 <li><span>Worker</span><strong>{!worker ? 'Never seen' : status.state === 'unavailable' ? `Last seen ${agoText(worker.heartbeat_at)}` : `Seen ${Math.round(worker.heartbeat_age_seconds || 0)} s ago`}</strong></li>
@@ -61,7 +61,7 @@ export function ProcessingPanel(): ReactElement {
                   {status.games.length ? status.games.map((game) => <li key={game.name}><span>{game.name}</span><strong>{processingFacts(game)}{game.views ? ` · ${number(game.views)} prepared answer${game.views === 1 ? '' : 's'}` : ''}</strong></li>) : <li><span>No games yet</span></li>}
                 </ul>
               </details>
-              <p className="help">Game events are always collected, whether processing runs or not. Stopping is safe at any time: work resumes where it left off.</p>
+              <p className="help">Events are always collected; stopping is safe.</p>
             </div>
           </>
         );

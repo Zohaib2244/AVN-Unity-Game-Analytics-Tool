@@ -44,7 +44,7 @@ describe('helpers', () => {
   it('reads levels per ad and the first-try share', () => {
     expect(levelsPerAd(622, 93)).toBe('1 per 6.7 levels');
     expect(levelsPerAd(0, 5)).toBeNull();
-    expect(firstTryShare(585, 622)).toBe('94%');
+    expect(firstTryShare(585, 622)).toBe('585 · 94%');
     expect(firstTryShare(0, 0)).toBe('—');
     expect(plain('level_reward')).toBe('Level reward');
   });

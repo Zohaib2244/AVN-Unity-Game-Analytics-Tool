@@ -22,7 +22,7 @@ export const money = (value: number | null | undefined, digits = 2): string => (
 export const share = (value: number | null | undefined): string => (value == null ? '—' : `${(value * 100).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`);
 
 export type DeliveryRow = {
-  format: string; loadsWorked: number | null; loadMedianMs: number | null; wanted: number | null; heldByRules: number | null;
+  format: string; loadsWorked: number | null; loadsOk: number | null; loadsTried: number | null; loadMedianMs: number | null; wanted: number | null; heldByRules: number | null;
   noAdReady: number | null; shown: number | null; shownOfWanted: number | null; topError: string | null;
 };
 
@@ -36,7 +36,7 @@ export function deliveryRows(data: AdDelivery): DeliveryRow[] {
     const serve = served.get(format); const health = healthy.get(format);
     const notReady = serve ? (serve.failed_by.NotReady ?? 0) : null;
     return {
-      format, loadsWorked: health?.load_success_rate ?? null, loadMedianMs: data.load_times[format]?.median_ms ?? null,
+      format, loadsWorked: health?.load_success_rate ?? null, loadsOk: health?.loaded ?? null, loadsTried: health ? health.loaded + health.load_failed : null, loadMedianMs: data.load_times[format]?.median_ms ?? null,
       wanted: serve?.wanted ?? null, heldByRules: serve?.blocked ?? null, noAdReady: notReady, shown: serve?.shown ?? (format === 'Banner' ? health?.impressions ?? null : null),
       shownOfWanted: serve?.shown_share ?? null, topError: errors.find((item) => item.format === format)?.error ?? null,
     };

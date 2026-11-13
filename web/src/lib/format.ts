@@ -4,6 +4,8 @@ export const number = (value: number | null | undefined): string => new Intl.Num
 export const percent = (value: number | string): string => `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
 /** A percentage in a column: always one decimal, so the figures line up (8.0%, not 8%). */
 export const percentFixed = (value: number | string): string => `${Number(value).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+/** A share in running text: the count, then the percentage (“412 · 28.9%”); in a table use the Share component. */
+export const shareText = (part: number, share: number): string => `${Number(part).toLocaleString()} · ${percentFixed(share)}`;
 /** One written form for a date with its time on every page: day, short month, year, then the time. */
 const DATE_TIME = { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' } as const;
 export const displayDate = (value: string | null | undefined): string => (value ? new Date(value).toLocaleString(undefined, DATE_TIME) : 'No events yet');

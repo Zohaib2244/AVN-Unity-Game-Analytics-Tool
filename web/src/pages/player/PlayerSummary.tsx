@@ -1,6 +1,7 @@
 // The Player tab's first half: what this player has done, at a glance. Ads seen by type, levels cleared and how
 // fast, coins and powerups, sessions and habits, counted by the server from the AVN events standard over everything
 // the player ever sent (not the date range above). A section the game sends no events for says so.
+import { Share } from '@/components/Share';
 import type { ReactElement } from 'react';
 import { useRead } from '@/api';
 import { QueryRegion, Skeleton } from '@/components/feedback';
@@ -38,7 +39,7 @@ function ValueCard({ data }: { data: PlayerSummaryData }): ReactElement | null {
       <div className="ps-value-top">
         <div><span>Ad revenue</span><b>{usd(money.total)}</b></div>
         <div><span>Cost to acquire</span><b>{cost?.state === 'ok' ? usd(cost.cost ?? 0, 2) : '—'}</b></div>
-        <div><span>Paid back</span><b className={share != null && share >= 1 ? 'good' : undefined}>{share != null ? `${Math.round(share * 100)}%` : '—'}</b></div>
+        <div><span>Paid back</span><b className={share != null && share >= 1 ? 'good' : undefined}>{share != null && cost?.cost ? <Share part={money.total} whole={cost.cost} percent={share * 100} unit="usd" /> : '—'}</b></div>
       </div>
       {share != null ? <div className="ps-payback" role="img" aria-label={`Paid back ${Math.round(share * 100)}% of the cost`}><i style={{ width: `${Math.max(1, Math.min(1, share) * 100)}%` }} /></div> : null}
       <p className="ps-note">{cost?.state === 'ok' ? `${cost.paid_back_day != null ? `Paid back the cost on day ${cost.paid_back_day} after install.` : 'Hasn’t paid back the cost yet.'} Cost is the campaign’s cost per install on the install day.` : COST_WORDS[cost?.state ?? 'off'] ?? ''}</p>
@@ -57,7 +58,7 @@ function ValueCard({ data }: { data: PlayerSummaryData }): ReactElement | null {
 /** How many levels the player clears for each ad shown, e.g. "1 per 6.7 levels"; null when either is zero. */
 export const levelsPerAd = (cleared: number, shown: number): string | null => (cleared > 0 && shown > 0 ? `1 per ${(cleared / shown).toFixed(1)} levels` : null);
 /** Share of the levels cleared that took no fail, restart or second start. */
-export const firstTryShare = (firstTry: number, cleared: number): string => (cleared > 0 ? `${Math.round((100 * firstTry) / cleared)}%` : '—');
+export const firstTryShare = (firstTry: number, cleared: number): string => (cleared > 0 ? `${firstTry.toLocaleString()} · ${Math.round((100 * firstTry) / cleared)}%` : '—');
 
 function Bars({ rows, tone }: { rows: Array<[string, number]>; tone?: string }): ReactElement {
   const most = Math.max(1, ...rows.map(([, value]) => value));

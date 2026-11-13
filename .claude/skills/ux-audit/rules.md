@@ -43,6 +43,11 @@ behaviour, missing search) · **S3** polish (stray lines, uneven heights).
   others.*) **auto**: compare the child structure and text pattern of cells in a column.
 - **R2.3 Colour has one job.** Status colours mean state. The accent marks the one main
   action or the active item. **look**.
+- **R2.4 A percentage shows what it is a share of.** Every percentage has its count beside it
+  (players, sessions, events, installs) or the money for a revenue share: the count first,
+  muted, then the percentage, through the shared `Share` component (`components/Share.tsx`).
+  Never a bare percentage, never the count only on hover (phones have no hover). The tooltip
+  says it whole ("412 of 1,426 players"). **auto** (a cell or tile whose only number is a %).
 
 ## R3 Same thing, same component, same behaviour
 

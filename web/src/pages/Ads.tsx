@@ -2,6 +2,7 @@
 // Summary first: four key numbers, then revenue (split twice) beside "Needs a look", then delivery
 // from wanted to shown, rewarded placements and the creatives players leave on. Every panel loads on
 // its own, so one slow or failed read never blanks the rest.
+import { Share } from '@/components/Share';
 import type { ReactElement } from 'react';
 import { Segmented, Tag } from '@avn/ui';
 import { useRead } from '@/api';
@@ -103,7 +104,7 @@ function KeyNumbers({ totals, placements }: { totals: AdRevenue; placements: AdP
       <Metric label="Ad revenue" value={money(totals.total_revenue)} note={`${money(totals.revenue_per_active_player)} per player`} />
       <Metric label="Per player per day" value={money(totals.arpdau)} note={`${number(totals.active_players)} active players`} />
       <Metric label="Ads per session" value={pacing?.ads_shown_per_session != null ? pacing.ads_shown_per_session.toFixed(1) : '—'} note={pacing?.median_seconds_between_interstitials != null ? `${Math.round(pacing.median_seconds_between_interstitials)} s between interstitials` : 'interstitial gap not known'} />
-      <Metric label="Shown of wanted" value={wanted ? <>{Math.round((100 * shown) / wanted)}<small>%</small></> : '—'} note={wanted ? `${number(notReady)} lost: no ad ready` : 'the game sends no ad requests'} />
+      <Metric label="Shown of wanted" value={wanted ? <Share part={shown} whole={wanted} unit="ads" /> : '—'} note={wanted ? `${number(notReady)} lost: no ad ready` : 'the game sends no ad requests'} />
     </div>
   );
 }
@@ -174,8 +175,8 @@ function Delivery({ data }: { data: AdDelivery }): ReactElement {
             {rows.map((row) => (
               <tr key={row.format}>
                 <td>{words(row.format)}</td>
-                <td className={`num${row.loadsWorked != null && row.loadsWorked < 0.6 ? ' hot' : ''}`}>{share(row.loadsWorked)}</td>
-                <td className="num">{row.loadMedianMs != null ? `${(row.loadMedianMs / 1000).toFixed(1)} s` : <span className="muted" title="This build's ad plugin doesn't report load times">not sent</span>}</td>
+                <td className={`num${row.loadsWorked != null && row.loadsWorked < 0.6 ? ' hot' : ''}`}>{row.loadsWorked != null && row.loadsOk != null ? <Share part={row.loadsOk} whole={row.loadsTried} percent={row.loadsWorked * 100} unit="ads" /> : share(row.loadsWorked)}</td>
+                <td className="num">{row.loadMedianMs ? `${(row.loadMedianMs / 1000).toFixed(1)} s` : <span className="muted" title="This build's ad plugin doesn't report load times">—</span>}</td>
                 <td className="num">{row.wanted != null ? number(row.wanted) : <span className="muted">—</span>}</td>
                 <td className="num">{row.heldByRules != null ? number(row.heldByRules) : <span className="muted">—</span>}</td>
                 <td className={`num${row.noAdReady && row.wanted && row.noAdReady / row.wanted >= 0.1 ? ' hot' : ''}`}>{row.noAdReady != null ? number(row.noAdReady) : <span className="muted">—</span>}</td>
@@ -207,7 +208,7 @@ function Rewarded({ data }: { data: AdPlacements }): ReactElement {
         <thead><tr><th>Placement</th><th className="num">Wanted</th><th className="num">Shown</th><th className="num" title="Of the ads closed, the share that gave the reward">Reward given</th><th className="num">Revenue</th></tr></thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={String(row.value)}><td>{words(row.value)}</td><td className="num">{number(row.wanted)}</td><td className="num">{number(row.shown)}</td><td className="num">{share(row.reward_given_share)}</td><td className="num">{money(money_by.get(row.value ?? '')?.revenue ?? null)}</td></tr>
+            <tr key={String(row.value)}><td>{words(row.value)}</td><td className="num">{number(row.wanted)}</td><td className="num">{number(row.shown)}</td><td className="num">{row.reward_given_share != null ? <Share part={Math.round(row.shown * row.reward_given_share)} whole={row.shown} percent={row.reward_given_share * 100} unit="ads" /> : '—'}</td><td className="num">{money(money_by.get(row.value ?? '')?.revenue ?? null)}</td></tr>
           ))}
         </tbody>
       </table>
@@ -227,7 +228,7 @@ function Creatives({ data }: { data: AdCreatives }): ReactElement {
             <thead><tr><th>Creative</th><th>Network</th><th className="num">Shown</th><th className="num" title="Shows after which the player played no more levels that session">Left after it</th></tr></thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.creative}><td className="mono">{row.creative}</td><td>{row.network ?? '—'}</td><td className="num">{number(row.shown)}</td><td className={`num${row.left_share != null && row.left_share - usual >= 0.15 ? ' hot' : ''}`}>{share(row.left_share)}</td></tr>
+                <tr key={row.creative}><td className="mono">{row.creative}</td><td>{row.network ?? '—'}</td><td className="num">{number(row.shown)}</td><td className={`num${row.left_share != null && row.left_share - usual >= 0.15 ? ' hot' : ''}`}>{row.left_share != null ? <Share part={row.left_after} whole={row.shown} percent={row.left_share * 100} unit="ads" /> : '—'}</td></tr>
               ))}
             </tbody>
           </table>

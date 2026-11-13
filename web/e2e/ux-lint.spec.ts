@@ -36,7 +36,7 @@ function staticChecks(): Array<Omit<Finding, 'page'>> {
     if (!visible(region)) continue;
     const seen = new Map<string, number>();
     for (const el of region.querySelectorAll('h1,h2,h3,h4,label,legend,button,a,span,small,strong,p,div')) {
-      if (el.children.length > 0 || !visible(el) || el.closest('table, ol.journey-events, [role=row], ul[role=listbox], select, option, [role=listbox]')) continue;
+      if (el.children.length > 0 || !visible(el) || el.closest('table, ol.journey-events, [role=row], ul[role=listbox], select, option, [role=listbox], dd, li > strong, .tag, .pill, time, .step-state')) continue;
       const value = text(el).toLowerCase();
       if (value.length < 4 || value.length > 30 || /^[\d\s.,%$:·—–/+-]+$/.test(value)) continue;
       seen.set(value, (seen.get(value) || 0) + 1);
@@ -55,6 +55,8 @@ function staticChecks(): Array<Omit<Finding, 'page'>> {
   for (const el of document.querySelectorAll('p, .help, .foot-note, .note')) {
     if (!visible(el) || inChat(el) || el.closest('table, button, [role=status]:empty')) continue;
     if (el.children.length > 4) continue;
+    // An answer or a warning worked out from the data (it carries a number), or text a reviewer chose to keep, is not filler.
+    if (el.closest('[data-keep], .answer-line, [role=alert], [role=status]') || /\d/.test(text(el))) continue;
     if (words(text(el)) > 12) add('R1.3', label(el), `${words(text(el))} words of explanation`);
   }
 
@@ -75,7 +77,10 @@ function staticChecks(): Array<Omit<Finding, 'page'>> {
       // R2.2 cells in one column made of different parts
       const shape = (value: string): string => value.replace(/[\d,.]+/g, '#').replace(/[A-Za-z]+/g, 'a');
       const shapes = new Set(values.filter((value) => !empties.has(value)).map(shape));
-      if (shapes.size > 2) add('R2.2', `${label(table)} › ${name}`, `cells have ${shapes.size} different shapes (e.g. ${[...shapes].slice(0, 3).join(' | ')})`);
+      // Only number columns: a label column (IDs, names, “Under 10s”) is free text by nature.
+      const filled = values.filter((value) => !empties.has(value));
+      const numeric = filled.filter((value) => /^[\s$+\-−~≈<>]*\d/.test(value)).length >= 0.6 * filled.length;
+      if (column > 0 && numeric && shapes.size > 2) add('R2.2', `${label(table)} › ${name}`, `cells have ${shapes.size} different shapes (e.g. ${[...shapes].slice(0, 3).join(' | ')})`);
       // R2.1 cells in one column with different backgrounds
       const tints = new Set(cells.map((cell) => getComputedStyle(cell).backgroundColor).concat(cells.map((cell) => getComputedStyle(cell.firstElementChild || cell).backgroundColor)));
       const real = [...tints].filter((color) => color !== 'rgba(0, 0, 0, 0)');
@@ -126,8 +131,26 @@ function staticChecks(): Array<Omit<Finding, 'page'>> {
     }
   }
 
+  // R2.4 a percentage carries its count: a cell, tile value or bar label whose only number is a %
+  for (const el of document.querySelectorAll('td, .k-v, .metric-value, .stat-value, .kpi, .tile .tv, .hl-count, .heat, .share')) {
+    if (!visible(el) || inChat(el) || el.closest('.share') && !el.matches('.share')) continue;
+    const value = text(el);
+    // Read each text piece on its own: a count and a percentage in two spans have no space between them.
+    const pieces: string[] = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) pieces.push(node.textContent || '');
+    const numbers = pieces.flatMap((piece) => piece.match(/\d[\d,.]*/g) || []);
+    // A share column right beside its count column is fine: the count is on the same row.
+    const before = el.matches('td') ? el.previousElementSibling : null;
+    if (before && /\d/.test(text(before)) && !/%/.test(text(before))) continue;
+    if (/\d%/.test(value) && numbers.length === 1) add('R2.4', label(el), `“${value.slice(0, 30)}” is a percentage with no count beside it`);
+  }
+
   // R5.6 the first data row is in the top half of the first screen
-  const firstRow = [...document.querySelectorAll('tbody tr, ol.journey-events li, [role=row]')].find((row) => visible(row) && !row.closest('thead'));
+  // Data is a table row, a number tile or a chart: a page that leads with tiles has its data on top.
+  const firstRow = [...document.querySelectorAll('tbody tr, ol.journey-events li, [role=row], .kpis > *, .metric, .tiles > *, .game-card, svg[role=img], canvas')]
+    .filter((row) => visible(row) && !row.closest('thead, .side, nav, .pop'))
+    .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
   if (firstRow && firstRow.getBoundingClientRect().top > 450) add('R5.6', label(firstRow), `first data row starts at y = ${Math.round(firstRow.getBoundingClientRect().top)} (limit 450)`);
 
   // R13.1 too many rows in the DOM

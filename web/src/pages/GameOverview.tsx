@@ -1,5 +1,6 @@
 // A game's home: the briefing overview. Setup checklist, what changed, key numbers, activity per day
 // beside "Needs a look", sections at a glance, daily active users, who's playing and top events.
+import { Share } from '@/components/Share';
 import { useEffect, useState, useSyncExternalStore, type ReactElement } from 'react';
 import { Link } from '@tanstack/react-router';
 import { Freshness, Segmented, Tag } from '@avn/ui';
@@ -73,7 +74,7 @@ export function GameOverviewPage({ game }: { game: Game }): ReactElement {
               <Metric label="Players" value={number(summary.players)} note={`${number(summary.new_players)} new · unique player IDs`} />
               <Metric label="Sessions" value={number(summary.sessions)} note={summary.players ? `${(summary.sessions / summary.players).toFixed(1)} per player` : 'with a player ID'} />
               <Metric label="Daily active" value={number(a.dau || 0)} note={!summary.events ? 'no events yet' : a.last_day === today() ? `so far today · ${number(a.dau_previous || 0)} on ${shortDay(addDays(a.last_day, -1))}` : <><span className={`d ${change < 0 ? 'down' : 'up'}`}>{signed(change, number)}</span> vs {shortDay(addDays(a.last_day, -1))}</>} />
-              <Metric label="Stickiness" value={a.stickiness == null ? '—' : <>{a.stickiness}<small>%</small></>} note="avg DAU ÷ MAU" />
+              <Metric label="Stickiness" value={a.stickiness == null ? '—' : <Share part={Math.round(a.avg_dau_30 ?? 0)} whole={a.mau} percent={a.stickiness} />} note="average daily players of the month’s" />
             </div>
           );
         }}

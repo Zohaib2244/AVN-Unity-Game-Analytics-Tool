@@ -28,7 +28,7 @@ export function StandardPanel({ workspace, canManage }: { workspace: string; can
 
   return (
     <section className="panel section-spacing" id="standard-panel">
-      <div className="panel-header"><div><h2>Events standard</h2><p>The <code>.md</code> file games follow, handed out with the setup prompt on Event setup. Upload a new version whenever it changes.</p></div><Ico name="book" size={17} /></div>
+      <div className="panel-header"><div><h2 title="The .md file games follow, handed out with the setup prompt on Event setup.">Events standard</h2></div><Ico name="book" size={17} /></div>
       <div className="panel-body">
         <QueryRegion query={query} path={path} skeleton={<Skeleton rows={2} columns={2} />} note={false}>{(standard) => (
           <>
@@ -42,7 +42,7 @@ export function StandardPanel({ workspace, canManage }: { workspace: string; can
               <button type="button" className="button" onClick={() => void download()}><Ico name="export" size={15} /> Download setup files</button>
               {canManage && standard.source === 'uploaded' ? <button type="button" className="button" onClick={() => setResetting(true)}>Use built-in (v{standard.builtin_version})</button> : null}
             </div>
-            {canManage ? <p className="help section-spacing">The first line names the version, like <code># AVN events standard — version 5</code>; each event is a <code># EVENT_NAME</code> heading with <code>### State</code> headings under it.</p> : null}
+            {canManage ? <p className="help section-spacing">Starts with <code># AVN events standard — version N</code>.</p> : null}
           </>
         )}</QueryRegion>
       </div>

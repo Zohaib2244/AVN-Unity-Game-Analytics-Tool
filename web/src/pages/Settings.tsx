@@ -87,7 +87,7 @@ export function SettingsPage(): ReactElement {
               <p className="help section-spacing">Storage location and limits are set in the server's .env file.</p>
             </div>
           </section>
-          <aside className="aside-card"><Ico name="shield" size={25} /><h3>Protect this workspace</h3><p>This dashboard has no sign-in of its own. Put it behind your own access control, such as Cloudflare Access, a VPN or a private network, and never expose it directly.</p></aside>
+          <aside className="aside-card"><Ico name="shield" size={25} /><h3>Protect this workspace</h3><p data-keep>No sign-in of its own: keep it behind Cloudflare Access, a VPN or a private network.</p></aside>
         </div>
       </div>
     </>

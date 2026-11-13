@@ -11,7 +11,7 @@ export type LevelDisplay = { columns: Record<LevelColumn, boolean>; style: DropS
 
 export const DEFAULT_DISPLAY: LevelDisplay = {
   columns: { started: true, finished: true, drop: true, failquit: false, tries: false, fails: true, time: true },
-  style: 'cell', counts: 'flag', dropFlag: 5, quitFlag: 10,
+  style: 'cell', counts: 'always', dropFlag: 5, quitFlag: 10,
 };
 export const FLAG_RANGE = { drop: { min: 5, max: 60 }, quit: { min: 0, max: 50 } } as const;
 export const displayKey = (game: { id: string }): string => `avn-level-display-${game.id}`;
@@ -23,7 +23,7 @@ export function cleanDisplay(saved: unknown): LevelDisplay {
   return {
     columns: Object.fromEntries(LEVEL_COLUMNS.map(({ key }) => [key, typeof columns[key] === 'boolean' ? columns[key] : DEFAULT_DISPLAY.columns[key]])) as Record<LevelColumn, boolean>,
     style: value.style === 'bar' ? 'bar' : 'cell',
-    counts: value.counts === 'hover' || value.counts === 'always' ? value.counts : 'flag',
+    counts: 'always', // the count beside every percentage (rules.md R2.4); old saved choices are ignored
     dropFlag: clamp(value.dropFlag, FLAG_RANGE.drop.min, FLAG_RANGE.drop.max, DEFAULT_DISPLAY.dropFlag),
     quitFlag: clamp(value.quitFlag, FLAG_RANGE.quit.min, FLAG_RANGE.quit.max, DEFAULT_DISPLAY.quitFlag),
   };
