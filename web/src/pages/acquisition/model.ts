@@ -74,3 +74,9 @@ export function cleanGoals(rows: Array<{ day: string | number; percent: string |
   }
   return [...found].sort((a, b) => a[0] - b[0]).map(([day, percent]) => ({ day, percent }));
 }
+
+/** Install days before the first player was seen here (the build sent no AVN events yet), and the rest. */
+export function splitTracked<T extends { installs: number }>(days: T[]): { before: T[]; tracked: T[] } {
+  const first = days.findIndex((row) => row.installs > 0);
+  return first < 0 ? { before: days, tracked: [] } : { before: days.slice(0, first), tracked: days.slice(first) };
+}

@@ -7,7 +7,7 @@ import { Fragment, useMemo, useRef, useState, type CSSProperties, type ReactElem
 import { useNavigate } from '@tanstack/react-router';
 import { Popover, Segmented } from '@avn/ui';
 import { useRead, write } from '@/api';
-import { addDays, number, shortDay, today } from '@/lib/format';
+import { addDays, number, plural, shortDay, today } from '@/lib/format';
 import { filterQuery, type ActiveFilters } from '@/lib/filters';
 import { gamePath, gameURL } from '@/lib/games';
 import { useStored } from '@/lib/store';
@@ -18,7 +18,7 @@ import { rangeText, resolveRange } from '@/components/DateRange';
 import { Share } from '@/components/Share';
 import { DoraScene } from '@/components/flavour';
 import { Ico } from '@/components/icons';
-import { ALL_PAID, FEW, RETENTION_DAYS, TABLE_DAYS, VALUE_DAYS, answer, cleanGoals, costWords, goalOn, judgedGoal, money, pct, pct1, tone } from './acquisition/model';
+import { ALL_PAID, FEW, splitTracked, RETENTION_DAYS, TABLE_DAYS, VALUE_DAYS, answer, cleanGoals, costWords, goalOn, judgedGoal, money, pct, pct1, tone } from './acquisition/model';
 
 const GROUPS = [{ value: 'campaign', label: 'Campaign' }, { value: 'media_source', label: 'Media source' }, { value: 'channel', label: 'Channel' }] as const;
 type Group = (typeof GROUPS)[number]['value'];
@@ -177,23 +177,41 @@ function CohortPanel({ game, filters, cohort, onCohort, settings, onDay }: { gam
 function InstallDays({ data, onDay }: { data: AcquisitionCohorts; onDay: (day: string) => void }): ReactElement {
   const hasCost = data.cost.state === 'ok' || data.cost.state === 'failed';
   if (!data.days.length) return <p className="help panel-body">No installs from {data.campaign} in these days.</p>;
+  // Days before the first player was seen here (the build didn't send AVN events yet) fold into one line.
+  const { before, tracked } = splitTracked(data.days);
   return (
     <>
-      <RetentionHeat days={data.days} onDay={onDay} />
-      {hasCost ? <ReturnCurves days={data.days} goals={data.goals} /> : null}
+      <RetentionHeat days={tracked} onDay={onDay} />
+      {hasCost && tracked.length ? <ReturnCurves days={tracked} goals={data.goals} /> : null}
       <div className="table-wrap">
         <table className="compact-table acq-table cohort-table">
           <thead>
             <tr><th rowSpan={2}>Install day</th>{hasCost ? <><th rowSpan={2} className="num">Cost</th><th rowSpan={2} className="num" title="Installs the cost service counted">Installs (service)</th><th rowSpan={2} className="num">Cost per install</th></> : null}<th rowSpan={2} className="num" title="Players who opened the game here, against the cost-service count">Seen here</th><th colSpan={VALUE_DAYS.length} className="grp">{hasCost ? 'Return by day since install' : 'Earned per install by day since install'}</th></tr>
-            <tr>{VALUE_DAYS.map((day) => { const goal = goalOn(data.goals, day); return <th key={day} className="num">{day}{goal ? <small className="goal-mark" title={`Goal: ${goal.percent}% by day ${day}`}>goal {goal.percent}%</small> : null}</th>; })}</tr>
+            <tr>{VALUE_DAYS.map((day) => { const goal = goalOn(data.goals, day); return <th key={day} className="num ret-col">{day}{goal ? <small className="goal-mark" title={`Goal: ${goal.percent}% by day ${day}`}>goal {goal.percent}%</small> : null}</th>; })}</tr>
           </thead>
           <tbody>
-            {[...data.days].reverse().map((row) => <CohortRow key={row.day} row={row} goals={data.goals} hasCost={hasCost} onDay={onDay} />)}
+            {[...tracked].reverse().map((row) => <CohortRow key={row.day} row={row} goals={data.goals} hasCost={hasCost} onDay={onDay} />)}
+            {before.length ? <BeforeRow days={before} hasCost={hasCost} /> : null}
           </tbody>
         </table>
       </div>
       <p className="foot-note">On a goal day, green cells reach the goal and red ones don’t yet · faint numbers rest on fewer than {FEW} players · days marked * may still gain installs at the cost service · return is earned per player seen here ÷ cost per install.</p>
     </>
+  );
+}
+
+/** One line for the days before any player was seen here: their cost and installs, nothing to return yet. */
+function BeforeRow({ days, hasCost }: { days: CohortDay[]; hasCost: boolean }): ReactElement {
+  const cost = days.reduce((sum, row) => sum + (row.cost ?? 0), 0);
+  const installs = days.reduce((sum, row) => sum + (row.service_installs ?? 0), 0);
+  const span = days.length === 1 ? shortDay(days[0]!.day) : `${shortDay(days[0]!.day)} to ${shortDay(days[days.length - 1]!.day)}`;
+  return (
+    <tr className="before-row">
+      <td title="No player was seen here on these days: the builds people installed did not send AVN events yet">{span} <span className="muted">· {plural(days.length, 'day')} before AVN events</span></td>
+      {hasCost ? <><td className="num">{money(cost)}</td><td className="num">{installs ? number(installs) : <span className="muted">—</span>}</td><td className="num">{installs ? money(cost / installs) : <span className="muted">—</span>}</td></> : null}
+      <td className="num muted">0</td>
+      <td className="muted" colSpan={VALUE_DAYS.length} />
+    </tr>
   );
 }
 
@@ -205,10 +223,10 @@ function CohortRow({ row, goals, hasCost, onDay }: { row: CohortDay; goals: Retu
       <td className="num">{number(row.installs)}{row.seen_share != null ? <span className="muted" title={row.sdk_installs != null ? `Players seen here ÷ the ${number(row.sdk_installs)} installs on a build that sends AVN events (${number(row.service_installs ?? 0)} installs in all)` : 'Players seen here ÷ every install the cost service counted'}> · {pct(row.seen_share)}</span> : null}</td>
       {VALUE_DAYS.map((day) => {
         const item = row.value_per_install[`day_${day}`];
-        if (!item?.players) return <td key={day} className="num muted">·</td>;
+        if (!item?.players) return <td key={day} className="num muted ret-col">·</td>;
         const value = hasCost ? row.return[`day_${day}`] : item.per_player;
         const shade = hasCost ? tone(value, goalOn(goals, day)) : 'none';
-        return <td key={day} className={`num ret-cell ${shade}${faint(item.players)}`}>{hasCost ? pct(value) : money(value, 3)}</td>;
+        return <td key={day} className={`num ret-col ret-cell ${shade}${faint(item.players)}`}>{hasCost ? pct(value) : money(value, 3)}</td>;
       })}
     </tr>
   );

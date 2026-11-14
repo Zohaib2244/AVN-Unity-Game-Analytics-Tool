@@ -47,8 +47,8 @@ def _load(storage, game_id, start, end, filters):
         ).fetchone():
             return {
                 "available": False,
-                "note": "This game sends no attribution (ATTRIBUTION_ANALYSIS), so players "
-                "can't be grouped by where they came from.",
+                "note": "The game sends no attribution (ATTRIBUTION_ANALYSIS): "
+                "install sources unknown.",
             }
         condition, args = insights.where(start, end, filters, source=source)
         connection.execute("DROP TABLE IF EXISTS temp.cohort")

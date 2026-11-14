@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AcquisitionReport, AcquisitionRow } from '@/lib/types';
-import { answer, cleanGoals, costWords, judgedGoal, settledDay, tone } from './model';
+import { answer, cleanGoals, costWords, judgedGoal, settledDay, tone, splitTracked } from './model';
 
 const row = (value: string, installs: number, perPlayer: Record<number, [number, number]>, cpi: number | null): AcquisitionRow => ({
   value, installs, paid: value !== 'Organic', retention: {},
@@ -34,5 +34,17 @@ describe('Acquisition page model', () => {
   it('says why cost is missing', () => {
     expect(costWords({ state: 'not_allowed', app_id: 'com.x' })!.text).toContain('com.x');
     expect(costWords({ state: 'ok' })).toBeNull();
+  });
+});
+
+describe('splitTracked', () => {
+  it('folds the days before anyone was seen here, keeps later empty days', () => {
+    const days = [{ day: 'a', installs: 0 }, { day: 'b', installs: 0 }, { day: 'c', installs: 3 }, { day: 'd', installs: 0 }, { day: 'e', installs: 2 }];
+    const { before, tracked } = splitTracked(days);
+    expect(before.map((row) => row.day)).toEqual(['a', 'b']);
+    expect(tracked.map((row) => row.day)).toEqual(['c', 'd', 'e']);
+  });
+  it('puts everything before when nobody was seen', () => {
+    expect(splitTracked([{ installs: 0 }])).toEqual({ before: [{ installs: 0 }], tracked: [] });
   });
 });

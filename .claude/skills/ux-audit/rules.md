@@ -153,6 +153,11 @@ behaviour, missing search) · **S3** polish (stray lines, uneven heights).
   value); `elementFromPoint` at the centre of each visible control returns that control.
 - **R8.3 No nested scroll on wide screens.** A box that scrolls inside a page that also
   scrolls is only allowed for the table body. **auto**.
+- **R8.4 Ad blockers don't hide it.** No class or id that looks like an ad (`ad-…`, `ads-…`,
+  `…-ad`, `advert…`, `sponsor…`): blockers such as uBlock and AdBlock hide them, and the
+  page silently loses panels. (*The whole Ads widget block vanished for the owner because
+  EasyList hides `.ad-widgets`.*) Ad pages use the `money-` prefix. **auto**: EasyList's
+  generic hiding rules are run against every page, and a unit test rejects ad-like names.
 
 ## R9 Builders build complete conditions
 

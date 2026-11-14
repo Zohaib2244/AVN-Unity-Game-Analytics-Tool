@@ -4,6 +4,7 @@
 import { Share } from '@/components/Share';
 import { useState, type ReactElement } from 'react';
 import { AdWidgets, type AdScope } from '@/components/AdWidgets';
+import { DayBars } from '@/components/DayBars';
 import { useRead } from '@/api';
 import { QueryRegion, Skeleton } from '@/components/feedback';
 import { addDays, duration, localTimezoneOffset, number, plural, today } from '@/lib/format';
@@ -28,7 +29,6 @@ function ValueCard({ data }: { data: PlayerSummaryData }): ReactElement | null {
   const money = data.money; const cost = data.cost;
   if (!money) return null;
   const days = money.per_day.slice(-30);
-  const most = Math.max(0.000001, ...days.map(([, value]) => value));
   const share = cost?.state === 'ok' ? cost.paid_back_share ?? 0 : null;
   const where = data.install?.campaign ? data.install.campaign : data.install?.attributed ? plain(String(data.install.media_source ?? 'organic')) : 'no install record';
   return (
@@ -43,10 +43,8 @@ function ValueCard({ data }: { data: PlayerSummaryData }): ReactElement | null {
       <p className="ps-note">{cost?.state === 'ok' ? `${cost.paid_back_day != null ? `Paid back the cost on day ${cost.paid_back_day} after install.` : 'Hasn’t paid back the cost yet.'} Cost is the campaign’s cost per install on the install day.` : COST_WORDS[cost?.state ?? 'off'] ?? ''}</p>
       {days.length ? (
         <>
-          <h4>Earned per day <small>{days.length < money.per_day.length ? `last ${days.length} days with revenue` : ''}</small></h4>
-          <svg viewBox="0 0 300 44" className="ps-days ps-earned" preserveAspectRatio="none" role="img" aria-label="Ad revenue per day">
-            {days.map(([day, value], index) => { const width = Math.min(292 / days.length, 22); const height = Math.max(1.5, (value / most) * 38); return <rect key={day} x={4 + index * width} y={42 - height} width={Math.max(1, width - 2)} height={height} rx="1"><title>{`${dayText(day)}: ${usd(value)}`}</title></rect>; })}
-          </svg>
+          <h4>Earned per day{days.length < money.per_day.length ? <small> · last {days.length} days with revenue</small> : null}</h4>
+          <DayBars points={days.map(([day, value]) => ({ day, value }))} label="Ad revenue per day" show={(value) => usd(value)} />
         </>
       ) : <p className="ps-empty">No ad revenue from this player yet.</p>}
     </section>
@@ -110,7 +108,7 @@ function LevelsCard({ data }: { data: PlayerSummaryData }): ReactElement {
             ['Fastest', seconds(levels.fastest_seconds)], ['Slowest', seconds(levels.slowest_seconds)],
             ['Restarts', number(levels.restarts)], ['Revives', number(levels.revives)], ['Quit mid-level', number(levels.left)],
           ]} />
-          <h4>Pace</h4>
+          {levels.pace.length >= 2 ? <h4>Pace</h4> : null}
           <Pace pace={levels.pace} />
           {levels.hardest.length ? (
             <>
@@ -214,7 +212,7 @@ function SettingsCard({ data }: { data: PlayerSummaryData }): ReactElement | nul
 
 function HabitsCard({ data }: { data: PlayerSummaryData }): ReactElement {
   const { sessions } = data;
-  const days = sessions.per_day; const most = Math.max(1, ...days.map(([, count]) => count));
+  const days = sessions.per_day;
   const background = Object.entries(data.background).sort((a, b) => b[1] - a[1]);
   const screens = Object.entries(data.screens).slice(0, 5);
   return (
@@ -222,10 +220,8 @@ function HabitsCard({ data }: { data: PlayerSummaryData }): ReactElement {
       <h3>Sessions and habits</h3>
       {days.length ? (
         <>
-          <h4>Sessions per day <small>last {days.length} active day{days.length === 1 ? '' : 's'}</small></h4>
-          <svg viewBox="0 0 300 40" className="ps-days" preserveAspectRatio="none" role="img" aria-label="Sessions per active day">
-            {days.map(([day, count], index) => { const width = Math.min(292 / days.length, 22); const height = Math.max(2, (count / most) * 34); return <rect key={day} x={4 + index * width} y={38 - height} width={Math.max(1, width - 2)} height={height} rx="1"><title>{`${day}: ${count}`}</title></rect>; })}
-          </svg>
+          <h4>Sessions per day{days.length > 2 ? <small> · last {days.length} active days</small> : null}</h4>
+          <DayBars points={days.map(([day, count]) => ({ day, value: count }))} label="Sessions per active day" show={(count) => plural(count, 'session')} tone="info" />
         </>
       ) : null}
       {background.length ? <><h4>Why the app went to the background</h4><Bars rows={background} /></> : null}
@@ -253,14 +249,8 @@ export function PlayerSummaryView({ data, ads: adScope }: { data: PlayerSummaryD
       {data.partial ? <p className="ps-warn" role="status">This player has more events than one summary reads; the numbers cover the latest {number(data.events_counted)}.</p> : null}
       <p className="ps-scope">All time<small> · not limited to the days chosen above</small></p>
       <div className="ps-tiles">{tiles.map(([label, value, note]) => <div className="ps-tile" key={label}><span>{label}</span><b>{value}</b>{note ? <small>{note}</small> : null}</div>)}</div>
-      <div className="ps-grid">
-        <div className="ps-col"><WalletCard data={data} /></div>
-        <div className="ps-col"><HabitsCard data={data} /><SettingsCard data={data} /></div>
-      </div>
-      <div className="ps-grid">
-        <div className="ps-col"><ValueCard data={data} /></div>
-        <div className="ps-col"><LevelsCard data={data} /></div>
-      </div>
+      {/* One flow in two columns that the browser balances by height, so no card leaves a hole beside it. */}
+      <div className="ps-flow"><WalletCard data={data} /><HabitsCard data={data} /><SettingsCard data={data} /><ValueCard data={data} /><LevelsCard data={data} /></div>
       {adScope ? <><h2 className="ps-section">Ads</h2><AdWidgets scope={adScope} /></> : null}
     </div>
   );

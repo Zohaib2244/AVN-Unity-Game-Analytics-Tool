@@ -43,14 +43,14 @@ export function AdsPage({ game }: { game: Game }): ReactElement {
       {networks.data?.available === false ? null : (
         <>
           <AdWidgets scope={scope} />
-          <div className="settings-cols ads-pair section-spacing">
+          <div className="settings-cols money-pair section-spacing">
             <section className="panel">
               <div className="panel-header"><div><h2 title="Which offers players take, and what each earns.">Rewarded placements</h2></div></div>
               <QueryRegion query={placements} path={placementsPath} skeleton={<Skeleton rows={4} columns={4} />}>
                 {(data) => <Rewarded data={data} />}
               </QueryRegion>
             </section>
-            <section className="panel" id="ads-creatives">
+            <section className="panel" id="money-creatives">
               <div className="panel-header"><div><h2 title="Creatives after which the player played no more levels that session.">Ads players leave on</h2></div></div>
               <QueryRegion query={creatives} path={creativesPath} skeleton={<Skeleton rows={4} columns={5} />}>
                 {(data) => <Creatives data={data} />}
@@ -79,10 +79,10 @@ function KeyNumbers({ totals, states }: { totals: AdRevenue; states: AdStates | 
 function Rewarded({ data }: { data: AdPlacements }): ReactElement {
   const money_by = new Map((data.revenue.groups ?? []).map((row) => [row.value ?? '', row]));
   const rows = (data.serving.groups ?? []).filter((row) => row.reward_given_share != null);
-  if (!rows.length) return <p className="help panel-body">No rewarded ad was shown in these days, or the game doesn't say when one gives its reward.</p>;
+  if (!rows.length) return <p className="help panel-body">No rewarded ad gave its reward in these days.</p>;
   return (
     <div className="table-wrap">
-      <table className="compact-table ads-table">
+      <table className="compact-table money-table">
         <thead><tr><th>Placement</th><th className="num">Wanted</th><th className="num">Shown</th><th className="num" title="Of the ads closed, the share that gave the reward">Reward given</th><th className="num">Revenue</th></tr></thead>
         <tbody>
           {rows.map((row) => (
@@ -102,7 +102,7 @@ function Creatives({ data }: { data: AdCreatives }): ReactElement {
     <>
       {rows.length ? (
         <div className="table-wrap">
-          <table className="compact-table ads-table">
+          <table className="compact-table money-table">
             <thead><tr><th>Creative</th><th>Network</th><th className="num">Shown</th><th className="num" title="Shows after which the player played no more levels that session">Left after it</th></tr></thead>
             <tbody>
               {rows.map((row) => (

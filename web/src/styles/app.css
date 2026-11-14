@@ -645,7 +645,7 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
 .last-actions.last-endings .last-action { min-height: 30px; }
 
 /* ── Raw events: compact rows, one colour per kind of event, dotted lanes, quiet parameter chips ── */
-.raw-timeline .journey-events li { grid-template-columns: 62px 48px var(--lanes-w, 0px) minmax(150px, 210px) minmax(0, 1fr); gap: 4px 10px; align-items: center; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
+.raw-timeline .journey-events li { grid-template-columns: 62px 48px var(--lanes-w, 0px) minmax(150px, 210px) minmax(0, 1fr); gap: 4px 10px; align-items: start; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
 .raw-timeline .journey-events time { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .raw-timeline .journey-gap { font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
 .raw-timeline .journey-name { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-sm); color: var(--c, var(--text)); }
@@ -922,21 +922,21 @@ th.sortable.num .sort-arrow { order: -1; }
 /* ─── Ads and Acquisition ─── */
 .install-source.on { border-color: var(--accent); color: var(--text); }
 .pop-note { padding: 8px 12px 0; margin: 0; }
-.ads-split { grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); }
-.ads-revenue-head { flex-wrap: wrap; }
-.ads-revenue-head > div:first-child { flex: 1 1 280px; }
+.money-split { grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); }
+.money-revenue-head { flex-wrap: wrap; }
+.money-revenue-head > div:first-child { flex: 1 1 280px; }
 .then-by { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin: 0; color: var(--dim); font-size: var(--fs-sm); }
 .then-by select { width: auto; min-height: 34px; }
-.ads-table td, .acq-table td { padding-block: 7px; }
-.ads-table td.hot, .acq-table td.hot, td.num.hot { color: var(--bad); font-weight: 700; }
+.money-table td, .acq-table td { padding-block: 7px; }
+.money-table td.hot, .acq-table td.hot, td.num.hot { color: var(--bad); font-weight: 700; }
 .share-bar { display: inline-block; width: 88px; height: 6px; border-radius: 3px; background: var(--nested); vertical-align: middle; overflow: hidden; }
 .share-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); opacity: .8; }
 .bar-cell { display: inline-flex; align-items: center; gap: 8px; }
-.ads-errors { display: grid; gap: 6px; border-top: var(--bw) solid var(--line); }
-.ads-errors ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.ads-errors li { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; font-size: var(--fs-sm); }
-.ads-errors code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-.ads-pair { margin-top: 16px; }
+.money-errors { display: grid; gap: 6px; border-top: var(--bw) solid var(--line); }
+.money-errors ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.money-errors li { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; font-size: var(--fs-sm); }
+.money-errors code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.money-pair { margin-top: 16px; }
 .answer-line { margin: 0 0 14px; padding: 12px 16px; border-radius: var(--r-card); background: var(--panel); border: var(--bw) solid var(--line); font-size: var(--fs-md); color: var(--text); max-width: none; }
 .acquisition-notes { gap: 8px 14px; }
 .acquisition-notes .warn-text { color: var(--warn); }
@@ -979,11 +979,11 @@ th.sortable.num .sort-arrow { order: -1; }
 .goal-row { display: flex; align-items: center; gap: 8px; }
 .goal-row label { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: var(--fs-sm); color: var(--muted); }
 .goal-row input { width: 64px; min-height: 32px; }
-@media (max-width: 900px) { .ads-split { grid-template-columns: 1fr; } }
-.ads-split { align-items: start; }
-.ads-split .look { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; }
-.ads-split .look .s { white-space: normal; }
-.ads-errors code { padding: 0; border: 0; background: none; font-size: var(--fs-sm); }
+@media (max-width: 900px) { .money-split { grid-template-columns: 1fr; } }
+.money-split { align-items: start; }
+.money-split .look { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.money-split .look .s { white-space: normal; }
+.money-errors code { padding: 0; border: 0; background: none; font-size: var(--fs-sm); }
 .cohort-table th .goal-mark { display: block; font-size: 10px; text-transform: none; color: var(--ok); }
 .return-curves { overflow-x: auto; }
 .return-curves svg { min-width: 680px; }
@@ -1139,7 +1139,7 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
   .app.rail .ni { justify-content: center; padding: 0; }
   .app.rail .grp-label { height: 1px; margin: 8px 6px; padding: 0; background: var(--line); pointer-events: none; }
   .app.rail .grp.closed .grp-body { grid-template-rows: 1fr; }
-  .app.rail .live { position: absolute; top: 8px; right: 8px; margin: 0; }
+  .app.rail .live:not(.ingest-chip) { position: absolute; top: 8px; right: 8px; margin: 0; }
   .app.rail .ni .cnt-dot { display: block; }
   .app.rail .acct-btn { justify-content: center; padding: 6px; }
   .app.rail .ingest-chip { justify-content: center; padding: 6px; }
@@ -1170,8 +1170,8 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 .panel-header .fresh, .panel-header .quiet-actions > * { min-height: 34px; box-sizing: border-box; }
 
 /* The ad widgets (components/AdWidgets.tsx): Ad states, Revenue, Failures and blocks, one failure's page. */
-.ad-states .count-link { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; border-bottom: 1px dotted var(--dim); font-variant-numeric: tabular-nums; }
-.ad-states .count-link:hover { color: var(--accent); border-color: var(--accent); }
+.money-states .count-link { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; border-bottom: 1px dotted var(--dim); font-variant-numeric: tabular-nums; }
+.money-states .count-link:hover { color: var(--accent); border-color: var(--accent); }
 .warn-text { color: var(--warn); } .bad-text { color: var(--bad); }
 .rank-list { display: grid; gap: 6px; }
 .rank-row { display: grid; grid-template-columns: minmax(80px, 150px) minmax(40px, 1fr) auto auto; gap: 10px; align-items: center; min-height: 26px; }
@@ -1202,8 +1202,8 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 .detail-block p { margin: 0; }
 @media (max-width: 700px) { .rank-row { grid-template-columns: minmax(70px, 110px) 1fr auto; } .rank-extra { display: none; } }
 
-.ad-widgets { display: grid; gap: 16px; margin-top: 16px; }
-.ad-widgets > .panel, .ad-widgets .split > .panel { margin: 0; }
+.money-widgets { display: grid; gap: 16px; margin-top: 16px; }
+.money-widgets > .panel, .money-widgets .split > .panel { margin: 0; }
 
 /* Acquisition: the install-day picker (bars you click). */
 .install-days { margin: 12px 0; }
@@ -1233,17 +1233,33 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 @keyframes appear-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 @keyframes grow-y { from { transform: scaleY(0); } to { transform: scaleY(1); } }
-:is(.kpis > *, .ps-card, .ps-tile, .ad-widgets > *, .ad-widgets .split > *, .install-days, .retention-heat, .answer-line) { animation: appear .3s var(--motion-ease, ease-out) backwards; }
+:is(.kpis > *, .ps-card, .ps-tile, .money-widgets > *, .money-widgets .split > *, .install-days, .retention-heat, .answer-line) { animation: appear .3s var(--motion-ease, ease-out) backwards; }
 :is(.kpis, .ps-tiles) > :nth-child(2) { animation-delay: 40ms; } :is(.kpis, .ps-tiles) > :nth-child(3) { animation-delay: 80ms; } :is(.kpis, .ps-tiles) > :nth-child(n+4) { animation-delay: 120ms; }
-.ad-widgets > :nth-child(2), .ad-widgets .split > :first-child { animation-delay: 60ms; } .ad-widgets > :nth-child(3), .ad-widgets .split > :nth-child(2) { animation-delay: 110ms; }
-.failures-table tbody tr, .ads-table tbody tr { animation: appear .26s var(--motion-ease, ease-out) backwards; }
-.failures-table tbody tr:nth-child(2), .ads-table tbody tr:nth-child(2) { animation-delay: 20ms; } .failures-table tbody tr:nth-child(3), .ads-table tbody tr:nth-child(3) { animation-delay: 40ms; } .failures-table tbody tr:nth-child(4), .ads-table tbody tr:nth-child(4) { animation-delay: 60ms; } .failures-table tbody tr:nth-child(n+5), .ads-table tbody tr:nth-child(n+5) { animation-delay: 80ms; }
+.money-widgets > :nth-child(2), .money-widgets .split > :first-child { animation-delay: 60ms; } .money-widgets > :nth-child(3), .money-widgets .split > :nth-child(2) { animation-delay: 110ms; }
+.failures-table tbody tr, .money-table tbody tr { animation: appear .26s var(--motion-ease, ease-out) backwards; }
+.failures-table tbody tr:nth-child(2), .money-table tbody tr:nth-child(2) { animation-delay: 20ms; } .failures-table tbody tr:nth-child(3), .money-table tbody tr:nth-child(3) { animation-delay: 40ms; } .failures-table tbody tr:nth-child(4), .money-table tbody tr:nth-child(4) { animation-delay: 60ms; } .failures-table tbody tr:nth-child(n+5), .money-table tbody tr:nth-child(n+5) { animation-delay: 80ms; }
 .rank-track i { transform-origin: left center; animation: grow-x .5s var(--motion-ease, ease-out) backwards; }
 .mini-bar i, .day-bar i { transform-origin: bottom center; animation: grow-y .45s var(--motion-ease, ease-out) backwards; }
 .rh-cell:not(.none) { animation: appear-fade .35s ease-out backwards; }
 /* The rail: the page does not slide (that reflows everything); the labels fade in when it opens. */
 .app:not(.rail) .side .ni .lbl, .app:not(.rail) .side .brand-t { animation: appear-fade .22s ease-out backwards; }
 @media (prefers-reduced-motion: reduce) {
-  :is(.kpis > *, .ps-card, .ps-tile, .ad-widgets > *, .ad-widgets .split > *, .install-days, .retention-heat, .answer-line),
-  .failures-table tbody tr, .ads-table tbody tr, .rank-track i, .mini-bar i, .day-bar i, .rh-cell, .app .side .ni .lbl, .app .side .brand-t { animation: none !important; }
+  :is(.kpis > *, .ps-card, .ps-tile, .money-widgets > *, .money-widgets .split > *, .install-days, .retention-heat, .answer-line),
+  .failures-table tbody tr, .money-table tbody tr, .rank-track i, .mini-bar i, .day-bar i, .rh-cell, .app .side .ni .lbl, .app .side .brand-t { animation: none !important; }
 }
+
+/* ── Player summary: the cards flow in two height-balanced columns; day bars; remote config as name/value rows ── */
+.ps-flow { columns: 2 340px; column-gap: 12px; }
+.ps-flow > .ps-card { break-inside: avoid; margin: 0 0 12px; display: block; width: 100%; box-sizing: border-box; }
+.ps-config { display: grid; gap: 0; margin: 0; font-size: var(--fs-sm); }
+.ps-config > div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-top: 1px solid var(--line); }
+.ps-config dt { color: var(--text); }
+.ps-config dd { margin: 0; font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
+.day-words { margin: 4px 0 0; font-size: var(--fs-sm); }
+.ps-card .day-bars-wrap .mini-bars { height: 48px; }
+.day-bars-wrap p { margin: 4px 0 0; }
+.mini-bars.info .mini-bar i { background: var(--info); }
+.money-widgets .money-split { align-items: stretch; }
+.title-count { display: flex; align-items: center; gap: 8px; }
+.cohort-table .ret-col { width: 6.5%; }
+.cohort-table tr.before-row td { color: var(--muted); border-top: 1px dashed var(--line); }

@@ -7,6 +7,7 @@ import { Popover, SingleSelect } from '@avn/ui';
 import { useRead } from '@/api';
 import { Ico } from '@/components/icons';
 import { QueryRegion, Skeleton } from '@/components/feedback';
+import { DayBars } from '@/components/DayBars';
 import { Share } from '@/components/Share';
 import { addDays, analysisDate, countryName, number } from '@/lib/format';
 import { gamePath, gameURL } from '@/lib/games';
@@ -49,12 +50,12 @@ export function AdStatesPanel({ scope, onNarrow }: { scope: AdScope; onNarrow: (
   const states = useRead<AdStates>(url);
   const who = scope.player ? 'This player only' : 'Every format the game sends';
   return (
-    <section className="panel ad-states">
+    <section className="panel money-states">
       <div className="panel-header"><div><h2 title="Each count is how many times the game sent that state. Failed and blocked counts open the list of reasons.">Ad states</h2></div><span className="muted small">{who}</span></div>
       <QueryRegion query={states} path={url} skeleton={<Skeleton rows={4} columns={8} />}>
         {(data) => (data.available ? (
           <div className="table-wrap">
-            <table className="compact-table ads-table">
+            <table className="compact-table money-table">
               <thead><tr><th>Format</th><th className="num" title="An ad was ready">Loaded</th><th className="num" title="No ad came back from the network">Load failed</th><th className="num" title="The game wanted to show one">Asked</th><th className="num" title="The game’s own rules held it back">Blocked</th><th className="num" title="It could not be shown">Show failed</th><th className="num" title="The player saw it and closed it">Shown</th><th className="num">Revenue</th></tr></thead>
               <tbody>
                 {data.formats.map((row) => {
@@ -90,7 +91,7 @@ export function AdRevenuePanel({ scope }: { scope: AdScope }): ReactElement {
   const revenue = useRead<AdRevenue>(url);
   const options = GROUPS.filter((item) => item.value !== 'day').map((item) => ({ value: item.value as AdGroup, label: item.label }));
   return (
-    <section className="panel ad-revenue">
+    <section className="panel money-revenue">
       <div className="panel-header"><div><h2>Revenue</h2></div><Pick<AdGroup> label="By" value={by} options={options} onChange={setBy} /></div>
       <QueryRegion query={revenue} path={url} skeleton={<Skeleton rows={4} columns={4} />}>
         {(data) => {
@@ -120,21 +121,13 @@ export function AdDailyPanel({ scope }: { scope: AdScope }): ReactElement {
   const url = adPath(scope, 'revenue', '&group_by=day');
   const revenue = useRead<AdRevenue>(url);
   return (
-    <section className="panel ad-daily">
+    <section className="panel money-daily">
       <div className="panel-header"><div><h2>Revenue per day</h2></div></div>
       <QueryRegion query={revenue} path={url} skeleton={<Skeleton rows={3} columns={2} />}>
         {(data) => {
           const days = data.available ? data.groups : [];
           if (!days.length) return <p className="help panel-body">No paid ads in these days.</p>;
-          const top = Math.max(...days.map((row) => row.revenue), 0.000001);
-          return (
-            <div className="panel-body">
-              <div className="mini-bars" role="img" aria-label={`Revenue per day, ${days.length} days, most ${money(top)}`}>
-                {days.map((row) => <span key={String(row.value)} className="mini-bar" title={`${row.value} · ${money(row.revenue)} · ${number(row.players)} players`}><i style={{ height: `${Math.max(3, (100 * row.revenue) / top)}%` }} /></span>)}
-              </div>
-              <p className="small muted">{days[0]?.value} to {days[days.length - 1]?.value}</p>
-            </div>
-          );
+          return <div className="panel-body"><DayBars points={days.map((row) => ({ day: String(row.value), value: row.revenue }))} label="Revenue per day" show={money} /></div>;
         }}
       </QueryRegion>
     </section>
@@ -208,7 +201,7 @@ function FailurePage({ scope, rows, at, onBack, onGo }: { scope: AdScope; rows: 
   const detail = useRead<AdFailureDetail>(url);
   const players = gamePath(scope.game, 'players');
   return (
-    <section className="panel ad-failure">
+    <section className="panel money-failure">
       <div className="panel-header failure-head">
         <button type="button" className="btn sm" onClick={onBack}><Ico name="arrow" size={13} /> All failures</button>
         <h2><span className={`dot tone-${KIND_TONE[row.kind]}`} aria-hidden="true" /> {words(row.format)} · {KIND_WORDS[row.kind]}</h2>
@@ -285,9 +278,9 @@ export function AdFailuresPanel({ scope, narrow, onNarrow }: { scope: AdScope; n
     </th>
   );
   return (
-    <section className="panel ad-failures" id="ad-failures">
+    <section className="panel money-failures" id="money-failures">
       <div className="panel-header">
-        <div><h2>Failures and blocks</h2></div><span className="count">{all.length}</span>
+        <div className="title-count"><h2>Failures and blocks</h2><span className="count">{all.length}</span></div>
         <span className="quiet-actions">
           <Pick<string> label="Format" value={narrow.format} options={[{ value: '', label: 'All' }, ...formats.map((item) => ({ value: item, label: words(item) }))]} onChange={(format) => onNarrow({ ...narrow, format })} />
           <Pick<string> label="Kind" value={narrow.kind} options={KINDS} onChange={(kind) => onNarrow({ ...narrow, kind })} />
@@ -322,11 +315,11 @@ export function AdFailuresPanel({ scope, narrow, onNarrow }: { scope: AdScope; n
 /** The whole set: states, revenue beside revenue per day, and failures. The states table narrows the failures list. */
 export function AdWidgets({ scope }: { scope: AdScope }): ReactElement {
   const [narrow, setNarrow] = useState<Narrow>({ format: '', kind: '' });
-  const toFailures = (next: Narrow) => { setNarrow(next); document.getElementById('ad-failures')?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }); };
+  const toFailures = (next: Narrow) => { setNarrow(next); document.getElementById('money-failures')?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }); };
   return (
-    <div className="ad-widgets">
+    <div className="money-widgets">
       <AdStatesPanel scope={scope} onNarrow={toFailures} />
-      <div className="split ads-split">
+      <div className="split money-split">
         <AdRevenuePanel scope={scope} />
         <AdDailyPanel scope={scope} />
       </div>

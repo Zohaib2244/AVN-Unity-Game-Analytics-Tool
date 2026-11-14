@@ -2,7 +2,7 @@
 // Needs a server with data (see the ux-audit skill): AVN_WEB_URL=http://127.0.0.1:8202 npm run ux-lint
 // Every finding names its rule. The run fails when there are any, and writes test-results/ux-lint.json.
 import { expect, test, type Page } from '@playwright/test';
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 type Finding = { rule: string; page: string; where: string; detail: string };
 
@@ -224,6 +224,40 @@ async function rawEventsChecks(page: Page, name: string): Promise<Finding[]> {
   return out;
 }
 
+// R8.4: ad blockers hide page parts whose class or id looks like an ad (EasyList has `##.ad-widgets`).
+// The generic EasyList hiding rules (no site named) are run against every page. The list is downloaded
+// once into test-results/ (AVN_EASYLIST names a local copy instead); without it the check is skipped.
+async function blockerSelectors(): Promise<string[]> {
+  const local = process.env.AVN_EASYLIST || 'test-results/easylist.txt';
+  if (!existsSync(local)) {
+    try {
+      const response = await fetch('https://easylist.to/easylist/easylist.txt');
+      if (!response.ok) return [];
+      mkdirSync('test-results', { recursive: true });
+      writeFileSync(local, await response.text());
+    } catch { return []; }
+  }
+  return readFileSync(local, 'utf8').split('\n').filter((line) => line.startsWith('##')).map((line) => line.slice(2).trim()).filter(Boolean);
+}
+
+async function blockerChecks(page: Page, name: string, selectors: string[]): Promise<Finding[]> {
+  const hits = await page.evaluate((all) => {
+    const found = new Set<string>();
+    const test = (group: string[]) => {
+      try {
+        for (const el of document.querySelectorAll(group.join(','))) {
+          if (!el.closest('#main, .side, .app')) continue;
+          const which = group.length === 1 ? group[0] : group.find((one) => { try { return el.matches(one); } catch { return false; } });
+          if (which) found.add(`${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${el.classList.length ? `.${[...el.classList].join('.')}` : ''} ← ##${which}`);
+        }
+      } catch { if (group.length > 1) for (const one of group) test([one]); }
+    };
+    for (let i = 0; i < all.length; i += 400) test(all.slice(i, i + 400));
+    return [...found].slice(0, 10);
+  }, selectors);
+  return hits.map((hit) => ({ rule: 'R8.4', page: name, where: hit.split(' ← ')[0]!, detail: `ad blockers hide it (EasyList ${hit.split(' ← ')[1]}); rename the class or id` }));
+}
+
 const findings: Finding[] = [];
 
 test.describe.configure({ mode: 'serial' });
@@ -235,6 +269,7 @@ test('UX lint', async ({ page: first, context }) => {
   const heavy = process.env.AVN_HEAVY_PLAYERS ? process.env.AVN_HEAVY_PLAYERS.split(',') : [];
   const paths = [...WORKSPACE_PAGES, ...SECTIONS.map((section) => `/games/${id}/${section}`), ...heavy.map((player) => `/games/${id}/players?player=${player}`)];
   await page.addInitScript(() => { localStorage.setItem('avn-boot-day', new Date().toISOString().slice(0, 10)); });
+  const blocked = await blockerSelectors();
   for (const path of paths) {
     const name = path.replace(id, ':game');
     mkdirSync('test-results', { recursive: true });
@@ -245,6 +280,7 @@ test('UX lint', async ({ page: first, context }) => {
       await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined);
       await page.waitForTimeout(Number(process.env.AVN_LINT_WAIT || 800));
       for (const finding of await page.evaluate(staticChecks)) findings.push({ ...finding, page: name });
+      if (blocked.length) findings.push(...(await blockerChecks(page, name, blocked)));
       findings.push(...(await popoverChecks(page, name)));
       if (path.includes('?player=')) findings.push(...(await rawEventsChecks(page, name)));
     } catch (error) {
