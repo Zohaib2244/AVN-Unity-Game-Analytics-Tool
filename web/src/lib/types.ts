@@ -454,8 +454,9 @@ export type ReturnGoal = { day: number; percent: number };
 export type ReturnGoals = { game: ReturnGoal[]; campaigns: Record<string, ReturnGoal[]> };
 export type CostState = { state: 'off' | 'no_app_id' | 'not_allowed' | 'ok' | 'failed'; app_id?: string; fetched_at?: string; detail?: string; not_final_from?: string | null };
 export type ValueByDay = Record<string, { players: number; per_player: number | null }>;
+export type Payback = { state: 'ok' | 'thin' | 'none'; break_even_day: number | null; predicted: Record<string, number>; based_on_day: number | null; players: number; summary: string };
 export type AcquisitionRow = {
-  value: string; installs: number; paid?: boolean;
+  value: string; installs: number; paid?: boolean; payback?: Payback;
   retention: Record<string, { players: number; rate: number | null }>;
   value_per_install: ValueByDay;
   cost: number | null; service_installs: number | null; sdk_installs: number | null; cost_per_install: number | null; seen_share: number | null; seen_share_all: number | null;
