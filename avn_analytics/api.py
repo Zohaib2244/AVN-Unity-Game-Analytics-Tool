@@ -42,6 +42,8 @@ from . import (
     ingest_meter,
     insights,
     journeys,
+    level_difficulty,
+    live_tail,
     materialize,
     nutbot_commands,
     player_chips,
@@ -1267,6 +1269,16 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             lambda: ads.creatives(storage, str(game_id), *days, chosen, 40),
         )
 
+    @admin_api.get("/v1/games/{game_id}/events/live")
+    def events_live(
+        game_id: UUID,
+        after: Annotated[int | None, Query(ge=0)] = None,
+        player: Annotated[str, Query(max_length=128)] = "",
+        limit: Annotated[int, Query(ge=1, le=live_tail.MAX_EVENTS)] = 100,
+    ):
+        """What the game is sending now (live_tail.py); never cached."""
+        return live_tail.tail(storage, str(game_id), after, player or None, limit)
+
     @admin_api.get("/v1/games/{game_id}/insights/acquisition")
     def insights_acquisition(
         game_id: UUID,
@@ -1496,6 +1508,23 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             scope,
             exclude_returners=exclude_returners,
             defer="respond-async" in {part.strip().lower() for part in (prefer or "").split(",")},
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/levels/difficulty")
+    def insights_level_difficulty(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+        min_attempts: Annotated[int, Query(ge=1, le=100_000)] = level_difficulty.MIN_ATTEMPTS,
+    ):
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "level-difficulty",
+            (days, chosen, min_attempts),
+            lambda: level_difficulty.find(storage, str(game_id), *days, chosen, min_attempts),
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/levels/features")

@@ -1,7 +1,7 @@
 """NutBot's level-attempt, player and query tools (see level_attempts.py, player_tools.py and
 counting.py)."""
 
-from . import counting, level_attempts, player_tools
+from . import counting, level_attempts, level_difficulty, player_tools
 from .nutbot_base import RANGE_PROPS, STEP_SCHEMA, ToolError, _tool
 from .segments import SEGMENT_SCHEMA, SegmentedTools
 
@@ -69,6 +69,20 @@ PLAYER_TOOLS = [
                 "minimum": 1,
                 "maximum": level_attempts.MAX_DESIGNS,
                 "description": "How many designs to return. Default 20.",
+            },
+            "segment": SEGMENT_SCHEMA,
+        },
+    ),
+    _tool(
+        "get_level_outliers",
+        'Levels that stand out from the levels around them: a much higher fail rate (Failed / finished tries) or a much bigger share of players whose furthest level is this one. Each level is compared with the median of the levels within 3 numbers either side; it is listed only when it is clearly higher both in points and as a multiple, with a sentence per reason ("45% of finished tries fail; levels around it about 10%"). The newest levels players have reached are left out of the stop comparison. Use it first to find which levels to look at, then get_level_attempts on one. '
+        + RANGE_NOTE,
+        {
+            **RANGE_PROPS,
+            "min_attempts": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Judge only levels with at least this many tries. Default 30.",
             },
             "segment": SEGMENT_SCHEMA,
         },
@@ -151,6 +165,7 @@ PLAYER_TOOLS = [
 PLAYER_LABELS = {
     "get_level_attempts": "Reading a level's attempts",
     "get_level_designs": "Comparing level designs",
+    "get_level_outliers": "Finding levels that stand out",
     "get_player_profile": "Reading a player's profile",
     "get_player_raw_events": "Reading a player's raw events",
     "count_events": "Counting events",
@@ -193,6 +208,17 @@ class PlayerTools(SegmentedTools):
             args.get("sort"),
             args.get("min_attempts"),
             args.get("limit") or 20,
+        )
+
+    def tool_get_level_outliers(self, run, game_id, args):
+        start, end = self._range(run, args)
+        return level_difficulty.find(
+            self.storage,
+            game_id,
+            start,
+            end,
+            self._segment_filters(run, args),
+            args.get("min_attempts") or level_difficulty.MIN_ATTEMPTS,
         )
 
     def tool_get_player_profile(self, run, game_id, args):

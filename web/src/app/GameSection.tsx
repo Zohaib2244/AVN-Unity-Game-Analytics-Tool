@@ -19,11 +19,12 @@ import { ExportsPage } from '@/pages/Exports';
 import { DictionaryPage } from '@/pages/Dictionary';
 import { EventSetupPage } from '@/pages/EventSetup';
 import { KeysPage } from '@/pages/Keys';
+import { LiveEventsPage } from '@/pages/LiveEvents';
 import { GameSettingsPage } from '@/pages/GameSettings';
 
 const PAGES: Record<Section, (props: { game: Game }) => ReactElement> = {
   overview: GameOverviewPage, levels: LevelsPage, players: PlayersPage, sessions: SessionsPage, ads: AdsPage, acquisition: AcquisitionPage, exports: ExportsPage,
-  dictionary: DictionaryPage, 'event-setup': EventSetupPage, keys: KeysPage, settings: GameSettingsPage,
+  dictionary: DictionaryPage, 'event-setup': EventSetupPage, live: LiveEventsPage, keys: KeysPage, settings: GameSettingsPage,
 };
 
 /** The game and section of the current address, or null outside a game. Used by the shell and pages. */

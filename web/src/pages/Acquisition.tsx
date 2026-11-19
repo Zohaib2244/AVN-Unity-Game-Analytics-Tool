@@ -56,7 +56,7 @@ export function AcquisitionPage({ game }: { game: Game }): ReactElement {
           </>
         ))}
       </QueryRegion>
-      {report.data?.available ? <CohortPanel game={game} filters={query} cohort={cohort} onCohort={setCohort} settings={settings.data} onDay={(day) => pickDays(day, day)} /> : null}
+      {report.data?.available ? <CohortPanel game={game} filters={query} cohort={cohort} onCohort={setCohort} settings={settings.data} payback={cohort === ALL_PAID ? report.data.all_paid.payback : report.data.rows.find((row) => row.value === cohort)?.payback} onDay={(day) => pickDays(day, day)} /> : null}
     </>
   );
 }
@@ -101,11 +101,6 @@ function CostNotice({ game, data, settings }: { game: Game; data: AcquisitionRep
   );
 }
 
-function paybackWords(item: Payback | undefined): ReactElement | string {
-  if (!item || item.state === 'none') return <span className="muted">—</span>;
-  return item.break_even_day == null ? 'not in 180 d' : `day ${item.break_even_day}`;
-}
-
 const faint = (players: number | undefined): string => (players != null && players < FEW ? ' few' : '');
 
 function SourcesTable({ data, goalsFor, selected, onPick }: { data: AcquisitionReport; goalsFor: (name: string) => ReturnGoal[]; selected: string | null; onPick?: (name: string) => void }): ReactElement {
@@ -120,7 +115,7 @@ function SourcesTable({ data, goalsFor, selected, onPick }: { data: AcquisitionR
       <div className="table-wrap">
         <table className="compact-table acq-table">
           <thead>
-            <tr><th rowSpan={2}>{label}</th><th rowSpan={2} className="num" title="Players who opened the game for the first time here; after the slash, the installs the cost service counted on a build that sends AVN events (every install until the first build with AVN is set)">Installs</th>{comeBack.length ? <th colSpan={comeBack.length} className="grp">Came back on day</th> : null}{earnedDays.length ? <th colSpan={earnedDays.length} className="grp">Earned per install by day</th> : null}{hasCost ? <><th rowSpan={2} className="num">Cost per install</th><th rowSpan={2} className="num" title="Earned per install ÷ cost per install, on the latest day with a goal">Return</th><th rowSpan={2} className="num" title="When the money earned per install is expected to reach the cost per install, from the revenue curve so far (capped at 180 days)">Pays back</th></> : null}</tr>
+            <tr><th rowSpan={2}>{label}</th><th rowSpan={2} className="num" title="Players who opened the game for the first time here; after the slash, the installs the cost service counted on a build that sends AVN events (every install until the first build with AVN is set)">Installs</th>{comeBack.length ? <th colSpan={comeBack.length} className="grp">Came back on day</th> : null}{earnedDays.length ? <th colSpan={earnedDays.length} className="grp">Earned per install by day</th> : null}{hasCost ? <><th rowSpan={2} className="num">Cost per install</th><th rowSpan={2} className="num" title="Earned per install ÷ cost per install, on the latest day with a goal">Return</th></> : null}</tr>
             <tr>{comeBack.map((day) => <th key={`r${day}`} className="num">{day}</th>)}{earnedDays.map((day) => <th key={`v${day}`} className="num">{day}</th>)}</tr>
           </thead>
           <tbody>
@@ -145,7 +140,6 @@ function SourceRow({ row, comeBack, earnedDays, hasCost, goals, total, selected,
         <>
           <td className="num">{row.cost_per_install != null ? money(row.cost_per_install) : <span className="muted">{row.paid === false ? '—' : row.cost === 0 ? 'cost 0' : 'no cost'}</span>}</td>
           <td className="num">{judged ? <span className={`ret ${tone(judged.value, judged.goal)}`} title={`Day ${judged.goal.day} goal: ${judged.goal.percent}%`}>{pct(judged.value)} <small>d{judged.goal.day}</small></span> : <span className="muted">{goals.length ? '—' : 'set a goal'}</span>}</td>
-          <td className={`num${row.payback?.state === 'thin' ? ' few' : ''}`} title={row.payback?.summary}>{paybackWords(row.payback)}</td>
         </>
       ) : null}
     </tr>
@@ -154,7 +148,7 @@ function SourceRow({ row, comeBack, earnedDays, hasCost, goals, total, selected,
 
 /* ─── Cohorts of one campaign ─── */
 
-function CohortPanel({ game, filters, cohort, onCohort, settings, onDay }: { game: Game; filters: URLSearchParams; cohort: string; onCohort: (name: string) => void; settings: CostSettings | undefined; onDay: (day: string) => void }): ReactElement {
+function CohortPanel({ game, filters, cohort, onCohort, settings, payback, onDay }: { game: Game; filters: URLSearchParams; cohort: string; onCohort: (name: string) => void; settings: CostSettings | undefined; payback?: Payback; onDay: (day: string) => void }): ReactElement {
   const [mode, setMode] = useStored<'install' | 'calendar'>(`avn-acquisition-mode-${game.id}`, 'install');
   const navigate = useNavigate();
   const path = `${gameURL(game)}/insights/acquisition/cohorts?${filters}${cohort && cohort !== ALL_PAID ? `&cohort=${encodeURIComponent(cohort)}` : ''}`;
@@ -173,6 +167,7 @@ function CohortPanel({ game, filters, cohort, onCohort, settings, onDay }: { gam
           <button type="button" className="btn primary" onClick={seePlayers}><Ico name="users" size={14} /> See these players</button>
         </div>
       </div>
+      {payback && payback.state !== 'none' ? <p className={`payback-line${payback.state === 'thin' ? ' few' : ''}`} title={`Fitted to the ad revenue per install so far, up to day ${payback.based_on_day}, and carried on to day 180.`}><Ico name="clock" size={14} /> {payback.summary}</p> : null}
       <QueryRegion query={data} path={path} skeleton={<Skeleton kind="chart" />}>
         {(result) => (!result.available ? <p className="help panel-body">{result.note}</p> : mode === 'install' ? <InstallDays data={result} onDay={onDay} /> : <CalendarDays data={result} />)}
       </QueryRegion>

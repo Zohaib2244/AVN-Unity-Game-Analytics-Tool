@@ -49,7 +49,7 @@ export const workspaceName = (workspaces: WorkspaceMembership[], workspace: stri
 export const GAME_SECTIONS = [
   ['overview', 'grid', 'Overview'], ['levels', 'pad', 'Levels'], ['players', 'users', 'Players'], ['sessions', 'pulse', 'Sessions'],
   ['ads', 'flame', 'Ads'], ['acquisition', 'up', 'Acquisition'],
-  ['exports', 'down', 'Exports'], ['dictionary', 'book', 'Event dictionary'], ['event-setup', 'link', 'Event setup'],
+  ['exports', 'down', 'Exports'], ['dictionary', 'book', 'Event dictionary'], ['event-setup', 'link', 'Event setup'], ['live', 'pulse', 'Live events'],
   ['keys', 'key', 'API keys'], ['settings', 'sliders', 'Game settings'],
 ] as const;
 export type Section = (typeof GAME_SECTIONS)[number][0];

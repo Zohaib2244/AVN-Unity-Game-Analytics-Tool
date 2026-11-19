@@ -473,3 +473,7 @@ export type AcquisitionCohorts = {
   days: CohortDay[]; by_calendar_day: Array<{ day: string; revenue: number; cost: number | null }>;
 };
 export type CostSettings = { app_id: string; typed_app_id: string; default_app_id: string; goals: ReturnGoals; first_sdk_version: string; configured: boolean };
+
+export type LevelOutlierReason = { metric: 'fail_rate' | 'stop_share'; value: number; expected: number; excess: number; words: string; short: string };
+export type LevelOutlier = { level: number; attempts: number; players: number; fail_rate: number | null; stop_share: number | null; reasons: LevelOutlierReason[] };
+export type LevelDifficulty = { available: true; summary: string; levels_judged: number; min_attempts: number; levels: LevelOutlier[] } | { available: false; note: string };

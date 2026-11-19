@@ -85,9 +85,9 @@ browser verification at wide, rail and phone widths before they are called finis
 
 ## Status
 
-- [~] 1 Payback forecast (backend + table column done and tested; browser check at three widths still to do)
-- [ ] 2 Live event tail
-- [ ] 3 Level difficulty finder
+- [x] 1 Payback forecast: `payback.py`; per row in the acquisition report; shown as one line above the chosen campaign's Cohorts (a table column overflowed the Sources table at 1440 wide, so it moved)
+- [x] 2 Live event tail: `live_tail.py`, `GET /v1/games/{id}/events/live`, Live events page under Data (polls every 2 s while visible; Paused/Offline with the last answer time; Player and Build columns only when they differ)
+- [x] 3 Level difficulty finder: `level_difficulty.py`, `GET .../insights/levels/difficulty`, NutBot/MCP `get_level_outliers`, a "Harder than nearby" chip in the Levels answer strip (only when no other chip names that level)
 - [ ] 4 Device and country performance
 - [ ] 5 What separates players who stay
 - [ ] 6 Churn-risk lists
