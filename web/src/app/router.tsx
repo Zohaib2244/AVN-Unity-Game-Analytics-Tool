@@ -1,15 +1,24 @@
 // Routes (TanStack Router, code-based). Filters, ranges and views live in search params where a page
 // supports "copy link to this view"; everything else is remembered per game in localStorage.
+import { Suspense, lazy, type ComponentType } from 'react';
 import { Outlet, createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router';
 import { Shell } from './Shell';
 import { GameSection } from './GameSection';
 import { HomePage } from '@/pages/Home';
-import { NewGamePage } from '@/pages/NewGame';
-import { AgentAccessPage } from '@/pages/AgentAccess';
-import { TeamPage, WorkspacesPage } from '@/pages/Team';
-import { StatusPage } from '@/pages/Status';
-import { SettingsPage } from '@/pages/Settings';
 import { NotFoundPage } from '@/pages/NotFound';
+import { Skeleton } from '@/components/feedback';
+
+// Pages outside a game are fetched when first opened (Home and the shell come with the first load).
+const later = (load: () => Promise<Record<string, unknown>>, name: string) => {
+  const Page = lazy(async () => ({ default: (await load())[name] as ComponentType }));
+  return () => <Suspense fallback={<Skeleton kind="stats" />}><Page /></Suspense>;
+};
+const NewGamePage = later(() => import('@/pages/NewGame'), 'NewGamePage');
+const AgentAccessPage = later(() => import('@/pages/AgentAccess'), 'AgentAccessPage');
+const TeamPage = later(() => import('@/pages/Team'), 'TeamPage');
+const WorkspacesPage = later(() => import('@/pages/Team'), 'WorkspacesPage');
+const StatusPage = later(() => import('@/pages/Status'), 'StatusPage');
+const SettingsPage = later(() => import('@/pages/Settings'), 'SettingsPage');
 import { LEGACY_PAGES } from '@/lib/games';
 
 export type Search = Record<string, string>;

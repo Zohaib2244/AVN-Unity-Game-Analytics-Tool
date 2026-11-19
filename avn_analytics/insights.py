@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from . import analytics, rules, segments, session_state, stories
+from . import analytics, event_stats, rules, segments, session_state, stories
 from .models import timestamp
 from .session_state import WATCHED_SQL, SessionState
 
@@ -240,13 +240,28 @@ def facets(storage, game_id, start, end):
     storage.get_game(game_id)
     result = {}
     with storage.connect(storage.game_path(game_id)) as connection:
-        scoped = scope_events(connection, start, end, source=read_source(storage, connection))
+        source = read_source(storage, connection)
+        condition, args = where(start, end, source=source)
+        # One pass over the events: each player's combinations of the dimensions, with their
+        # event counts (about one row per player). Every menu is then counted from that small
+        # table, with the same distinct players and event totals as counting the events.
+        values = ", ".join(
+            f"{source.dimensions[column]} AS {column}" for column in SCOPED_DIMENSIONS
+        )
+        # Grouped by position: the facts have raw columns under some of these names.
+        positions = ", ".join(str(index + 1) for index in range(len(SCOPED_DIMENSIONS) + 1))
+        connection.execute("DROP TABLE IF EXISTS temp.facet_combos")
+        connection.execute(
+            f"CREATE TEMP TABLE facet_combos AS SELECT {values}, {source.player} AS player,"
+            f" count(*) AS events FROM {source.table} WHERE {condition} GROUP BY {positions}",
+            args,
+        )
         for column in SCOPED_DIMENSIONS:
             result[column] = [
                 dict(row)
                 for row in connection.execute(
                     f"SELECT {column} AS value, count(DISTINCT player) AS players, "
-                    f"count(*) AS events FROM {scoped} GROUP BY value "
+                    "sum(events) AS events FROM facet_combos GROUP BY value "
                     "ORDER BY players DESC, events DESC LIMIT 100"
                 )
             ]
@@ -502,10 +517,6 @@ def retention(storage, game_id, start, end, filters, timezone_offset_minutes=0):
     }
     candidate_names = sorted({"session_start", *mapped_names})
     marks = ",".join("?" * len(candidate_names))
-    all_condition, all_args = where(
-        "1970-01-01T00:00:00+00:00", "9999-01-01T00:00:00+00:00", filters
-    )
-    selected_condition, selected_args = where(start, end, filters)
     starts = {}
     total_candidates = 0
     offset = timedelta(minutes=timezone_offset_minutes)
@@ -514,18 +525,25 @@ def retention(storage, game_id, start, end, filters, timezone_offset_minutes=0):
         return (datetime.fromisoformat(value).astimezone(UTC) + offset).date()
 
     with storage.connect(storage.game_path(game_id)) as connection:
+        # Every session start of all time: from the facts when they are ready (plain columns,
+        # no JSON to read per event), else from the raw events. Same rows either way.
+        source = read_source(storage, connection)
+        all_condition, all_args = where(
+            "1970-01-01T00:00:00+00:00", "9999-01-01T00:00:00+00:00", filters, source=source
+        )
+        selected_condition, selected_args = where(start, end, filters, source=source)
         total_candidates = connection.execute(
-            f"SELECT count(*) FROM events WHERE {all_condition} AND {IDENTIFIED} "
+            f"SELECT count(*) FROM {source.table} WHERE {all_condition} AND {source.identified} "
             f"AND name IN ({marks})",
             (*all_args, *candidate_names),
         ).fetchone()[0]
         if total_candidates > MAX_FUNNEL_EVENTS:
             raise HTTPException(400, "Too many session starts to analyze. Pick narrower filters.")
         rows = connection.execute(
-            f"""SELECT {PLAYER} AS player, name, client_ts,
-                       json_extract(payload, '$.params') AS params,
-                       json_extract(payload, '$.app_version') AS app_version
-                FROM events WHERE {all_condition} AND {IDENTIFIED} AND name IN ({marks})
+            f"""SELECT {source.player} AS player, name, client_ts, {source.params} AS params,
+                       {source.envelope("app_version")} AS app_version
+                FROM {source.table}
+                WHERE {all_condition} AND {source.identified} AND name IN ({marks})
                 ORDER BY player, client_ts, event_id""",
             (*all_args, *candidate_names),
         )
@@ -538,7 +556,8 @@ def retention(storage, game_id, start, end, filters, timezone_offset_minutes=0):
             player = starts.setdefault(row["player"], [])
             player.append((datetime.fromisoformat(row["client_ts"]), local_day(row["client_ts"])))
         anonymous_events = connection.execute(
-            f"SELECT count(*) FROM events WHERE {selected_condition} AND NOT ({IDENTIFIED})",
+            f"SELECT count(*) FROM {source.table}"
+            f" WHERE {selected_condition} AND NOT ({source.identified})",
             selected_args,
         ).fetchone()[0]
 
@@ -653,26 +672,46 @@ def discovery(storage, game_id):
     """
     storage.get_game(game_id)
     definitions = storage.get_dictionary(game_id)
+    event_stats.refreshed(storage, game_id)
     with storage.connect(storage.game_path(game_id)) as connection:
-        observed = {
-            row["name"]: {
-                "name": row["name"],
-                "count": row["count"],
-                "first_seen": row["first_seen"],
-                "last_seen": row["last_seen"],
-                "params": {},
+        # Every stored event, all environments: the kept totals when the facts are ready (the
+        # same events, without reading each one again), else the raw events.
+        totals = params = None
+        if read_source(storage, connection).facts:
+            totals = event_stats.name_totals(connection)
+            params = event_stats.param_totals(connection)
+        if totals is not None and params is not None:
+            observed = {
+                name: {
+                    "name": name,
+                    "count": item["events"],
+                    "first_seen": item["first_server"],
+                    "last_seen": item["last_server"],
+                    "params": {},
+                }
+                for name, item in totals.items()
             }
-            for row in connection.execute(
-                """SELECT name, count(*) AS count, min(server_ts) AS first_seen,
-                          max(server_ts) AS last_seen FROM events GROUP BY name"""
+        else:
+            observed = {
+                row["name"]: {
+                    "name": row["name"],
+                    "count": row["count"],
+                    "first_seen": row["first_seen"],
+                    "last_seen": row["last_seen"],
+                    "params": {},
+                }
+                for row in connection.execute(
+                    """SELECT name, count(*) AS count, min(server_ts) AS first_seen,
+                              max(server_ts) AS last_seen FROM events GROUP BY name"""
+                )
+            }
+            params = connection.execute(
+                """SELECT name, p.key AS key, p.type AS type, count(*) AS count,
+                          min(p.value) AS low, max(p.value) AS high
+                   FROM events, json_each(events.payload, '$.params') AS p
+                   GROUP BY name, p.key, p.type"""
             )
-        }
-        for row in connection.execute(
-            """SELECT name, p.key AS key, p.type AS type, count(*) AS count,
-                      min(p.value) AS low, max(p.value) AS high
-               FROM events, json_each(events.payload, '$.params') AS p
-               GROUP BY name, p.key, p.type"""
-        ):
+        for row in params:
             if row["key"] in HIDDEN_PARAMS or row["type"] not in PARAM_TYPES:
                 continue
             param = observed[row["name"]]["params"].setdefault(

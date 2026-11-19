@@ -116,7 +116,7 @@ def command_generate(options):
             "Record this as the limit of this machine, or use a larger scratch disk."
         )
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / MARKER).write_text("synthetic benchmark data; safe to delete\n")
+    (directory / MARKER).write_text(f"synthetic benchmark data ({options.shape}); safe to delete\n")
     from avn_analytics.models import Batch, EventDefinition, GameCreate
 
     storage = storage_for(directory)
@@ -125,7 +125,7 @@ def command_generate(options):
     )
     game_id = game["id"]
     with storage.connect(storage.game_path(game_id)) as connection:
-        for name, definition in DICTIONARY.items():
+        for name, definition in DICTIONARY.items() if options.shape == "classic" else ():
             storage.write_definition(connection, name, EventDefinition.model_validate(definition))
         connection.execute(
             "INSERT INTO environment_fixes (from_environment, to_environment, app_version, build,"
@@ -134,7 +134,11 @@ def command_generate(options):
         )
     began = time.perf_counter()
     stored = 0
-    for country, batch in generate(options.events, seed=options.seed, days=options.days):
+    if options.shape == "sdk":
+        from synthetic_sdk import generate as generator
+    else:
+        generator = generate
+    for country, batch in generator(options.events, seed=options.seed, days=options.days):
         stored += storage.ingest(game_id, Batch.model_validate(batch), country=country)["accepted"]
         if stored // 100_000 != (stored - len(batch["events"])) // 100_000:
             print(f"  {stored:,} events ({time.perf_counter() - began:.0f} s)", flush=True)
@@ -622,6 +626,12 @@ def main():
     generate_parser.add_argument("--dir", required=True)
     generate_parser.add_argument("--seed", type=int, default=1)
     generate_parser.add_argument("--days", type=int, default=120)
+    generate_parser.add_argument(
+        "--shape",
+        choices=("classic", "sdk"),
+        default="classic",
+        help="classic: tests/synthetic.py; sdk: today's plugin events (tests/synthetic_sdk.py)",
+    )
     for name in ("measure", "ingest", "facts", "plans", "compare", "_load", "_one", "_http"):
         sub = commands.add_parser(name)
         sub.add_argument("--dir", required=True)

@@ -280,6 +280,15 @@ def snapshot(storage, game_id, module, *, full=True):
             answers[key] = without_added_level_fields(answers[key])
         if function is module.insights.summary:
             answers[key] = without_session_counts(answers[key])
+        if function is module.events.overview and isinstance(answers[key].get("summary"), dict):
+            # The size of the database file, not an answer: it grows when the kept all-time
+            # totals (event_stats.py) are written; test_event_stats.py checks those totals.
+            answers[key] = {
+                **answers[key],
+                "summary": {
+                    k: v for k, v in answers[key]["summary"].items() if k != "database_bytes"
+                },
+            }
         if function is module.insights.players and isinstance(answers[key], dict):
             # The highest level and last event of each listed player were added after the
             # reference was frozen; test_player_summary.py checks them.

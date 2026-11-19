@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 
-from . import conditions, stories
+from . import conditions, event_stats, stories
 from .insights import (
     HIDDEN_PARAMS,
     LEGACY,
@@ -48,13 +48,16 @@ def _observed_params(connection, app_version="", source=LEGACY):
     """name -> key -> {types, count} for every parameter ever sent."""
     seen = defaultdict(dict)
     version = source.envelope("app_version")
-    for row in connection.execute(
-        f"""SELECT name, p.key AS key, p.type AS type, count(*) AS count
-           FROM {_each_param(source)}
-           WHERE (? = '' OR {version} = ?)
-           GROUP BY name, p.key, p.type""",
-        (app_version, app_version),
-    ):
+    rows = event_stats.param_totals(connection, app_version) if source.facts else None
+    if rows is None:
+        rows = connection.execute(
+            f"""SELECT name, p.key AS key, p.type AS type, count(*) AS count
+               FROM {_each_param(source)}
+               WHERE (? = '' OR {version} = ?)
+               GROUP BY name, p.key, p.type""",
+            (app_version, app_version),
+        )
+    for row in rows:
         kind = _kind(row["type"])
         if row["key"] in HIDDEN_PARAMS or kind is None:
             continue
@@ -83,16 +86,32 @@ def overview(storage, game_id, start, end, filters, timezone_offset_minutes=0):
     definitions = storage.get_dictionary(game_id)
     drafts = storage.get_drafts(game_id)
     day = day_expression(timezone_offset_minutes)
+    event_stats.refreshed(storage, game_id)
     with storage.connect(storage.game_path(game_id)) as connection:
         source = read_source(storage, connection)
-        ever = {
-            row["name"]: dict(row)
-            for row in connection.execute(
-                f"""SELECT name, count(*) AS events, count(DISTINCT {source.player}) AS players,
-                           min(client_ts) AS first_seen, max(client_ts) AS last_seen
-                    FROM {source.table} GROUP BY name"""
-            )
-        }
+        totals = event_stats.name_totals(connection) if source.facts else None
+        players = event_stats.name_players(connection) if totals is not None else None
+        if totals is not None and players is not None:
+            ever = {
+                name: {
+                    "name": name,
+                    "events": item["events"],
+                    "players": players.get(name, 0),
+                    "first_seen": item["first_seen"],
+                    "last_seen": item["last_seen"],
+                }
+                for name, item in totals.items()
+            }
+        else:
+            ever = {
+                row["name"]: dict(row)
+                for row in connection.execute(
+                    f"""SELECT name, count(*) AS events,
+                               count(DISTINCT {source.player}) AS players,
+                               min(client_ts) AS first_seen, max(client_ts) AS last_seen
+                        FROM {source.table} GROUP BY name"""
+                )
+            }
         scoped = scope_events(connection, start, end, filters, source=source)
         ranged = {
             row["name"]: dict(row)
@@ -265,7 +284,7 @@ def detail(storage, game_id, name, start, end, filters, timezone_offset_minutes=
                 (name,),
             )
         ]
-        every_version = [
+        every_version = (event_stats.versions(connection) if source.facts else None) or [
             row["version"]
             for row in connection.execute(
                 f"SELECT DISTINCT coalesce({version}, 'unknown') AS version FROM {table}"
@@ -287,13 +306,20 @@ def detail(storage, game_id, name, start, end, filters, timezone_offset_minutes=
                     FROM {scoped} GROUP BY value ORDER BY events DESC LIMIT 8"""
             )
         ]
+        # Every parameter value of the range's events, counted once; the parameter totals and
+        # the most common values below are both read from this (one pass over the JSON).
+        connection.execute("DROP TABLE IF EXISTS temp.detail_values")
+        connection.execute(
+            f"""CREATE TEMP TABLE detail_values AS
+                SELECT p.key AS key, p.type AS type, p.value AS value, count(*) AS count
+                FROM {_each_param(source)}
+                WHERE {scope} GROUP BY p.key, p.type, p.value""",
+            base,
+        )
         params = {}
         for row in connection.execute(
-            f"""SELECT p.key AS key, p.type AS type, count(*) AS count,
-                       count(DISTINCT p.value) AS distinct_values
-                FROM {_each_param(source)}
-                WHERE {scope} GROUP BY p.key, p.type""",
-            base,
+            """SELECT key, type, sum(count) AS count, count(DISTINCT value) AS distinct_values
+               FROM detail_values GROUP BY key, type"""
         ):
             kind = _kind(row["type"])
             if row["key"] in HIDDEN_PARAMS or kind is None:
@@ -308,10 +334,8 @@ def detail(storage, game_id, name, start, end, filters, timezone_offset_minutes=
                 item["types"].append(kind)
         values = defaultdict(list)
         for row in connection.execute(
-            f"""SELECT p.key AS key, p.value AS value, count(*) AS count
-                FROM {_each_param(source)}
-                WHERE {scope} GROUP BY p.key, p.value ORDER BY count DESC LIMIT 600""",
-            base,
+            """SELECT key, value, sum(count) AS count FROM detail_values
+               GROUP BY key, value ORDER BY count DESC LIMIT 600"""
         ):
             if row["key"] in params and len(values[row["key"]]) < TOP_VALUES:
                 values[row["key"]].append({"value": str(row["value"])[:80], "count": row["count"]})
@@ -397,13 +421,16 @@ def _suggestions(name, params, examples, app_version):
     return rules
 
 
-def mappings(storage, game_id, app_version="", detail=True):
+def mappings(storage, game_id, app_version="", detail=True, verdict=False):
     """Which of the dashboards' shared moments each event of the game stands for: the mappings
     the team set, and what is understood on its own (session_start, level events with a level
     parameter such as `Started: 3`).
 
     `detail=False` leaves out what only the Event setup page shows (the versions, and each event's
-    count and parameters): those read the game's whole history, and a verdict doesn't need them."""
+    count and parameters): those read the game's whole history, and a verdict doesn't need them.
+    `verdict=True` (mapping_status) also stops reading as soon as every required moment has an
+    event and every mapping rule has matched one: then nothing later can change the verdict, and
+    the counts it returns cover only the events read so far."""
     storage.get_game(game_id)
     definitions = storage.get_dictionary(game_id)
     labeler = stories.Labeler(definitions)
@@ -413,6 +440,8 @@ def mappings(storage, game_id, app_version="", detail=True):
     scope_args = (app_version, app_version)
     versions, observed, params = [], {}, {}
     examples = defaultdict(lambda: defaultdict(list))
+    if detail:
+        event_stats.refreshed(storage, game_id)
     with storage.connect(storage.game_path(game_id)) as connection:
         source = read_source(storage, connection)
         rows_from, version = source.table, source.envelope("app_version")
@@ -424,14 +453,21 @@ def mappings(storage, game_id, app_version="", detail=True):
                     f"SELECT DISTINCT {version} FROM {rows_from} WHERE {version} IS NOT NULL"
                 )
             ]
-            observed = {
-                row["name"]: dict(row)
-                for row in connection.execute(
-                    "SELECT name, count(*) AS events, max(client_ts) AS last_seen "
-                    f"FROM {rows_from} WHERE {scope} GROUP BY name",
-                    scope_args,
-                )
-            }
+            totals = event_stats.name_totals(connection, app_version) if source.facts else None
+            if totals is not None:
+                observed = {
+                    name: {"name": name, "events": item["events"], "last_seen": item["last_seen"]}
+                    for name, item in totals.items()
+                }
+            else:
+                observed = {
+                    row["name"]: dict(row)
+                    for row in connection.execute(
+                        "SELECT name, count(*) AS events, max(client_ts) AS last_seen "
+                        f"FROM {rows_from} WHERE {scope} GROUP BY name",
+                        scope_args,
+                    )
+                }
             params = _observed_params(connection, app_version, source)
             for row in connection.execute(
                 f"""SELECT name, p.key AS key, p.value AS value, count(*) AS count
@@ -470,9 +506,22 @@ def mappings(storage, game_id, app_version="", detail=True):
                 "auto_level": info if info and f"level_{info[0]}" not in explicit else None,
             }
 
+        # What the verdict waits for: each required moment, and each concept rule (by content,
+        # as the silent-rule check compares them).
+        known = {concept["key"] for concept in stories.CONCEPTS}
+        waiting_rules = {
+            (name, json.dumps(rule, sort_keys=True))
+            for name, definition in definitions.items()
+            for rule in definition.get("canonical", [])
+            if rule["action"] in known
+        }
+        waiting_concepts = set(REQUIRED_CONCEPTS)
+        waiting_names = {name for name, _ in waiting_rules}
         for row in rows:
             scanned += 1
             name, player = row["name"], row["player"]
+            if verdict and not waiting_concepts and name not in waiting_names:
+                continue  # can no longer change the verdict: don't read its parameters
             kind = (name, row["params"], row["app_version"])
             found = meanings.get(kind)
             if found is None:
@@ -486,6 +535,24 @@ def mappings(storage, game_id, app_version="", detail=True):
             if found["auto_level"]:
                 verb, number = found["auto_level"]
                 _bump(table, (f"level_{verb}", name, "auto", None), player, number)
+            if verdict:
+                if found.get("waiting") is None:
+                    canonical = definitions[name]["canonical"] if found["matched"] else []
+                    found["waiting"] = (
+                        {
+                            (name, json.dumps(canonical[index], sort_keys=True))
+                            for index, _, _ in found["matched"]
+                        },
+                        {action for _, action, _ in found["matched"]}
+                        | ({"session_start"} if found["session_start"] else set())
+                        | ({f"level_{found['auto_level'][0]}"} if found["auto_level"] else set()),
+                    )
+                if found["waiting"][0] & waiting_rules:
+                    waiting_rules -= found["waiting"][0]
+                    waiting_names = {name for name, _ in waiting_rules}
+                waiting_concepts -= found["waiting"][1]
+                if not waiting_rules and not waiting_concepts:
+                    break
     concepts = []
     for concept in stories.CONCEPTS:
         sources = []
@@ -599,7 +666,7 @@ def mapping_status(storage, game_id):
     Something needs attention when a level moment the dashboards depend on has no event behind
     it, or when a mapping rule the team set matches nothing the game has sent.
     """
-    result = mappings(storage, game_id, detail=False)
+    result = mappings(storage, game_id, detail=False, verdict=True)
     issues = []
     if result["scanned"]:
         for concept in result["concepts"]:

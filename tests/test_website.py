@@ -80,3 +80,28 @@ def test_no_login_routes_and_writes_from_any_host(website):
     app = create_app(website[1], admin=True)
     with TestClient(app, base_url="http://analytics.example.lan") as lan:
         assert lan.post("/v1/games", json=payload).status_code == 201
+
+
+
+@needs_build
+def test_answers_and_files_are_compressed_but_streams_are_not(website):
+    client, settings = website
+    page = client.get("/", headers={"Accept-Encoding": "gzip"})
+    script = re.search(r'src="(/assets/build/[^"]+\.js)"', page.text).group(1)
+    built = client.get(script, headers={"Accept-Encoding": "gzip"})
+    assert built.headers["content-encoding"] == "gzip"
+    assert built.headers["cache-control"] == "public, max-age=31536000, immutable"
+    plain = client.get(script, headers={"Accept-Encoding": "identity"})
+    assert "content-encoding" not in plain.headers and plain.content == built.content
+    auth = {"Authorization": f"Bearer {settings.admin_token}", "Accept-Encoding": "gzip"}
+    answer = client.get("/openapi.json", headers=auth)
+    assert answer.status_code == 200 and answer.headers["content-encoding"] == "gzip"
+    # NutBot's answers stream line by line (and MCP's as events): never held back to compress.
+    from avn_analytics import api
+
+    excluded = next(
+        middleware.kwargs["exclude_content_types"]
+        for middleware in client.app.user_middleware
+        if middleware.cls is api.GZipMiddleware
+    )
+    assert "application/x-ndjson" in excluded and "text/event-stream" in excluded

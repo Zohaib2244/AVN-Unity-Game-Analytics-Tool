@@ -26,6 +26,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import Field
 from starlette.background import BackgroundTask
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
 
 from . import (
     acquisition_report,
@@ -340,6 +341,19 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
         ReadBudget,
         seconds=settings.read_deadline_seconds,
         max_body_bytes=settings.max_body_bytes,
+    )
+    # Compress answers and the website's files for browsers that accept it: JSON and scripts
+    # shrink to a fifth or less. Streams (NutBot's answers, MCP events) go out as they are, so
+    # every line still arrives at once; files that are compressed already are left alone.
+    app.add_middleware(
+        GZipMiddleware,
+        minimum_size=1024,
+        compresslevel=5,
+        exclude_content_types=(
+            *DEFAULT_EXCLUDED_CONTENT_TYPES,
+            "application/x-ndjson",
+            "application/octet-stream",
+        ),
     )
 
     # The agent CLI that NutBot starts calls back here with a one-off token.

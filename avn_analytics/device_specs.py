@@ -8,6 +8,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from . import insights
 from .insights import PLAYER
 
 WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
@@ -200,13 +201,23 @@ def lookup(model):
 def for_player(storage, game_id, player):
     storage.get_game(game_id)
     with storage.connect(storage.game_path(game_id)) as connection:
-        row = connection.execute(
-            f"""SELECT json_extract(payload, '$.params.device_model') AS model
-                FROM events WHERE {PLAYER}=? AND name='session_start'
-                AND json_extract(payload, '$.params.device_model') IS NOT NULL
-                ORDER BY client_ts DESC, event_id DESC LIMIT 1""",
-            (player,),
-        ).fetchone()
+        if insights.read_source(storage, connection).facts:
+            # The player's own events through the facts' player index, not a scan of every event.
+            row = connection.execute(
+                """SELECT json_extract(params, '$.device_model') AS model
+                   FROM analytics_facts WHERE player=? AND name='session_start'
+                   AND json_extract(params, '$.device_model') IS NOT NULL
+                   ORDER BY client_ts DESC, event_id DESC LIMIT 1""",
+                (player,),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                f"""SELECT json_extract(payload, '$.params.device_model') AS model
+                    FROM events WHERE {PLAYER}=? AND name='session_start'
+                    AND json_extract(payload, '$.params.device_model') IS NOT NULL
+                    ORDER BY client_ts DESC, event_id DESC LIMIT 1""",
+                (player,),
+            ).fetchone()
     model = str(row["model"]).strip() if row and row["model"] is not None else ""
     if not model:
         raise DeviceSpecsNotFound("This player has not sent a device model")

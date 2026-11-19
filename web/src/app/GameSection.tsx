@@ -1,6 +1,6 @@
 // A page inside a game: finds the game (switching workspace when it belongs to another one the person
 // is a member of), then draws the section. Old section names are redirected.
-import { useEffect, type ReactElement } from 'react';
+import { Suspense, lazy, useEffect, type ComponentType, type ReactElement } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { request } from '@/api';
@@ -9,19 +9,38 @@ import { MOVED_SECTIONS, gamePath, isSection, type Section } from '@/lib/games';
 import type { Game } from '@/lib/types';
 import { Skeleton } from '@/components/feedback';
 import { NotFoundPage } from '@/pages/NotFound';
-import { GameOverviewPage } from '@/pages/GameOverview';
-import { LevelsPage } from '@/pages/Levels';
-import { PlayersPage } from '@/pages/Players';
-import { SessionsPage } from '@/pages/Sessions';
-import { AdsPage } from '@/pages/Ads';
-import { AcquisitionPage } from '@/pages/Acquisition';
-import { ExportsPage } from '@/pages/Exports';
-import { DictionaryPage } from '@/pages/Dictionary';
-import { EventSetupPage } from '@/pages/EventSetup';
-import { KeysPage } from '@/pages/Keys';
-import { GameSettingsPage } from '@/pages/GameSettings';
+// Each section's code is its own file, so the first page doesn't wait for every other page. Once
+// a page is showing, the rest are fetched while the browser is idle (warm()), so moving to another
+// section later doesn't wait either.
+type PageComponent = ComponentType<{ game: Game }>;
+const loaders: (() => Promise<unknown>)[] = [];
+const page = (load: () => Promise<Record<string, unknown>>, name: string) => {
+  loaders.push(load);
+  return lazy(async () => ({ default: (await load())[name] as PageComponent }));
+};
+let warmed = false;
+function warm(): void {
+  if (warmed || typeof window === 'undefined') return;
+  warmed = true;
+  const idle = (work: () => void): void => {
+    if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(work, { timeout: 4000 });
+    else setTimeout(work, 1500);
+  };
+  idle(() => { for (const load of loaders) void load().catch(() => undefined); });
+}
+const GameOverviewPage = page(() => import('@/pages/GameOverview'), 'GameOverviewPage');
+const LevelsPage = page(() => import('@/pages/Levels'), 'LevelsPage');
+const PlayersPage = page(() => import('@/pages/Players'), 'PlayersPage');
+const SessionsPage = page(() => import('@/pages/Sessions'), 'SessionsPage');
+const AdsPage = page(() => import('@/pages/Ads'), 'AdsPage');
+const AcquisitionPage = page(() => import('@/pages/Acquisition'), 'AcquisitionPage');
+const ExportsPage = page(() => import('@/pages/Exports'), 'ExportsPage');
+const DictionaryPage = page(() => import('@/pages/Dictionary'), 'DictionaryPage');
+const EventSetupPage = page(() => import('@/pages/EventSetup'), 'EventSetupPage');
+const KeysPage = page(() => import('@/pages/Keys'), 'KeysPage');
+const GameSettingsPage = page(() => import('@/pages/GameSettings'), 'GameSettingsPage');
 
-const PAGES: Record<Section, (props: { game: Game }) => ReactElement> = {
+const PAGES: Record<Section, PageComponent> = {
   overview: GameOverviewPage, levels: LevelsPage, players: PlayersPage, sessions: SessionsPage, ads: AdsPage, acquisition: AcquisitionPage, exports: ExportsPage,
   dictionary: DictionaryPage, 'event-setup': EventSetupPage, keys: KeysPage, settings: GameSettingsPage,
 };
@@ -49,6 +68,7 @@ export function GameSection(): ReactElement {
   const game = wanted === '-' ? overview.games[0] || null : overview.games.find((item) => item.id === wanted) || null;
   // Maybe a game of another workspace the person belongs to.
   const elsewhere = useQuery({ queryKey: ['game-elsewhere', wanted], enabled: !game && wanted !== '-' && !!wanted, retry: false, queryFn: ({ signal }) => request<Game>(`/v1/games/${encodeURIComponent(wanted)}`, { signal }).catch(() => null) });
+  useEffect(warm, []);
   useEffect(() => {
     if (game && (wanted === '-' || moved)) { void navigate({ to: gamePath(game, section), search: query, replace: true, hash: moved === 'event-setup' ? 'mappings' : undefined }); return; }
     const found = elsewhere.data;
@@ -60,5 +80,5 @@ export function GameSection(): ReactElement {
   }
   if (!isSection(section)) return <NotFoundPage />;
   const Page = PAGES[section];
-  return <Page key={`${game.id}:${section}`} game={game} />;
+  return <Suspense fallback={<Skeleton kind="stats" />}><Page key={`${game.id}:${section}`} game={game} /></Suspense>;
 }

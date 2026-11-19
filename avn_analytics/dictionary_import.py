@@ -15,8 +15,9 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from . import analytics, event_stats
 from .events import _observed_params, _simple
-from .insights import SDK_EVENTS
+from .insights import FACTS, LEGACY, SDK_EVENTS
 from .models import EventDefinition, ImportFile, ImportOptions, timestamp
 
 FORMAT = "avn-events/1"
@@ -54,17 +55,25 @@ def _read(connection):
             "confidence": row["confidence"],
             "source": row["source"],
         }
-    ever = {
-        row["name"]: {"events": row["events"], "last_seen": row["last_seen"]}
-        for row in connection.execute(
-            "SELECT name, count(*) AS events, max(server_ts) AS last_seen FROM events GROUP BY name"
-        )
-    }
+    totals = event_stats.name_totals(connection) if analytics.facts_ready(connection) else None
+    if totals is not None:  # the kept all-time totals (event_stats.py): same numbers, no scan
+        ever = {
+            name: {"events": item["events"], "last_seen": item["last_server"]}
+            for name, item in totals.items()
+        }
+    else:
+        ever = {
+            row["name"]: {"events": row["events"], "last_seen": row["last_seen"]}
+            for row in connection.execute(
+                "SELECT name, count(*) AS events, max(server_ts) AS last_seen FROM events"
+                " GROUP BY name"
+            )
+        }
     return {
         "definitions": definitions,
         "drafts": drafts,
         "ever": ever,
-        "params": _observed_params(connection),
+        "params": _observed_params(connection, source=FACTS if totals is not None else LEGACY),
     }
 
 

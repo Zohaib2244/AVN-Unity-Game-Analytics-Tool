@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from . import analytics, avn_events_standard, insights, materialize, readbudget, views
+from . import analytics, avn_events_standard, event_stats, insights, materialize, readbudget, views
 from .config import Settings
 from .models import Batch, EventDefinition, GameCreate, GameUpdate, timestamp
 from .readcache import ReadCache
@@ -227,6 +227,7 @@ class Storage:
             """)
         analytics.install(connection)
         views.install(connection)
+        event_stats.install(connection)
 
     def game_path(self, game_id):
         return self.root / "games" / f"{game_id}.sqlite3"
