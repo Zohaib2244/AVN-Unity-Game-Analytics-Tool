@@ -204,3 +204,40 @@ def test_the_worker_catches_up_a_large_backlog_of_totals(tmp_path, monkeypatch):
     with storage.connect(storage.game_path(game_id)) as connection:
         assert event_stats.behind(connection) <= 100  # a small rest is left to the readers
     _check(storage, game_id)
+
+
+def test_event_activity_reads_the_facts_with_the_same_counts(tmp_path):
+    facts = make_storage(tmp_path, analytics_read_mode="facts", read_cache_seconds=0)
+    game_id = _game(facts)
+    _ingest(facts, game_id, events=1200, sdk=True)
+    legacy = make_storage(tmp_path, analytics_read_mode="legacy", read_cache_seconds=0)
+    start, end = "2026-08-01T00:00:00+00:00", "2026-10-01T00:00:00+00:00"
+    filters = {"exclude_environments": insights.TEST_ENVIRONMENTS}
+
+    def rule(param, op, value=""):
+        return {"field": "param", "param": param, "op": op, "value": value}
+
+    trees = [
+        None,
+        rule("STATE", "eq", "Revenue"),
+        rule("LEVEL_NUMBER", "gte", "3"),
+        rule("NETWORK", "contains", "app"),
+        rule("PLACEMENT", "exists"),
+        rule("ERROR", "missing"),
+        rule("FORMAT", "ne", "Banner"),
+        {
+            "match": "any",
+            "conditions": [rule("REVENUE", "gt", "0.01"), rule("STATE", "eq", "LoadFailed")],
+        },
+    ]
+    for tree in trees:
+        for zone in (0, 330):
+            expected = events.activity(
+                legacy, game_id, "AD_ANALYSIS", start, end, filters, tree, zone
+            )
+            assert (
+                events.activity(facts, game_id, "AD_ANALYSIS", start, end, filters, tree, zone)
+                == expected
+            )
+            if tree is None:
+                assert expected["events"] > 100

@@ -206,28 +206,32 @@ def overview(storage, game_id, start, end, filters, timezone_offset_minutes=0):
 def activity(storage, game_id, name, start, end, filters, tree=None, timezone_offset_minutes=0):
     """Exact conditional counts; anonymous events never enter a per-player numerator."""
     storage.get_game(game_id)
-    scope, args = where(start, end, filters)
-    predicate, values = conditions.condition_sql(tree) if tree else ("1", [])
     day = day_expression(timezone_offset_minutes)
     with storage.connect(storage.game_path(game_id)) as connection:
+        # The facts when ready (plain columns), else the raw events: the same counts.
+        source = read_source(storage, connection)
+        table, player = source.table, source.player
+        scope, args = where(start, end, filters, source=source)
+        params = conditions.FACT_PARAMS if source.facts else conditions.RAW_PARAMS
+        predicate, values = conditions.condition_sql(tree, params) if tree else ("1", [])
         active_players = connection.execute(
-            f"SELECT count(DISTINCT {PLAYER}) FROM events WHERE {scope}", args
+            f"SELECT count(DISTINCT {player}) FROM {table} WHERE {scope}", args
         ).fetchone()[0]
         matching = f"{scope} AND name=? AND ({predicate})"
         bound = [*args, name, *values]
         totals = dict(
             connection.execute(
-                f"""SELECT count(*) AS events, count(DISTINCT {PLAYER}) AS players,
-                           count({PLAYER}) AS identified_events
-                    FROM events WHERE {matching}""",
+                f"""SELECT count(*) AS events, count(DISTINCT {player}) AS players,
+                           count({player}) AS identified_events
+                    FROM {table} WHERE {matching}""",
                 bound,
             ).fetchone()
         )
         days = {
             row["day"]: dict(row)
             for row in connection.execute(
-                f"""SELECT {day} AS day, count(*) AS events, count(DISTINCT {PLAYER}) AS players
-                    FROM events WHERE {matching} GROUP BY day""",
+                f"""SELECT {day} AS day, count(*) AS events, count(DISTINCT {player}) AS players
+                    FROM {table} WHERE {matching} GROUP BY day""",
                 bound,
             )
         }

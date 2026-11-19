@@ -11,7 +11,8 @@ synthetic game shaped like the current Unity plugin (`scripts/benchmark.py gener
    import and the mappings check counted (and parsed the parameters of) every event the game
    ever sent, whatever dates were picked. They grew with history, not with the range.
 2. **Raw JSON reads where the facts already had the answer.** Retention read every session start
-   of all time from the raw JSON; device specs scanned every event to find one player's phone.
+   of all time from the raw JSON; device specs scanned every event to find one player's phone;
+   event activity (an MCP and NutBot tool) parsed every event's JSON.
 3. **Repeated passes.** The filter menus made five full passes over the range; event detail
    expanded every parameter twice; Players replayed every session twice in Python.
 4. **The website shipped as one 1.17 MB script, uncompressed** (the reverse proxy does not
@@ -55,6 +56,7 @@ synthetic game shaped like the current Unity plugin (`scripts/benchmark.py gener
 | Event detail | 2.24 s | 1.40 s |
 | Players | 2.09 s | 1.80 s |
 | Device specs (SQL part) | 3.0 s | < 1 ms |
+| Event activity (MCP/NutBot, one condition) | 1.72 s | 0.56 s |
 
 \* 6.4 s through Python on the same data; the fixture's standard mapping includes a Restarted rule
 it never sends, so its own check reads to the end (0.4 s) as it must.

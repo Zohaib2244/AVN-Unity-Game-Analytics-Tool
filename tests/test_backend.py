@@ -3659,6 +3659,10 @@ def test_conditional_activity_counts_nested_groups_and_labels_average_denominato
             "UPDATE events SET payload=json_remove(payload, '$.device_id') WHERE event_id=?",
             (legacy["event_id"],),
         )
+        # ...and their facts say the same (as the facts backfill copies them).
+        connection.execute(
+            "UPDATE analytics_facts SET device_id=NULL WHERE event_id=?", (legacy["event_id"],)
+        )
     tree = {
         "match": "all",
         "conditions": [

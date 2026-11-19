@@ -13,10 +13,17 @@ def numeric_value(value):
     return number if math.isfinite(number) else None
 
 
-def condition_sql(node):
-    """Compile a validated condition tree using bound values, never SQL from user input."""
+RAW_PARAMS = "events.payload, '$.params'"
+FACT_PARAMS = "analytics_facts.params, '$'"
+
+
+def condition_sql(node, params=RAW_PARAMS):
+    """Compile a validated condition tree using bound values, never SQL from user input.
+
+    params says where an event's parameters are: the raw events' JSON (the default) or the
+    facts' parameters (FACT_PARAMS); the same values either way."""
     if "conditions" in node:
-        parts = [condition_sql(child) for child in node["conditions"]]
+        parts = [condition_sql(child, params) for child in node["conditions"]]
         join = " AND " if node["match"] == "all" else " OR "
         return "(" + join.join(sql for sql, _ in parts) + ")", [
             arg for _, args in parts for arg in args
@@ -27,7 +34,7 @@ def condition_sql(node):
             return "instr(lower(name), lower(?)) > 0", [value]
         return f"name {'=' if op == 'eq' else '!='} ?", [value]
     # json_each binds the key as data, including punctuation, without constructing a JSON path.
-    base = "SELECT 1 FROM json_each(events.payload, '$.params') AS test WHERE test.key=?"
+    base = f"SELECT 1 FROM json_each({params}) AS test WHERE test.key=?"
     args = [node["param"]]
     if op in ("exists", "missing"):
         return f"{'NOT ' if op == 'missing' else ''}EXISTS ({base})", args
