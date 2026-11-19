@@ -457,3 +457,32 @@ def test_one_failure_in_detail_says_when_where_and_whether_it_arrived_late(faili
         ad_report.failure(
             storage, game["id"], START, END, Filters().model_dump(), "x", "weird", "y"
         )
+
+
+def test_one_request_builds_its_ad_table_once_with_the_same_answers(game, monkeypatch):
+    _, game, storage = game
+    filters = Filters().model_dump()
+    separate = {
+        "serving": ads.serving(storage, game["id"], START, END, filters, "placement", 40),
+        "revenue": ads.revenue(storage, game["id"], START, END, filters, "placement", 40),
+    }
+    delivery = ads.delivery(storage, game["id"], START, END, filters)
+    builds = []
+    original = storage.connect
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def traced(path):
+        with original(path) as connection:
+            connection.set_trace_callback(
+                lambda sql: builds.append(sql) if "CREATE TEMP TABLE ad_events" in sql else None
+            )
+            yield connection
+
+    monkeypatch.setattr(storage, "connect", traced)
+    assert ads.placements(storage, game["id"], START, END, filters) == separate
+    assert len(builds) == 1
+    builds.clear()
+    assert ads.delivery(storage, game["id"], START, END, filters) == delivery
+    assert len(builds) == 1

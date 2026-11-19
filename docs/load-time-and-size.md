@@ -57,6 +57,8 @@ synthetic game shaped like the current Unity plugin (`scripts/benchmark.py gener
 | Players | 2.09 s | 1.80 s |
 | Device specs (SQL part) | 3.0 s | < 1 ms |
 | Event activity (MCP/NutBot, one condition) | 1.72 s | 0.56 s |
+| Data health (MCP/NutBot, 100k events in window) | 0.99 s | 0.48 s |
+| Ads delivery / placements | built the ad table 2x | once per request |
 
 \* 6.4 s through Python on the same data; the fixture's standard mapping includes a Restarted rule
 it never sends, so its own check reads to the end (0.4 s) as it must.
@@ -71,27 +73,35 @@ Whole-history requests now stay flat as history grows; the others grow with the 
 
 ## Size
 
-Where an event's 1,750 bytes go: the raw row 821 (JSON envelope about 625), the facts copy 407,
-and nine indexes about 520. Changes:
+Where an event's 1,750 bytes went: the raw row 821 (JSON envelope about 625), the facts copy 407,
+and nine indexes about 520. Measured again on the same generator after the changes below:
+**1,475 bytes per event, 16% less** (raw row 585, facts' unique index 13 instead of 50). Ingest
+also got faster (2,750 to 3,450 events/s here): fewer bytes and one random-ID index less.
 
-- New events are stored as compact JSON (no spaces after `,` and `:`): about 46 bytes, 7% of the
-  envelope, with the same values for every reader. Stored events are not rewritten.
-- The write-ahead log is cut back to 64 MB after checkpoints instead of staying as large as it ever
-  grew.
-- `python -m avn_analytics.storage_report` shows each game's size, free pages and, where SQLite
-  has `dbstat`, each table and index. `--game ID --compact --yes` gives free pages back (VACUUM:
-  6.6 s for 450 MB on an SSD; collection waits meanwhile). The owner decides when to run it.
+- **Stored JSON without the columns it repeated.** `event_id`, `name`, `client_ts` and
+  `server_ts` are columns of `events`; new events no longer repeat them inside `payload`, which
+  is also written without the spaces `json.dumps` adds. `storage.full_event(row)` puts the four
+  back, in the envelope's usual key order, for whoever needs the whole event (exports). About
+  210 bytes per event. Every value is still stored once.
+- **Facts schema 2: facts point at their raw row.** `analytics_facts.event_row` (the event's
+  rowid, unique) replaces the unique index on the 36-character `event_id` (kept as a column:
+  timelines break timestamp ties by it). Coverage, verification, repair and version deletion
+  look events up by row, which is also faster. About 40 bytes per event. **Upgrading rebuilds
+  every game's facts** (the worker does it, as for any schema version; pages read the raw events
+  until a game's facts are ready again, and prepared answers are rebuilt).
+- The write-ahead log is cut back to 64 MB after checkpoints instead of staying as large as it
+  ever grew.
+- `python -m avn_analytics.storage_report` (owner) shows each game's size, free pages and, where
+  SQLite has `dbstat`, each table and index. `--game ID --slim --yes` rewrites events stored
+  before this change without the four repeated fields (only where each equals its column; a few
+  thousand per transaction, collection carries on). `--compact` gives the freed pages back
+  (VACUUM: 6.6 s for 450 MB on an SSD; collection waits meanwhile) and checks that every fact
+  still points at its event, re-verifying them if not (SQLite keeps row numbers through VACUUM
+  but does not promise it).
 
-Larger savings need a facts rebuild or an envelope change and were left for a decision:
-
-- Facts keyed by the raw row instead of repeating the event ID (and its unique index): about 85
-  bytes per event (5%), needs a facts schema version (every game's facts rebuilt by the worker).
-- Not repeating `event_id`, `name` and both timestamps inside the stored JSON (they are columns
-  already): about 160 bytes per event (9%); every reader of `payload` would rebuild them.
-- Leaving out envelope keys whose value is null: about 55 bytes per event (3%); `json_type`
-  distinguishes a missing key from a null one, so exports would change shape.
-- Binary JSON (JSONB) for facts parameters measured 11% smaller and 15% faster to read here; not
-  worth a rebuild on its own.
+Not done: leaving out envelope keys whose value is null (about 55 bytes per event, 4%) would
+change what exports contain (`json_type` tells a missing key from a null one). Binary JSON
+(JSONB) for the facts' parameters measured 11% smaller there and 15% faster to read.
 
 ## Reproducing
 

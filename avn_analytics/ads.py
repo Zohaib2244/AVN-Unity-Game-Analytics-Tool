@@ -17,8 +17,10 @@ A game that sends none of these gets `available: false` and a sentence saying so
 Revenue is taken to be USD (only some networks say so).
 """
 
+import json
 import math
 from collections import defaultdict
+from contextlib import contextmanager
 from statistics import median
 
 from . import insights
@@ -85,8 +87,27 @@ def _dimensions(source):
     }
 
 
+@contextmanager
+def _connected(storage, game_id, connection=None):
+    """The caller's connection when one is shared (so its ad_events table is reused), else a new
+    one for this read."""
+    if connection is not None:
+        yield connection
+        return
+    with storage.connect(storage.game_path(game_id)) as opened:
+        yield opened
+
+
 def _ad_events(connection, source, start, end, filters, player=None):
-    """The range's AD_ANALYSIS events (one player's, if named) as a temp table of plain columns."""
+    """The range's AD_ANALYSIS events (one player's, if named) as a temp table of plain columns.
+
+    Several reads of one request ask for the same table: it is built once per connection and
+    these arguments."""
+    key = json.dumps([source.table, start, end, filters, player], sort_keys=True, default=str)
+    connection.execute("CREATE TEMP TABLE IF NOT EXISTS ad_events_key (key TEXT)")
+    built = connection.execute("SELECT key FROM temp.ad_events_key").fetchone()
+    if built is not None and built[0] == key:
+        return
     condition, args = insights.where(start, end, filters, source=source)
     if player:
         condition += f" AND {source.player}=?"
@@ -112,6 +133,8 @@ def _ad_events(connection, source, start, end, filters, player=None):
             FROM {source.table} WHERE name=? AND {condition}""",
         [AD_EVENT, *args],
     )
+    connection.execute("DELETE FROM temp.ad_events_key")
+    connection.execute("INSERT INTO temp.ad_events_key VALUES (?)", (key,))
 
 
 def _absent(what, sends):
@@ -123,7 +146,16 @@ def _absent(what, sends):
 
 
 def revenue(
-    storage, game_id, start, end, filters, group_by=None, limit=15, then_by=None, player=None
+    storage,
+    game_id,
+    start,
+    end,
+    filters,
+    group_by=None,
+    limit=15,
+    then_by=None,
+    player=None,
+    connection=None,
 ):
     """Ad money: impressions, revenue, eCPM and revenue per player, in total and by group.
 
@@ -135,7 +167,7 @@ def revenue(
         then_by = _choice(then_by, REVENUE_GROUPS, "format", "then_by")
         then_by = None if then_by == group_by else then_by
     storage.get_game(game_id)
-    with storage.connect(storage.game_path(game_id)) as connection:
+    with _connected(storage, game_id, connection) as connection:
         source = insights.read_source(storage, connection)
         _ad_events(connection, source, start, end, filters, player)
         counts = dict(
@@ -307,12 +339,12 @@ def _health_row(row):
     }
 
 
-def health(storage, game_id, start, end, filters, group_by=None, limit=15):
+def health(storage, game_id, start, end, filters, group_by=None, limit=15, connection=None):
     """Whether ads load and show: network health counters by format, with the usual errors."""
     group_by = _choice(group_by, HEALTH_GROUPS, "format", "group_by")
     storage.get_game(game_id)
     sums = ", ".join(f"sum({name}) AS {name}" for name in HEALTH_COUNTERS)
-    with storage.connect(storage.game_path(game_id)) as connection:
+    with _connected(storage, game_id, connection) as connection:
         source = insights.read_source(storage, connection)
         _health_table(connection, source, start, end, filters)
         if not connection.execute("SELECT 1 FROM ad_health LIMIT 1").fetchone():
@@ -349,11 +381,11 @@ def health(storage, game_id, start, end, filters, group_by=None, limit=15):
     }
 
 
-def serving(storage, game_id, start, end, filters, group_by=None, limit=15):
+def serving(storage, game_id, start, end, filters, group_by=None, limit=15, connection=None):
     """How the game asks for ads: wanted, shown, held back by its rules, failed, and the pacing."""
     group_by = _choice(group_by, SERVING_GROUPS, "placement", "group_by")
     storage.get_game(game_id)
-    with storage.connect(storage.game_path(game_id)) as connection:
+    with _connected(storage, game_id, connection) as connection:
         source = insights.read_source(storage, connection)
         _ad_events(connection, source, start, end, filters)
         if not connection.execute("SELECT 1 FROM ad_events LIMIT 1").fetchone():
@@ -619,10 +651,10 @@ def impact(storage, game_id, start, end, filters):
 def delivery(storage, game_id, start, end, filters):
     """From wanted to shown, per format: what the game asked for and lost (serving), whether the
     networks loaded (health), and how long loads took where the game's ad plugin reports them."""
-    served = serving(storage, game_id, start, end, filters, group_by="format")
-    healthy = health(storage, game_id, start, end, filters, group_by="format")
     times, errors = {}, []
     with storage.connect(storage.game_path(game_id)) as connection:
+        served = serving(storage, game_id, start, end, filters, "format", connection=connection)
+        healthy = health(storage, game_id, start, end, filters, "format", connection=connection)
         source = insights.read_source(storage, connection)
         _ad_events(connection, source, start, end, filters)
         loads = defaultdict(list)
@@ -730,3 +762,17 @@ def creatives(storage, game_id, start, end, filters, limit=20):
         "usual_share": _ratio(total["left_after"], total["shown"]),
         "rows": [{**row, "left_share": _ratio(row["left_after"], row["shown"])} for row in rows],
     }
+
+
+def placements(storage, game_id, start, end, filters, limit=40):
+    """Serving and money by placement, from one ad_events table."""
+    storage.get_game(game_id)
+    with storage.connect(storage.game_path(game_id)) as connection:
+        return {
+            "serving": serving(
+                storage, game_id, start, end, filters, "placement", limit, connection=connection
+            ),
+            "revenue": revenue(
+                storage, game_id, start, end, filters, "placement", limit, connection=connection
+            ),
+        }

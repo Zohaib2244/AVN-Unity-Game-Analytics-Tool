@@ -3,6 +3,7 @@
     python -m avn_analytics.storage_report            # read-only: every game
     python -m avn_analytics.storage_report --game ID  # read-only: one game
     python -m avn_analytics.storage_report --game ID --compact --yes
+    python -m avn_analytics.storage_report --game ID --slim --compact --yes
 
 The report opens every database read-only and changes nothing: per game, its events, the size
 of the database and its write-ahead log, how much of the file is free pages (space SQLite keeps
@@ -16,6 +17,12 @@ as they are. While it runs the game cannot store new events (the SDKs keep them 
 again later). It took 6.6 s for a 450 MB synthetic game on an SSD; a USB hard disk is several
 times slower. It also needs free disk space about the size of the database. It is the owner's
 call when to run it; nothing runs it automatically.
+
+--slim rewrites older events' JSON without the event ID, name and the two times, which the
+events table keeps as columns (events stored since November 2026 are written that way). A key
+is removed only where its value is exactly the column's, so nothing is lost; exports and the
+website put them back (storage.full_event). It runs a few thousand events per transaction,
+so collection carries on. The space shows as free pages: add --compact to give it back.
 """
 
 import argparse
@@ -23,6 +30,8 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
+
+from . import analytics
 
 
 def _read_only(path):
@@ -75,18 +84,92 @@ def report(path):
     return result
 
 
+SLIM_ROWS = 5000  # events rewritten per short transaction
+# The envelope fields the events table keeps as columns (storage.ENVELOPE_COLUMNS). A key is
+# removed only where its value is exactly the column's, so nothing the row says is lost.
+SLIM = (
+    "UPDATE events SET payload=json_remove(payload, '$.event_id', '$.name', '$.client_ts',"
+    " '$.server_ts') WHERE rowid>? AND rowid<=? AND json_valid(payload)"
+    " AND json_extract(payload, '$.event_id') IS event_id"
+    " AND json_extract(payload, '$.name') IS name"
+    " AND json_extract(payload, '$.client_ts') IS client_ts"
+    " AND json_extract(payload, '$.server_ts') IS server_ts"
+)
+
+
+def _connect(path):
+    connection = sqlite3.connect(path, timeout=30, isolation_level=None)
+    connection.execute("PRAGMA journal_size_limit=67108864")
+    return connection
+
+
+def slim(path, rows=SLIM_ROWS):
+    """Stop older events repeating their ID, name and times inside the JSON (they are columns).
+
+    A few thousand events per short transaction, so collection carries on between them; running
+    it again carries on (rows already slim no longer match). Returns how many were rewritten."""
+    connection = _connect(path)
+    rewritten = 0
+    try:
+        end = connection.execute("SELECT coalesce(max(rowid), 0) FROM events").fetchone()[0]
+        for low in range(0, end, rows):
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                rewritten += connection.execute(SLIM, (low, low + rows)).rowcount
+                connection.execute("COMMIT")
+            except BaseException:
+                connection.execute("ROLLBACK")
+                raise
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        connection.close()
+    return rewritten
+
+
 def compact(path):
-    """VACUUM one database (keeps every row); returns the file size before and after."""
+    """VACUUM one database (keeps every row); returns the file size before and after.
+
+    Facts point at their raw event's row number. SQLite keeps those numbers through VACUUM, but
+    does not promise it; if any no longer match, the facts are checked again from the start
+    (pages read the raw events meanwhile) and wrong ones rewritten."""
     path = Path(path)
     before = path.stat().st_size
-    connection = sqlite3.connect(path, timeout=30)
+    connection = _connect(path)
     try:
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         connection.execute("VACUUM")
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        moved = _facts_moved(connection)
+        if moved:
+            connection.execute("BEGIN IMMEDIATE")
+            end = connection.execute("SELECT coalesce(max(id), 0) FROM analytics_facts").fetchone()
+            analytics._set(
+                connection,
+                phase="values",
+                verify_cursor=0,
+                verify_until=end[0],
+                ready=0,
+                ready_at=None,
+            )
+            connection.execute("COMMIT")
     finally:
         connection.close()
-    return {"before_bytes": before, "after_bytes": path.stat().st_size}
+    return {"before_bytes": before, "after_bytes": path.stat().st_size, "facts_rechecked": moved}
+
+
+def _facts_moved(connection):
+    """Facts whose raw row is not the event they describe."""
+    if not connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE name='analytics_facts'"
+    ).fetchone():
+        return 0
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(analytics_facts)")}
+    if "event_row" not in columns:
+        return 0
+    return connection.execute(
+        "SELECT count(*) FROM analytics_facts AS fact LEFT JOIN events"
+        " ON events.rowid = fact.event_row WHERE events.event_id IS NOT fact.event_id"
+    ).fetchone()[0]
 
 
 def main(arguments=None):
@@ -94,6 +177,9 @@ def main(arguments=None):
 
     parser = argparse.ArgumentParser(prog="python -m avn_analytics.storage_report")
     parser.add_argument("--game", help="one game's id (default: every game)")
+    parser.add_argument(
+        "--slim", action="store_true", help="older events: stop repeating ID, name and times"
+    )
     parser.add_argument("--compact", action="store_true", help="give back free pages (VACUUM)")
     parser.add_argument("--yes", action="store_true", help="confirm --compact")
     options = parser.parse_args(arguments)
@@ -108,15 +194,17 @@ def main(arguments=None):
     finally:
         connection.close()
     games = [game for game in games if options.game in (None, game[0])]
-    if options.compact:
+    if options.compact or options.slim:
         if not options.game or not options.yes:
-            print("--compact needs one --game and --yes (see the module's help)", file=sys.stderr)
+            print("--slim/--compact need one --game and --yes (see the help)", file=sys.stderr)
             return 2
     for game_id, name, platform in games:
         path = root / "games" / f"{game_id}.sqlite3"
         if not path.is_file():
             continue
         line = {"game": game_id, "name": name, "platform": platform, **report(path)}
+        if options.slim:
+            line["slimmed_events"] = slim(path)
         if options.compact:
             line["compacted"] = compact(path)
         print(json.dumps(line))

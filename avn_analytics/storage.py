@@ -20,8 +20,32 @@ ENVIRONMENT_VALUE = "lower(substr(trim({column}), 1, 64))"
 
 
 MAX_ICON_BYTES = 512 * 1024
+# Envelope fields kept as columns of `events` and not repeated in its JSON `payload` (events
+# stored before November 2026 still repeat them; full_event() reads both).
+ENVELOPE_COLUMNS = ("event_id", "name", "client_ts", "server_ts")
 WAL_SIZE_LIMIT = 64 * 1024 * 1024
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def full_event(row):
+    """The whole stored event (the envelope as the SDK and server made it) from an `events` row.
+
+    `row` has the event_id, name, client_ts, server_ts and payload columns. Older rows carry those
+    four inside the JSON as well; newer ones only as columns, and they are put back here in the
+    envelope's usual order (event_id, name, params, client_ts, ..., server_ts, country)."""
+    event = json.loads(row["payload"])
+    if "event_id" in event:
+        return event
+    whole = {"event_id": row["event_id"], "name": row["name"]}
+    for key, value in event.items():
+        if key == "country" and "server_ts" not in whole:
+            whole["server_ts"] = row["server_ts"]
+        whole[key] = value
+        if key == "params":
+            whole["client_ts"] = row["client_ts"]
+    whole.setdefault("client_ts", row["client_ts"])
+    whole.setdefault("server_ts", row["server_ts"])
+    return whole
 
 
 class Storage:
@@ -546,9 +570,10 @@ class Storage:
         server_ts = timestamp()
         rows = defaultdict(list)  # the app that sent them -> events, to tally each app's own
         for event in batch.resolved:
-            payload = event.model_dump(mode="json")
-            payload["client_ts"] = timestamp(event.client_ts)
-            payload["server_ts"] = server_ts
+            # The event ID, name and both times are columns of the row already: the stored JSON
+            # leaves them out (full_event() puts them back for whoever needs the whole event).
+            payload = event.model_dump(mode="json", exclude=set(ENVELOPE_COLUMNS))
+            client_ts = timestamp(event.client_ts)
             payload["country"] = country  # set from the request IP by the server, never by clients
             if delivery:
                 payload["delivery"] = delivery  # how the SDK sent the batch, X-AVN-Delivery
@@ -556,7 +581,7 @@ class Storage:
                 (
                     str(event.event_id),
                     event.name,
-                    payload["client_ts"],
+                    client_ts,
                     server_ts,
                     # Without the spaces json.dumps puts after "," and ":" (the same JSON,
                     # about 7% smaller): every byte here is kept for as long as the event.
@@ -736,13 +761,19 @@ class Storage:
         if basis not in ("server_ts", "client_ts"):
             raise ValueError("Invalid timestamp basis")
         self.get_game(game_id)
-        condition, args = insights.where(start, end, filters, column=basis)
         with self.connect(self.game_path(game_id)) as connection:
+            source = insights.read_source(self, connection)
+            table = source.table
+            # Received days through the raw events' server_ts index, the filters from the facts.
+            span = insights.RECEIVED if source.facts and basis == "server_ts" else None
+            condition, args = insights.where(
+                start, end, filters, column=basis, source=source, span=span
+            )
             days = [
                 dict(row)
                 for row in connection.execute(
                     f"""SELECT substr({basis}, 1, 10) AS day, count(*) AS events
-                   FROM events WHERE {condition} GROUP BY day ORDER BY day""",
+                   FROM {table} WHERE {condition} GROUP BY day ORDER BY day""",
                     args,
                 )
             ]

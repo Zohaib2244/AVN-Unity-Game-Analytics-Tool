@@ -241,3 +241,30 @@ def test_event_activity_reads_the_facts_with_the_same_counts(tmp_path):
             )
             if tree is None:
                 assert expected["events"] > 100
+
+
+def test_data_health_and_received_days_read_the_facts_with_the_same_answers(tmp_path):
+    from avn_analytics import game_setup
+
+    facts = make_storage(tmp_path, analytics_read_mode="facts", read_cache_seconds=0)
+    game_id = _game(facts)
+    _ingest(facts, game_id, events=900, sdk=True)
+    legacy = make_storage(tmp_path, analytics_read_mode="legacy", read_cache_seconds=0)
+
+    def health(storage):
+        answer = game_setup.data_health(storage, game_id, 14)
+        answer.pop("hours_since_newest_event")  # the clock moves between the two reads
+        return answer
+
+    assert health(facts) == health(legacy)
+    assert sum(day["events"] for day in health(facts)["days"]) > 800
+    start, end = "2000-01-01T00:00:00+00:00", "2100-01-01T00:00:00+00:00"
+    for filters in (
+        None,
+        {"exclude_environments": insights.TEST_ENVIRONMENTS},
+        {"countries": ["US"]},
+    ):
+        for basis in ("server_ts", "client_ts"):
+            assert facts.health(game_id, start, end, basis, filters) == legacy.health(
+                game_id, start, end, basis, filters
+            )

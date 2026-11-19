@@ -1258,12 +1258,12 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     ):
         days = day_range(start, end, tz_offset)
 
-        def compute():
-            served = ads.serving(storage, str(game_id), *days, chosen, "placement", 40)
-            money = ads.revenue(storage, str(game_id), *days, chosen, "placement", 40)
-            return {"serving": served, "revenue": money}
-
-        return cached(game_id, "ad-placements", (days, chosen), compute)
+        return cached(
+            game_id,
+            "ad-placements",
+            (days, chosen),
+            lambda: ads.placements(storage, str(game_id), *days, chosen),
+        )
 
     @admin_api.get("/v1/games/{game_id}/insights/ads/creatives")
     def insights_ad_creatives(

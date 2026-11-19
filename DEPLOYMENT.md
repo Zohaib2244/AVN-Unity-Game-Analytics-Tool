@@ -215,6 +215,7 @@ docker compose up -d --wait                # start
 ```
 
 - **Updating:** `git pull`, then `docker compose up -d --build --wait`. The ingest and admin services both use the image, so rebuild both: a brief restart of ingest is safe (games queue events and retry). Keep `.env` and `data/` as they are. Do not overwrite `.env` with `.env.example` or you will lose the admin token.
+- **Updating past November 2026 (facts schema 2, slimmer stored events):** after the update the worker rebuilds each game's analytics facts (Settings → Analytics processing must be running); pages read the raw events, more slowly, until a game's facts are ready again. Events stored from then on keep their ID, name and times only as columns, so an older version rolled back to cannot export them; roll forward instead. To shrink events stored earlier, run `docker compose exec -T admin python -m avn_analytics.storage_report --game <id> --slim --compact --yes` per game at a quiet time (see [load times and size](docs/load-time-and-size.md)).
 - **Boot:** services use `restart: unless-stopped`; enable the Docker service at boot (`systemctl enable docker`).
 - **Rotating the admin token:** edit `AVN_ADMIN_TOKEN` in `.env`, then `docker compose up -d --force-recreate`.
 - **Disk:** check free space occasionally. There is no automatic retention or deletion, and a full disk makes the server return 503 (clients keep their events and retry), so plan capacity or export and archive.

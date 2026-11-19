@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from . import insights
 from .models import timestamp
+from .storage import full_event
 
 SKILL = Path(__file__).parent / "skill" / "SKILL.md"
 # Sent automatically by the Unity SDK and documented in the skill itself.
@@ -79,7 +80,7 @@ def param_columns(connection, query, args):
     """Typed columns for event params, in first-seen order (string > float > int)."""
     kinds = {}
     for row in connection.execute(query, args):
-        for key, value in json.loads(row["payload"])["params"].items():
+        for key, value in (json.loads(row["payload"]).get("params") or {}).items():
             kind = "s" if isinstance(value, str) else "f" if isinstance(value, float) else "i"
             seen = kinds.get(key)
             if seen is None and len(kinds) >= MAX_PARAM_COLUMNS:
@@ -108,7 +109,7 @@ def write_parquet(connection, query, args, path):
     with pq.ParquetWriter(path, schema, compression="zstd") as writer:
         batch = empty()
         for row in connection.execute(query, args):
-            event = json.loads(row["payload"])
+            event = full_event(row)
             for name, _ in FIXED_COLUMNS:
                 value = event.get(name)
                 batch[name].append(
@@ -181,19 +182,27 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None, 
                 with archive.open("events.jsonl.gz", "w", force_zip64=True) as member:
                     with gzip.GzipFile(fileobj=member, mode="wb", mtime=0) as compressed:
                         rows = connection.execute(
-                            f"""SELECT payload FROM events WHERE {condition}
+                            f"""SELECT event_id, name, client_ts, server_ts, payload FROM events
+                                WHERE {condition}
                                 ORDER BY {basis}, event_id""",
                             args,
                         )
                         for row in rows:
-                            encoded = (row["payload"] + "\n").encode("utf-8")
+                            event = full_event(row)
+                            # Older rows hold the whole event already: written as stored.
+                            stored_whole = row["payload"].startswith('{"event_id"')
+                            line = (
+                                row["payload"]
+                                if stored_whole
+                                else json.dumps(event, ensure_ascii=True, separators=(",", ":"))
+                            )
+                            encoded = (line + "\n").encode("utf-8")
                             raw_bytes += len(encoded)
                             if raw_bytes > storage.settings.max_export_bytes:
                                 raise HTTPException(
                                     413, "Export too large; select a shorter period"
                                 )
                             compressed.write(encoded)
-                            event = json.loads(row["payload"])
                             name_counts[event["name"]] = name_counts.get(event["name"], 0) + 1
                             if event["name"] not in observed and len(observed) >= 1000:
                                 dictionary_truncated = True
@@ -211,7 +220,8 @@ def build_export(storage, game_id, period, selected_date, basis, end_date=None, 
                 try:
                     parquet_columns = write_parquet(
                         connection,
-                        f"""SELECT payload FROM events WHERE {condition}
+                        f"""SELECT event_id, name, client_ts, server_ts, payload FROM events
+                                WHERE {condition}
                             ORDER BY {basis}, event_id""",
                         args,
                         parquet_path,

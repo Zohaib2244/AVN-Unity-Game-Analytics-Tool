@@ -8,6 +8,7 @@ from parity import HIDE_TEST, build_fixture, make_storage, ranges
 
 from avn_analytics import insights, journeys, level_views, materialize, views
 from avn_analytics.models import EventDefinition
+from avn_analytics.storage import full_event
 
 
 @pytest.fixture
@@ -126,11 +127,11 @@ def test_late_event_replaces_only_the_affected_players_contribution(prepared, mo
     journeys.level_progress(storage, game, *days, HIDE_TEST)
     worker = finish(storage, game)
     with storage.connect(storage.game_path(game)) as db:
-        event = json.loads(
+        event = full_event(
             db.execute(
-                "SELECT payload FROM events WHERE json_extract(payload,'$.device_id') IS NOT NULL "
-                "ORDER BY client_ts LIMIT 1"
-            ).fetchone()[0]
+                "SELECT event_id, name, client_ts, server_ts, payload FROM events"
+                " WHERE json_extract(payload,'$.device_id') IS NOT NULL ORDER BY client_ts LIMIT 1"
+            ).fetchone()
         )
     event["event_id"] = "00000000-0000-4000-8000-000000000901"
     # A late timestamp changes an already processed player's history, not the ingest order.

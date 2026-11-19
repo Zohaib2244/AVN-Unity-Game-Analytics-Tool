@@ -174,12 +174,18 @@ BREAKDOWN_SEGMENTS = 12
 RETENTION_DAYS = (1, 3, 7, 14, 30)
 
 
-def where(start, end, filters=None, column="client_ts", source=LEGACY):
+# The facts of events received in [start, end), found through the raw events' server_ts index
+# (the facts have no index on it); for where(..., span=RECEIVED).
+RECEIVED = "event_row IN (SELECT rowid FROM events WHERE server_ts>=? AND server_ts<?)"
+
+
+def where(start, end, filters=None, column="client_ts", source=LEGACY, span=None):
     """SQL condition and arguments for the day range plus any filters.
 
     column picks which timestamp bounds the range (client_ts by default; exports can use server_ts).
+    span replaces that range test with another taking (start, end), such as RECEIVED.
     """
-    clauses, args = [f"{column}>=? AND {column}<?"], [start, end]
+    clauses, args = [span or f"{column}>=? AND {column}<?"], [start, end]
     filters = filters or {}
     for field_name, dimension in FILTER_FIELDS.items():
         values = filters.get(field_name) or []

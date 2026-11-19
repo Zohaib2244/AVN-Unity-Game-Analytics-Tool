@@ -122,13 +122,20 @@ def data_health(storage, game_id, days=14):
     recent = (now - timedelta(days=RECENT_DAYS)).isoformat(timespec="microseconds")
     with storage.connect(storage.game_path(game_id)) as connection:
         newest = connection.execute("SELECT max(server_ts) FROM events").fetchone()[0]
+        # Who and which environment come from the facts when they are ready (plain columns),
+        # found through the raw events' received-time index; else from the raw JSON.
+        source = insights.read_source(storage, connection)
+        if source.facts:
+            table = "analytics_facts"
+            received = "event_row IN (SELECT rowid FROM events WHERE server_ts>=?)"  # indexed
+        else:
+            table, received = "events", "server_ts>=?"
         per_day = [
             dict(row)
             for row in connection.execute(
-                """SELECT substr(server_ts, 1, 10) AS day, count(*) AS events,
-                          count(DISTINCT coalesce(json_extract(payload, '$.user_id'),
-                                                   json_extract(payload, '$.device_id'))) AS players
-                   FROM events WHERE server_ts>=? GROUP BY day ORDER BY day""",
+                f"""SELECT substr(server_ts, 1, 10) AS day, count(*) AS events,
+                           count(DISTINCT {source.player}) AS players
+                    FROM {table} WHERE {received} GROUP BY day ORDER BY day""",
                 (since,),
             )
         ]
@@ -144,8 +151,8 @@ def data_health(storage, game_id, days=14):
         environments = {
             row[0] or "unknown": row[1]
             for row in connection.execute(
-                f"SELECT {insights.ENVIRONMENT} AS env, count(*) FROM events "
-                "WHERE server_ts>=? GROUP BY 1 ORDER BY 2 DESC",
+                f"SELECT {source.environment} AS env, count(*) FROM {table} "
+                f"WHERE {received} GROUP BY 1 ORDER BY 2 DESC",
                 (since,),
             )
         }
