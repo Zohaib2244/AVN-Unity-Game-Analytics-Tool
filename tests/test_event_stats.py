@@ -186,3 +186,21 @@ def test_mapping_verdict_stops_early_with_the_same_answer(tmp_path, monkeypatch)
     status, fast_reads, slow_reads = verdicts()
     assert status == {"ok": True, "has_events": True, "issues": []}
     assert fast_reads < 200 < slow_reads
+
+
+def test_the_worker_catches_up_a_large_backlog_of_totals(tmp_path, monkeypatch):
+    from avn_analytics import materialize
+
+    monkeypatch.setattr(event_stats, "CATCH_UP_ROWS", 100)
+    monkeypatch.setattr(event_stats, "WORKER_ROWS", 300)
+    storage = make_storage(tmp_path, analytics_read_mode="facts")
+    game_id = _game(storage)
+    _ingest(storage, game_id, events=900, sdk=True)
+    with storage.connect(storage.game_path(game_id)) as connection:
+        assert event_stats.behind(connection) > 800
+    worker = materialize.Worker(storage, identity="totals")
+    for _ in range(10):
+        worker.tick()
+    with storage.connect(storage.game_path(game_id)) as connection:
+        assert event_stats.behind(connection) <= 100  # a small rest is left to the readers
+    _check(storage, game_id)

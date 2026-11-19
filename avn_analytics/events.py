@@ -469,10 +469,15 @@ def mappings(storage, game_id, app_version="", detail=True, verdict=False):
                     )
                 }
             params = _observed_params(connection, app_version, source)
+            # Example values come from the same most recent events the meanings below read:
+            # counting every value the game ever sent grew with its whole history (minutes on a
+            # large game) for a handful of examples per parameter.
             for row in connection.execute(
                 f"""SELECT name, p.key AS key, p.value AS value, count(*) AS count
-                   FROM {_each_param(source)}
-                   WHERE {scope} AND p.type IN ('text', 'integer', 'real')
+                   FROM (SELECT name, {source.params} AS params FROM {rows_from}
+                         WHERE {scope} ORDER BY client_ts DESC, event_id
+                         LIMIT {MAPPING_SCAN}) AS recent, json_each(recent.params) AS p
+                   WHERE p.type IN ('text', 'integer', 'real')
                    GROUP BY name, p.key, p.value ORDER BY count DESC LIMIT 4000""",
                 scope_args,
             ):

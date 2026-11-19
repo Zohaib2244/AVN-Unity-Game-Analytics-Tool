@@ -32,7 +32,9 @@ log = logging.getLogger(__name__)
 
 VERSION = 1
 CHUNK_ROWS = 20_000  # facts added per short write transaction
-REFRESH_ROWS = 400_000  # at most this many per request; the rest is counted live this time
+REFRESH_ROWS = 100_000  # at most this many per request; the rest is counted live this time
+CATCH_UP_ROWS = 20_000  # further behind than this, the analytics worker catches up (catch_up)
+WORKER_ROWS = 200_000  # facts the worker adds per turn
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS event_stats_meta (
@@ -331,3 +333,18 @@ def versions(connection):
             (through,),
         )
     ]
+
+
+def behind(connection):
+    """How many facts are newer than the kept totals (all of them if none are usable)."""
+    newest = connection.execute("SELECT coalesce(max(id), 0) FROM analytics_facts").fetchone()[0]
+    through = current(connection)
+    return newest - (through or 0)
+
+
+def catch_up(connection, max_rows=WORKER_ROWS):
+    """The worker's share: True if the totals were far behind and some were added."""
+    if not analytics.facts_ready(connection) or behind(connection) <= CATCH_UP_ROWS:
+        return False
+    refresh(connection, max_rows=max_rows)
+    return True

@@ -265,17 +265,19 @@ class Labeler:
                 or field.lower() in LEVEL_VERBS
                 or (LEVELISH_KEY.search(name) and field.lower() in ("action", "status", "state"))
             )
-            found = self._display_fields[shape] = (fields, required)
-        fields, required = found
+            # Whether each field's name mentions a level depends on the name only: once per shape.
+            levelish = tuple(bool(LEVELISH_KEY.search(field)) for field in fields)
+            found = self._display_fields[shape] = (fields, required, levelish)
+        fields, required, levelish = found
         order = ()
         if label:
             # Generic labels stop after three displayed parts. Later snapshot values cannot
             # change that caption, but explicit templates/mappings still keep all their inputs.
             shown = []
-            for field in fields:
+            for field, named_level in zip(fields, levelish, strict=True):
                 value = params[field]
                 if (
-                    LEVELISH_KEY.search(field)
+                    named_level
                     or isinstance(value, int | float)
                     or isinstance(value, str)
                     and (len(value) <= 32 or _number(value) is not None)

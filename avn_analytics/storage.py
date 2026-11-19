@@ -20,6 +20,7 @@ ENVIRONMENT_VALUE = "lower(substr(trim({column}), 1, 64))"
 
 
 MAX_ICON_BYTES = 512 * 1024
+WAL_SIZE_LIMIT = 64 * 1024 * 1024
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -40,6 +41,9 @@ class Storage:
         try:
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA synchronous=FULL")
+            # After a checkpoint, shrink the write-ahead log back to this size instead of keeping
+            # it as large as it ever grew (a big import or backfill can leave hundreds of MB).
+            connection.execute(f"PRAGMA journal_size_limit={WAL_SIZE_LIMIT}")
             with connection:
                 yield connection
         except sqlite3.OperationalError as error:
@@ -554,7 +558,9 @@ class Storage:
                     event.name,
                     payload["client_ts"],
                     server_ts,
-                    json.dumps(payload, ensure_ascii=True, allow_nan=False),
+                    # Without the spaces json.dumps puts after "," and ":" (the same JSON,
+                    # about 7% smaller): every byte here is kept for as long as the event.
+                    json.dumps(payload, ensure_ascii=True, allow_nan=False, separators=(",", ":")),
                 )
             )
         environments = {}

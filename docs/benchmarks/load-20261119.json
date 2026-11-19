@@ -1,0 +1,246 @@
+{
+ "fixture": "scripts/benchmark.py generate --shape sdk --events 250000 --days 60 (250,081 events, 436 MB)",
+ "conditions": "facts read mode, response cache off, one request each over HTTP (TestClient), 30-day range, test environments hidden; development machine SSD, warm OS cache",
+ "endpoints": {
+  "me": {
+   "before_s": 0.005,
+   "after_s": 0.004,
+   "bytes": 348,
+   "gzip_bytes": 246
+  },
+  "overview(totals=false)": {
+   "before_s": 0.008,
+   "after_s": 0.007,
+   "bytes": 746,
+   "gzip_bytes": 403
+  },
+  "overview(totals)": {
+   "before_s": 0.03,
+   "after_s": 0.032,
+   "bytes": 874,
+   "gzip_bytes": 438
+  },
+  "games": {
+   "before_s": 0.004,
+   "after_s": 0.005,
+   "bytes": 354,
+   "gzip_bytes": 249
+  },
+  "game": {
+   "before_s": 0.153,
+   "after_s": 0.152,
+   "bytes": 743,
+   "gzip_bytes": 380
+  },
+  "versions": {
+   "before_s": 0.254,
+   "after_s": 0.25,
+   "bytes": 916,
+   "gzip_bytes": 311
+  },
+  "processing": {
+   "before_s": 0.005,
+   "after_s": 0.005,
+   "bytes": 16,
+   "gzip_bytes": 36
+  },
+  "facets": {
+   "before_s": 1.134,
+   "after_s": 0.763,
+   "bytes": 1000,
+   "gzip_bytes": 329
+  },
+  "summary": {
+   "before_s": 2.157,
+   "after_s": 2.122,
+   "bytes": 4266,
+   "gzip_bytes": 1157
+  },
+  "sessions": {
+   "before_s": 2.115,
+   "after_s": 2.066,
+   "bytes": 4564,
+   "gzip_bytes": 910
+  },
+  "retention": {
+   "before_s": 1.786,
+   "after_s": 0.367,
+   "bytes": 7191,
+   "gzip_bytes": 887
+  },
+  "levels": {
+   "before_s": 8.059,
+   "after_s": 7.896,
+   "bytes": 89947,
+   "gzip_bytes": 9341
+  },
+  "levels first": {
+   "before_s": 4.396,
+   "after_s": 4.176,
+   "bytes": 40743,
+   "gzip_bytes": 4812
+  },
+  "levels/features": {
+   "before_s": 8.309,
+   "after_s": 7.76,
+   "bytes": 68762,
+   "gzip_bytes": 5268
+  },
+  "players": {
+   "before_s": 2.087,
+   "after_s": 1.795,
+   "bytes": 25551,
+   "gzip_bytes": 3293
+  },
+  "player-chip-options": {
+   "before_s": 0.643,
+   "after_s": 0.627,
+   "bytes": 712,
+   "gzip_bytes": 282
+  },
+  "player-group-counts": {
+   "before_s": 0.202,
+   "after_s": 0.187,
+   "bytes": 24,
+   "gzip_bytes": 44
+  },
+  "player-summary": {
+   "before_s": 0.056,
+   "after_s": 0.052,
+   "bytes": 8529,
+   "gzip_bytes": 2575
+  },
+  "device-specs": {
+   "before_s": 3.026,
+   "after_s": 2.574,
+   "bytes": 1127,
+   "gzip_bytes": 637
+  },
+  "journey": {
+   "before_s": 0.084,
+   "after_s": 0.093,
+   "bytes": 513833,
+   "gzip_bytes": 59641
+  },
+  "story": {
+   "before_s": 0.073,
+   "after_s": 0.077,
+   "bytes": 215481,
+   "gzip_bytes": 22799
+  },
+  "ads/revenue": {
+   "before_s": 0.902,
+   "after_s": 0.858,
+   "bytes": 987,
+   "gzip_bytes": 488
+  },
+  "ads/states": {
+   "before_s": 0.576,
+   "after_s": 0.557,
+   "bytes": 728,
+   "gzip_bytes": 305
+  },
+  "ads/failures": {
+   "before_s": 0.499,
+   "after_s": 0.492,
+   "bytes": 771,
+   "gzip_bytes": 390
+  },
+  "ads/delivery": {
+   "before_s": 1.427,
+   "after_s": 1.442,
+   "bytes": 3432,
+   "gzip_bytes": 1068
+  },
+  "ads/placements": {
+   "before_s": 1.705,
+   "after_s": 1.679,
+   "bytes": 2033,
+   "gzip_bytes": 746
+  },
+  "ads/creatives": {
+   "before_s": 0.676,
+   "after_s": 0.685,
+   "bytes": 88,
+   "gzip_bytes": 106
+  },
+  "acquisition": {
+   "before_s": 0.084,
+   "after_s": 0.081,
+   "bytes": 109,
+   "gzip_bytes": 111
+  },
+  "acquisition/cohorts": {
+   "before_s": 0.084,
+   "after_s": 0.082,
+   "bytes": 109,
+   "gzip_bytes": 111
+  },
+  "catalog": {
+   "before_s": 2.667,
+   "after_s": 2.428,
+   "bytes": 19290,
+   "gzip_bytes": 7846
+  },
+  "events": {
+   "before_s": 4.136,
+   "after_s": 0.725,
+   "bytes": 10835,
+   "gzip_bytes": 2484
+  },
+  "events/detail": {
+   "before_s": 2.238,
+   "after_s": 1.4,
+   "bytes": 6610,
+   "gzip_bytes": 1595
+  },
+  "catalog 7d": {
+   "before_s": 0.66,
+   "after_s": 0.56,
+   "bytes": 19181,
+   "gzip_bytes": 7709
+  },
+  "health": {
+   "before_s": 0.012,
+   "after_s": 0.006,
+   "bytes": 90,
+   "gzip_bytes": 104
+  },
+  "health/live": {
+   "before_s": 2.124,
+   "after_s": 1.203,
+   "bytes": 1206,
+   "gzip_bytes": 298
+  },
+  "dictionary": {
+   "before_s": 0.005,
+   "after_s": 0.006,
+   "bytes": 863,
+   "gzip_bytes": 326
+  },
+  "mappings/status": {
+   "before_s": 1.85,
+   "after_s": 0.405,
+   "bytes": 603,
+   "gzip_bytes": 189
+  },
+  "dictionary/discovery": {
+   "before_s": 3.88,
+   "after_s": 0.011,
+   "bytes": 7816,
+   "gzip_bytes": 1673
+  },
+  "highlights": {
+   "before_s": 0.006,
+   "after_s": 0.005,
+   "bytes": 2,
+   "gzip_bytes": 22
+  },
+  "group-library": {
+   "before_s": 0.006,
+   "after_s": 0.005,
+   "bytes": 2,
+   "gzip_bytes": 22
+  }
+ }
+}

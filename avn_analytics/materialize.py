@@ -34,7 +34,7 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 
-from . import analytics
+from . import analytics, event_stats
 from .models import timestamp
 
 logger = logging.getLogger("avn_analytics.worker")
@@ -420,6 +420,14 @@ class Worker:
                             "analytics worker: game %s has events without facts", game_id
                         )
                         return True
+            with self.storage.connect(path) as connection:
+                # A large backlog of the all-time event totals (event_stats.py), say right after
+                # an upgrade, is added here rather than inside page loads.
+                connection.isolation_level = None
+                connection.set_progress_handler(self._interrupt(revision), 10000)
+                self.job = (game_id, "event totals")
+                if event_stats.catch_up(connection):
+                    return True
             return views.refresh(self, game_id, revision)
         except sqlite3.OperationalError as error:
             if str(error) == "interrupted" and self.should_stop(revision):

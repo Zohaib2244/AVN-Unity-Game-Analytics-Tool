@@ -82,7 +82,6 @@ def test_no_login_routes_and_writes_from_any_host(website):
         assert lan.post("/v1/games", json=payload).status_code == 201
 
 
-
 @needs_build
 def test_answers_and_files_are_compressed_but_streams_are_not(website):
     client, settings = website

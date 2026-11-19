@@ -976,35 +976,58 @@ class _NewestVersion:
         return None if self.best is None else str(self.best)
 
 
-class _SessionLengths:
-    """SQL aggregate: a player's sessions, each worked out by SessionState."""
+def _session_length_aggregates():
+    """SQL aggregates (average, total) over a player's sessions, each worked out by SessionState.
 
-    def __init__(self):
-        self.sessions = {}
+    Both are asked of the same events of each player, so they share the work: whichever is
+    stepped first for a player keeps the sessions and the other reads them at the end. Their
+    first argument is the player (the GROUP BY), which is how they find each other. Made per
+    statement, so nothing is shared beyond it.
+    """
+    leaders = {}
 
-    def step(self, session_id, name, client_ts, server_ts, seq, params):
-        if session_id is None or client_ts is None:
-            return
-        state = self.sessions.setdefault(session_id, SessionState())
-        state.add(name, client_ts, server_ts, seq, params)
+    class Lengths:
+        def __init__(self):
+            self.sessions = None
+            self.leader = None
 
+        def step(self, player, session_id, name, client_ts, server_ts, seq, params):
+            if self.sessions is None and self.leader is None:
+                leader = leaders.pop(player, None)
+                if leader is None:
+                    self.sessions = {}
+                    leaders[player] = self
+                else:
+                    self.leader = leader
+            if self.leader is not None or session_id is None or client_ts is None:
+                return
+            state = self.sessions.get(session_id)
+            if state is None:
+                state = self.sessions[session_id] = SessionState()
+            state.add(name, client_ts, server_ts, seq, params)
 
-class _AverageSessionLength(_SessionLengths):
-    """Average length of the finished sessions: an open one has no final length yet."""
+        def states(self):
+            owner = self.leader or self
+            return (owner.sessions or {}).values()
 
-    def finalize(self):
-        now = session_state.clock()
-        lengths = [
-            state.seconds for state in self.sessions.values() if state.outcome(now)[0] == "closed"
-        ]
-        return sum(lengths) / len(lengths) if lengths else None
+    class Average(Lengths):
+        """Average length of the finished sessions: an open one has no final length yet."""
 
+        def finalize(self):
+            now = session_state.clock()
+            lengths = [
+                state.seconds for state in self.states() if state.outcome(now)[0] == "closed"
+            ]
+            return sum(lengths) / len(lengths) if lengths else None
 
-class _TotalSessionLength(_SessionLengths):
-    def finalize(self):
-        if not self.sessions:
-            return None
-        return sum(state.seconds for state in self.sessions.values())
+    class Total(Lengths):
+        def finalize(self):
+            states = list(self.states())
+            if not states:
+                return None
+            return sum(state.seconds for state in states)
+
+    return Average, Total
 
 
 def _player_progress(connection, source, condition, args, ids):
@@ -1158,8 +1181,9 @@ def players(
         having = f"HAVING {' AND '.join(clauses)}" if clauses else ""
         connection.create_function("version_key", 1, version_key, deterministic=True)
         connection.create_aggregate("newest_version", 1, _NewestVersion)
-        connection.create_aggregate("average_session_length", 6, _AverageSessionLength)
-        connection.create_aggregate("total_session_length", 6, _TotalSessionLength)
+        average, total_length = _session_length_aggregates()
+        connection.create_aggregate("average_session_length", 7, average)
+        connection.create_aggregate("total_session_length", 7, total_length)
         anonymous_events = connection.execute(
             f"SELECT count(*) FROM {table} WHERE {condition} AND NOT ({source.identified})", args
         ).fetchone()[0]
@@ -1170,7 +1194,7 @@ def players(
             (*args, *total_args),
         ).fetchone()[0]
         session_values = (
-            f"{session}, name, client_ts, server_ts, {source.param('seq')}, "
+            f"{player}, {session}, name, client_ts, server_ts, {source.param('seq')}, "
             f"CASE WHEN name IN ({WATCHED_SQL}) THEN {source.params} END"
         )
         rows = connection.execute(
