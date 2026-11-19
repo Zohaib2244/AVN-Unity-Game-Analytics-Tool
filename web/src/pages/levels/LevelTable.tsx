@@ -68,7 +68,9 @@ type Props = {
 
 export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump, onJumped, onOpen }: Props): ReactElement {
   // Levels far harder than their neighbours: one more chip in the answer strip; nothing shown while it loads or fails.
-  const difficulty = useRead<LevelDifficulty>(difficultyPath(game, filters));
+  // The finder counts every player, so it is only asked (and shown) when the table does too.
+  const everyone = scope !== 'first_session' && !nav.excludeReturners;
+  const difficulty = useRead<LevelDifficulty>(difficultyPath(game, filters), { enabled: everyone });
   const { toast } = useNotify();
   // Back from a level's page: the same page of levels, then the same scroll position once the rows are there.
   const [spot] = useState(() => returnSpot(game.id));
@@ -143,7 +145,7 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
           }
           return (
             <>
-              <LevelAnswer levels={result.levels} minimum={minimum} excludeReturners={nav.excludeReturners} outliers={difficulty.data?.available ? difficulty.data.levels : []} onJump={jumpTo} />
+              <LevelAnswer levels={result.levels} minimum={minimum} excludeReturners={nav.excludeReturners} outliers={everyone && difficulty.data?.available ? difficulty.data.levels : []} onJump={jumpTo} />
               <LevelSummary open={summary} onClose={() => setSummary(false)} levels={result.levels} minimum={minimum} dropFlag={display.dropFlag} quitFlag={display.quitFlag} firstSession={scope === 'first_session'} excludeReturners={nav.excludeReturners} onJump={jumpTo} onOpen={onOpen} />
               <div className="table-wrap level-scroll levels-scroll" tabIndex={0} role="region" aria-label="Level results">
                 <table className="levels-grid">

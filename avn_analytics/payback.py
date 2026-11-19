@@ -74,13 +74,17 @@ def forecast(observed, cost_per_install):
     latest_day = points[-1][0]
     predicted = {f"day_{mark}": round(_at(curve, mark), 4) for mark in MARKS}
     day = _break_even(curve, cost_per_install)
-    if day is None:
+    # what has happened is said as fact: the first day mark whose revenue already covers the cost
+    reached = next((mark for mark, _, value in points if value >= cost_per_install), None)
+    if reached is not None:
+        summary = (
+            "Paid back on the install day." if reached == 0 else f"Paid back by day {reached}."
+        )
+    elif day is None:
         summary = f"Not expected to pay back within {HORIZON_DAYS} days."
-    elif day <= latest_day:
-        summary = f"Already paid back around day {day}."
     else:
         summary = f"Expected to pay back around day {day}."
-    if state == "thin":
+    if state == "thin" and reached is None:
         summary += f" Based on only {players} players, so treat it as rough."
     return {
         "state": state,
@@ -88,6 +92,7 @@ def forecast(observed, cost_per_install):
         "predicted": predicted,
         "based_on_day": latest_day,
         "players": players,
+        "paid_back_by": reached,
         "summary": summary,
     }
 
@@ -99,5 +104,6 @@ def _none(summary):
         "predicted": {},
         "based_on_day": None,
         "players": 0,
+        "paid_back_by": None,
         "summary": summary,
     }

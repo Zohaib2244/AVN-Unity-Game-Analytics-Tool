@@ -92,6 +92,7 @@ def test_the_planted_hard_level_is_found(hard_game):
     assert data["available"] is True
     assert [item["level"] for item in data["levels"]] == [5]
     assert data["levels"][0]["fail_rate"] == 0.75
+    assert data["levels"][0]["reasons"][0]["count"] == 120  # 3 failed tries x 40 players
     assert data["summary"].startswith("Level 5 stands out: 75% of finished tries fail")
     from test_backend import AUTH
 

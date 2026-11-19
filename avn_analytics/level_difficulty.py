@@ -65,6 +65,7 @@ def flag(levels, window=WINDOW, min_excess=MIN_EXCESS, min_ratio=MIN_RATIO):
                 reasons.append(
                     {
                         "metric": metric,
+                        "count": row.get(f"{short}_count"),
                         "value": round(value, 4),
                         "expected": round(expected, 4),
                         "excess": round(excess, 4),
@@ -119,6 +120,8 @@ def find(storage, game_id, start, end, filters, min_attempts=MIN_ATTEMPTS, limit
         levels.append(
             {
                 **row,
+                "fail_count": row["failed"],
+                "stop_count": stopped.get(row["level"], 0),
                 "fail_rate": row["failed"] / finished if enough else None,
                 "stop_share": (
                     stopped.get(row["level"], 0) / row["players"]
@@ -145,7 +148,8 @@ def find(storage, game_id, start, end, filters, min_attempts=MIN_ATTEMPTS, limit
             "fail_rate = Failed / (Completed + Failed) tries; stop_share = players whose "
             "furthest level in the range is this one / players who started it (includes players "
             "still playing, so it is only compared with nearby levels). expected = median of the "
-            f"levels within {WINDOW} either side with enough data. A level is listed when it is "
+            f"levels within {WINDOW} either side with enough data. count = the failed tries or "
+            "the players who stopped. A level is listed when it is "
             f"at least {round(MIN_EXCESS * 100)} points and {MIN_RATIO}x above that."
         ),
         "levels_judged": judged,

@@ -1276,19 +1276,22 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 .live-table { width: 100%; }
 .live-table td { vertical-align: top; }
 .live-table .c-time { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.live-table .c-player, .live-table .c-build { white-space: nowrap; }
-.live-table .live-params { max-width: 0; width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-sm); }
-.live-table .live-params.open { white-space: normal; }
-.live-table .live-params pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.live-table .c-time, .live-table .c-event, .live-table .c-player, .live-table .c-build, .live-table .c-copy { width: 1%; white-space: nowrap; }
+.live-table .live-params { max-width: 0; width: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-sm); }
+.live-table .live-detail td { padding-top: 4px; padding-bottom: 14px; }
+.live-table .live-detail dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0 0 8px; font-size: var(--fs-sm); }
+.live-table .live-detail dt { color: var(--muted); }
+.live-table .live-detail dd { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.live-table .live-detail pre { margin: 0; font-family: var(--font-mono); font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
 .live-table .icon-button { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; border-radius: var(--r-ctl); }
 .live-table .icon-button:hover { color: var(--text); }
 @media (max-width: 640px) {
   .live-head .quiet-actions { width: 100%; margin-left: 0; }
   .live-head .live-state { margin-right: auto; }
+  .live-since { display: none; }
   .live-table { table-layout: fixed; }
-  .live-table .c-player, .live-table .c-build { display: none; }
   .live-table th.c-time { width: 76px; }
-  .live-table th.c-event { width: 38%; }
+  .live-table th.c-event { width: 38%; white-space: normal; }
   .live-table th.c-copy { width: 40px; }
   .live-table .c-copy { padding-left: 4px; padding-right: 8px; }
   .live-table td.c-event { overflow: hidden; text-overflow: ellipsis; }
@@ -1296,5 +1299,5 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 }
 
 /* Acquisition: the chosen campaign's payback forecast, above its cohorts */
-.payback-line { display: flex; align-items: center; gap: 8px; margin: 0; padding: 10px 16px; border-bottom: var(--bw) solid var(--line); font-size: var(--fs-sm); color: var(--text); }
+.payback-line { display: flex; align-items: center; gap: 8px; margin: 0; padding: 12px 16px; border-bottom: var(--bw) solid var(--line); font-size: var(--fs-md); font-weight: 600; color: var(--text); }
 .payback-line.few { color: var(--muted); }

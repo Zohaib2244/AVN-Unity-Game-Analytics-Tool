@@ -454,7 +454,7 @@ export type ReturnGoal = { day: number; percent: number };
 export type ReturnGoals = { game: ReturnGoal[]; campaigns: Record<string, ReturnGoal[]> };
 export type CostState = { state: 'off' | 'no_app_id' | 'not_allowed' | 'ok' | 'failed'; app_id?: string; fetched_at?: string; detail?: string; not_final_from?: string | null };
 export type ValueByDay = Record<string, { players: number; per_player: number | null }>;
-export type Payback = { state: 'ok' | 'thin' | 'none'; break_even_day: number | null; predicted: Record<string, number>; based_on_day: number | null; players: number; summary: string };
+export type Payback = { state: 'ok' | 'thin' | 'none'; break_even_day: number | null; predicted: Record<string, number>; based_on_day: number | null; players: number; paid_back_by: number | null; summary: string };
 export type AcquisitionRow = {
   value: string; installs: number; paid?: boolean; payback?: Payback;
   retention: Record<string, { players: number; rate: number | null }>;
@@ -474,6 +474,6 @@ export type AcquisitionCohorts = {
 };
 export type CostSettings = { app_id: string; typed_app_id: string; default_app_id: string; goals: ReturnGoals; first_sdk_version: string; configured: boolean };
 
-export type LevelOutlierReason = { metric: 'fail_rate' | 'stop_share'; value: number; expected: number; excess: number; words: string; short: string };
+export type LevelOutlierReason = { metric: 'fail_rate' | 'stop_share'; count: number; value: number; expected: number; excess: number; words: string; short: string };
 export type LevelOutlier = { level: number; attempts: number; players: number; fail_rate: number | null; stop_share: number | null; reasons: LevelOutlierReason[] };
 export type LevelDifficulty = { available: true; summary: string; levels_judged: number; min_attempts: number; levels: LevelOutlier[] } | { available: false; note: string };

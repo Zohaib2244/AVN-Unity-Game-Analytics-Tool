@@ -91,3 +91,20 @@ browser verification at wide, rail and phone widths before they are called finis
 - [ ] 4 Device and country performance
 - [ ] 5 What separates players who stay
 - [ ] 6 Churn-risk lists
+
+## Notes from the UX audit of slices 1-3 (2026-11-19)
+
+Fixed: the Levels chip ignored the first-session / no-return scope (the finder counts every
+player, so the chip is only asked for and shown under Everyone); chip shows count first with one
+decimal and names one level only; Live events opens a full-width detail row (player, build,
+session, received, parameters) and keeps phone columns to time, event, parameters; status time
+only in the tooltip on phones; Pause has no clock icon; a mistyped ID offers "Show every player";
+payback says "Paid back by day N" once it has happened.
+
+Found but not changed here (already there before this branch):
+- One test event from a new build makes it "Latest", so Acquisition (and other pages) open
+  empty on the default build filter. Live events makes test-device events more common, so this
+  will be hit more. Possible fix: Latest needs a minimum number of players, or skips test builds.
+- Acquisition Sources "Return" says "set a goal" on every row when no goals are set (R10.2).
+- The "Fewest finish" chip doesn't say what its percentage is a share of.
+- Suggested rule R1.5: scoped controls drive everything in their region.

@@ -27,7 +27,7 @@ export function LevelAnswer({ levels, minimum, excludeReturners, outliers = [], 
   const named = new Set([largestDrop?.level, ...others.map((item) => item.row?.level)]);
   const fresh = outliers.filter((item) => !named.has(item.level));
   const odd = fresh[0];
-  const oddTitle = fresh.map((item) => `Level ${item.level}: ${item.reasons.map((reason) => reason.words).join('; ')}`).join('\n');
+  const oddTitle = odd ? `${odd.reasons.map((reason) => reason.words).join('; ')} (${odd.reasons[0]!.metric === 'fail_rate' ? 'failed tries' : 'players who went no further'})` : '';
   return (
     <div className="sumstrip levels-answer">
       {largestDrop && drop ? (
@@ -37,7 +37,7 @@ export function LevelAnswer({ levels, minimum, excludeReturners, outliers = [], 
       ) : <p className="muted">No level has the {number(minimum)} players needed to name a worst one yet.</p>}
       <span className="answer-others">
         {others.map((item) => <button key={item.key} type="button" className="answer-chip" onClick={() => onJump(item.row!.level)}><span>{item.label}</span><b>Level {item.row!.level}</b><em>{item.value}</em></button>)}
-        {odd ? <button type="button" className="answer-chip" title={oddTitle} onClick={() => onJump(odd.level)}><span>Harder than nearby</span><b>Level {odd.level}</b><em>{odd.reasons[0]!.metric === 'fail_rate' ? `${percent(Math.round(odd.reasons[0]!.value * 100))} fail` : `${percent(Math.round(odd.reasons[0]!.value * 100))} stop`}{fresh.length > 1 ? ` · +${fresh.length - 1}` : ''}</em></button> : null}
+        {odd ? <button type="button" className="answer-chip" title={oddTitle} onClick={() => onJump(odd.level)}><span>{odd.reasons[0]!.metric === 'fail_rate' ? 'Fails far more than nearby' : 'Loses far more than nearby'}</span><b>Level {odd.level}</b><em>{shareText(odd.reasons[0]!.count, odd.reasons[0]!.value * 100)}</em></button> : null}
       </span>
     </div>
   );

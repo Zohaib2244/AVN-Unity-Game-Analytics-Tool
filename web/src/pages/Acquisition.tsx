@@ -167,7 +167,7 @@ function CohortPanel({ game, filters, cohort, onCohort, settings, payback, onDay
           <button type="button" className="btn primary" onClick={seePlayers}><Ico name="users" size={14} /> See these players</button>
         </div>
       </div>
-      {payback && payback.state !== 'none' ? <p className={`payback-line${payback.state === 'thin' ? ' few' : ''}`} title={`Fitted to the ad revenue per install so far, up to day ${payback.based_on_day}, and carried on to day 180.`}><Ico name="clock" size={14} /> {payback.summary}</p> : null}
+      {payback && payback.state !== 'none' ? <p className={`payback-line${payback.state === 'thin' ? ' few' : ''}`} title={payback.paid_back_by != null ? 'Ad revenue per install has already covered the cost per install.' : `Forecast: fitted to the ad revenue per install so far (up to day ${payback.based_on_day}) and carried on to day 180.`}><Ico name="clock" size={14} /> {payback.summary}</p> : null}
       <QueryRegion query={data} path={path} skeleton={<Skeleton kind="chart" />}>
         {(result) => (!result.available ? <p className="help panel-body">{result.note}</p> : mode === 'install' ? <InstallDays data={result} onDay={onDay} /> : <CalendarDays data={result} />)}
       </QueryRegion>

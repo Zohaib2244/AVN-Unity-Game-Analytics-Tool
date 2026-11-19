@@ -25,7 +25,11 @@ def test_already_paid_back_is_said_so():
     result = payback.forecast(_observed(lambda d: 0.5 * (d + 1) ** 0.5), cost_per_install=0.43)
     assert result["break_even_day"] is not None
     assert result["break_even_day"] <= 30
-    assert "Already paid back" in result["summary"]
+    # 0.5 >= 0.43 already on the install day, observed: said as a fact, not a forecast
+    assert result["paid_back_by"] == 0
+    assert result["summary"] == "Paid back on the install day."
+    later = payback.forecast(_observed(lambda d: 0.2 * (d + 1) ** 0.5), cost_per_install=0.43)
+    assert later["paid_back_by"] == 7 and later["summary"] == "Paid back by day 7."
 
 
 def test_thin_data_is_flagged():
