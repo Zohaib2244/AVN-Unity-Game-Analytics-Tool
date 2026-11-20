@@ -288,3 +288,22 @@ def test_occurrence_session_exit_uses_last_level_event_even_when_it_is_not_selec
     result = features.finish(events, {1: {"started": {}}, 2: {"started": {}}})
     assert result[1]["*"][2] == 1
     assert result[2]["*"][2] == 1
+
+
+def test_summary_keeps_exact_seconds_compactly():
+    rows = long_session()
+    part = journeys.player_levels(
+        "player", rows, None, "all", rows[0]["client_ts"], journeys._Reader(stories.Labeler())
+    )
+    part["progress"][1]["seconds"] = [3.25, 1.5, 9.0, 0.125]
+    plain, compact = journeys._LevelTotals(), journeys._LevelSummary()
+    for totals in (plain, compact):
+        totals.add(part)
+        totals.add(part)
+    # The same exact samples, so the same median and percentile, at 8 bytes a sample.
+    assert sorted(compact.levels[1]["seconds"]) == sorted(plain.levels[1]["seconds"])
+    assert compact.levels[1]["seconds"].itemsize == journeys.SECOND_BYTES
+    # Packing (what a prepared answer stores) turns them into a plain list.
+    assert json.loads(json.dumps(compact.levels[1]["seconds"], default=sorted)) == sorted(
+        plain.levels[1]["seconds"]
+    )

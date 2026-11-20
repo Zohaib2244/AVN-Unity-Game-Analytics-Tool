@@ -6,6 +6,7 @@ Built on the same live event queries as insights.py, but everything is named in 
 
 import json
 import re
+from array import array
 from bisect import bisect_left, bisect_right
 from collections import Counter, namedtuple
 from datetime import datetime
@@ -31,6 +32,7 @@ TOP_EXITS = 25
 JOURNEY_PLAYERS = 200
 MAX_PLAYER_EVENTS = 3000
 MAX_SIGNATURE = 14
+SECOND_BYTES = 8  # one retained completion time (a double) in a prepared Levels summary
 START_EXIT = "__start__"
 # Events counted as power-ups on a level: any event with one of these in its name that also
 # carries a level number (a parameter with "level" in its name, e.g. LEVEL_NUMBER).
@@ -1057,6 +1059,8 @@ def _limited(found, kind, scope):
 class _LevelTotals:
     """Adds players' parts (player_levels) up, in player order, into the dashboards' numbers."""
 
+    new_seconds = staticmethod(list)
+
     def __init__(self):
         self.levels = {}
         self.groups = {}
@@ -1076,7 +1080,7 @@ class _LevelTotals:
                     "completions": 0,
                     "fails": 0,
                     "restarts": 0,
-                    "seconds": [],
+                    "seconds": self.new_seconds(),
                     "quit": 0,
                     "powerups": Counter(),
                     "other": Counter(),
@@ -1086,7 +1090,7 @@ class _LevelTotals:
             item["completed"] += mine["completed"]
             for key in ("attempts", "completions", "fails", "restarts", "quit"):
                 item[key] += mine[key]
-            item["seconds"] += mine["seconds"]
+            item["seconds"].extend(mine["seconds"])
             if mine["powerups"]:
                 item["powerups"].update(mine["powerups"])
             if mine["other"]:
@@ -1176,6 +1180,10 @@ def group_summary(groups):
 class _LevelSummary(_LevelTotals):
     """Exact totals which retain counts, not every player's record in every group."""
 
+    # Every completion time is kept (the median and 90th percentile are exact), as 8-byte doubles
+    # rather than Python floats (about 32 bytes each); packing sorts them into a plain list.
+    new_seconds = staticmethod(lambda: array("d"))
+
     def __init__(self, memory_budget=None):
         super().__init__()
         self.memory_budget = memory_budget
@@ -1189,7 +1197,7 @@ class _LevelSummary(_LevelTotals):
             previous = self.levels.get(number)
             if previous is None:
                 self.memory_used += 1536
-            self.memory_used += 48 * len(mine["seconds"])
+            self.memory_used += SECOND_BYTES * len(mine["seconds"])
             for field in ("powerups", "other"):
                 existing = previous[field] if previous else {}
                 self.memory_used += sum(
