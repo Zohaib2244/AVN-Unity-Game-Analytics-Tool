@@ -1329,9 +1329,24 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
   .stay-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; padding: 10px 16px; border-top: var(--bw) solid var(--line); }
   .stay-table td { display: block; padding: 0; border: 0; text-align: left; min-width: 0; max-width: none; white-space: normal; overflow: visible; text-overflow: clip; }
   .stay-table td:first-child { grid-column: 1 / -1; }
-  .stay-table td[data-label]::before { content: attr(data-label); display: block; font-size: var(--fs-sm); color: var(--dim); }
+  .stay-table td[data-label]::before { content: attr(data-label); display: block; font-family: var(--font-ui); font-size: var(--fs-sm); color: var(--dim); }
   .stay-table td:last-child { grid-column: 1 / -1; }
   .stay-table td:last-child:empty { display: none; }
 }
 
 .kpis.kpis-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* At risk: a player's early-behaviour note sits under their ID; on a phone each row is a small card. */
+.risk-note { display: block; font-size: var(--fs-sm); color: var(--dim); white-space: normal; max-width: 60ch; }
+.risk-table td:first-child { white-space: normal; }
+@container app (max-width: 640px) {
+  .risk-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .risk-table, .risk-table tbody { display: block; }
+  .risk-table tr { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 4px 12px; padding: 10px 16px; border-top: var(--bw) solid var(--line); }
+  .risk-table td { display: block; padding: 0; border: 0; text-align: left; min-width: 0; max-width: none; white-space: normal; }
+  .risk-table td:first-child { grid-column: 1 / -1; }
+  .risk-table td[data-label]:not(:first-child)::before { content: attr(data-label); display: block; font-family: var(--font-ui); font-size: var(--fs-sm); color: var(--dim); }
+}
+
+.kpis .kpi-button { height: 100%; }
+.kpis .kpi-button > .kpi { height: 100%; box-sizing: border-box; }

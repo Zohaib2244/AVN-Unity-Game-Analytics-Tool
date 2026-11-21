@@ -22,10 +22,11 @@ import { KeysPage } from '@/pages/Keys';
 import { LiveEventsPage } from '@/pages/LiveEvents';
 import { PerformancePage } from '@/pages/Performance';
 import { WhoStaysPage } from '@/pages/WhoStays';
+import { AtRiskPage } from '@/pages/AtRisk';
 import { GameSettingsPage } from '@/pages/GameSettings';
 
 const PAGES: Record<Section, (props: { game: Game }) => ReactElement> = {
-  overview: GameOverviewPage, levels: LevelsPage, players: PlayersPage, sessions: SessionsPage, ads: AdsPage, acquisition: AcquisitionPage, performance: PerformancePage, stay: WhoStaysPage, exports: ExportsPage,
+  overview: GameOverviewPage, levels: LevelsPage, players: PlayersPage, sessions: SessionsPage, ads: AdsPage, acquisition: AcquisitionPage, performance: PerformancePage, stay: WhoStaysPage, risk: AtRiskPage, exports: ExportsPage,
   dictionary: DictionaryPage, 'event-setup': EventSetupPage, live: LiveEventsPage, keys: KeysPage, settings: GameSettingsPage,
 };
 

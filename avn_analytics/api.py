@@ -32,6 +32,7 @@ from . import (
     ad_report,
     ads,
     avn_events_standard,
+    churn_risk,
     cleanup,
     costs,
     device_specs,
@@ -1295,6 +1296,39 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             "performance",
             (days, chosen),
             lambda: segment_performance.report(storage, str(game_id), *days, chosen),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/churn-risk")
+    def insights_churn_risk(
+        game_id: UUID,
+        state: Literal["any", "slipping", "gone"] = "any",
+        limit: Annotated[int, Query(ge=1, le=churn_risk.MAX_LISTED)] = 100,
+    ):
+        """Players quiet longer than their own habit (churn_risk.py); as of the last data day."""
+        return cached(
+            game_id,
+            "churn-risk",
+            (state, limit),
+            lambda: churn_risk.at_risk(storage, str(game_id), state, limit),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/churn-risk/export")
+    def churn_risk_export(
+        game_id: UUID,
+        principal: Current,
+        state: Literal["any", "slipping", "gone"] = "any",
+    ):
+        result = churn_risk.at_risk(storage, str(game_id), state, everything=True)
+        if not result["available"]:
+            raise HTTPException(404, result["note"])
+        accounts.audit(principal, "export.download", str(game_id), f"churn risk ({state})")
+        return Response(
+            churn_risk.csv_text(result),
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{game_id}-at-risk-{state}.csv"',
+                "Cache-Control": "no-store",
+            },
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/separators")

@@ -499,3 +499,9 @@ export type SeparatorOutcome = 'day_1' | 'day_3' | 'day_7' | 'pays';
 export type SeparatorReport =
   | { available: true; outcome: SeparatorOutcome; outcome_label: string; window_days: number; summary: string; means: string; players: number; outcome_players: number; rate: number; facts_tried: number; more_likely: SeparatorFinding[]; less_likely: SeparatorFinding[] }
   | { available: false; note: string };
+
+export type ChurnState = 'any' | 'slipping' | 'gone';
+export type ChurnPlayer = { player: string; state: 'slipping' | 'gone'; days_played: number; usual_gap: number; days_away: number; ratio: number; last_day: string; words: string; note?: string; missing?: string };
+export type ChurnReport =
+  | { available: true; as_of: string; means: string; counts: { measured: number; steady: number; slipping: number; gone: number; long_gone: number; too_new: number }; state: ChurnState; early_facts: Array<{ human: string; with_rate: number; without_rate: number }>; listed: number; total: number; players: ChurnPlayer[] }
+  | { available: false; note: string };

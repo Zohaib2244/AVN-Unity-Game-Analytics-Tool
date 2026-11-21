@@ -14,13 +14,13 @@ export type ChipKind =
   | 'ad_format' | 'ad_network' | 'ad_creative' | 'ad_failed' | 'earned'
   | 'paid_back' | 'cost'
   | 'highest_level' | 'stopped_on'
-  | 'days_active' | 'sessions' | 'last_seen'
+  | 'days_active' | 'sessions' | 'last_seen' | 'churn_risk'
   | 'event';
 
 export type Chip = {
   kind: ChipKind;
   values?: string[];
-  value?: 'paid' | 'organic' | 'none';
+  value?: 'paid' | 'organic' | 'none' | 'any' | 'slipping' | 'gone';
   min?: number | null; max?: number | null;
   from?: string; to?: string;
   level?: number;
@@ -40,7 +40,7 @@ export const MENU: Array<{ heading: string; items: Array<{ kind: ChipKind; label
   { heading: 'Ads', items: [{ kind: 'ad_format', label: 'Saw a format' }, { kind: 'ad_network', label: 'Saw a network' }, { kind: 'ad_creative', label: 'Saw a creative' }, { kind: 'ad_failed', label: 'Had an ad fail' }, { kind: 'earned', label: 'Earned from ads' }] },
   { heading: 'Money', items: [{ kind: 'paid_back', label: 'Paid back their cost' }, { kind: 'cost', label: 'Cost to acquire' }] },
   { heading: 'Progress', items: [{ kind: 'highest_level', label: 'Highest level' }, { kind: 'stopped_on', label: 'Stopped on a level' }] },
-  { heading: 'Activity', items: [{ kind: 'days_active', label: 'Days active' }, { kind: 'sessions', label: 'Sessions' }, { kind: 'last_seen', label: 'Last seen' }] },
+  { heading: 'Activity', items: [{ kind: 'days_active', label: 'Days active' }, { kind: 'sessions', label: 'Sessions' }, { kind: 'last_seen', label: 'Last seen' }, { kind: 'churn_risk', label: 'At risk' }] },
   { heading: 'Anything else', items: [{ kind: 'event', label: 'Did an event…' }, { kind: 'event', label: 'Never did an event…', never: true }] },
 ];
 
@@ -49,6 +49,7 @@ export function blankChip(kind: ChipKind, never = false): Chip {
   if (VALUE_KINDS[kind]) return { kind, values: [] };
   switch (kind) {
     case 'install_type': return { kind, value: 'paid' };
+    case 'churn_risk': return { kind, value: 'any' };
     case 'installed': return { kind, from: '', to: '' };
     case 'ad_failed': return { kind, values: [] };
     case 'earned': return { kind, min: 0.5, max: null };
@@ -100,6 +101,7 @@ export function chipWords(chip: Chip): [string, string] {
     case 'days_active': return ['played on', `${rangeText(chip, plainNumber)} days`];
     case 'sessions': return ['played', `${rangeText(chip, plainNumber)} sessions`];
     case 'last_seen': return chip.more_than_days != null ? ['not seen for', `${plainNumber(chip.more_than_days)}+ days`] : ['seen in the last', `${plainNumber(chip.within_days ?? 0)} days`];
+    case 'churn_risk': return ['are', chip.value === 'slipping' ? 'slipping away' : chip.value === 'gone' ? 'gone quiet for good' : 'at risk of leaving'];
     case 'event': {
       const name = chip.event || '…';
       const test = chip.param ? chip.op ? ` with ${chip.param} ${OP_WORDS[chip.op] ?? chip.op}${valuelessOp(chip.op) ? '' : ` ${chip.rule_value ?? ''}`}` : ` with ${chip.param} ${orList(chip.values)}` : '';
@@ -130,7 +132,7 @@ export function groupParam(chips: Chip[]): string {
 /** A one-line summary of a saved group for the side list. */
 export const groupSummary = (chips: Chip[]): string => chips.map((chip) => chipWords(chip).join(' ')).join(' · ');
 
-const CHIP_KINDS: ChipKind[] = ['campaign', 'media_source', 'install_type', 'installed', 'ad_format', 'ad_network', 'ad_creative', 'ad_failed', 'earned', 'paid_back', 'cost', 'highest_level', 'stopped_on', 'days_active', 'sessions', 'last_seen', 'event'];
+const CHIP_KINDS: ChipKind[] = ['campaign', 'media_source', 'install_type', 'installed', 'ad_format', 'ad_network', 'ad_creative', 'ad_failed', 'earned', 'paid_back', 'cost', 'highest_level', 'stopped_on', 'days_active', 'sessions', 'last_seen', 'churn_risk', 'event'];
 
 /** One chip sent whole as `chip=` (a finding's "See players"): kept only when it is a known, complete chip. */
 function chipFromJSON(text: string): Chip[] {

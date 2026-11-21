@@ -90,7 +90,7 @@ browser verification at wide, rail and phone widths before they are called finis
 - [x] 3 Level difficulty finder: `level_difficulty.py`, `GET .../insights/levels/difficulty`, NutBot/MCP `get_level_outliers`, a "Harder than nearby" chip in the Levels answer strip (only when no other chip names that level)
 - [x] 4 Device and country performance: `segment_performance.py` (bad exits and ads that fail to show by country, device tier, RAM, OS version, model; a group is compared with everyone else and flagged only with enough launches/ads and a clear gap; dimensions that describe the same players are merged into one finding), `GET .../insights/performance`, NutBot/MCP `get_where_it_breaks`, Performance page under Analyze. `stability._launches` / `_device_tables` were factored out so both read the same tables
 - [x] 5 What separates players who stay: `separators.py` (first-open cohort; outcomes come back on day 1/3/7 or pay in 7 days; first-day facts: events sent, repeated, 2+ sessions, country/platform/version/device/install source; wide 99.9% margin, 30+ players each side, 5+ points; mirror-image and identical facts merged), `GET .../insights/separators`, NutBot/MCP `get_who_stays`, Who stays page under Analyze; Players accepts a whole `chip=` from the address
-- [ ] 6 Churn-risk lists
+- [x] 6 Churn-risk lists: `churn_risk.py` (each player's usual gap between play days vs how long they have been away; slipping 2x/3+ days, gone 5x/7+ days, long gone 60+ not listed; ranked slipping first then most engaged; a sentence per player and, from the separators, the first-day behaviour they skipped), `GET .../insights/churn-risk` and `/export` (CSV), Players chip kind `churn_risk` (resolved to the live player list like the cost chips), NutBot/MCP `get_churn_risk`, At risk page under Analyze
 
 ## Notes from the UX audit of slices 1-3 (2026-11-19)
 
@@ -132,3 +132,18 @@ Known limits:
   link needs saved groups made of player IDs (too long for an address); left for slice 6, which needs
   exportable saved lists anyway.
 - "Sent it at least N times" facts have no chip (the Players page can't say how many times in a window).
+
+## Notes from slice 6 (2026-11-21)
+
+Audit found 12 things; fixed: the page opens on Slipping (Both made Gone invisible under the 50-row cap),
+the choice is kept per game, KPI tiles say what Slipping and Gone mean (2x / 5x their usual gap) and are
+buttons for the list, "a habit comparison, not a prediction" is on screen, the early-behaviour sentence
+(same on every row) is shown once at the foot with a short "Skipped ..." line per player, one name
+("At risk") across nav, chip menu and editor, phone cards use one label face.
+Known limits:
+- "Open in Players" opens the chip, and the Players page only counts players active in the days it shows
+  (and its build filter), so its number is smaller than the page's; the link says so. It is how every
+  Players chip behaves.
+- The group is live: it is recomputed from the data (cached a few minutes), not a frozen list of IDs.
+- A weekly player who is a day late is not flagged (2x and 3+ days): rhythm, not a clock.
+- The thresholds (2x, 5x, 60 days) and the separators' wide margin are untested on real game data.

@@ -66,7 +66,7 @@ def _event_label(labeler, key, window_days, at_least=1):
     name, _, state = key.partition(" ")
     human = labeler.label(name, {"STATE": state} if state else {}) or key
     count = "" if at_least <= 1 else f" at least {at_least} times"
-    return f"had “{human}”{count} {_times(window_days)}"
+    return f"had “{human}”{count} {_times(window_days)}", human
 
 
 def _chip(feature):
@@ -289,11 +289,13 @@ def analyse(storage, game_id, start, end, filters, outcome="day_7", window_days=
     features = []
     popular = sorted(counts.items(), key=lambda item: (-len(item[1]), item[0]))[:MAX_KEYS]
     for key, per_player in popular:
+        fact_label, human = _event_label(labeler, key, window_days)
         features.append(
             {
                 "kind": "event",
                 "key": key,
-                "label": _event_label(labeler, key, window_days),
+                "human": human,
+                "label": fact_label,
                 "players": set(per_player),
             }
         )
@@ -305,8 +307,9 @@ def analyse(storage, game_id, start, end, filters, outcome="day_7", window_days=
                 {
                     "kind": "event",
                     "key": key,
+                    "human": human,
                     "at_least": usual,
-                    "label": _event_label(labeler, key, window_days, usual),
+                    "label": _event_label(labeler, key, window_days, usual)[0],
                     "players": repeat,
                 }
             )

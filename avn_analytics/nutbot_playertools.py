@@ -1,7 +1,7 @@
 """NutBot's level-attempt, player and query tools (see level_attempts.py, player_tools.py and
 counting.py)."""
 
-from . import counting, level_attempts, level_difficulty, player_tools, separators
+from . import churn_risk, counting, level_attempts, level_difficulty, player_tools, separators
 from .nutbot_base import RANGE_PROPS, STEP_SCHEMA, ToolError, _tool
 from .segments import SEGMENT_SCHEMA, SegmentedTools
 
@@ -106,6 +106,23 @@ PLAYER_TOOLS = [
         },
     ),
     _tool(
+        "get_churn_risk",
+        "Players who have gone quiet for longer than they usually do, with a sentence each and the early behaviour they lacked. Each player's usual gap is the median number of days between two days they started a session (players with at least 3 days played); slipping = away 2x that and 3+ days (still worth reaching), gone = 5x and 7+ days; away more than 60 days is long gone and not listed. Measured as of the last day the game sent data, test builds left out. state: any (default), slipping or gone. The list is ranked slipping first, then the most engaged. It is a habit comparison, not a prediction: say so. The Players page can hold the same group (chip At risk) and the page offers a CSV. No dates: it is always as of now.",
+        {
+            "state": {
+                "type": "string",
+                "enum": list(churn_risk.CHOICES),
+                "description": "any by default.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": churn_risk.MAX_LISTED,
+                "description": "How many players to list. Default 25.",
+            },
+        },
+    ),
+    _tool(
         "get_player_profile",
         "Who one player is, in a single call: first and last seen, where they came from (media source, campaign, channel, creative, organic or not), their device (tier, RAM, CPU cores, model, OS), their latest saved state (highest level, coin balances, power-up stock, purchased, subscribed, ads removed), what their ads earned (full-screen plus banner, and impressions by format), how their sessions ended (previous exit reasons at launch, levels ended by the app being killed) and a summary of their play (levels, ads, sessions, coins, power-ups). Attribution, device and the saved state look at everything the player ever sent; ad money and exits count only start to end.",
         {**PLAYER_ONLY_RANGE, "player": PLAYER},
@@ -185,6 +202,7 @@ PLAYER_LABELS = {
     "get_level_designs": "Comparing level designs",
     "get_level_outliers": "Finding levels that stand out",
     "get_who_stays": "Comparing players who stay with those who leave",
+    "get_churn_risk": "Finding players who have gone quiet",
     "get_player_profile": "Reading a player's profile",
     "get_player_raw_events": "Reading a player's raw events",
     "count_events": "Counting events",
@@ -250,6 +268,11 @@ class PlayerTools(SegmentedTools):
             self._segment_filters(run, args),
             args.get("outcome") or "day_7",
             args.get("window_days") or 1,
+        )
+
+    def tool_get_churn_risk(self, run, game_id, args):
+        return churn_risk.at_risk(
+            self.storage, game_id, args.get("state") or "any", args.get("limit") or 25
         )
 
     def tool_get_player_profile(self, run, game_id, args):
