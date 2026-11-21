@@ -31,8 +31,6 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from . import analytics
-
 
 def _read_only(path):
     connection = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
@@ -127,11 +125,7 @@ def slim(path, rows=SLIM_ROWS):
 
 
 def compact(path):
-    """VACUUM one database (keeps every row); returns the file size before and after.
-
-    Facts point at their raw event's row number. SQLite keeps those numbers through VACUUM, but
-    does not promise it; if any no longer match, the facts are checked again from the start
-    (pages read the raw events meanwhile) and wrong ones rewritten."""
+    """VACUUM one database (keeps every row); returns the file size before and after."""
     path = Path(path)
     before = path.stat().st_size
     connection = _connect(path)
@@ -139,37 +133,9 @@ def compact(path):
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         connection.execute("VACUUM")
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        moved = _facts_moved(connection)
-        if moved:
-            connection.execute("BEGIN IMMEDIATE")
-            end = connection.execute("SELECT coalesce(max(id), 0) FROM analytics_facts").fetchone()
-            analytics._set(
-                connection,
-                phase="values",
-                verify_cursor=0,
-                verify_until=end[0],
-                ready=0,
-                ready_at=None,
-            )
-            connection.execute("COMMIT")
     finally:
         connection.close()
-    return {"before_bytes": before, "after_bytes": path.stat().st_size, "facts_rechecked": moved}
-
-
-def _facts_moved(connection):
-    """Facts whose raw row is not the event they describe."""
-    if not connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE name='analytics_facts'"
-    ).fetchone():
-        return 0
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(analytics_facts)")}
-    if "event_row" not in columns:
-        return 0
-    return connection.execute(
-        "SELECT count(*) FROM analytics_facts AS fact LEFT JOIN events"
-        " ON events.rowid = fact.event_row WHERE events.event_id IS NOT fact.event_id"
-    ).fetchone()[0]
+    return {"before_bytes": before, "after_bytes": path.stat().st_size}
 
 
 def main(arguments=None):

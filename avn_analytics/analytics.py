@@ -30,14 +30,11 @@ from contextlib import contextmanager
 
 from .models import timestamp
 
-# 2: facts point at their raw row (event_row) instead of keeping a unique index on the 36-character
-# event ID: the same lookups, about 40 bytes less per event.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 1
 
 # Fact column -> how it is read from an events row. The trigger and the backfill both use these,
 # so facts written either way are identical. The values keep the type the JSON had.
 EXTRACTED = {
-    "event_row": "{row}.rowid",
     "event_id": "{row}.event_id",
     "name": "{row}.name",
     "client_ts": "{row}.client_ts",
@@ -62,8 +59,7 @@ CREATE TABLE IF NOT EXISTS analytics_meta (
 );
 CREATE TABLE IF NOT EXISTS analytics_facts (
     id INTEGER PRIMARY KEY,
-    event_row INTEGER NOT NULL UNIQUE,
-    event_id TEXT NOT NULL,
+    event_id TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     client_ts TEXT NOT NULL,
     server_ts TEXT NOT NULL,
@@ -216,7 +212,7 @@ def step(connection, backfill_rows=BACKFILL_ROWS, verify_rows=VERIFY_ROWS):
         added = _insert_from_events(
             connection,
             "events.rowid > ? AND events.rowid <= ? AND NOT EXISTS (SELECT 1 FROM analytics_facts"
-            " AS fact WHERE fact.event_row = events.rowid)",
+            " AS fact WHERE fact.event_id = events.event_id)",
             (cursor, upper),
         )
         _set(connection, verify_cursor=upper, repaired=int(meta["repaired"]) + added)
@@ -234,22 +230,22 @@ def step(connection, backfill_rows=BACKFILL_ROWS, verify_rows=VERIFY_ROWS):
             row[0]
             for row in connection.execute(
                 f"SELECT fact.id FROM analytics_facts AS fact JOIN events"
-                f" ON events.rowid = fact.event_row WHERE fact.id > ? AND fact.id <= ?"
+                f" ON events.event_id = fact.event_id WHERE fact.id > ? AND fact.id <= ?"
                 f" AND ({differs})",
                 (cursor, upper),
             )
         ]
         if wrong:  # rewrite them from their events; their new ids queue them for processing
             marks = ",".join("?" * len(wrong))
-            event_rows = [
+            event_ids = [
                 row[0]
                 for row in connection.execute(
-                    f"SELECT event_row FROM analytics_facts WHERE id IN ({marks})", wrong
+                    f"SELECT event_id FROM analytics_facts WHERE id IN ({marks})", wrong
                 )
             ]
             connection.execute(f"DELETE FROM analytics_facts WHERE id IN ({marks})", wrong)
             _insert_from_events(
-                connection, f"events.rowid IN ({','.join('?' * len(event_rows))})", event_rows
+                connection, f"events.event_id IN ({','.join('?' * len(event_ids))})", event_ids
             )
         _set(connection, verify_cursor=upper, repaired=int(meta["repaired"]) + len(wrong))
         if upper >= until:
@@ -299,7 +295,7 @@ def prepare_all(storage, game_id, *, dry_run=False):
         if dry_run:
             missing = connection.execute(
                 "SELECT count(*) FROM events WHERE NOT EXISTS (SELECT 1 FROM analytics_facts"
-                " AS fact WHERE fact.event_row = events.rowid)"
+                " AS fact WHERE fact.event_id = events.event_id)"
             ).fetchone()[0]
             return {**state, "events_without_facts": missing}
     while not state["ready"]:

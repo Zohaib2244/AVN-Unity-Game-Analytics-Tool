@@ -27,7 +27,7 @@ def test_events_are_stored_as_compact_json_without_repeating_their_columns(tmp_p
         rows = connection.execute(
             "SELECT events.event_id, events.name, events.client_ts, events.server_ts, payload,"
             " json_extract(payload, '$.params') AS raw_params, analytics_facts.params AS fact"
-            " FROM events JOIN analytics_facts ON analytics_facts.event_row = events.rowid"
+            " FROM events JOIN analytics_facts ON analytics_facts.event_id = events.event_id"
         ).fetchall()
         limit = connection.execute("PRAGMA journal_size_limit").fetchone()[0]
     assert rows and limit == WAL_SIZE_LIMIT
@@ -113,7 +113,6 @@ def test_slimming_older_events_keeps_every_value(tmp_path, monkeypatch, capsys):
     assert storage_report.main(["--game", game_id, "--slim", "--compact", "--yes"]) == 0
     line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert line["slimmed_events"] == len(rows) - 1
-    assert line["compacted"]["facts_rechecked"] == 0
     with storage.connect(path) as connection:
         after = connection.execute(
             "SELECT event_id, name, client_ts, server_ts, payload FROM events"
@@ -175,27 +174,17 @@ def test_storage_report_reads_only_and_compact_keeps_every_row(tmp_path, monkeyp
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
-def test_compact_rechecks_facts_whose_raw_row_moved(tmp_path):
-    storage = make_storage(tmp_path, analytics_read_mode="facts")
+def test_starting_up_does_not_rebuild_a_games_facts(tmp_path):
+    """Every service upgrades every game at startup; a rebuild there starves the others of the
+    write lock (a live deploy failed on it), so the facts layout must not change by release."""
+    storage = make_storage(tmp_path)
     game_id = _game(storage)
     path = storage.game_path(game_id)
     with storage.connect(path) as connection:
-        first, second = connection.execute(
-            "SELECT id, event_row FROM analytics_facts ORDER BY id LIMIT 2"
-        ).fetchall()
-        # As if VACUUM had renumbered two events (SQLite keeps the numbers, but doesn't promise).
-        connection.execute("UPDATE analytics_facts SET event_row=-1 WHERE id=?", (first["id"],))
-        connection.execute(
-            "UPDATE analytics_facts SET event_row=? WHERE id=?", (first["event_row"], second["id"])
-        )
-        connection.execute(
-            "UPDATE analytics_facts SET event_row=? WHERE id=?", (second["event_row"], first["id"])
-        )
-    assert storage_report.compact(path)["facts_rechecked"] == 2
+        meta = analytics.read_meta(connection)
+        facts = connection.execute("SELECT count(*) FROM analytics_facts").fetchone()[0]
+    assert meta["schema_version"] == "1" and analytics.SCHEMA_VERSION == 1
+    storage.initialize()
     with storage.connect(path) as connection:
-        assert not analytics.facts_ready(connection)  # pages read the raw events meanwhile
-        while not analytics.facts_ready(connection):
-            analytics.step(connection)
-            connection.commit()
-        assert storage_report._facts_moved(connection) == 0
-        assert analytics.read_meta(connection)["repaired"] == "2"
+        assert analytics.read_meta(connection) == meta
+        assert connection.execute("SELECT count(*) FROM analytics_facts").fetchone()[0] == facts

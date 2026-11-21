@@ -84,22 +84,21 @@ def delete(storage, game_id, chosen):
         for low in range(0, end, WINDOW):
             connection.execute("BEGIN IMMEDIATE")
             try:
-                rows = [
+                ids = [
                     row[0]
                     for row in connection.execute(
-                        f"SELECT rowid FROM events WHERE rowid>? AND rowid<=? "
+                        f"SELECT event_id FROM events WHERE rowid>? AND rowid<=? "
                         f"AND {VERSION} IN ({marks})",
                         (low, low + WINDOW, *chosen),
                     )
                 ]
-                if rows:
-                    found = ",".join("?" * len(rows))
-                    # Facts first, through their raw row (facts point at events by row).
+                if ids:
+                    found = ",".join("?" * len(ids))
+                    connection.execute(f"DELETE FROM events WHERE event_id IN ({found})", ids)
                     connection.execute(
-                        f"DELETE FROM analytics_facts WHERE event_row IN ({found})", rows
+                        f"DELETE FROM analytics_facts WHERE event_id IN ({found})", ids
                     )
-                    connection.execute(f"DELETE FROM events WHERE rowid IN ({found})", rows)
-                    removed += len(rows)
+                    removed += len(ids)
                 connection.commit()
             except BaseException:
                 connection.rollback()

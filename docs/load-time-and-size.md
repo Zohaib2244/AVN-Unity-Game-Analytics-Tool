@@ -75,20 +75,13 @@ Whole-history requests now stay flat as history grows; the others grow with the 
 
 Where an event's 1,750 bytes went: the raw row 821 (JSON envelope about 625), the facts copy 407,
 and nine indexes about 520. Measured again on the same generator after the changes below:
-**1,475 bytes per event, 16% less** (raw row 585, facts' unique index 13 instead of 50). Ingest
-also got faster (2,750 to 3,450 events/s here): fewer bytes and one random-ID index less.
+about **1,515 bytes per event, 13% less** (raw row 585; 1,475 was measured with the facts change that was removed, which saved 40 of those). Ingest also got faster here.
 
 - **Stored JSON without the columns it repeated.** `event_id`, `name`, `client_ts` and
   `server_ts` are columns of `events`; new events no longer repeat them inside `payload`, which
   is also written without the spaces `json.dumps` adds. `storage.full_event(row)` puts the four
   back, in the envelope's usual key order, for whoever needs the whole event (exports). About
   210 bytes per event. Every value is still stored once.
-- **Facts schema 2: facts point at their raw row.** `analytics_facts.event_row` (the event's
-  rowid, unique) replaces the unique index on the 36-character `event_id` (kept as a column:
-  timelines break timestamp ties by it). Coverage, verification, repair and version deletion
-  look events up by row, which is also faster. About 40 bytes per event. **Upgrading rebuilds
-  every game's facts** (the worker does it, as for any schema version; pages read the raw events
-  until a game's facts are ready again, and prepared answers are rebuilt).
 - The write-ahead log is cut back to 64 MB after checkpoints instead of staying as large as it
   ever grew.
 - `python -m avn_analytics.storage_report` (owner) shows each game's size, free pages and, where
@@ -99,7 +92,9 @@ also got faster (2,750 to 3,450 events/s here): fewer bytes and one random-ID in
   still points at its event, re-verifying them if not (SQLite keeps row numbers through VACUUM
   but does not promise it).
 
-Not done: leaving out envelope keys whose value is null (about 55 bytes per event, 4%) would
+Not done: keying the facts by their raw row instead of the unique event ID index (about 40 bytes
+per event, 2%) was built and removed: it changes the facts schema, which makes every service drop
+and rebuild each game's facts at startup (a deploy failed on that). Leaving out envelope keys whose value is null (about 55 bytes per event, 4%) would
 change what exports contain (`json_type` tells a missing key from a null one). Binary JSON
 (JSONB) for the facts' parameters measured 11% smaller there and 15% faster to read.
 

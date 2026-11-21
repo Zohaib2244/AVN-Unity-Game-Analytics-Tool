@@ -176,7 +176,7 @@ RETENTION_DAYS = (1, 3, 7, 14, 30)
 
 # The facts of events received in [start, end), found through the raw events' server_ts index
 # (the facts have no index on it); for where(..., span=RECEIVED).
-RECEIVED = "event_row IN (SELECT rowid FROM events WHERE server_ts>=? AND server_ts<?)"
+RECEIVED = "event_id IN (SELECT event_id FROM events WHERE server_ts>=? AND server_ts<?)"
 
 
 def where(start, end, filters=None, column="client_ts", source=LEGACY, span=None):

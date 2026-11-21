@@ -127,7 +127,7 @@ def data_health(storage, game_id, days=14):
         source = insights.read_source(storage, connection)
         if source.facts:
             table = "analytics_facts"
-            received = "event_row IN (SELECT rowid FROM events WHERE server_ts>=?)"  # indexed
+            received = "event_id IN (SELECT event_id FROM events WHERE server_ts>=?)"  # indexed
         else:
             table, received = "events", "server_ts>=?"
         per_day = [
