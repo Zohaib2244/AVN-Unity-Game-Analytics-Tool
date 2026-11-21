@@ -52,6 +52,7 @@ from . import (
     sdk_package,
     segment_performance,
     segments,
+    separators,
     session_report,
 )
 from .auth import AccessVerifier, Accounts, Principal
@@ -1294,6 +1295,28 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             "performance",
             (days, chosen),
             lambda: segment_performance.report(storage, str(game_id), *days, chosen),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/separators")
+    def insights_separators(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+        outcome: Literal["day_1", "day_3", "day_7", "pays"] = "day_7",
+        window_days: Annotated[int, Query(ge=1, le=separators.MAX_WINDOW)] = 1,
+    ):
+        days = day_range(start, end, tz_offset)
+        if outcome in ("day_1",) and window_days > 1 or outcome == "day_3" and window_days > 3:
+            raise HTTPException(
+                400, f"To look at {window_days} days of play, ask about a later day."
+            )
+        return cached(
+            game_id,
+            "separators",
+            (days, chosen, outcome, window_days),
+            lambda: separators.analyse(storage, str(game_id), *days, chosen, outcome, window_days),
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/acquisition")

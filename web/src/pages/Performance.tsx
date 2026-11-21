@@ -60,7 +60,7 @@ function Answer({ report }: { report: Report }): ReactElement {
           {rows.length ? (
             <div className="table-wrap">
               <table className="compact-table perf-table">
-                <thead><tr><th>{block.label}</th><th className="num perf-players">Players</th>{exits ? <th className="num" title="Launches whose previous run ended in a crash, an ANR or the system killing the game">Bad exits<span className="perf-unit">of launches</span></th> : null}{adColumn ? <th className="num" title="Ads asked for that had none to show">Ads failing<span className="perf-unit">of ads asked</span></th> : null}</tr></thead>
+                <thead><tr><th>{block.label}</th><th className="num perf-players">Players</th>{exits ? <th className="num" title="Launches whose previous run ended in a crash, an ANR or the system killing the game">Bad exits<span className="th-unit">of launches</span></th> : null}{adColumn ? <th className="num" title="Ads asked for that had none to show">Ads failing<span className="th-unit">of ads asked</span></th> : null}</tr></thead>
                 <tbody>
                   {rows.map((row) => (
                     <tr key={row.value}>

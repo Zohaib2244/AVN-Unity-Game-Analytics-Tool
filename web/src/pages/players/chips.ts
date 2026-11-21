@@ -130,8 +130,19 @@ export function groupParam(chips: Chip[]): string {
 /** A one-line summary of a saved group for the side list. */
 export const groupSummary = (chips: Chip[]): string => chips.map((chip) => chipWords(chip).join(' ')).join(' · ');
 
-/** "See these players" from Ads or Acquisition arrives as campaign= / source= / install=: turn it into chips. */
+const CHIP_KINDS: ChipKind[] = ['campaign', 'media_source', 'install_type', 'installed', 'ad_format', 'ad_network', 'ad_creative', 'ad_failed', 'earned', 'paid_back', 'cost', 'highest_level', 'stopped_on', 'days_active', 'sessions', 'last_seen', 'event'];
+
+/** One chip sent whole as `chip=` (a finding's "See players"): kept only when it is a known, complete chip. */
+function chipFromJSON(text: string): Chip[] {
+  try {
+    const chip = JSON.parse(text) as Chip;
+    return chip && typeof chip === 'object' && CHIP_KINDS.includes(chip.kind) && chipReady(chip) ? [chip] : [];
+  } catch { return []; }
+}
+
+/** "See these players" from Ads, Acquisition or Who stays arrives as campaign= / source= / install= / chip=: turn it into chips. */
 export function chipsFromSearch(search: Record<string, string | undefined>): Chip[] {
+  if (search.chip) return chipFromJSON(search.chip);
   if (search.campaign) return [{ kind: 'campaign', values: [search.campaign] }];
   if (search.source) return [{ kind: 'media_source', values: [search.source] }];
   if (search.install === 'paid' || search.install === 'organic' || search.install === 'none') return [{ kind: 'install_type', value: search.install }];

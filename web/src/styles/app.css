@@ -1309,9 +1309,29 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 .look.perf-look .perf-kind { display: block; font-size: var(--fs-sm); color: var(--dim); letter-spacing: .04em; text-transform: uppercase; }
 .perf-table td:first-child { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .perf-table td.few { opacity: .55; }
-.perf-table .perf-unit { display: block; font-size: .85em; letter-spacing: 0; text-transform: none; color: var(--dim); }
+.th-unit { display: block; font-size: var(--fs-sm); letter-spacing: 0; text-transform: none; color: var(--dim); }
 @container app (max-width: 640px) {
   .perf-table .perf-players { display: none; }
 }
 /* Narrow screens lead with what stands out, the table follows. */
 @media (max-width: 1150px) { .perf-split > section:last-child { order: -1; } }
+
+/* Who stays: two lists side by side that stack on narrower screens; only a list with rows is shown. */
+.stay-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 14px; align-items: start; margin-bottom: 16px; }
+.stay-panels.one { grid-template-columns: minmax(0, 1fr); }
+.stay-panels > .panel { margin: 0; }
+.stay-table td:last-child { white-space: nowrap; }
+.stay-table td:first-child { white-space: normal; overflow-wrap: anywhere; }
+@container app (max-width: 640px) {
+  /* Each fact becomes a small card: the words on top, then the two rates side by side. */
+  .stay-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .stay-table, .stay-table tbody { display: block; }
+  .stay-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; padding: 10px 16px; border-top: var(--bw) solid var(--line); }
+  .stay-table td { display: block; padding: 0; border: 0; text-align: left; min-width: 0; max-width: none; white-space: normal; overflow: visible; text-overflow: clip; }
+  .stay-table td:first-child { grid-column: 1 / -1; }
+  .stay-table td[data-label]::before { content: attr(data-label); display: block; font-size: var(--fs-sm); color: var(--dim); }
+  .stay-table td:last-child { grid-column: 1 / -1; }
+  .stay-table td:last-child:empty { display: none; }
+}
+
+.kpis.kpis-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }

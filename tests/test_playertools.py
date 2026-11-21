@@ -701,7 +701,7 @@ def test_segments_narrow_the_attempts(game):
 def test_the_tools_are_served_to_agents_with_a_key(game):
     admin, game, _ = game
     names = {tool["name"] for tool in PLAYER_TOOLS}
-    assert names == set(PLAYER_READ_ONLY) and len(names) == 6
+    assert names == set(PLAYER_READ_ONLY) and len(names) == 7
     assert not any(
         n.startswith(("save", "set", "propose", "show", "delete", "update", "create", "restore"))
         for n in names

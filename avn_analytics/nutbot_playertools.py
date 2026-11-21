@@ -1,7 +1,7 @@
 """NutBot's level-attempt, player and query tools (see level_attempts.py, player_tools.py and
 counting.py)."""
 
-from . import counting, level_attempts, level_difficulty, player_tools
+from . import counting, level_attempts, level_difficulty, player_tools, separators
 from .nutbot_base import RANGE_PROPS, STEP_SCHEMA, ToolError, _tool
 from .segments import SEGMENT_SCHEMA, SegmentedTools
 
@@ -88,6 +88,24 @@ PLAYER_TOOLS = [
         },
     ),
     _tool(
+        "get_who_stays",
+        "What separates players who come back (or pay) from those who don't, from what they did in their first days. The players are those who opened the game for the first time in start to end and whose day is over. outcome: day_1, day_3 or day_7 (any event that day; default day_7) or pays (bought something in the first 7 days). Each fact (sent an event, sent it several times, played two sessions, or who they are: country, platform, version, device tier, RAM, model, OS, install source) is compared between the players who have it and those who don't, and listed in more_likely or less_likely with both rates, counts and a sentence, only when both sides are large enough and the gap is clear. Purchases and what followed them are left out when the outcome is pays. This is association, never cause: say so. Use it to find what to look at, then get_level_attempts, get_behaviour or compare_player_groups to dig in. Each finding may carry a `chip` for the Players page. start and end are the dates of the first open.",
+        {
+            **RANGE_PROPS,
+            "outcome": {
+                "type": "string",
+                "enum": list(separators.OUTCOMES),
+                "description": "day_7 by default.",
+            },
+            "window_days": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": separators.MAX_WINDOW,
+                "description": "How many first days of play to compare. Default 1; not more than the outcome's day.",
+            },
+        },
+    ),
+    _tool(
         "get_player_profile",
         "Who one player is, in a single call: first and last seen, where they came from (media source, campaign, channel, creative, organic or not), their device (tier, RAM, CPU cores, model, OS), their latest saved state (highest level, coin balances, power-up stock, purchased, subscribed, ads removed), what their ads earned (full-screen plus banner, and impressions by format), how their sessions ended (previous exit reasons at launch, levels ended by the app being killed) and a summary of their play (levels, ads, sessions, coins, power-ups). Attribution, device and the saved state look at everything the player ever sent; ad money and exits count only start to end.",
         {**PLAYER_ONLY_RANGE, "player": PLAYER},
@@ -166,6 +184,7 @@ PLAYER_LABELS = {
     "get_level_attempts": "Reading a level's attempts",
     "get_level_designs": "Comparing level designs",
     "get_level_outliers": "Finding levels that stand out",
+    "get_who_stays": "Comparing players who stay with those who leave",
     "get_player_profile": "Reading a player's profile",
     "get_player_raw_events": "Reading a player's raw events",
     "count_events": "Counting events",
@@ -219,6 +238,18 @@ class PlayerTools(SegmentedTools):
             end,
             self._segment_filters(run, args),
             args.get("min_attempts") or level_difficulty.MIN_ATTEMPTS,
+        )
+
+    def tool_get_who_stays(self, run, game_id, args):
+        start, end = self._range(run, args)
+        return separators.analyse(
+            self.storage,
+            game_id,
+            start,
+            end,
+            self._segment_filters(run, args),
+            args.get("outcome") or "day_7",
+            args.get("window_days") or 1,
         )
 
     def tool_get_player_profile(self, run, game_id, args):

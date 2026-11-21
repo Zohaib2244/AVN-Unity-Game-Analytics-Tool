@@ -489,3 +489,13 @@ export type PerformanceFinding = PerformanceFlag & { dimension: PerformanceDimen
 export type PerformanceReport =
   | { available: true; summary: string; min_sample: number; everyone: { players: number; launches: number; exit_total: number; exit_bad: number; ad_total: number; ad_bad: number }; findings: PerformanceFinding[]; dimensions: Record<PerformanceDimension, PerformanceBlock> }
   | { available: false; note: string };
+
+export type SeparatorSide = { reached: number; players: number; rate: number };
+export type SeparatorFinding = {
+  kind: string; label: string; words: string; points: number; interval: [number, number];
+  with: SeparatorSide; without: SeparatorSide; chip?: Record<string, unknown>;
+};
+export type SeparatorOutcome = 'day_1' | 'day_3' | 'day_7' | 'pays';
+export type SeparatorReport =
+  | { available: true; outcome: SeparatorOutcome; outcome_label: string; window_days: number; summary: string; means: string; players: number; outcome_players: number; rate: number; facts_tried: number; more_likely: SeparatorFinding[]; less_likely: SeparatorFinding[] }
+  | { available: false; note: string };

@@ -32,6 +32,7 @@ TOOL_NEEDS = {
     "get_level_attempts": ("all", [("LEVEL_ANALYSIS", "Started")]),
     "get_level_designs": ("all", [("LEVEL_ANALYSIS", "Started")]),
     "get_level_outliers": ("all", [("LEVEL_ANALYSIS", "Started")]),
+    "get_who_stays": ("all", [("first_open", None)]),
 }
 TOPICS = ("core", "digest", "exits", "level-review", "player-review", "release-check")
 
@@ -39,6 +40,7 @@ TOOL_MAP = """Tools by question
 - Which games, what a game sends, is data arriving: list_games, get_game_setup, get_data_health.
 - Overall numbers: get_overview, get_sessions, get_retention, get_event_activity, list_events.
 - Levels: get_level_progress, get_exits, get_level_detail, get_level_features, get_level_attempts (one level's tries), get_level_designs (a design reused at many numbers), get_level_outliers (levels far harder than their neighbours).
+- Who stays: get_who_stays (what first-day behaviour goes with coming back on day 1/3/7 or paying; association only).
 - Funnels and paths: run_funnel, get_journeys, list_journey_players.
 - Players: find_players, get_player_profile, get_player_story, get_player_levels, get_player_events, get_player_raw_events, compare_player.
 - Groups: compare_cohorts, compare_player_groups, list_saved, compare_segments, compare_versions.

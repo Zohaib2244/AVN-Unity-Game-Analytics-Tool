@@ -89,7 +89,7 @@ browser verification at wide, rail and phone widths before they are called finis
 - [x] 2 Live event tail: `live_tail.py`, `GET /v1/games/{id}/events/live`, Live events page under Data (polls every 2 s while visible; Paused/Offline with the last answer time; Player and Build columns only when they differ)
 - [x] 3 Level difficulty finder: `level_difficulty.py`, `GET .../insights/levels/difficulty`, NutBot/MCP `get_level_outliers`, a "Harder than nearby" chip in the Levels answer strip (only when no other chip names that level)
 - [x] 4 Device and country performance: `segment_performance.py` (bad exits and ads that fail to show by country, device tier, RAM, OS version, model; a group is compared with everyone else and flagged only with enough launches/ads and a clear gap; dimensions that describe the same players are merged into one finding), `GET .../insights/performance`, NutBot/MCP `get_where_it_breaks`, Performance page under Analyze. `stability._launches` / `_device_tables` were factored out so both read the same tables
-- [ ] 5 What separates players who stay
+- [x] 5 What separates players who stay: `separators.py` (first-open cohort; outcomes come back on day 1/3/7 or pay in 7 days; first-day facts: events sent, repeated, 2+ sessions, country/platform/version/device/install source; wide 99.9% margin, 30+ players each side, 5+ points; mirror-image and identical facts merged), `GET .../insights/separators`, NutBot/MCP `get_who_stays`, Who stays page under Analyze; Players accepts a whole `chip=` from the address
 - [ ] 6 Churn-risk lists
 
 ## Notes from the UX audit of slices 1-3 (2026-11-19)
@@ -119,3 +119,16 @@ tier in natural order, country names, short empty text. Not changed:
   fits the group-library work in slice 5.
 - "Bad exits" tile stays as a dash with a note on a game that sends no previous-exit reasons.
 - The table and findings panels differ in height at wide widths (align start, no stretching).
+
+## Notes from slice 5 (2026-11-21)
+
+Audit found 10 things; fixed: plain event names (the dictionary's, else automatic), SDK events left
+out of the facts, group sizes shown ("218 of 476"), outcome and early-play choice kept per game (Back
+finds the same question), Early play always shown, two tiles instead of four, panel titles say
+"More likely to come back", the association note sits inside the first list, a row with no chip shows a dash.
+Known limits:
+- "All who ever did this" opens the Players page with an event chip, which means "ever", not "on their
+  first day, as a new player": the Players count is bigger than the row's. The link says so. An exact
+  link needs saved groups made of player IDs (too long for an address); left for slice 6, which needs
+  exportable saved lists anyway.
+- "Sent it at least N times" facts have no chip (the Players page can't say how many times in a window).
