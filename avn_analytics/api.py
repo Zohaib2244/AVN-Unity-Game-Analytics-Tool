@@ -50,6 +50,7 @@ from . import (
     player_groups,
     player_summary,
     sdk_package,
+    segment_performance,
     segments,
     session_report,
 )
@@ -1278,6 +1279,22 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
     ):
         """What the game is sending now (live_tail.py); never cached."""
         return live_tail.tail(storage, str(game_id), after, player or None, limit)
+
+    @admin_api.get("/v1/games/{game_id}/insights/performance")
+    def insights_performance(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "performance",
+            (days, chosen),
+            lambda: segment_performance.report(storage, str(game_id), *days, chosen),
+        )
 
     @admin_api.get("/v1/games/{game_id}/insights/acquisition")
     def insights_acquisition(

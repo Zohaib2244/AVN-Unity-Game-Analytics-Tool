@@ -595,7 +595,14 @@ def test_agents_can_read_the_systems_through_a_key(game):
         "/mcp", headers=headers, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
     ).json()["result"]["tools"]
     names = {t["name"] for t in listed}
-    mine = {"get_ad_impact", "get_stability", "get_economy", "get_onboarding", "get_store"}
+    mine = {
+        "get_ad_impact",
+        "get_stability",
+        "get_where_it_breaks",
+        "get_economy",
+        "get_onboarding",
+        "get_store",
+    }
     assert mine <= names
     for tool in listed:
         if tool["name"] in mine:
@@ -605,6 +612,8 @@ def test_agents_can_read_the_systems_through_a_key(game):
     assert not error and data["first_day_retention"]["cohort_players"] == 6
     error, data = call("get_stability", group_by="app_version")
     assert not error and by(data["groups"])["1.1"]["launches"] == 3
+    error, data = call("get_where_it_breaks")
+    assert not error and data["available"] is True and "device_tier" in data["dimensions"]
     error, data = call("get_economy")
     assert not error and data["currencies"][0]["currency"] == "coins"
     error, data = call("get_economy", view="powerups", segment={"unattributed": True})

@@ -88,7 +88,7 @@ browser verification at wide, rail and phone widths before they are called finis
 - [x] 1 Payback forecast: `payback.py`; per row in the acquisition report; shown as one line above the chosen campaign's Cohorts (a table column overflowed the Sources table at 1440 wide, so it moved)
 - [x] 2 Live event tail: `live_tail.py`, `GET /v1/games/{id}/events/live`, Live events page under Data (polls every 2 s while visible; Paused/Offline with the last answer time; Player and Build columns only when they differ)
 - [x] 3 Level difficulty finder: `level_difficulty.py`, `GET .../insights/levels/difficulty`, NutBot/MCP `get_level_outliers`, a "Harder than nearby" chip in the Levels answer strip (only when no other chip names that level)
-- [ ] 4 Device and country performance
+- [x] 4 Device and country performance: `segment_performance.py` (bad exits and ads that fail to show by country, device tier, RAM, OS version, model; a group is compared with everyone else and flagged only with enough launches/ads and a clear gap; dimensions that describe the same players are merged into one finding), `GET .../insights/performance`, NutBot/MCP `get_where_it_breaks`, Performance page under Analyze. `stability._launches` / `_device_tables` were factored out so both read the same tables
 - [ ] 5 What separates players who stay
 - [ ] 6 Churn-risk lists
 
@@ -108,3 +108,14 @@ Found but not changed here (already there before this branch):
 - Acquisition Sources "Return" says "set a goal" on every row when no goals are set (R10.2).
 - The "Fewest finish" chip doesn't say what its percentage is a share of.
 - Suggested rule R1.5: scoped controls drive everything in their region.
+
+## Notes from slice 4 (2026-11-21)
+
+Audit (independent ux-audit pass) found 14 things; fixed: sentences carry counts and one decimal,
+the Standing out tile counts the red rows, singular/plural, one panel title instead of tab + title +
+header repeating, findings lead on narrow screens, faint rows under the sample minimum, RAM and
+tier in natural order, country names, short empty text. Not changed:
+- Findings have no "See players" link (R11.1): a device group is not a player group chip yet; this
+  fits the group-library work in slice 5.
+- "Bad exits" tile stays as a dash with a note on a game that sends no previous-exit reasons.
+- The table and findings panels differ in height at wide widths (align start, no stretching).

@@ -1,10 +1,10 @@
 """NutBot's game-systems tools: ad impact, stability, economy, onboarding and the store.
 
 See ads.py (impact), stability.py and systems.py. Every read goes through `insights.where`, so all
-five honour `segment`.
+five honour `segment`; so does get_where_it_breaks (segment_performance.py).
 """
 
-from . import ads, stability, systems
+from . import ads, segment_performance, stability, systems
 from .nutbot_base import RANGE_PROPS, _tool
 from .segments import SEGMENT_SCHEMA, SegmentedTools
 
@@ -33,6 +33,19 @@ SYSTEM_TOOLS = [
             },
             "segment": SEGMENT_SCHEMA,
             "limit": LIMIT,
+        },
+    ),
+    _tool(
+        "get_where_it_breaks",
+        "Where crashes and ad failures cluster, in one call: for country, device tier, RAM band, OS version and device model, each group's players, launches, bad exits (launches whose previous run ended in a crash, ANR or the system killing the game / launches with a known previous exit) and ads that fail to show (AD_ANALYSIS Failed / (Show + Failed)). A group is compared with everyone else and listed under findings, with a sentence (\"31% of launches follow a crash...; everyone else 4%\"), only when it has enough launches or ads and is clearly worse in points and as a multiple, so a single phone never makes a country look broken. Use it first to find the group, then get_stability or get_ad_health to dig in. Players without a device snapshot are 'unknown'. Says so when the game sends neither launches nor ads.",
+        {
+            **RANGE_PROPS,
+            "min_sample": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Judge a group only with at least this many launches or ads. Default 50.",
+            },
+            "segment": SEGMENT_SCHEMA,
         },
     ),
     _tool(
@@ -68,6 +81,7 @@ SYSTEM_TOOLS = [
 SYSTEM_LABELS = {
     "get_ad_impact": "Checking whether ads hurt the game",
     "get_stability": "Checking crashes and kills",
+    "get_where_it_breaks": "Finding where it breaks",
     "get_economy": "Reading the economy",
     "get_onboarding": "Reading onboarding",
     "get_store": "Reading the store",
@@ -92,6 +106,17 @@ class SystemTools(SegmentedTools):
             self._segment_filters(run, args),
             args.get("group_by"),
             args.get("limit") or 15,
+        )
+
+    def tool_get_where_it_breaks(self, run, game_id, args):
+        start, end = self._range(run, args)
+        return segment_performance.report(
+            self.storage,
+            game_id,
+            start,
+            end,
+            self._segment_filters(run, args),
+            args.get("min_sample") or segment_performance.MIN_SAMPLE,
         )
 
     def tool_get_economy(self, run, game_id, args):

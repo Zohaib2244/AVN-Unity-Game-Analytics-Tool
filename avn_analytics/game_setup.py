@@ -25,6 +25,7 @@ TOOL_NEEDS = {
     "get_acquisition": ("all", [("ATTRIBUTION_ANALYSIS", "Install")]),
     "get_ltv": ("all", [("ATTRIBUTION_ANALYSIS", "Install")]),
     "get_stability": ("all", [("APP_ANALYSIS", "Launch")]),
+    "get_where_it_breaks": ("any", [("APP_ANALYSIS", "Launch"), ("AD_ANALYSIS", None)]),
     "get_economy": ("any", [("ECONOMY_ANALYSIS", None), ("POWERUP_ANALYSIS", None)]),
     "get_onboarding": ("any", [("TUTORIAL_ANALYSIS", None), ("first_open", None)]),
     "get_store": ("any", [("SCREEN_ANALYSIS", None), ("IAP_ANALYSIS", None)]),
@@ -43,7 +44,7 @@ TOOL_MAP = """Tools by question
 - Groups: compare_cohorts, compare_player_groups, list_saved, compare_segments, compare_versions.
 - Ads: get_ad_revenue, get_ad_health, get_ad_serving, get_ad_impact.
 - Where players came from: get_acquisition, get_ltv. The ad and acquisition tools (and several others, see their schemas) take a `segment`.
-- Game systems: get_economy (coins, power-ups), get_onboarding, get_store, get_stability.
+- Game systems: get_economy (coins, power-ups), get_onboarding, get_store, get_stability, get_where_it_breaks (which country or device group crashes or fails ads most).
 - Anything else: count_events counts or averages any event, filtered and grouped.
 Revenue is USD. A tool says so when the game doesn't send what it needs; ask get_game_setup which tools have data."""
 

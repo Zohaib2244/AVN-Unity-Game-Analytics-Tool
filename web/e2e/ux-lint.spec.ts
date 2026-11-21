@@ -7,7 +7,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 type Finding = { rule: string; page: string; where: string; detail: string };
 
 const TOKEN = process.env.AVN_ADMIN_TOKEN || 'local-dev-token-not-a-secret-0123456789';
-const SECTIONS = ['overview', 'levels', 'players', 'sessions', 'ads', 'acquisition', 'exports', 'dictionary', 'event-setup', 'live', 'keys', 'settings'];
+const SECTIONS = ['overview', 'levels', 'players', 'sessions', 'ads', 'acquisition', 'performance', 'exports', 'dictionary', 'event-setup', 'live', 'keys', 'settings'];
 const WORKSPACE_PAGES = ['/', '/status', '/settings', '/team', '/workspaces', '/agent-access'];
 
 test.use({ launchOptions: { args: ['--js-flags=--max-old-space-size=1536'] }, extraHTTPHeaders: { Authorization: `Bearer ${TOKEN}` }, viewport: { width: 1440, height: 900 } });

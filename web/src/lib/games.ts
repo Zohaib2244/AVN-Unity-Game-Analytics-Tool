@@ -48,7 +48,7 @@ export const workspaceName = (workspaces: WorkspaceMembership[], workspace: stri
 /** Sidebar sections of a game, in order; the icon names are from @avn/ui. */
 export const GAME_SECTIONS = [
   ['overview', 'grid', 'Overview'], ['levels', 'pad', 'Levels'], ['players', 'users', 'Players'], ['sessions', 'pulse', 'Sessions'],
-  ['ads', 'flame', 'Ads'], ['acquisition', 'up', 'Acquisition'],
+  ['ads', 'flame', 'Ads'], ['acquisition', 'up', 'Acquisition'], ['performance', 'phone', 'Performance'],
   ['exports', 'down', 'Exports'], ['dictionary', 'book', 'Event dictionary'], ['event-setup', 'link', 'Event setup'], ['live', 'pulse', 'Live events'],
   ['keys', 'key', 'API keys'], ['settings', 'sliders', 'Game settings'],
 ] as const;

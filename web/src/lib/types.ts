@@ -477,3 +477,15 @@ export type CostSettings = { app_id: string; typed_app_id: string; default_app_i
 export type LevelOutlierReason = { metric: 'fail_rate' | 'stop_share'; count: number; value: number; expected: number; excess: number; words: string; short: string };
 export type LevelOutlier = { level: number; attempts: number; players: number; fail_rate: number | null; stop_share: number | null; reasons: LevelOutlierReason[] };
 export type LevelDifficulty = { available: true; summary: string; levels_judged: number; min_attempts: number; levels: LevelOutlier[] } | { available: false; note: string };
+
+export type PerformanceDimension = 'country' | 'device_tier' | 'ram_band' | 'os_version' | 'device_model';
+export type PerformanceFlag = { measure: 'bad_exits' | 'ad_failures'; rate: number; rest: number; count: number; total: number; words: string };
+export type PerformanceRow = {
+  value: string; players: number; launches: number; exit_total: number; exit_bad: number; bad_exit_rate: number | null;
+  ad_total: number; ad_bad: number; ad_failure_rate: number | null; flags: PerformanceFlag[];
+};
+export type PerformanceBlock = { label: string; available: boolean; unknown_players: number; groups: number; rows: PerformanceRow[] };
+export type PerformanceFinding = PerformanceFlag & { dimension: PerformanceDimension; label: string; value: string; players: number; same_as: string[] };
+export type PerformanceReport =
+  | { available: true; summary: string; min_sample: number; everyone: { players: number; launches: number; exit_total: number; exit_bad: number; ad_total: number; ad_bad: number }; findings: PerformanceFinding[]; dimensions: Record<PerformanceDimension, PerformanceBlock> }
+  | { available: false; note: string };

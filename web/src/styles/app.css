@@ -1301,3 +1301,17 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 /* Acquisition: the chosen campaign's payback forecast, above its cohorts */
 .payback-line { display: flex; align-items: center; gap: 8px; margin: 0; padding: 12px 16px; border-bottom: var(--bw) solid var(--line); font-size: var(--fs-md); font-weight: 600; color: var(--text); }
 .payback-line.few { color: var(--muted); }
+
+/* Performance: findings keep whole sentences; on a phone the table gives up Players so the two rates fit. */
+.look.perf-look { grid-template-columns: minmax(0, 1fr); }
+.look.perf-look span.s { white-space: normal; overflow: visible; text-overflow: clip; }
+.look.perf-look span.s.dim { color: var(--muted); }
+.look.perf-look .perf-kind { display: block; font-size: var(--fs-sm); color: var(--dim); letter-spacing: .04em; text-transform: uppercase; }
+.perf-table td:first-child { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.perf-table td.few { opacity: .55; }
+.perf-table .perf-unit { display: block; font-size: .85em; letter-spacing: 0; text-transform: none; color: var(--dim); }
+@container app (max-width: 640px) {
+  .perf-table .perf-players { display: none; }
+}
+/* Narrow screens lead with what stands out, the table follows. */
+@media (max-width: 1150px) { .perf-split > section:last-child { order: -1; } }
