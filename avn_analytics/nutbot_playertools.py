@@ -1,7 +1,7 @@
 """NutBot's level-attempt, player and query tools (see level_attempts.py, player_tools.py and
 counting.py)."""
 
-from . import counting, level_attempts, player_tools
+from . import churn_risk, counting, level_attempts, level_difficulty, player_tools, separators
 from .nutbot_base import RANGE_PROPS, STEP_SCHEMA, ToolError, _tool
 from .segments import SEGMENT_SCHEMA, SegmentedTools
 
@@ -71,6 +71,55 @@ PLAYER_TOOLS = [
                 "description": "How many designs to return. Default 20.",
             },
             "segment": SEGMENT_SCHEMA,
+        },
+    ),
+    _tool(
+        "get_level_outliers",
+        'Levels that stand out from the levels around them: a much higher fail rate (Failed / finished tries) or a much bigger share of players whose furthest level is this one. Each level is compared with the median of the levels within 3 numbers either side; it is listed only when it is clearly higher both in points and as a multiple, with a sentence per reason ("45% of finished tries fail; levels around it about 10%"). The newest levels players have reached are left out of the stop comparison. Use it first to find which levels to look at, then get_level_attempts on one. '
+        + RANGE_NOTE,
+        {
+            **RANGE_PROPS,
+            "min_attempts": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Judge only levels with at least this many tries. Default 30.",
+            },
+            "segment": SEGMENT_SCHEMA,
+        },
+    ),
+    _tool(
+        "get_who_stays",
+        "What separates players who come back (or pay) from those who don't, from what they did in their first days. The players are those who opened the game for the first time in start to end and whose day is over. outcome: day_1, day_3 or day_7 (any event that day; default day_7) or pays (bought something in the first 7 days). Each fact (sent an event, sent it several times, played two sessions, or who they are: country, platform, version, device tier, RAM, model, OS, install source) is compared between the players who have it and those who don't, and listed in more_likely or less_likely with both rates, counts and a sentence, only when both sides are large enough and the gap is clear. Purchases and what followed them are left out when the outcome is pays. This is association, never cause: say so. Use it to find what to look at, then get_level_attempts, get_behaviour or compare_player_groups to dig in. Each finding may carry a `chip` for the Players page. start and end are the dates of the first open.",
+        {
+            **RANGE_PROPS,
+            "outcome": {
+                "type": "string",
+                "enum": list(separators.OUTCOMES),
+                "description": "day_7 by default.",
+            },
+            "window_days": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": separators.MAX_WINDOW,
+                "description": "How many first days of play to compare. Default 1; not more than the outcome's day.",
+            },
+        },
+    ),
+    _tool(
+        "get_churn_risk",
+        "Players who have gone quiet for longer than they usually do, with a sentence each and the early behaviour they lacked. Each player's usual gap is the median number of days between two days they started a session (players with at least 3 days played); slipping = away 2x that and 3+ days (still worth reaching), gone = 5x and 7+ days; away more than 60 days is long gone and not listed. Measured as of the last day the game sent data, test builds left out. state: any (default), slipping or gone. The list is ranked slipping first, then the most engaged. It is a habit comparison, not a prediction: say so. The Players page can hold the same group (chip At risk) and the page offers a CSV. No dates: it is always as of now.",
+        {
+            "state": {
+                "type": "string",
+                "enum": list(churn_risk.CHOICES),
+                "description": "any by default.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": churn_risk.MAX_LISTED,
+                "description": "How many players to list. Default 25.",
+            },
         },
     ),
     _tool(
@@ -151,6 +200,9 @@ PLAYER_TOOLS = [
 PLAYER_LABELS = {
     "get_level_attempts": "Reading a level's attempts",
     "get_level_designs": "Comparing level designs",
+    "get_level_outliers": "Finding levels that stand out",
+    "get_who_stays": "Comparing players who stay with those who leave",
+    "get_churn_risk": "Finding players who have gone quiet",
     "get_player_profile": "Reading a player's profile",
     "get_player_raw_events": "Reading a player's raw events",
     "count_events": "Counting events",
@@ -193,6 +245,34 @@ class PlayerTools(SegmentedTools):
             args.get("sort"),
             args.get("min_attempts"),
             args.get("limit") or 20,
+        )
+
+    def tool_get_level_outliers(self, run, game_id, args):
+        start, end = self._range(run, args)
+        return level_difficulty.find(
+            self.storage,
+            game_id,
+            start,
+            end,
+            self._segment_filters(run, args),
+            args.get("min_attempts") or level_difficulty.MIN_ATTEMPTS,
+        )
+
+    def tool_get_who_stays(self, run, game_id, args):
+        start, end = self._range(run, args)
+        return separators.analyse(
+            self.storage,
+            game_id,
+            start,
+            end,
+            self._segment_filters(run, args),
+            args.get("outcome") or "day_7",
+            args.get("window_days") or 1,
+        )
+
+    def tool_get_churn_risk(self, run, game_id, args):
+        return churn_risk.at_risk(
+            self.storage, game_id, args.get("state") or "any", args.get("limit") or 25
         )
 
     def tool_get_player_profile(self, run, game_id, args):

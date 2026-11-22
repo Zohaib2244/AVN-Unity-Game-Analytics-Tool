@@ -701,7 +701,7 @@ def test_segments_narrow_the_attempts(game):
 def test_the_tools_are_served_to_agents_with_a_key(game):
     admin, game, _ = game
     names = {tool["name"] for tool in PLAYER_TOOLS}
-    assert names == set(PLAYER_READ_ONLY) and len(names) == 5
+    assert names == set(PLAYER_READ_ONLY) and len(names) == 8
     assert not any(
         n.startswith(("save", "set", "propose", "show", "delete", "update", "create", "restore"))
         for n in names
@@ -715,7 +715,12 @@ def test_the_tools_are_served_to_agents_with_a_key(game):
     ).json()["result"]["tools"]
     assert names <= {t["name"] for t in listed}
     segmented = {t["name"] for t in listed if "segment" in t["inputSchema"]["properties"]}
-    assert {"get_level_attempts", "get_level_designs", "count_events"} <= segmented
+    assert {
+        "get_level_attempts",
+        "get_level_designs",
+        "get_level_outliers",
+        "count_events",
+    } <= segmented
     assert not {"get_player_profile", "get_player_raw_events"} & segmented
 
     def call(name, **arguments):

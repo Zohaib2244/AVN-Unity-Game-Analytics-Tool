@@ -30,11 +30,11 @@ REASONS = {
 }
 
 
-def wilson(reached, players):
-    """95% Wilson score interval, in proportions; undefined for an empty group."""
+def wilson(reached, players, z=1.959963984540054):
+    """Wilson score interval (95% unless `z` says otherwise), in proportions; undefined for an
+    empty group."""
     if not players:
         return None
-    z = 1.959963984540054
     p = reached / players
     denominator = 1 + z * z / players
     center = (p + z * z / (2 * players)) / denominator
@@ -42,13 +42,13 @@ def wilson(reached, players):
     return max(0, center - half), min(1, center + half)
 
 
-def difference(a, b):
+def difference(a, b, z=1.959963984540054):
     """Newcombe interval for the independent A-minus-B difference, using Wilson limits."""
     if not a["players"] or not b["players"]:
         return None
     pa, pb = a["reached"] / a["players"], b["reached"] / b["players"]
-    la, ua = wilson(a["reached"], a["players"])
-    lb, ub = wilson(b["reached"], b["players"])
+    la, ua = wilson(a["reached"], a["players"], z)
+    lb, ub = wilson(b["reached"], b["players"], z)
     delta = pa - pb
     low = max(-1, delta - math.hypot(pa - la, ub - pb))
     high = min(1, delta + math.hypot(ua - pa, pb - lb))

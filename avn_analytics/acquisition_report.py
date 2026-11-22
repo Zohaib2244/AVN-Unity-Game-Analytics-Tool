@@ -27,7 +27,7 @@ so single days can disagree while weeks add up. Its newest days are marked not f
 from collections import defaultdict
 from datetime import date, timedelta
 
-from . import acquisition, costs
+from . import acquisition, costs, payback
 from .acquisition import _day_after, _over, _ratio
 
 GROUPS = ("campaign", "media_source", "channel")
@@ -112,6 +112,7 @@ def _with_cost(row, spend, bought, value, sdk=None):
         )
         for key, item in value.items()
     }
+    row["payback"] = payback.forecast(value, cpi)
     return row
 
 

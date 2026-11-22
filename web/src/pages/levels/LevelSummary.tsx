@@ -6,7 +6,7 @@ import { DialogShell } from '@avn/ui';
 import { Ico, type IcoName } from '@/components/icons';
 import { duration, number, percent, shareText } from '@/lib/format';
 import { rise } from '@/lib/motion';
-import type { LevelRow } from '@/lib/types';
+import type { LevelOutlier, LevelRow } from '@/lib/types';
 import { LevelViz } from './LevelViz';
 import { heatOf } from './levelDisplay';
 import { levelHighlights } from './levelMath';
@@ -15,7 +15,7 @@ import { levelHighlights } from './levelMath';
  * The answer above the level table, in words: the level that loses the most players and the other levels worth
  * a look. Each one scrolls to its row.
  */
-export function LevelAnswer({ levels, minimum, excludeReturners, onJump }: { levels: LevelRow[]; minimum: number; excludeReturners: boolean; onJump: (level: number) => void }): ReactElement {
+export function LevelAnswer({ levels, minimum, excludeReturners, outliers = [], onJump }: { levels: LevelRow[]; minimum: number; excludeReturners: boolean; outliers?: LevelOutlier[]; onJump: (level: number) => void }): ReactElement {
   const { largestDrop, failQuit, hardest, slowest } = levelHighlights(levels);
   const drop = largestDrop?.transition;
   const others: Array<{ key: string; label: string; row: LevelRow | undefined; value: string }> = [
@@ -23,6 +23,11 @@ export function LevelAnswer({ levels, minimum, excludeReturners, onJump }: { lev
     { key: 'hard', label: 'Fewest finish', row: hardest, value: hardest ? shareText(hardest.completed, hardest.completion ?? 0) : '' },
     { key: 'slow', label: 'Slowest', row: slowest, value: slowest ? duration(slowest.median_seconds) : '' },
   ].filter((item) => item.row);
+  // A level another chip or the sentence already names is not named again.
+  const named = new Set([largestDrop?.level, ...others.map((item) => item.row?.level)]);
+  const fresh = outliers.filter((item) => !named.has(item.level));
+  const odd = fresh[0];
+  const oddTitle = odd ? `${odd.reasons.map((reason) => reason.words).join('; ')} (${odd.reasons[0]!.metric === 'fail_rate' ? 'failed tries' : 'players who went no further'})` : '';
   return (
     <div className="sumstrip levels-answer">
       {largestDrop && drop ? (
@@ -32,6 +37,7 @@ export function LevelAnswer({ levels, minimum, excludeReturners, onJump }: { lev
       ) : <p className="muted">No level has the {number(minimum)} players needed to name a worst one yet.</p>}
       <span className="answer-others">
         {others.map((item) => <button key={item.key} type="button" className="answer-chip" onClick={() => onJump(item.row!.level)}><span>{item.label}</span><b>Level {item.row!.level}</b><em>{item.value}</em></button>)}
+        {odd ? <button type="button" className="answer-chip" title={oddTitle} onClick={() => onJump(odd.level)}><span>{odd.reasons[0]!.metric === 'fail_rate' ? 'Fails far more than nearby' : 'Loses far more than nearby'}</span><b>Level {odd.level}</b><em>{shareText(odd.reasons[0]!.count, odd.reasons[0]!.value * 100)}</em></button> : null}
       </span>
     </div>
   );

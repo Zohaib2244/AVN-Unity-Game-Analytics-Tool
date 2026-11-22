@@ -37,12 +37,16 @@ const AcquisitionPage = page(() => import('@/pages/Acquisition'), 'AcquisitionPa
 const ExportsPage = page(() => import('@/pages/Exports'), 'ExportsPage');
 const DictionaryPage = page(() => import('@/pages/Dictionary'), 'DictionaryPage');
 const EventSetupPage = page(() => import('@/pages/EventSetup'), 'EventSetupPage');
+const LiveEventsPage = page(() => import('@/pages/LiveEvents'), 'LiveEventsPage');
+const PerformancePage = page(() => import('@/pages/Performance'), 'PerformancePage');
+const WhoStaysPage = page(() => import('@/pages/WhoStays'), 'WhoStaysPage');
+const AtRiskPage = page(() => import('@/pages/AtRisk'), 'AtRiskPage');
 const KeysPage = page(() => import('@/pages/Keys'), 'KeysPage');
 const GameSettingsPage = page(() => import('@/pages/GameSettings'), 'GameSettingsPage');
 
 const PAGES: Record<Section, PageComponent> = {
-  overview: GameOverviewPage, levels: LevelsPage, players: PlayersPage, sessions: SessionsPage, ads: AdsPage, acquisition: AcquisitionPage, exports: ExportsPage,
-  dictionary: DictionaryPage, 'event-setup': EventSetupPage, keys: KeysPage, settings: GameSettingsPage,
+  overview: GameOverviewPage, levels: LevelsPage, players: PlayersPage, sessions: SessionsPage, ads: AdsPage, acquisition: AcquisitionPage, performance: PerformancePage, stay: WhoStaysPage, risk: AtRiskPage, exports: ExportsPage,
+  dictionary: DictionaryPage, 'event-setup': EventSetupPage, live: LiveEventsPage, keys: KeysPage, settings: GameSettingsPage,
 };
 
 /** The game and section of the current address, or null outside a game. Used by the shell and pages. */

@@ -33,6 +33,7 @@ from . import (
     ad_report,
     ads,
     avn_events_standard,
+    churn_risk,
     cleanup,
     costs,
     device_specs,
@@ -43,13 +44,17 @@ from . import (
     ingest_meter,
     insights,
     journeys,
+    level_difficulty,
+    live_tail,
     materialize,
     nutbot_commands,
     player_chips,
     player_groups,
     player_summary,
     sdk_package,
+    segment_performance,
     segments,
+    separators,
     session_report,
 )
 from .auth import AccessVerifier, Accounts, Principal
@@ -1281,6 +1286,87 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             lambda: ads.creatives(storage, str(game_id), *days, chosen, 40),
         )
 
+    @admin_api.get("/v1/games/{game_id}/events/live")
+    def events_live(
+        game_id: UUID,
+        after: Annotated[int | None, Query(ge=0)] = None,
+        player: Annotated[str, Query(max_length=128)] = "",
+        limit: Annotated[int, Query(ge=1, le=live_tail.MAX_EVENTS)] = 100,
+    ):
+        """What the game is sending now (live_tail.py); never cached."""
+        return live_tail.tail(storage, str(game_id), after, player or None, limit)
+
+    @admin_api.get("/v1/games/{game_id}/insights/performance")
+    def insights_performance(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+    ):
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "performance",
+            (days, chosen),
+            lambda: segment_performance.report(storage, str(game_id), *days, chosen),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/churn-risk")
+    def insights_churn_risk(
+        game_id: UUID,
+        state: Literal["any", "slipping", "gone"] = "any",
+        limit: Annotated[int, Query(ge=1, le=churn_risk.MAX_LISTED)] = 100,
+    ):
+        """Players quiet longer than their own habit (churn_risk.py); as of the last data day."""
+        return cached(
+            game_id,
+            "churn-risk",
+            (state, limit),
+            lambda: churn_risk.at_risk(storage, str(game_id), state, limit),
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/churn-risk/export")
+    def churn_risk_export(
+        game_id: UUID,
+        principal: Current,
+        state: Literal["any", "slipping", "gone"] = "any",
+    ):
+        result = churn_risk.at_risk(storage, str(game_id), state, everything=True)
+        if not result["available"]:
+            raise HTTPException(404, result["note"])
+        accounts.audit(principal, "export.download", str(game_id), f"churn risk ({state})")
+        return Response(
+            churn_risk.csv_text(result),
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{game_id}-at-risk-{state}.csv"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/separators")
+    def insights_separators(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+        outcome: Literal["day_1", "day_3", "day_7", "pays"] = "day_7",
+        window_days: Annotated[int, Query(ge=1, le=separators.MAX_WINDOW)] = 1,
+    ):
+        days = day_range(start, end, tz_offset)
+        if outcome in ("day_1",) and window_days > 1 or outcome == "day_3" and window_days > 3:
+            raise HTTPException(
+                400, f"To look at {window_days} days of play, ask about a later day."
+            )
+        return cached(
+            game_id,
+            "separators",
+            (days, chosen, outcome, window_days),
+            lambda: separators.analyse(storage, str(game_id), *days, chosen, outcome, window_days),
+        )
+
     @admin_api.get("/v1/games/{game_id}/insights/acquisition")
     def insights_acquisition(
         game_id: UUID,
@@ -1510,6 +1596,23 @@ def create_app(settings: Settings, *, admin: bool = False, access_keys=None):
             scope,
             exclude_returners=exclude_returners,
             defer="respond-async" in {part.strip().lower() for part in (prefer or "").split(",")},
+        )
+
+    @admin_api.get("/v1/games/{game_id}/insights/levels/difficulty")
+    def insights_level_difficulty(
+        game_id: UUID,
+        start: DateParam,
+        end: DateParam,
+        chosen: Filtered,
+        tz_offset: TimezoneOffset = 0,
+        min_attempts: Annotated[int, Query(ge=1, le=100_000)] = level_difficulty.MIN_ATTEMPTS,
+    ):
+        days = day_range(start, end, tz_offset)
+        return cached(
+            game_id,
+            "level-difficulty",
+            (days, chosen, min_attempts),
+            lambda: level_difficulty.find(storage, str(game_id), *days, chosen, min_attempts),
         )
 
     @admin_api.get("/v1/games/{game_id}/insights/levels/features")

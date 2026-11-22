@@ -44,8 +44,10 @@ RAM_CASE = (
 )
 
 
-def _device_tables(connection, source):
-    """Each launching player's latest device snapshot and session device model (all time)."""
+def _device_tables(connection, source, players="launches", column="player"):
+    """Each listed player's latest device snapshot, session device model and OS (all time).
+
+    `players` is a temp table and `column` its player column (the launches by default)."""
     param, table, player = source.param, source.table, source.player
     connection.execute("DROP TABLE IF EXISTS temp.launch_device")
     connection.execute(
@@ -55,18 +57,19 @@ def _device_tables(connection, source):
                        CAST({param("RAM_MB")} AS REAL) AS ram, max(client_ts)
                 FROM {table}
                 WHERE name=? AND coalesce({param("STATE")}, 'Snapshot')='Snapshot'
-                      AND {player} IN (SELECT player FROM launches)
+                      AND {player} IN (SELECT {column} FROM {players})
                 GROUP BY {player})""",
         [DEVICE_EVENT],
     )
     connection.execute("DROP TABLE IF EXISTS temp.launch_model")
     connection.execute(
         f"""CREATE TEMP TABLE launch_model AS
-            SELECT pid, model FROM (
-                SELECT {player} AS pid, {param("device_model")} AS model, max(client_ts)
+            SELECT pid, model, os_version FROM (
+                SELECT {player} AS pid, {param("device_model")} AS model,
+                       {param("os_version")} AS os_version, max(client_ts)
                 FROM {table}
                 WHERE name=? AND {param("device_model")} IS NOT NULL
-                      AND {player} IN (SELECT player FROM launches)
+                      AND {player} IN (SELECT {column} FROM {players})
                 GROUP BY {player})""",
         [SESSION_EVENT],
     )
@@ -145,6 +148,24 @@ def _killed_levels(connection, source, start, end, filters):
     }
 
 
+def _launches(connection, source, start, end, filters):
+    """The range's app launches as a temp table `launches` of plain columns."""
+    dimensions = {name: source.dimensions[name] for name in ("app_version", "country", "platform")}
+    condition, args = insights.where(start, end, filters, source=source)
+    extra = ", ".join(f"{expr} AS {name}" for name, expr in dimensions.items())
+    connection.execute("DROP TABLE IF EXISTS temp.launches")
+    connection.execute(
+        f"""CREATE TEMP TABLE launches AS
+            SELECT {source.player} AS player, {extra},
+                   nullif({source.param("PREV_EXIT_REASON")}, '') AS reason,
+                   {source.param("PREV_EXIT")} AS exit_kind,
+                   {source.param("PREV_EXIT_AD")} AS exit_ad
+            FROM {source.table}
+            WHERE name=? AND {source.param("STATE")}='Launch' AND {condition}""",
+        [APP_EVENT, *args],
+    )
+
+
 def stability(storage, game_id, start, end, filters, group_by=None, limit=15):
     """Launches by how the run before them ended, with problem exits and the groups they hit."""
     group_by = _choice(group_by, GROUPS, "none", "group_by")
@@ -152,22 +173,7 @@ def stability(storage, game_id, start, end, filters, group_by=None, limit=15):
     storage.get_game(game_id)
     with storage.connect(storage.game_path(game_id)) as connection:
         source = insights.read_source(storage, connection)
-        dimensions = {
-            name: source.dimensions[name] for name in ("app_version", "country", "platform")
-        }
-        condition, args = insights.where(start, end, filters, source=source)
-        extra = ", ".join(f"{expr} AS {name}" for name, expr in dimensions.items())
-        connection.execute("DROP TABLE IF EXISTS temp.launches")
-        connection.execute(
-            f"""CREATE TEMP TABLE launches AS
-                SELECT {source.player} AS player, {extra},
-                       nullif({source.param("PREV_EXIT_REASON")}, '') AS reason,
-                       {source.param("PREV_EXIT")} AS exit_kind,
-                       {source.param("PREV_EXIT_AD")} AS exit_ad
-                FROM {source.table}
-                WHERE name=? AND {source.param("STATE")}='Launch' AND {condition}""",
-            [APP_EVENT, *args],
-        )
+        _launches(connection, source, start, end, filters)
         if not connection.execute("SELECT 1 FROM launches LIMIT 1").fetchone():
             return _absent("app launches", "APP_ANALYSIS Launch events")
         total = connection.execute(f"SELECT {COUNTS} FROM launches", PROBLEMS).fetchone()

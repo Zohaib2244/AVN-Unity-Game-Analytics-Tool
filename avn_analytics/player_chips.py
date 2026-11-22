@@ -9,7 +9,8 @@ through insights.where honours it. Two kinds of condition come out of here:
 - aggregate conditions ({"aggregate": ...}): a per-player sum, count or extreme over some events,
   between a minimum and a maximum (see segments.clause);
 - player lists ({"players": [...]}) for what SQL alone can't say: whether a player has paid back
-  what they cost, which needs the cost service's numbers (costs.py).
+  what they cost, which needs the cost service's numbers (costs.py), or has gone quiet longer than
+  their own habit (churn_risk.py).
 
 The chip shapes are checked here; anything unexpected is a ValueError with a sentence for people.
 """
@@ -41,6 +42,7 @@ KINDS = (
     "days_active",
     "sessions",
     "last_seen",
+    "churn_risk",
     "event",
 )
 
@@ -224,6 +226,13 @@ def conditions(chips, now=None):
                     stamp(beyond) if beyond is not None else None,
                 )
             )
+        elif kind == "churn_risk":
+            from .churn_risk import CHOICES
+
+            value = chip.get("value") or "any"
+            if value not in CHOICES:
+                raise ValueError("At risk is slipping, gone or either.")
+            found.append({"churn": value})
         elif kind == "event":
             event = str(chip.get("event") or "")[:NAME_LIMIT]
             if not event:
@@ -272,19 +281,26 @@ def conditions(chips, now=None):
 
 
 def resolve_costs(storage, game_id, found):
-    """Turn {"cost": ...} placeholders into lists of the players who meet them: their campaign's
-    cost per install on their install day (cost) or their ad revenue over it (paid_back, in %)."""
-    pending = [item for item in found if "cost" in item]
-    if not pending:
+    """Turn {"cost": ...} and {"churn": ...} placeholders into lists of the players who meet them:
+    their campaign's cost per install on their install day (cost), their ad revenue over it
+    (paid_back, in %), or those who have gone quiet longer than usual (churn_risk)."""
+    if not any("cost" in item or "churn" in item for item in found):
         return found
-    value = storage.scans.get(
-        storage, game_id, ("player-cost-values",), lambda: _cost_values(storage, game_id)
-    )
+    value = None
     resolved = []
     for item in found:
+        if "churn" in item:
+            from . import churn_risk
+
+            resolved.append({"players": churn_risk.members(storage, game_id, item["churn"])})
+            continue
         if "cost" not in item:
             resolved.append(item)
             continue
+        if value is None:
+            value = storage.scans.get(
+                storage, game_id, ("player-cost-values",), lambda: _cost_values(storage, game_id)
+            )
         low, high = item["min"], item["max"]
         keep = [
             pid

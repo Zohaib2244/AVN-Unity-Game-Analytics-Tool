@@ -142,7 +142,7 @@ const TITLES: Record<ChipKind, string> = {
   campaign: 'Came from these campaigns', media_source: 'Came through these media sources', install_type: 'How they installed', installed: 'Installed between',
   ad_format: 'Saw an ad of this format', ad_network: 'Saw an ad from this network', ad_creative: 'Saw this creative', ad_failed: 'Had an ad fail', earned: 'Earned from ads',
   paid_back: 'Paid back their cost', cost: 'Cost to acquire', highest_level: 'Highest level reached', stopped_on: 'Stopped on level',
-  days_active: 'Days they played on', sessions: 'Sessions played', last_seen: 'Last seen', event: 'Did an event',
+  days_active: 'Days they played on', sessions: 'Sessions played', last_seen: 'Last seen', churn_risk: 'At risk', event: 'Did an event',
 };
 const NOTES: Partial<Record<ChipKind, string>> = {
   earned: 'Ad revenue over everything they ever did, banners included.',
@@ -169,7 +169,8 @@ function ChipEditor({ chip, options, catalog, onChange, onDone }: { chip: Chip; 
         {source ? (
           options ? <OptionList options={(options[source] ?? []).map((item) => ({ value: item.value, label: item.value, count: number(item.players) }))} selected={chip.values ?? []} searchLabel="Search" rows={7} empty="None sent yet" onChange={(values) => onChange({ ...chip, values })} /> : <p className="small muted">Reading what this game sends…</p>
         ) : null}
-        {chip.kind === 'install_type' ? <Segmented<'paid' | 'organic' | 'none'> label="Install type" value={chip.value ?? 'paid'} onChange={(value) => onChange({ ...chip, value })} options={[{ value: 'paid', label: 'Paid' }, { value: 'organic', label: 'Organic' }, { value: 'none', label: 'No record' }]} /> : null}
+        {chip.kind === 'churn_risk' ? <Segmented<'any' | 'slipping' | 'gone'> label="At risk" value={(chip.value as 'any' | 'slipping' | 'gone') ?? 'any'} onChange={(value) => onChange({ ...chip, value })} options={[{ value: 'slipping', label: 'Slipping' }, { value: 'gone', label: 'Gone' }, { value: 'any', label: 'Both' }]} /> : null}
+        {chip.kind === 'install_type' ? <Segmented<'paid' | 'organic' | 'none'> label="Install type" value={(chip.value as 'paid' | 'organic' | 'none') ?? 'paid'} onChange={(value) => onChange({ ...chip, value })} options={[{ value: 'paid', label: 'Paid' }, { value: 'organic', label: 'Organic' }, { value: 'none', label: 'No record' }]} /> : null}
         {chip.kind === 'installed' ? <div className="chip-dates"><label>From<input type="date" value={chip.from ?? ''} onChange={(e) => onChange({ ...chip, from: e.target.value })} /></label><label>To<input type="date" value={chip.to ?? ''} onChange={(e) => onChange({ ...chip, to: e.target.value })} /></label></div> : null}
         {unit != null ? (
           <>

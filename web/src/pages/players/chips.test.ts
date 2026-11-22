@@ -25,6 +25,11 @@ describe('player group chips', () => {
     expect(groupSummary([{ kind: 'campaign', values: ['C1'] }, { kind: 'earned', min: 1, max: null }])).toBe('came from C1 · earned at least $1.00');
     expect(chipsFromSearch({ campaign: 'D7 WW' })).toEqual([{ kind: 'campaign', values: ['D7 WW'] }]);
     expect(chipsFromSearch({ install: 'paid' })).toEqual([{ kind: 'install_type', value: 'paid' }]);
+    const finding = { kind: 'event', event: 'LEVEL_ANALYSIS', param: 'STATE', values: ['Completed'] };
+    expect(chipsFromSearch({ chip: JSON.stringify(finding) })).toEqual([finding]);
+    expect(chipsFromSearch({ chip: '{"kind":"nonsense"}' })).toEqual([]);
+    expect(chipsFromSearch({ chip: '{"kind":"event"}' })).toEqual([]);
+    expect(chipsFromSearch({ chip: 'not json' })).toEqual([]);
     expect(chipsFromSearch({})).toEqual([]);
   });
 });

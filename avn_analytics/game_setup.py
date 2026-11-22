@@ -25,24 +25,29 @@ TOOL_NEEDS = {
     "get_acquisition": ("all", [("ATTRIBUTION_ANALYSIS", "Install")]),
     "get_ltv": ("all", [("ATTRIBUTION_ANALYSIS", "Install")]),
     "get_stability": ("all", [("APP_ANALYSIS", "Launch")]),
+    "get_where_it_breaks": ("any", [("APP_ANALYSIS", "Launch"), ("AD_ANALYSIS", None)]),
     "get_economy": ("any", [("ECONOMY_ANALYSIS", None), ("POWERUP_ANALYSIS", None)]),
     "get_onboarding": ("any", [("TUTORIAL_ANALYSIS", None), ("first_open", None)]),
     "get_store": ("any", [("SCREEN_ANALYSIS", None), ("IAP_ANALYSIS", None)]),
     "get_level_attempts": ("all", [("LEVEL_ANALYSIS", "Started")]),
     "get_level_designs": ("all", [("LEVEL_ANALYSIS", "Started")]),
+    "get_level_outliers": ("all", [("LEVEL_ANALYSIS", "Started")]),
+    "get_who_stays": ("all", [("first_open", None)]),
+    "get_churn_risk": ("all", [("session_start", None)]),
 }
 TOPICS = ("core", "digest", "exits", "level-review", "player-review", "release-check")
 
 TOOL_MAP = """Tools by question
 - Which games, what a game sends, is data arriving: list_games, get_game_setup, get_data_health.
 - Overall numbers: get_overview, get_sessions, get_retention, get_event_activity, list_events.
-- Levels: get_level_progress, get_exits, get_level_detail, get_level_features, get_level_attempts (one level's tries), get_level_designs (a design reused at many numbers).
+- Levels: get_level_progress, get_exits, get_level_detail, get_level_features, get_level_attempts (one level's tries), get_level_designs (a design reused at many numbers), get_level_outliers (levels far harder than their neighbours).
+- Who stays: get_who_stays (what first-day behaviour goes with coming back on day 1/3/7 or paying; association only); get_churn_risk (players quiet longer than their own habit).
 - Funnels and paths: run_funnel, get_journeys, list_journey_players.
 - Players: find_players, get_player_profile, get_player_story, get_player_levels, get_player_events, get_player_raw_events, compare_player.
 - Groups: compare_cohorts, compare_player_groups, list_saved, compare_segments, compare_versions.
 - Ads: get_ad_revenue, get_ad_health, get_ad_serving, get_ad_impact.
 - Where players came from: get_acquisition, get_ltv. The ad and acquisition tools (and several others, see their schemas) take a `segment`.
-- Game systems: get_economy (coins, power-ups), get_onboarding, get_store, get_stability.
+- Game systems: get_economy (coins, power-ups), get_onboarding, get_store, get_stability, get_where_it_breaks (which country or device group crashes or fails ads most).
 - Anything else: count_events counts or averages any event, filtered and grouped.
 Revenue is USD. A tool says so when the game doesn't send what it needs; ask get_game_setup which tools have data."""
 

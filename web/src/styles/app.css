@@ -1263,3 +1263,90 @@ body .pop > .pop-scroll, body .pop .display-pop-body { min-height: 0; }
 .title-count { display: flex; align-items: center; gap: 8px; }
 .cohort-table .ret-col { width: 6.5%; }
 .cohort-table tr.before-row td { color: var(--muted); border-top: 1px dashed var(--line); }
+
+/* Live events (pages/LiveEvents.tsx) */
+.live-head { flex-wrap: wrap; gap: 10px 12px; }
+.live-head .search { flex: 1 1 240px; max-width: 360px; min-width: 0; }
+.live-head .quiet-actions { gap: 8px; margin-left: auto; align-items: center; }
+.live-state { display: inline-flex; align-items: center; gap: 8px; margin-right: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
+.live-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+.live-state.is-live .live-dot { background: var(--ok); }
+.live-state.is-offline .live-dot { background: var(--bad); }
+.live-state.is-paused .live-dot { background: var(--warn); }
+.live-table { width: 100%; }
+.live-table td { vertical-align: top; }
+.live-table .c-time { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.live-table .c-time, .live-table .c-event, .live-table .c-player, .live-table .c-build, .live-table .c-copy { width: 1%; white-space: nowrap; }
+.live-table .live-params { max-width: 0; width: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-sm); }
+.live-table .live-detail td { padding-top: 4px; padding-bottom: 14px; }
+.live-table .live-detail dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0 0 8px; font-size: var(--fs-sm); }
+.live-table .live-detail dt { color: var(--muted); }
+.live-table .live-detail dd { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.live-table .live-detail pre { margin: 0; font-family: var(--font-mono); font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.live-table .icon-button { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; border-radius: var(--r-ctl); }
+.live-table .icon-button:hover { color: var(--text); }
+@media (max-width: 640px) {
+  .live-head .quiet-actions { width: 100%; margin-left: 0; }
+  .live-head .live-state { margin-right: auto; }
+  .live-since { display: none; }
+  .live-table { table-layout: fixed; }
+  .live-table th.c-time { width: 76px; }
+  .live-table th.c-event { width: 38%; white-space: normal; }
+  .live-table th.c-copy { width: 40px; }
+  .live-table .c-copy { padding-left: 4px; padding-right: 8px; }
+  .live-table td.c-event { overflow: hidden; text-overflow: ellipsis; }
+  .live-table .live-params { width: auto; max-width: none; }
+}
+
+/* Acquisition: the chosen campaign's payback forecast, above its cohorts */
+.payback-line { display: flex; align-items: center; gap: 8px; margin: 0; padding: 12px 16px; border-bottom: var(--bw) solid var(--line); font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+.payback-line.few { color: var(--muted); }
+
+/* Performance: findings keep whole sentences; on a phone the table gives up Players so the two rates fit. */
+.look.perf-look { grid-template-columns: minmax(0, 1fr); }
+.look.perf-look span.s { white-space: normal; overflow: visible; text-overflow: clip; }
+.look.perf-look span.s.dim { color: var(--muted); }
+.look.perf-look .perf-kind { display: block; font-size: var(--fs-sm); color: var(--dim); letter-spacing: .04em; text-transform: uppercase; }
+.perf-table td:first-child { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.perf-table td.few { opacity: .55; }
+.th-unit { display: block; font-size: var(--fs-sm); letter-spacing: 0; text-transform: none; color: var(--dim); }
+@container app (max-width: 640px) {
+  .perf-table .perf-players { display: none; }
+}
+/* Narrow screens lead with what stands out, the table follows. */
+@media (max-width: 1150px) { .perf-split > section:last-child { order: -1; } }
+
+/* Who stays: two lists side by side that stack on narrower screens; only a list with rows is shown. */
+.stay-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 14px; align-items: start; margin-bottom: 16px; }
+.stay-panels.one { grid-template-columns: minmax(0, 1fr); }
+.stay-panels > .panel { margin: 0; }
+.stay-table td:last-child { white-space: nowrap; }
+.stay-table td:first-child { white-space: normal; overflow-wrap: anywhere; }
+@container app (max-width: 640px) {
+  /* Each fact becomes a small card: the words on top, then the two rates side by side. */
+  .stay-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .stay-table, .stay-table tbody { display: block; }
+  .stay-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; padding: 10px 16px; border-top: var(--bw) solid var(--line); }
+  .stay-table td { display: block; padding: 0; border: 0; text-align: left; min-width: 0; max-width: none; white-space: normal; overflow: visible; text-overflow: clip; }
+  .stay-table td:first-child { grid-column: 1 / -1; }
+  .stay-table td[data-label]::before { content: attr(data-label); display: block; font-family: var(--font-ui); font-size: var(--fs-sm); color: var(--dim); }
+  .stay-table td:last-child { grid-column: 1 / -1; }
+  .stay-table td:last-child:empty { display: none; }
+}
+
+.kpis.kpis-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* At risk: a player's early-behaviour note sits under their ID; on a phone each row is a small card. */
+.risk-note { display: block; font-size: var(--fs-sm); color: var(--dim); white-space: normal; max-width: 60ch; }
+.risk-table td:first-child { white-space: normal; }
+@container app (max-width: 640px) {
+  .risk-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .risk-table, .risk-table tbody { display: block; }
+  .risk-table tr { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 4px 12px; padding: 10px 16px; border-top: var(--bw) solid var(--line); }
+  .risk-table td { display: block; padding: 0; border: 0; text-align: left; min-width: 0; max-width: none; white-space: normal; }
+  .risk-table td:first-child { grid-column: 1 / -1; }
+  .risk-table td[data-label]:not(:first-child)::before { content: attr(data-label); display: block; font-family: var(--font-ui); font-size: var(--fs-sm); color: var(--dim); }
+}
+
+.kpis .kpi-button { height: 100%; }
+.kpis .kpi-button > .kpi { height: 100%; box-sizing: border-box; }

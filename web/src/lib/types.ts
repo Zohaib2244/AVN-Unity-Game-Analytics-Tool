@@ -454,8 +454,9 @@ export type ReturnGoal = { day: number; percent: number };
 export type ReturnGoals = { game: ReturnGoal[]; campaigns: Record<string, ReturnGoal[]> };
 export type CostState = { state: 'off' | 'no_app_id' | 'not_allowed' | 'ok' | 'failed'; app_id?: string; fetched_at?: string; detail?: string; not_final_from?: string | null };
 export type ValueByDay = Record<string, { players: number; per_player: number | null }>;
+export type Payback = { state: 'ok' | 'thin' | 'none'; break_even_day: number | null; predicted: Record<string, number>; based_on_day: number | null; players: number; paid_back_by: number | null; summary: string };
 export type AcquisitionRow = {
-  value: string; installs: number; paid?: boolean;
+  value: string; installs: number; paid?: boolean; payback?: Payback;
   retention: Record<string, { players: number; rate: number | null }>;
   value_per_install: ValueByDay;
   cost: number | null; service_installs: number | null; sdk_installs: number | null; cost_per_install: number | null; seen_share: number | null; seen_share_all: number | null;
@@ -472,3 +473,35 @@ export type AcquisitionCohorts = {
   days: CohortDay[]; by_calendar_day: Array<{ day: string; revenue: number; cost: number | null }>;
 };
 export type CostSettings = { app_id: string; typed_app_id: string; default_app_id: string; goals: ReturnGoals; first_sdk_version: string; configured: boolean };
+
+export type LevelOutlierReason = { metric: 'fail_rate' | 'stop_share'; count: number; value: number; expected: number; excess: number; words: string; short: string };
+export type LevelOutlier = { level: number; attempts: number; players: number; fail_rate: number | null; stop_share: number | null; reasons: LevelOutlierReason[] };
+export type LevelDifficulty = { available: true; summary: string; levels_judged: number; min_attempts: number; levels: LevelOutlier[] } | { available: false; note: string };
+
+export type PerformanceDimension = 'country' | 'device_tier' | 'ram_band' | 'os_version' | 'device_model';
+export type PerformanceFlag = { measure: 'bad_exits' | 'ad_failures'; rate: number; rest: number; count: number; total: number; words: string };
+export type PerformanceRow = {
+  value: string; players: number; launches: number; exit_total: number; exit_bad: number; bad_exit_rate: number | null;
+  ad_total: number; ad_bad: number; ad_failure_rate: number | null; flags: PerformanceFlag[];
+};
+export type PerformanceBlock = { label: string; available: boolean; unknown_players: number; groups: number; rows: PerformanceRow[] };
+export type PerformanceFinding = PerformanceFlag & { dimension: PerformanceDimension; label: string; value: string; players: number; same_as: string[] };
+export type PerformanceReport =
+  | { available: true; summary: string; min_sample: number; everyone: { players: number; launches: number; exit_total: number; exit_bad: number; ad_total: number; ad_bad: number }; findings: PerformanceFinding[]; dimensions: Record<PerformanceDimension, PerformanceBlock> }
+  | { available: false; note: string };
+
+export type SeparatorSide = { reached: number; players: number; rate: number };
+export type SeparatorFinding = {
+  kind: string; label: string; words: string; points: number; interval: [number, number];
+  with: SeparatorSide; without: SeparatorSide; chip?: Record<string, unknown>;
+};
+export type SeparatorOutcome = 'day_1' | 'day_3' | 'day_7' | 'pays';
+export type SeparatorReport =
+  | { available: true; outcome: SeparatorOutcome; outcome_label: string; window_days: number; summary: string; means: string; players: number; outcome_players: number; rate: number; facts_tried: number; more_likely: SeparatorFinding[]; less_likely: SeparatorFinding[] }
+  | { available: false; note: string };
+
+export type ChurnState = 'any' | 'slipping' | 'gone';
+export type ChurnPlayer = { player: string; state: 'slipping' | 'gone'; days_played: number; usual_gap: number; days_away: number; ratio: number; last_day: string; words: string; note?: string; missing?: string };
+export type ChurnReport =
+  | { available: true; as_of: string; means: string; counts: { measured: number; steady: number; slipping: number; gone: number; long_gone: number; too_new: number }; state: ChurnState; early_facts: Array<{ human: string; with_rate: number; without_rate: number }>; listed: number; total: number; players: ChurnPlayer[] }
+  | { available: false; note: string };

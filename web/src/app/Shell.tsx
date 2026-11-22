@@ -21,9 +21,9 @@ import { GameSwitcher, variantFor } from './GameSwitcher';
 import { useBrowserPage } from './browserPage';
 
 const NAV_GROUPS: NavGroup[] = [
-  { label: 'Analyze', items: GAME_SECTIONS.slice(0, 6).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
-  { label: 'Data', items: GAME_SECTIONS.slice(6, 9).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
-  { label: 'Manage', collapsible: true, defaultClosed: true, items: GAME_SECTIONS.slice(9).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
+  { label: 'Analyze', items: GAME_SECTIONS.slice(0, 9).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
+  { label: 'Data', items: GAME_SECTIONS.slice(9, 13).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
+  { label: 'Manage', collapsible: true, defaultClosed: true, items: GAME_SECTIONS.slice(13).map(([id, icon, label]) => ({ id, icon: icon as IconName, label })) },
 ];
 const PHONE_TABS = ['overview', 'levels', 'players', 'sessions'];
 const AUTO_KEY = 'avn-auto-refresh';

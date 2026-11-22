@@ -227,6 +227,8 @@ def test_return_divides_value_per_player_seen_by_the_services_cost_per_install(g
     assert c1["return"]["day_1"] == round(0.0325 / 2.5, 4)
     assert rows["C2"]["value_per_install"]["day_1"]["players"] == 0  # day 1 isn't over yet
     assert rows["Organic"]["cost"] is None and rows["Organic"]["paid"] is False
+    assert c1["payback"]["state"] in ("thin", "none")  # two players: never a firm forecast
+    assert rows["Organic"]["payback"]["state"] == "none"
     assert data["all_paid"]["cost"] == 16.0 and data["all_paid"]["service_installs"] == 6
 
 

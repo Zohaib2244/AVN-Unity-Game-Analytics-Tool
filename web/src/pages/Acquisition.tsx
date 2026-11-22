@@ -11,7 +11,7 @@ import { addDays, number, plural, shortDay, today } from '@/lib/format';
 import { filterQuery, type ActiveFilters } from '@/lib/filters';
 import { gamePath, gameURL } from '@/lib/games';
 import { useStored } from '@/lib/store';
-import type { AcquisitionCohorts, AcquisitionReport, AcquisitionRow, CohortDay, CostSettings, Game, ReturnGoal, ReturnGoals } from '@/lib/types';
+import type { AcquisitionCohorts, AcquisitionReport, AcquisitionRow, CohortDay, CostSettings, Game, Payback, ReturnGoal, ReturnGoals } from '@/lib/types';
 import { FilterBar, useFilters } from '@/components/Filters';
 import { Heading, Metric, QueryRegion, Skeleton, useNotify } from '@/components/feedback';
 import { rangeText, resolveRange } from '@/components/DateRange';
@@ -56,7 +56,7 @@ export function AcquisitionPage({ game }: { game: Game }): ReactElement {
           </>
         ))}
       </QueryRegion>
-      {report.data?.available ? <CohortPanel game={game} filters={query} cohort={cohort} onCohort={setCohort} settings={settings.data} onDay={(day) => pickDays(day, day)} /> : null}
+      {report.data?.available ? <CohortPanel game={game} filters={query} cohort={cohort} onCohort={setCohort} settings={settings.data} payback={cohort === ALL_PAID ? report.data.all_paid.payback : report.data.rows.find((row) => row.value === cohort)?.payback} onDay={(day) => pickDays(day, day)} /> : null}
     </>
   );
 }
@@ -148,7 +148,7 @@ function SourceRow({ row, comeBack, earnedDays, hasCost, goals, total, selected,
 
 /* ─── Cohorts of one campaign ─── */
 
-function CohortPanel({ game, filters, cohort, onCohort, settings, onDay }: { game: Game; filters: URLSearchParams; cohort: string; onCohort: (name: string) => void; settings: CostSettings | undefined; onDay: (day: string) => void }): ReactElement {
+function CohortPanel({ game, filters, cohort, onCohort, settings, payback, onDay }: { game: Game; filters: URLSearchParams; cohort: string; onCohort: (name: string) => void; settings: CostSettings | undefined; payback?: Payback; onDay: (day: string) => void }): ReactElement {
   const [mode, setMode] = useStored<'install' | 'calendar'>(`avn-acquisition-mode-${game.id}`, 'install');
   const navigate = useNavigate();
   const path = `${gameURL(game)}/insights/acquisition/cohorts?${filters}${cohort && cohort !== ALL_PAID ? `&cohort=${encodeURIComponent(cohort)}` : ''}`;
@@ -167,6 +167,7 @@ function CohortPanel({ game, filters, cohort, onCohort, settings, onDay }: { gam
           <button type="button" className="btn primary" onClick={seePlayers}><Ico name="users" size={14} /> See these players</button>
         </div>
       </div>
+      {payback && payback.state !== 'none' ? <p className={`payback-line${payback.state === 'thin' ? ' few' : ''}`} title={payback.paid_back_by != null ? 'Ad revenue per install has already covered the cost per install.' : `Forecast: fitted to the ad revenue per install so far (up to day ${payback.based_on_day}) and carried on to day 180.`}><Ico name="clock" size={14} /> {payback.summary}</p> : null}
       <QueryRegion query={data} path={path} skeleton={<Skeleton kind="chart" />}>
         {(result) => (!result.available ? <p className="help panel-body">{result.note}</p> : mode === 'install' ? <InstallDays data={result} onDay={onDay} /> : <CalendarDays data={result} />)}
       </QueryRegion>

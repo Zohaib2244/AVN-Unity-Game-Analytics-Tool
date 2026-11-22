@@ -21,6 +21,9 @@ export function levelsQuery(state: ActiveFilters, scope: LevelScope, excludeRetu
 }
 export const levelsPath = (game: GameRef, state: ActiveFilters, scope: LevelScope, excludeReturners = false): string => `${gameURL(game)}/insights/levels?${levelsQuery(state, scope, excludeReturners)}`;
 
+/** Levels far harder, or losing far more players, than the levels around them (level_difficulty.py); not split by scope. */
+export const difficultyPath = (game: GameRef, state: ActiveFilters): string => `${gameURL(game)}/insights/levels/difficulty?${filterQuery(state)}`;
+
 export const featuresPath = (game: GameRef, state: ActiveFilters, scope: LevelScope, excludeReturners = false): string => `${gameURL(game)}/insights/levels/features?${levelsQuery(state, scope, excludeReturners)}`;
 
 /** Which players of a level are listed: the group, the order and, within a group, one last action, or one cause of ending (and how it ended). */

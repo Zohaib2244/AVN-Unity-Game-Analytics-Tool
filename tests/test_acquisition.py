@@ -270,10 +270,12 @@ def test_agents_can_ask_for_a_segment_through_the_key(game):
         "get_ad_serving",
         "get_ad_impact",
         "get_stability",
+        "get_where_it_breaks",
         "get_economy",
         "get_onboarding",
         "get_store",
         "get_level_attempts",
         "get_level_designs",
+        "get_level_outliers",
         "count_events",
     }
