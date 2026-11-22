@@ -29,6 +29,12 @@ BATCH_PLAYERS = 20
 BATCH_ROWS, BATCH_BYTES = 25_000, 16 * 1024 * 1024
 SOLO_ROWS, SOLO_BYTES = 200_000, 128 * 1024 * 1024
 MAX_SECONDS = 30.0
+# A prepared answer that failed is tried again after RETRY_SECONDS, then twice as long after each
+# further failure, up to RETRY_CAP_SECONDS. A game too large to prepare an answer within MAX_SECONDS
+# would otherwise be retried every minute for as long as the answer is asked for, which keeps the
+# worker and the disk busy for nothing.
+RETRY_SECONDS = 60
+RETRY_CAP_SECONDS = 6 * 3600
 SUMMARY_MEMORY_BYTES = 64 * 1024 * 1024
 PLAYER_SUMMARY_BYTES = 16 * 1024 * 1024
 SCHEMA = """
@@ -37,7 +43,8 @@ CREATE TABLE IF NOT EXISTS analytics_views (
     fingerprint TEXT, watermark INTEGER, contexts INTEGER,
     source_at REAL, checked_at REAL, answer BLOB,
     stage TEXT, cursor INTEGER NOT NULL DEFAULT 0,
-    error TEXT, retry_at REAL NOT NULL DEFAULT 0, error_version INTEGER
+    error TEXT, retry_at REAL NOT NULL DEFAULT 0, error_version INTEGER,
+    failures INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS analytics_parts (
     view_key TEXT NOT NULL REFERENCES analytics_views(key) ON DELETE CASCADE,
@@ -63,6 +70,10 @@ def install(connection):
         )
     if "error_version" not in columns:
         connection.execute("ALTER TABLE analytics_views ADD COLUMN error_version INTEGER")
+    if "failures" not in columns:
+        connection.execute(
+            "ALTER TABLE analytics_views ADD COLUMN failures INTEGER NOT NULL DEFAULT 0"
+        )
     for statement in analytics._statements(level_views.SCHEMA):
         connection.execute(statement)
 
@@ -277,6 +288,11 @@ class Snapshot:
                 yield connection
 
 
+def retry_delay(failures):
+    """Seconds to wait before trying again after the `failures`-th failure in a row (1-based)."""
+    return min(RETRY_CAP_SECONDS, RETRY_SECONDS * 2 ** max(0, min(failures, 30) - 1))
+
+
 def _guard(worker, revision, began):
     if worker.should_stop(revision):
         raise Cancelled()
@@ -349,13 +365,17 @@ def refresh(worker, game_id, revision):
             if time.monotonic() - began < MAX_SECONDS:
                 return False
             error = TimeoutError("Prepared computation exceeded its snapshot budget")
+        # Failures count only within one VERSION: a new version starts again from the short wait.
+        failures = (row["failures"] if row["error_version"] == VERSION else 0) + 1
         with storage.connect(path) as connection:
             connection.execute(
-                "UPDATE analytics_views SET error=?,retry_at=?,error_version=? WHERE key=?",
+                "UPDATE analytics_views SET error=?,retry_at=?,error_version=?,failures=? "
+                "WHERE key=?",
                 (
                     f"{type(error).__name__}: {str(error)[:300]}",
-                    time.time() + 60,
+                    time.time() + retry_delay(failures),
                     VERSION,
+                    failures,
                     row["key"],
                 ),
             )
@@ -641,7 +661,7 @@ def _refresh(worker, game_id, revision, row, began):
         connection.execute(
             "UPDATE analytics_views SET answer=?,fingerprint=?,watermark=?,contexts=?,"
             "source_at=?,checked_at=?,stage=NULL,cursor=0,error=NULL,retry_at=0,"
-            "error_version=NULL WHERE key=?",
+            "error_version=NULL,failures=0 WHERE key=?",
             (payload, digest, mark, watermarks(connection)[1], source_at, time.time(), key),
         )
         connection.execute("DELETE FROM analytics_queue WHERE view_key=?", (key,))

@@ -713,6 +713,82 @@ def test_prepared_schema_keeps_the_previous_worker_insert_shape(prepared):
         ]
 
 
+def test_the_wait_after_a_failed_preparation_doubles_up_to_a_cap():
+    waits = [views.retry_delay(count) for count in range(1, 12)]
+    assert waits[:4] == [60, 120, 240, 480]
+    assert waits[-1] == views.RETRY_CAP_SECONDS == 6 * 3600
+    assert waits == sorted(waits)
+    assert views.retry_delay(10_000) == views.RETRY_CAP_SECONDS
+
+
+def test_a_preparation_that_keeps_timing_out_is_retried_less_and_less_often(prepared, monkeypatch):
+    import time
+
+    storage, game, days = prepared
+    views.answer(storage, game, "levels", (*days, HIDE_TEST, "all"), lambda: None)
+    attempts = []
+
+    def too_slow(*args, **kwargs):
+        attempts.append(time.time())
+        raise TimeoutError("Prepared computation exceeded its 30-second snapshot budget")
+
+    monkeypatch.setattr(views, "_refresh", too_slow)
+    worker = materialize.Worker(storage, identity="test")
+    seen = []
+    for _ in range(4):
+        worker._backoff.clear()
+        worker.tick()
+        with storage.connect(storage.game_path(game)) as db:
+            row = db.execute("SELECT failures,retry_at,error FROM analytics_views").fetchone()
+        seen.append((row["failures"], round(row["retry_at"] - time.time())))
+        assert row["error"].startswith("TimeoutError")
+        with storage.connect(storage.game_path(game)) as db:
+            db.execute("UPDATE analytics_views SET retry_at=0")  # as if the wait had passed
+    assert [count for count, _ in seen] == [1, 2, 3, 4]
+    assert [wait for _, wait in seen] == [60, 120, 240, 480]
+    # while the wait has not passed, the worker leaves the answer alone
+    with storage.connect(storage.game_path(game)) as db:
+        db.execute("UPDATE analytics_views SET retry_at=?", (time.time() + 600,))
+    before = len(attempts)
+    worker._backoff.clear()
+    worker.tick()
+    assert len(attempts) == before
+
+
+def test_a_new_version_starts_again_from_the_short_wait_and_success_clears_the_count(
+    prepared, monkeypatch
+):
+    storage, game, days = prepared
+    views.answer(storage, game, "levels", (*days, HIDE_TEST, "all"), lambda: None)
+    real = views._refresh
+    monkeypatch.setattr(
+        views, "_refresh", lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("slow"))
+    )
+    worker = materialize.Worker(storage, identity="test")
+    worker.tick()
+    with storage.connect(storage.game_path(game)) as db:
+        db.execute("UPDATE analytics_views SET failures=7,error_version=?", (views.VERSION - 1,))
+    worker._backoff.clear()
+    worker.tick()
+    with storage.connect(storage.game_path(game)) as db:
+        assert db.execute("SELECT failures FROM analytics_views").fetchone()[0] == 1
+        db.execute("UPDATE analytics_views SET retry_at=0")
+    monkeypatch.setattr(views, "_refresh", real)
+    finish(storage, game)
+    with storage.connect(storage.game_path(game)) as db:
+        row = db.execute("SELECT failures,error,retry_at FROM analytics_views").fetchone()
+    assert (row["failures"], row["error"], row["retry_at"]) == (0, None, 0)
+
+
+def test_an_older_database_gets_the_failure_count_column(prepared):
+    storage, game, _ = prepared
+    with storage.connect(storage.game_path(game)) as db:
+        db.execute("ALTER TABLE analytics_views DROP COLUMN failures")
+        views.install(db)
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(analytics_views)")}
+    assert "failures" in columns
+
+
 def test_previous_version_failure_does_not_block_new_preparation(prepared):
     import time
 
