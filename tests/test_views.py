@@ -937,3 +937,15 @@ def test_the_reducer_memory_for_prepared_levels_is_a_setting(prepared, monkeypat
     finish(storage, game)
     with pytest.raises(ValueError, match="AVN_ANALYTICS_SUMMARY_MEMORY_BYTES"):
         dataclasses.replace(storage.settings, analytics_summary_memory_bytes=1024)
+
+
+def test_the_worker_container_is_passed_the_settings_only_it_uses():
+    """compose.yaml hands a service only the settings it names: a setting the worker reads but
+    compose does not name never reaches it (the prepare time and reducer memory did not)."""
+    from pathlib import Path
+
+    compose = (Path(__file__).parent.parent / "compose.yaml").read_text()
+    worker = compose[compose.index("\n  worker:") :]
+    worker = worker[: worker.index("command:")]
+    for name in ("AVN_ANALYTICS_PREPARE_SECONDS", "AVN_ANALYTICS_SUMMARY_MEMORY_BYTES"):
+        assert name in worker
