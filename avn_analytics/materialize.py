@@ -467,12 +467,15 @@ class Worker:
         now = self.clock()
         if owner and owner != self.identity and until and datetime.fromisoformat(until) > now:
             return False
+        # The lease must outlive the longest piece of work: a prepared answer may take up to
+        # AVN_ANALYTICS_PREPARE_SECONDS, and one whose lease ran out is thrown away unpublished.
+        seconds = LEASE_SECONDS + self.storage.settings.analytics_prepare_seconds
         connection.executemany(
             "INSERT INTO analytics_meta (key, value) VALUES (?, ?)"
             " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             [
                 ("lease_owner", self.identity),
-                ("lease_until", timestamp(now + timedelta(seconds=LEASE_SECONDS))),
+                ("lease_until", timestamp(now + timedelta(seconds=seconds))),
             ],
         )
         return True

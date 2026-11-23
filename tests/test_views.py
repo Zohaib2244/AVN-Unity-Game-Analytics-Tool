@@ -949,3 +949,40 @@ def test_the_worker_container_is_passed_the_settings_only_it_uses():
     worker = worker[: worker.index("command:")]
     for name in ("AVN_ANALYTICS_PREPARE_SECONDS", "AVN_ANALYTICS_SUMMARY_MEMORY_BYTES"):
         assert name in worker
+
+
+def test_the_game_lease_outlives_the_longest_piece_of_work(prepared):
+    import dataclasses
+    from datetime import datetime
+
+    storage, game, days = prepared
+    storage.settings = dataclasses.replace(storage.settings, analytics_prepare_seconds=300)
+    worker = materialize.Worker(storage, identity="test")
+    with storage.connect(storage.game_path(game)) as db:
+        assert worker._lease(db, game)
+        db.commit()
+    with storage.connect(storage.game_path(game)) as db:
+        until = datetime.fromisoformat(
+            db.execute("SELECT value FROM analytics_meta WHERE key='lease_until'").fetchone()[0]
+        )
+    # a 300-second piece of work that is then saved must still hold the lease
+    assert (until - worker.clock()).total_seconds() > 300
+
+
+def test_an_answer_that_gives_up_quietly_steps_aside_for_the_others(prepared, monkeypatch, caplog):
+    storage, game, days = prepared
+    views.answer(storage, game, "levels", (*days, HIDE_TEST, "all"), lambda: None)
+    views.answer(storage, game, "summary", (days, HIDE_TEST, 0), lambda: None)
+    tried = []
+
+    def gives_up(worker, game_id, revision, row, began):
+        tried.append(json.loads(row["spec"])[0])
+        return False  # e.g. its lease or the data changed before it could be saved
+
+    monkeypatch.setattr(views, "_refresh", gives_up)
+    worker = materialize.Worker(storage, identity="test")
+    for _ in range(2):
+        worker._backoff.clear()
+        views.refresh(worker, game, worker._control()["revision"])
+    assert sorted(tried) == ["levels", "summary"]  # not the same answer twice
+    assert "gave up preparing" in caplog.text

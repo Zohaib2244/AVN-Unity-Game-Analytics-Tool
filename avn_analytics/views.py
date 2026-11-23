@@ -293,6 +293,25 @@ def retry_delay(failures):
     return min(RETRY_CAP_SECONDS, RETRY_SECONDS * 2 ** max(0, min(failures, 30) - 1))
 
 
+def _step_aside(storage, game_id, row, began):
+    """A piece of work that gave up without an error (the data, the definitions or the worker's
+    lease changed before it could be saved) goes to the back of the queue, so it cannot be picked
+    again and again ahead of every other answer of the game, and says so in the log."""
+    kind = json.loads(row["spec"])[0]
+    logger.warning(
+        "analytics worker: game %s gave up preparing %s after %.0f s (changed while it ran); "
+        "other answers go first",
+        game_id,
+        kind,
+        time.monotonic() - began,
+    )
+    # Behind every other waiting answer (the queue is ordered by checked_at), but still due now
+    # when it is the only one.
+    due = time.time() - storage.settings.analytics_refresh_seconds - 1
+    with storage.connect(storage.game_path(game_id)) as connection:
+        connection.execute("UPDATE analytics_views SET checked_at=? WHERE key=?", (due, row["key"]))
+
+
 def _guard(worker, revision, began):
     if worker.should_stop(revision):
         raise Cancelled()
@@ -358,12 +377,16 @@ def refresh(worker, game_id, revision):
     worker.job = (game_id, "preparing " + json.loads(row["spec"])[0])
     worker._write_status()
     try:
-        return _refresh(worker, game_id, revision, dict(row), began)
+        if _refresh(worker, game_id, revision, dict(row), began):
+            return True
+        _step_aside(storage, game_id, row, began)
+        return False
     except Cancelled:
         return False
     except Exception as error:
         if isinstance(error, sqlite3.OperationalError) and str(error) == "interrupted":
             if time.monotonic() - began < storage.settings.analytics_prepare_seconds:
+                _step_aside(storage, game_id, row, began)
                 return False
             error = TimeoutError("Prepared computation exceeded its snapshot budget")
         # Failures count only within one VERSION: a new version starts again from the short wait.
