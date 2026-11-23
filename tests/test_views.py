@@ -910,3 +910,30 @@ def test_the_time_one_piece_of_a_prepared_answer_may_take_is_a_setting():
             Settings(data_dir=__import__("pathlib").Path("x"), admin_token="t" * 32),
             analytics_prepare_seconds=1,
         )
+
+
+def test_the_reducer_memory_for_prepared_levels_is_a_setting(prepared, monkeypatch):
+    import dataclasses
+
+    import pytest
+
+    storage, game, days = prepared
+    journeys.level_progress(storage, game, *days, HIDE_TEST)
+    monkeypatch.setattr(views, "SUMMARY_MEMORY_BYTES", 1)  # the built-in allowance is too small
+    worker = materialize.Worker(storage, identity="test")
+    for _ in range(100):
+        worker.tick()
+        if worker.failing:
+            break
+    message = worker.failing[game]["message"]
+    assert "bounded reducer memory budget (" in message and "MiB)" in message
+    # a larger allowance set for the deployment wins over the built-in one
+    storage.settings = dataclasses.replace(
+        storage.settings, analytics_summary_memory_bytes=32 * 1024 * 1024
+    )
+    with storage.connect(storage.game_path(game)) as db:
+        db.execute("UPDATE analytics_views SET retry_at=0, failures=0")
+    worker._backoff.clear()
+    finish(storage, game)
+    with pytest.raises(ValueError, match="AVN_ANALYTICS_SUMMARY_MEMORY_BYTES"):
+        dataclasses.replace(storage.settings, analytics_summary_memory_bytes=1024)

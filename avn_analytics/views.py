@@ -617,7 +617,10 @@ def _refresh(worker, game_id, revision, row, began):
             ).fetchone()[0]
             if count > journeys.MAX_FUNNEL_EVENTS:
                 raise ValueError("Levels history exceeds the existing event limit")
-            totals = journeys._LevelSummary(memory_budget=SUMMARY_MEMORY_BYTES)
+            totals = journeys._LevelSummary(
+                memory_budget=storage.settings.analytics_summary_memory_bytes
+                or SUMMARY_MEMORY_BYTES
+            )
             for part in connection.execute(
                 "SELECT part FROM analytics_parts WHERE view_key=? ORDER BY player", (key,)
             ):

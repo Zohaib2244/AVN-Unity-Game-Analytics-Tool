@@ -387,7 +387,7 @@ class Worker:
         logger.warning(
             "analytics worker: game %s failed (%s), retry in %.0f s",
             game_id,
-            type(error).__name__,
+            message,
             delay,
         )
         self.failing[game_id] = {"message": message, "at": timestamp(self.clock())}

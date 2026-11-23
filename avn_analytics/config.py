@@ -38,6 +38,8 @@ class Settings:
     analytics_refresh_seconds: int = 10
     # How long the worker may spend on one piece of a prepared answer (and hold its read snapshot).
     analytics_prepare_seconds: int = 30
+    # Memory the worker may use to combine a prepared Levels answer; 0 = the built-in 64 MiB.
+    analytics_summary_memory_bytes: int = 0
     analytics_freshness_seconds: int = 60
     analytics_active_views: int = 12
     analytics_storage_bytes: int = 1_073_741_824
@@ -101,6 +103,10 @@ class Settings:
         ):
             if not low <= getattr(self, name) <= high:
                 raise ValueError(f"AVN_{name.upper()} must be between {low} and {high}")
+        if self.analytics_summary_memory_bytes and not (
+            16 * 1024**2 <= self.analytics_summary_memory_bytes <= 2 * 1024**3
+        ):
+            raise ValueError("AVN_ANALYTICS_SUMMARY_MEMORY_BYTES must be 0 or 16 MiB to 2 GiB")
         if not 1 <= self.mcp_calls_per_minute <= 6000:
             raise ValueError("AVN_MCP_CALLS_PER_MINUTE must be between 1 and 6000")
         if self.nutbot_keep_days < 0 or not 1 <= self.nutbot_limit_warn <= 100:
@@ -136,6 +142,7 @@ class Settings:
             analytics_batch_rows=int(_text("AVN_ANALYTICS_BATCH_ROWS", "5000")),
             analytics_refresh_seconds=int(_text("AVN_ANALYTICS_REFRESH_SECONDS", "10")),
             analytics_prepare_seconds=int(_text("AVN_ANALYTICS_PREPARE_SECONDS", "30")),
+            analytics_summary_memory_bytes=int(_text("AVN_ANALYTICS_SUMMARY_MEMORY_BYTES", "0")),
             analytics_freshness_seconds=int(_text("AVN_ANALYTICS_FRESHNESS_SECONDS", "60")),
             analytics_active_views=int(_text("AVN_ANALYTICS_ACTIVE_VIEWS", "12")),
             analytics_storage_bytes=int(_text("AVN_ANALYTICS_STORAGE_BYTES", "1073741824")),

@@ -1215,7 +1215,10 @@ class _LevelSummary(_LevelTotals):
                 1024 + 2 * len(key.encode()) for key in values if key not in existing
             )
         if self.memory_budget is not None and self.memory_used > self.memory_budget:
-            raise ValueError("Prepared Levels exceeds the bounded reducer memory budget")
+            raise ValueError(
+                "Prepared Levels exceeds the bounded reducer memory budget "
+                f"({self.memory_used >> 20} of {self.memory_budget >> 20} MiB)"
+            )
         super().add(part)
 
     def add_groups(self, groups):
