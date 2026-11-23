@@ -848,3 +848,65 @@ def test_prepared_group_filters_are_canonical_and_keep_their_semantics(prepared)
     # Duplicate membership conditions describe the same answer and must reuse its generation.
     duplicate = {**filters, "segments": filters["segments"] * 2}
     assert views.answer(storage, game, "summary", (days, duplicate, 0), lambda: "live") == expected
+
+
+def test_a_new_worker_gives_answers_that_failed_a_fresh_attempt(prepared, monkeypatch):
+    import time
+
+    storage, game, days = prepared
+    views.answer(storage, game, "levels", (*days, HIDE_TEST, "all"), lambda: None)
+    attempts = []
+
+    def too_slow(*args, **kwargs):
+        attempts.append(1)
+        raise TimeoutError("slow")
+
+    monkeypatch.setattr(views, "_refresh", too_slow)
+    worker = materialize.Worker(storage, identity="old")
+    worker.tick()
+    assert len(attempts) == 1
+    # the old worker had piled up a long wait; the new one must not sit it out
+    with storage.connect(storage.game_path(game)) as db:
+        db.execute("UPDATE analytics_views SET failures=7, retry_at=?", (time.time() + 7200,))
+    worker._backoff.clear()
+    worker.tick()
+    assert len(attempts) == 1  # still waiting
+    newer = materialize.Worker(storage, identity="old")  # the restarted process
+    newer._stopping.set()  # start up and stop at once: only the start-up step runs
+    newer.run()
+    with storage.connect(storage.game_path(game)) as db:
+        row = db.execute("SELECT failures,retry_at,error FROM analytics_views").fetchone()
+    assert row["failures"] == 0 and row["retry_at"] == 0 and row["error"].startswith("TimeoutError")
+    newer._backoff.clear()
+    newer._stopping.clear()
+    newer.tick()
+    assert len(attempts) == 2
+
+
+def test_the_time_one_piece_of_a_prepared_answer_may_take_is_a_setting():
+    import dataclasses
+    import time
+    from types import SimpleNamespace
+
+    import pytest
+
+    from avn_analytics.config import Settings
+
+    def worker_with(seconds):
+        settings = SimpleNamespace(analytics_prepare_seconds=seconds)
+        return SimpleNamespace(
+            storage=SimpleNamespace(settings=settings),
+            should_stop=lambda revision: False,
+            _write_status=lambda: None,
+        )
+
+    began = time.monotonic() - 60
+    with pytest.raises(TimeoutError, match="5-second"):
+        views._guard(worker_with(5), 1, began)
+    views._guard(worker_with(300), 1, began)  # a longer budget lets the same work carry on
+    assert Settings.__dataclass_fields__["analytics_prepare_seconds"].default == 30
+    with pytest.raises(ValueError, match="ANALYTICS_PREPARE_SECONDS"):
+        dataclasses.replace(
+            Settings(data_dir=__import__("pathlib").Path("x"), admin_token="t" * 32),
+            analytics_prepare_seconds=1,
+        )

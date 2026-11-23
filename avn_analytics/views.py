@@ -28,11 +28,11 @@ BATCH_PLAYERS = 20
 # What one Levels step may read: a batch of players, or a single heavy player on their own.
 BATCH_ROWS, BATCH_BYTES = 25_000, 16 * 1024 * 1024
 SOLO_ROWS, SOLO_BYTES = 200_000, 128 * 1024 * 1024
-MAX_SECONDS = 30.0
 # A prepared answer that failed is tried again after RETRY_SECONDS, then twice as long after each
-# further failure, up to RETRY_CAP_SECONDS. A game too large to prepare an answer within MAX_SECONDS
-# would otherwise be retried every minute for as long as the answer is asked for, which keeps the
-# worker and the disk busy for nothing.
+# further failure, up to RETRY_CAP_SECONDS. A game too large to prepare an answer within the
+# prepare budget (AVN_ANALYTICS_PREPARE_SECONDS) would otherwise be retried every minute for as
+# long as the answer is asked for, which keeps the worker and the disk busy for nothing. A new
+# worker starts every answer over (fresh_attempt).
 RETRY_SECONDS = 60
 RETRY_CAP_SECONDS = 6 * 3600
 SUMMARY_MEMORY_BYTES = 64 * 1024 * 1024
@@ -297,8 +297,9 @@ def _guard(worker, revision, began):
     if worker.should_stop(revision):
         raise Cancelled()
     worker._write_status()
-    if time.monotonic() - began >= MAX_SECONDS:
-        raise TimeoutError("Prepared computation exceeded its 30-second snapshot budget")
+    budget = worker.storage.settings.analytics_prepare_seconds
+    if time.monotonic() - began >= budget:
+        raise TimeoutError(f"Prepared computation exceeded its {budget}-second snapshot budget")
 
 
 def _space(storage):
@@ -362,7 +363,7 @@ def refresh(worker, game_id, revision):
         return False
     except Exception as error:
         if isinstance(error, sqlite3.OperationalError) and str(error) == "interrupted":
-            if time.monotonic() - began < MAX_SECONDS:
+            if time.monotonic() - began < storage.settings.analytics_prepare_seconds:
                 return False
             error = TimeoutError("Prepared computation exceeded its snapshot budget")
         # Failures count only within one VERSION: a new version starts again from the short wait.
@@ -666,6 +667,22 @@ def _refresh(worker, game_id, revision, row, began):
         )
         connection.execute("DELETE FROM analytics_queue WHERE view_key=?", (key,))
     return True
+
+
+def fresh_attempt(storage):
+    """Give every answer that failed a fresh attempt now: a new worker means a new build or new
+    settings (more CPU, a longer budget), so the waits stored by the old one no longer apply."""
+    cleared = 0
+    for game in storage.list_games():
+        try:
+            with storage.connect(storage.game_path(game["id"])) as connection:
+                cleared += connection.execute(
+                    "UPDATE analytics_views SET retry_at=0, failures=0 WHERE error IS NOT NULL "
+                    "AND (retry_at!=0 OR failures!=0)"
+                ).rowcount
+        except sqlite3.Error:  # busy or unavailable: it simply keeps its wait
+            logger.warning("analytics worker: could not reset waits for one game")
+    return cleared
 
 
 def has_errors(storage, game_id):

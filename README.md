@@ -585,6 +585,7 @@ Environment variables (see `.env.example`):
 | `AVN_ANALYTICS_WORKER_DEFAULT_ENABLED` | `true` | Initial processing choice only; the stored administrator Start/Stop choice wins on all later starts. Pass the same setting to all services |
 | `AVN_ANALYTICS_BATCH_ROWS` | `5000` | Historical events copied per worker transaction (100–100000) |
 | `AVN_ANALYTICS_REFRESH_SECONDS` | `10` | Worker refresh interval for prepared answers (1–3600 seconds) |
+| `AVN_ANALYTICS_PREPARE_SECONDS` | `30` | How long the worker may spend on one piece of a prepared answer before it gives up and retries later (5–3600 seconds). Raise it for very large games; the worker keeps a read snapshot open that long, so the game's write-ahead log cannot be folded back meanwhile |
 | `AVN_ANALYTICS_FRESHNESS_SECONDS` | `60` | Maximum prepared-answer age before live fallback (5–86400 seconds); configure admin and worker identically |
 | `AVN_ANALYTICS_ACTIVE_VIEWS` | `12` | Maximum retained prepared specifications per game (1–100); unused specifications expire after 24 hours |
 | `AVN_ANALYTICS_STORAGE_BYTES` | `1073741824` | Global logical budget for prepared answers and player contributions (1 MiB–10 GiB); raw events and stable facts are outside this derived-answer budget |

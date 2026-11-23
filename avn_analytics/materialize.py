@@ -220,6 +220,15 @@ class Worker:
 
     def run(self):
         logger.info("analytics worker %s started", self.identity)
+        try:
+            from . import views
+
+            cleared = views.fresh_attempt(self.storage)
+        except Exception:  # never stop the worker over this
+            logger.exception("analytics worker: could not reset waits")
+        else:
+            if cleared:
+                logger.info("analytics worker: %d failed answers get a fresh attempt", cleared)
         while not self._stopping.is_set():
             try:
                 worked = self.tick()

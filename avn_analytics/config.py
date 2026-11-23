@@ -36,6 +36,8 @@ class Settings:
     analytics_worker_default_enabled: bool = True
     analytics_batch_rows: int = 5000
     analytics_refresh_seconds: int = 10
+    # How long the worker may spend on one piece of a prepared answer (and hold its read snapshot).
+    analytics_prepare_seconds: int = 30
     analytics_freshness_seconds: int = 60
     analytics_active_views: int = 12
     analytics_storage_bytes: int = 1_073_741_824
@@ -94,6 +96,7 @@ class Settings:
             ("analytics_active_views", 1, 100),
             ("analytics_storage_bytes", 1_048_576, 10_737_418_240),
             ("analytics_refresh_seconds", 1, 3600),
+            ("analytics_prepare_seconds", 5, 3600),
             ("analytics_freshness_seconds", 5, 86_400),
         ):
             if not low <= getattr(self, name) <= high:
@@ -132,6 +135,7 @@ class Settings:
             analytics_worker_default_enabled=_flag("AVN_ANALYTICS_WORKER_DEFAULT_ENABLED", True),
             analytics_batch_rows=int(_text("AVN_ANALYTICS_BATCH_ROWS", "5000")),
             analytics_refresh_seconds=int(_text("AVN_ANALYTICS_REFRESH_SECONDS", "10")),
+            analytics_prepare_seconds=int(_text("AVN_ANALYTICS_PREPARE_SECONDS", "30")),
             analytics_freshness_seconds=int(_text("AVN_ANALYTICS_FRESHNESS_SECONDS", "60")),
             analytics_active_views=int(_text("AVN_ANALYTICS_ACTIVE_VIEWS", "12")),
             analytics_storage_bytes=int(_text("AVN_ANALYTICS_STORAGE_BYTES", "1073741824")),
