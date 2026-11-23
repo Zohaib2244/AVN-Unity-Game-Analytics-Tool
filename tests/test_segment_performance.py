@@ -226,3 +226,15 @@ def test_a_game_without_launches_or_ads_gets_a_sentence(tmp_path):
             admin.app.state.storage, game["id"], START, END, NO_FILTERS
         )
         assert data["available"] is False and "may not send" in data["note"]
+
+
+def test_one_phone_is_not_a_finding_but_the_same_numbers_from_many_players_are():
+    def with_players(value, players):
+        item = row(value, ad_total=100, ad_bad=70)
+        item["ad_players"] = players
+        return item
+
+    calm = [row(name, ad_total=200, ad_bad=10) for name in ("a", "b", "c")]
+    assert flagged([with_players("one phone", 1), *calm])["one phone"] == []
+    many = flagged([with_players("many phones", 12), *calm])["many phones"]
+    assert [f["measure"] for f in many] == ["ad_failures"]

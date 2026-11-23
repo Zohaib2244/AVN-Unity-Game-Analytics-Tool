@@ -111,3 +111,30 @@ def test_a_game_without_level_events_gets_a_sentence(tmp_path):
         game = register(admin)
         data = level_difficulty.find(admin.app.state.storage, game["id"], START, END, NO_FILTERS)
     assert data["available"] is False and data["note"]
+
+
+def counted(number, fail_rate, tries):
+    """A level row that carries its counts, like the ones `find` builds."""
+    failed = round(fail_rate * tries)
+    return {
+        "level": number,
+        "fail_rate": failed / tries,
+        "fail_count": failed,
+        "fail_total": tries,
+        "stop_share": None,
+    }
+
+
+def test_a_level_with_few_tries_is_not_flagged_but_the_same_rate_with_many_is():
+    few = [counted(n, 0.1, 400) for n in range(1, 10)]
+    few[4] = counted(5, 0.3, 10)  # 3 of 10: could be luck
+    assert level_difficulty.flag(few) == []
+    many = [counted(n, 0.1, 400) for n in range(1, 10)]
+    many[4] = counted(5, 0.3, 400)  # 120 of 400: not luck
+    assert [item["level"] for item in level_difficulty.flag(many)] == [5]
+
+
+def test_the_answer_counts_the_levels_that_stand_out(hard_game):
+    admin, game, storage = hard_game
+    data = level_difficulty.find(storage, game["id"], START, END, NO_FILTERS, min_attempts=20)
+    assert data["levels_flagged"] == 1 and "stand out in all" not in data["summary"]

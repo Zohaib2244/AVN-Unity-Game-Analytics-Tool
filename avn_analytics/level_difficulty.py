@@ -13,6 +13,7 @@ either side that have enough attempts. It is flagged when it is both clearly hig
 terms (MIN_EXCESS) and relative terms (MIN_RATIO). The answer says this as a sentence per level.
 """
 
+from math import sqrt
 from statistics import median
 
 from . import insights, level_attempts
@@ -24,10 +25,22 @@ MIN_NEIGHBOURS = 2
 MIN_EXCESS = 0.10
 MIN_RATIO = 1.5
 MAX_SHOWN = 20
+# Hundreds of levels are compared, so a level is listed only when even the low end of what its own
+# tries allow (a wide 99% margin) is clearly above its neighbours: a handful of tries never does.
+Z = 2.58
 METRICS = {
     "fail_rate": ("fail", "of finished tries fail"),
     "stop_share": ("stop", "of players who reach it go no further"),
 }
+
+
+def _low_end(count, total):
+    """The low end of the rate `count` / `total` (Wilson interval); None without a total."""
+    if not total:
+        return None
+    rate = count / total
+    spread = Z * sqrt(rate * (1 - rate) / total + Z * Z / (4 * total * total))
+    return (rate + Z * Z / (2 * total) - spread) / (1 + Z * Z / total)
 
 
 def _expected(levels, index, metric, window):
@@ -62,6 +75,12 @@ def flag(levels, window=WINDOW, min_excess=MIN_EXCESS, min_ratio=MIN_RATIO):
                 continue
             excess = value - expected
             if excess >= min_excess and value >= expected * min_ratio:
+                # rows that carry their counts must also clear the bar at the low end of their rate
+                low = _low_end(row.get(f"{short}_count") or 0, row.get(f"{short}_total"))
+                if low is not None and not (
+                    low - expected >= min_excess and low >= expected * min_ratio
+                ):
+                    continue
                 reasons.append(
                     {
                         "metric": metric,
@@ -121,7 +140,9 @@ def find(storage, game_id, start, end, filters, min_attempts=MIN_ATTEMPTS, limit
             {
                 **row,
                 "fail_count": row["failed"],
+                "fail_total": finished,
                 "stop_count": stopped.get(row["level"], 0),
+                "stop_total": row["players"],
                 "fail_rate": row["failed"] / finished if enough else None,
                 "stop_share": (
                     stopped.get(row["level"], 0) / row["players"]
@@ -135,8 +156,14 @@ def find(storage, game_id, start, end, filters, min_attempts=MIN_ATTEMPTS, limit
     if found:
         top = found[0]
         summary = f"Level {top['level']} stands out: {top['reasons'][0]['words']}."
-        if len(found) > 1:
-            summary += f" {len(found) - 1} more level{'s' if len(found) > 2 else ''} below."
+        shown = min(len(found), limit)
+        if shown > 1:
+            summary += f" {shown - 1} more level{'s' if shown > 2 else ''} below."
+        if len(found) > shown:
+            summary += (
+                f" {len(found)} levels stand out in all; the {shown} furthest from their "
+                "neighbours are listed."
+            )
     else:
         summary = (
             f"No level stands out from the levels around it ({judged} levels had enough tries)."
@@ -153,6 +180,7 @@ def find(storage, game_id, start, end, filters, min_attempts=MIN_ATTEMPTS, limit
             f"at least {round(MIN_EXCESS * 100)} points and {MIN_RATIO}x above that."
         ),
         "levels_judged": judged,
+        "levels_flagged": len(found),
         "min_attempts": min_attempts,
         "levels": [
             {

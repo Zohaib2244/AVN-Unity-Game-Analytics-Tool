@@ -24,6 +24,7 @@ DIMENSIONS = {
 }
 MIN_SAMPLE = 50  # launches with a known exit, or ads asked for, before a group is judged
 MIN_BAD = 5  # bad exits or failed ads before a group is flagged
+MIN_PLAYERS = 10  # players behind a measure before a group is flagged: one phone is not a finding
 MIN_EXCESS = 0.03  # points above everyone else
 MIN_RATIO = 1.5  # times everyone else
 MAX_ROWS = 25
@@ -47,9 +48,18 @@ def _pct(value):
     return f"{value * 100:.1f}%"
 
 
-def flag(rows, min_sample=MIN_SAMPLE, min_bad=MIN_BAD, min_excess=MIN_EXCESS, min_ratio=MIN_RATIO):
+def flag(
+    rows,
+    min_sample=MIN_SAMPLE,
+    min_bad=MIN_BAD,
+    min_excess=MIN_EXCESS,
+    min_ratio=MIN_RATIO,
+    min_players=MIN_PLAYERS,
+):
     """Pure: rows {"value", "exit_total", "exit_bad", "ad_total", "ad_bad", ...}. Adds `flags`
-    (one per measure the group is clearly worse on, with a sentence) and returns the rows."""
+    (one per measure the group is clearly worse on, with a sentence) and returns the rows. A row
+    that says how many players are behind a measure (`exit_players`, `ad_players`) is flagged on it
+    only with at least `min_players`."""
     totals = {
         key: (sum(row[f"{key}_total"] for row in rows), sum(row[f"{key}_bad"] for row in rows))
         for key in ("exit", "ad")
@@ -61,6 +71,9 @@ def flag(rows, min_sample=MIN_SAMPLE, min_bad=MIN_BAD, min_excess=MIN_EXCESS, mi
             rest_total, rest_bad = totals[key][0] - total, totals[key][1] - bad
             row[f"{key}_rest"] = rest_bad / rest_total if rest_total else None
             if total < min_sample or bad < min_bad or not rest_total:
+                continue
+            players = row.get(f"{key}_players")
+            if players is not None and players < min_players:
                 continue
             rate, rest = bad / total, rest_bad / rest_total
             if rate - rest >= min_excess and rate >= rest * min_ratio:
@@ -86,6 +99,8 @@ def _row(value, exits, shows):
     return {
         "value": value,
         "players": max(exits["players"] if exits else 0, shows["players"] if shows else 0),
+        "exit_players": exits["players"] if exits else 0,
+        "ad_players": shows["players"] if shows else 0,
         "launches": exits["launches"] if exits else 0,
         "exit_total": exit_total,
         "exit_bad": exit_bad,
@@ -260,9 +275,9 @@ def report(storage, game_id, start, end, filters, min_sample=MIN_SAMPLE):
             "killing the game / launches whose previous exit is known; ads that fail to show = "
             "AD_ANALYSIS Failed / (Show + Failed), blocked asks left out. A group is compared "
             f"with everyone else and listed when it is at least {round(MIN_EXCESS * 100)} points "
-            f"and {MIN_RATIO}x worse, with at least {min_sample} launches or ads and {MIN_BAD} "
-            "bad ones. Device groups come from each player's latest device snapshot and session "
-            "start; players without one are 'unknown'."
+            f"and {MIN_RATIO}x worse, with at least {min_sample} launches or ads, {MIN_BAD} "
+            f"bad ones and {MIN_PLAYERS} players. Device groups come from each player's latest "
+            "device snapshot and session start; players without one are 'unknown'."
         ),
         "everyone": {
             **everyone,
