@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { duration, number, percent } from '@/lib/format';
 import type { LevelRow, LevelTransition } from '@/lib/types';
-import { afterReturning, DRILL_PAGE, cleanNavigation, clampPage, dropChange, dropChangeLabel, dropText, lastDidDetails, lastDidLabel, levelCurve, levelDrillGroup, levelDrop, levelHighlights, levelsNote, pageCount, pageSizeOf, pickReleases, releaseChoices, sortLevels, zoomedLevels, zoomWindow } from './levelMath';
+import { afterReturning, DRILL_PAGE, cleanNavigation, clampPage, loadMoreLabel, shownRows, dropChange, dropChangeLabel, dropText, lastDidDetails, lastDidLabel, levelCurve, levelDrillGroup, levelDrop, levelHighlights, levelsNote, pageCount, pageSizeOf, pickReleases, releaseChoices, sortLevels, zoomedLevels, zoomWindow } from './levelMath';
 
 const transition = (over: Partial<LevelTransition> = {}): LevelTransition => ({
   available: true, next_level: 2, drop_percent: 20, total_drop: 10, net_change: 0, left: 0, finished_stopped: 0, kept_going: 0, straight_on: 0, came_back_later: 0, unknown_progress: 0, failed: 0, failed_left: 0, failed_kept_playing: 0, fail_drop_percent: null, ...over,
@@ -24,10 +24,10 @@ describe('failing and then quitting', () => {
 describe('level navigation memory', () => {
   it('keeps valid saved sort, rows and scope, and falls back to the defaults for anything else', () => {
     expect(cleanNavigation({ sort: 'drop', pageSize: '100', scope: 'first_session' })).toEqual({ sort: 'drop', pageSize: '100', scope: 'first_session', excludeReturners: false });
-    expect(cleanNavigation({ sort: 'nope', pageSize: '10', scope: 'everyone' })).toEqual({ sort: 'level', pageSize: '50', scope: 'all', excludeReturners: false });
+    expect(cleanNavigation({ sort: 'nope', pageSize: '10', scope: 'everyone' })).toEqual({ sort: 'level', pageSize: '100', scope: 'all', excludeReturners: false });
     expect(cleanNavigation({ excludeReturners: true }).excludeReturners).toBe(true);
     expect(cleanNavigation({ excludeReturners: 'true' }).excludeReturners).toBe(false);
-    expect(cleanNavigation(null)).toEqual({ sort: 'level', pageSize: '50', scope: 'all', excludeReturners: false });
+    expect(cleanNavigation(null)).toEqual({ sort: 'level', pageSize: '100', scope: 'all', excludeReturners: false });
   });
   it('words the note for each scope and keeps the old sentence', () => {
     expect(levelsNote('all')).toBe('Counted from level start, complete, fail and restart events. Click a level to see the players behind it.');
@@ -118,6 +118,22 @@ describe('paging the level table', () => {
     expect(pageCount('50', 0)).toBe(1);
     expect(pageSizeOf('all', 0)).toBe(1);
     expect(pageCount('all', 300)).toBe(1);
+  });
+  it('keeps 200 rows at a time when chosen', () => {
+    expect(cleanNavigation({ pageSize: '200' }).pageSize).toBe('200');
+  });
+  it('shows more rows with each load, up to every level', () => {
+    expect(shownRows(0, '100', 19815)).toBe(100);
+    expect(shownRows(2, '100', 19815)).toBe(300);
+    expect(shownRows(9, '100', 250)).toBe(250);
+    expect(shownRows(0, 'all', 250)).toBe(250);
+    expect(shownRows(0, '100', 0)).toBe(0);
+  });
+  it('says how many the next load adds, and nothing once all are shown', () => {
+    expect(loadMoreLabel(0, '100', 19815)).toBe('Load 100 more');
+    expect(loadMoreLabel(1, '100', 250)).toBe('Load the last 50');
+    expect(loadMoreLabel(2, '100', 250)).toBeNull();
+    expect(loadMoreLabel(0, 'all', 19815)).toBeNull();
   });
   it('clamps the page to the last one that exists', () => {
     expect(clampPage(5, '25', 51)).toBe(2);

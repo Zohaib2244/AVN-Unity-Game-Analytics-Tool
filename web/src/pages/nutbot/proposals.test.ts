@@ -23,7 +23,7 @@ describe('NutBot proposals', () => {
 
   it('sets the level table and names a stable key and page per kind', async () => {
     await applyProposal(game, proposal('levels', { sort: 'drop', scope: 'first_session' }));
-    expect(JSON.parse(localStorage.getItem('avn-level-nav-g1')!)).toMatchObject({ sort: 'drop', scope: 'first_session', pageSize: '50' });
+    expect(JSON.parse(localStorage.getItem('avn-level-nav-g1')!)).toMatchObject({ sort: 'drop', scope: 'first_session', pageSize: '100' });
     expect(proposalPage(proposal('highlight', {}))).toBe('players');
     expect(proposalKey(proposal('levels', { a: 1 }))).toBe('levels:T:{"a":1}');
   });

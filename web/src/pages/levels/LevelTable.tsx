@@ -1,5 +1,5 @@
 // "Level flow": one toolbar (jump to a level, the flags, sort, Display, Chart), a plain-words answer naming the
-// levels worth a look, the table of every level and its paging. Chart opens players remaining by level.
+// levels worth a look, the table of every level (a step of rows at a time, “Load more” adds the next). Chart opens players remaining by level.
 // A row or a level opens that level's page. Drops and quits are drawn against per-game flag thresholds.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactElement } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
@@ -14,7 +14,7 @@ import { useStored } from '@/lib/store';
 import { POP } from '@/lib/motion';
 import { gamePath } from '@/lib/games';
 import type { Game, LevelDifficulty, LevelRow, LevelsResult } from '@/lib/types';
-import { clampPage, levelDrillGroup, pageSizeOf, pageCount, sortLevels, type LevelNavigation, type LevelPageSize, type LevelScope, type LevelSort } from './levelMath';
+import { clampPage, levelDrillGroup, loadMoreLabel, pageSizeOf, shownRows, sortLevels, type LevelNavigation, type LevelPageSize, type LevelScope, type LevelSort } from './levelMath';
 import { difficultyPath, drillPagePath } from './levelPaths';
 import { HeatValue } from './LevelHeat';
 import { LevelDisplayMenu } from './LevelDisplayMenu';
@@ -23,7 +23,7 @@ import { cleanDisplay, displayKey, heatOf, type LevelDisplay } from './levelDisp
 import { forgetSpot, rememberSpot, returnSpot, scrollBackTo } from './levelReturn';
 
 const SORTS: Array<[LevelSort, string]> = [['level', 'Level order'], ['drop', 'Highest total drop'], ['failquit', 'Most failers who quit'], ['completion', 'Lowest completion'], ['tries', 'Most tries per player'], ['time', 'Slowest']];
-const PAGE_SIZES: Array<[LevelPageSize, string]> = [['25', '25'], ['50', '50'], ['100', '100'], ['all', 'All']];
+const PAGE_SIZES: Array<[LevelPageSize, string]> = [['25', '25 at a time'], ['50', '50 at a time'], ['100', '100 at a time'], ['200', '200 at a time'], ['all', 'All levels']];
 
 /** The drop to the next level as a link to the level: a heat cell or bar against the drop flag. */
 function DropCell({ game, row, display, excludeReturners }: { game: Game; row: LevelRow; display: LevelDisplay; excludeReturners: boolean }): ReactElement {
@@ -72,7 +72,8 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
   const everyone = scope !== 'first_session' && !nav.excludeReturners;
   const difficulty = useRead<LevelDifficulty>(difficultyPath(game, filters), { enabled: everyone });
   const { toast } = useNotify();
-  // Back from a level's page: the same page of levels, then the same scroll position once the rows are there.
+  // `page` is how many extra steps of rows are loaded (0 = the first step). Back from a level's page: the same rows
+  // loaded, then the same scroll position once they are there.
   const [spot] = useState(() => returnSpot(game.id));
   const [page, setPage] = useState(spot?.page ?? 0);
   const returning = useRef(spot);
@@ -87,14 +88,14 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
   const display = useMemo(() => cleanDisplay(stored), [stored]);
   const [summary, setSummary] = useState(false);
   const flagged = data ? data.levels.filter((row) => heatOf(row.transition?.drop_percent, display.dropFlag).over && !row.low_sample).length : 0;
-  const size = pageSizeOf(nav.pageSize, sorted.length);
-  const pages = pageCount(nav.pageSize, sorted.length);
+  const shown = shownRows(current, nav.pageSize, sorted.length);
+  const more = loadMoreLabel(current, nav.pageSize, sorted.length);
 
   const jumpTo = (level: number) => {
     if (!data) return;
     const index = sorted.findIndex((row) => row.level === level);
     if (index < 0) { toast('No data for that level in the current filters.'); return; }
-    setPage(nav.pageSize === 'all' ? 0 : Math.floor(index / Number(nav.pageSize)));
+    setPage(Math.floor(index / pageSizeOf(nav.pageSize, sorted.length)));
     setHighlight({ level, token: Date.now() });
   };
   useEffect(() => { if (jump && data) { jumpTo(jump.level); onJumped(); } }, [jump, data]);
@@ -159,7 +160,7 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
                     {columns.time ? <Th icon="clock">Median time</Th> : null}
                   </tr></thead>
                   <tbody>
-                    {sorted.slice(current * size, (current + 1) * size).map((row) => (
+                    {sorted.slice(0, shown).map((row) => (
                       <tr key={row.level} data-level-row={row.level} className={`${highlight?.level === row.level ? 'level-highlight' : ''}`}
                         onClick={(event) => openRow(event, row.level)}
                         onPointerOver={(event) => { if (event.pointerType === 'mouse') void prefetch(drillPagePath(game, filters, scope, row.level, { group: levelDrillGroup(row), sort: 'exit_at', lastAction: null }, 0, nav.excludeReturners)); }}>
@@ -180,13 +181,12 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
                 </table>
               </div>
               <div className="table-foot levels-foot">
-                <span id="levels-page-info" className="small muted" aria-live="polite">{`${current * size + 1}–${Math.min((current + 1) * size, sorted.length)} of ${plural(sorted.length, 'level')}`}{result.levels.some((row) => row.low_sample) ? ` · a dot after a level means fewer than ${number(minimum)} players started it` : ''}</span>
+                <span id="levels-page-info" className="small muted" aria-live="polite">{shown < sorted.length ? `Showing ${number(shown)} of ${plural(sorted.length, 'level')}` : `All ${plural(sorted.length, 'level')}`}{result.levels.some((row) => row.low_sample) ? ` · a dot after a level means fewer than ${number(minimum)} players started it` : ''}</span>
                 <div className="quiet-actions">
-                  <label className="inline-field"><span className="sr-only">Rows per page</span><select id="levels-page-size" aria-label="Rows per page" value={nav.pageSize} onChange={(event) => { setPage(0); onNav({ pageSize: event.target.value as LevelPageSize }); }}>
-                    {PAGE_SIZES.map(([key, label]) => <option key={key} value={key}>{label === 'All' ? 'All rows' : `${label} rows`}</option>)}
+                  <label className="inline-field"><span className="sr-only">Levels shown at a time</span><select id="levels-page-size" aria-label="Levels shown at a time" value={nav.pageSize} onChange={(event) => { setPage(0); onNav({ pageSize: event.target.value as LevelPageSize }); }}>
+                    {PAGE_SIZES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                   </select></label>
-                  <button type="button" className="btn" id="levels-previous-page" disabled={current === 0} onClick={() => setPage(current - 1)}>Previous</button>
-                  <button type="button" className="btn" id="levels-next-page" disabled={current + 1 >= pages} onClick={() => setPage(current + 1)}>Next</button>
+                  {more ? <button type="button" className="btn" id="levels-load-more" onClick={() => setPage(current + 1)}>{more}</button> : null}
                 </div>
               </div>
             </>

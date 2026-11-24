@@ -18,19 +18,19 @@ export const CARRIED_ON_GROUPS: LevelDrillGroup[] = ['straight_on', 'failed_kept
 
 export type LevelSort = 'level' | 'drop' | 'failquit' | 'completion' | 'tries' | 'time';
 export const LEVEL_SORTS: LevelSort[] = ['level', 'drop', 'failquit', 'completion', 'tries', 'time'];
-export type LevelPageSize = '25' | '50' | '100' | 'all';
-export const LEVEL_PAGE_SIZES: LevelPageSize[] = ['25', '50', '100', 'all'];
+export type LevelPageSize = '25' | '50' | '100' | '200' | 'all';
+export const LEVEL_PAGE_SIZES: LevelPageSize[] = ['25', '50', '100', '200', 'all'];
 export type DrillSort = 'exit_at' | 'tries' | 'fails';
 export const DRILL_PAGE = 50;
 
-/** The sort, rows per page and scope of the level table, remembered per game (`avn-level-nav-<game>`). */
+/** The sort, rows shown at a time (and loaded with each “Load more”) and scope of the level table, remembered per game (`avn-level-nav-<game>`). */
 export type LevelNavigation = { sort: LevelSort; pageSize: LevelPageSize; scope: LevelScope; excludeReturners: boolean };
 export const navigationKey = (game: { id: string }): string => `avn-level-nav-${game.id}`;
 export function cleanNavigation(saved: Partial<Record<keyof LevelNavigation, unknown>> | null | undefined): LevelNavigation {
   const sort = saved?.sort; const pageSize = saved?.pageSize; const scope = saved?.scope;
   return {
     sort: LEVEL_SORTS.includes(sort as LevelSort) ? (sort as LevelSort) : 'level',
-    pageSize: LEVEL_PAGE_SIZES.includes(pageSize as LevelPageSize) ? (pageSize as LevelPageSize) : '50',
+    pageSize: LEVEL_PAGE_SIZES.includes(pageSize as LevelPageSize) ? (pageSize as LevelPageSize) : '100',
     scope: isLevelScope(scope) ? scope : 'all',
     excludeReturners: saved?.excludeReturners === true,
   };
@@ -80,6 +80,15 @@ export function sortLevels(levels: LevelRow[], sort: LevelSort): LevelRow[] {
 export const pageSizeOf = (pageSize: LevelPageSize, total: number): number => (pageSize === 'all' ? Math.max(1, total) : Number(pageSize));
 export const pageCount = (pageSize: LevelPageSize, total: number): number => Math.max(1, Math.ceil(total / pageSizeOf(pageSize, total)));
 export const clampPage = (page: number, pageSize: LevelPageSize, total: number): number => Math.min(page, pageCount(pageSize, total) - 1);
+/** The table shows the first `page + 1` steps of rows: “Load more” adds one step, and a jump loads up to the level. */
+export const shownRows = (page: number, pageSize: LevelPageSize, total: number): number => Math.min(total, (clampPage(page, pageSize, total) + 1) * pageSizeOf(pageSize, total));
+/** What the “Load more” button says: the next step, or only what is left when that is fewer; null once every row is shown. */
+export function loadMoreLabel(page: number, pageSize: LevelPageSize, total: number): string | null {
+  const left = total - shownRows(page, pageSize, total);
+  if (left <= 0) return null;
+  const step = pageSizeOf(pageSize, total);
+  return left <= step ? `Load the last ${left.toLocaleString('en-US')}` : `Load ${step} more`;
+}
 
 /** The key numbers above the table: the largest drop, hardest and slowest level (small samples not ranked). */
 export function levelHighlights(levels: LevelRow[]): { largestDrop: LevelRow | undefined; failQuit: LevelRow | undefined; hardest: LevelRow | undefined; slowest: LevelRow | undefined } {
