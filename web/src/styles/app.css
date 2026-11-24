@@ -397,6 +397,8 @@ tr:hover .heat-n.on-hover, tr:focus-within .heat-n.on-hover { opacity: 1; }
 .level-flags > svg { color: var(--dim); }
 .level-flagged { font-weight: 600; color: color-mix(in oklab, var(--warn), var(--bad) 60%); padding-left: 8px; border-left: var(--bw) solid var(--line-strong); }
 .levels-grid .level-drop-button { display: inline-flex; padding: 0; }
+/* Every heat cell is the same width, whatever it shows (room for a 4-digit count and 100.0%). */
+.levels-grid .heat-cell { width: 132px; box-sizing: border-box; }
 .levels-grid .level-drop-button:hover { transform: none; }
 .levels-grid .level-drop-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
 .display-pop { max-height: min(60vh, calc(100vh - var(--y, 0px) - 12px)) !important; }

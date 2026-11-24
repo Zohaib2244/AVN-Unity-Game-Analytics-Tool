@@ -23,7 +23,7 @@ import { cleanDisplay, displayKey, heatOf, type LevelDisplay } from './levelDisp
 import { forgetSpot, rememberSpot, returnSpot, scrollBackTo } from './levelReturn';
 
 const SORTS: Array<[LevelSort, string]> = [['level', 'Level order'], ['drop', 'Highest total drop'], ['failquit', 'Most failers who quit'], ['completion', 'Lowest completion'], ['tries', 'Most tries per player'], ['time', 'Slowest']];
-const PAGE_SIZES: Array<[LevelPageSize, string]> = [['25', '25 at a time'], ['50', '50 at a time'], ['100', '100 at a time'], ['200', '200 at a time'], ['all', 'All levels']];
+const PAGE_SIZES: Array<[LevelPageSize, string]> = [['25', '25 levels'], ['50', '50 levels'], ['100', '100 levels'], ['200', '200 levels'], ['all', 'All levels']];
 
 /** The drop to the next level as a link to the level: a heat cell or bar against the drop flag. */
 function DropCell({ game, row, display, excludeReturners }: { game: Game; row: LevelRow; display: LevelDisplay; excludeReturners: boolean }): ReactElement {
@@ -183,7 +183,7 @@ export function LevelTable({ game, filters, scope, nav, onNav, query, path, jump
               <div className="table-foot levels-foot">
                 <span id="levels-page-info" className="small muted" aria-live="polite">{shown < sorted.length ? `Showing ${number(shown)} of ${plural(sorted.length, 'level')}` : `All ${plural(sorted.length, 'level')}`}{result.levels.some((row) => row.low_sample) ? ` · a dot after a level means fewer than ${number(minimum)} players started it` : ''}</span>
                 <div className="quiet-actions">
-                  <label className="inline-field"><span className="sr-only">Levels shown at a time</span><select id="levels-page-size" aria-label="Levels shown at a time" value={nav.pageSize} onChange={(event) => { setPage(0); onNav({ pageSize: event.target.value as LevelPageSize }); }}>
+                  <label className="inline-field"><span className="sr-only">Levels added with each click</span><select id="levels-page-size" aria-label="Levels added with each click" value={nav.pageSize} onChange={(event) => { setPage(0); onNav({ pageSize: event.target.value as LevelPageSize }); }}>
                     {PAGE_SIZES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                   </select></label>
                   {more ? <button type="button" className="btn" id="levels-load-more" onClick={() => setPage(current + 1)}>{more}</button> : null}
